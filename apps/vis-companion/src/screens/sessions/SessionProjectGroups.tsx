@@ -10,8 +10,6 @@ import {
 import {
   HeaderActions,
   HeaderTally,
-  LIST_EDGE_END,
-  LIST_MARK,
   NewSessionButton,
   Pager,
   ProjectCrumb,
@@ -437,67 +435,51 @@ export const ProjectGroup = memo(function ProjectGroup({
         className="[&+&]:pt-2"
       >
         <SectionHeader>
-          <div className={`grid min-w-0 flex-1 ${hasPending ? 'gap-2 py-2' : ''}`}>
-            <div className="flex min-w-0">
-              <div
-                className={`flex min-w-0 flex-1 gap-3.5 mouse:gap-2 ${hasPending ? 'min-h-11 mouse:min-h-7' : 'sm:min-h-13 mouse:min-h-12'}`}
-              >
-                {/* The leading half NAMES the project and FOLDS it: folder name, the path that
-              tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
-              the band already reserves, so the name keeps the list's one leading edge
-              and the path gets the whole column instead of the crumbs of one. Paging
-              walks a project's history; the fold decides whether it is on screen at
-              all, which is what a reader with four checkouts on one machine needs. */}
-                <ProjectCrumb
-                  name={project}
-                  qualifier={hasPending ? undefined : qualifier}
-                  qualifierTitle={root}
-                  disclosure={
-                    hasSessions
-                      ? {
-                          isOpen: isShowing,
-                          onToggle: () => fold(!isShowing),
-                          label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
-                        }
-                      : null
-                  }
-                />
-                {pager && <div className="flex shrink-0 items-center pr-5 mouse:pr-4">{pager}</div>}
-              </div>
-              <HeaderActions align="center">
-                <NewSessionButton
-                  machine={machineLabel(conn)}
-                  where={project}
-                  isBusy={creating?.at === `${base}\u0000${root}`}
-                  onPress={() => void onNewSession(conn, root)}
-                />
-              </HeaderActions>
-            </div>
-            {hasPending && (
-              <div
-                className={`${LIST_EDGE_END} flex min-h-11 min-w-0 items-center gap-2 pl-4 mouse:min-h-7`}
-              >
-                <span aria-hidden="true" className={LIST_MARK} />
-                <div className="flex min-w-0 flex-1 items-center gap-3 font-mono text-ui text-dialog-hint mouse:text-meta">
-                  <Button
-                    variant="quiet"
-                    density="compact"
-                    pressEffect="none"
-                    className="relative -left-px -ml-2.5 shrink-0 sm:-ml-3"
-                    aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
-                    onClick={() => {
-                      acceptUpdates(pendingIds);
-                      setFirst(0);
-                      fold(true);
-                    }}
-                  >
-                    {pendingIds.length} newer {pendingIds.length === 1 ? 'session' : 'sessions'}
-                  </Button>
-                  {qualifier}
-                </div>
-              </div>
-            )}
+          <div className="flex min-w-0 flex-1 gap-3.5 sm:min-h-13 mouse:min-h-12 mouse:gap-2">
+            {/* The naming half keeps the same two-line rhythm with or without arrivals. */}
+            <ProjectCrumb
+              name={project}
+              qualifier={qualifier}
+              qualifierTitle={root}
+              disclosure={
+                hasSessions
+                  ? {
+                      isOpen: isShowing,
+                      onToggle: () => fold(!isShowing),
+                      label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
+                    }
+                  : null
+              }
+            />
+            {pager && <div className="flex shrink-0 items-center pr-5 mouse:pr-4">{pager}</div>}
           </div>
+          <HeaderActions align="center">
+            {hasPending && (
+              <Button
+                variant="quiet"
+                density="compact"
+                pressEffect="none"
+                className="shrink-0"
+                aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
+                onClick={() => {
+                  acceptUpdates(pendingIds);
+                  setFirst(0);
+                  fold(true);
+                }}
+              >
+                <span className="@lg:hidden">{pendingIds.length} new</span>
+                <span className="hidden @lg:inline">
+                  {pendingIds.length} newer {pendingIds.length === 1 ? 'session' : 'sessions'}
+                </span>
+              </Button>
+            )}
+            <NewSessionButton
+              machine={machineLabel(conn)}
+              where={project}
+              isBusy={creating?.at === `${base}\u0000${root}`}
+              onPress={() => void onNewSession(conn, root)}
+            />
+          </HeaderActions>
         </SectionHeader>
         {/* The header closes the band; rows draw only separators between sessions. */}
         {isShowing && rows.length > 0 && (

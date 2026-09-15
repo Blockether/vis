@@ -215,9 +215,14 @@ export const Fleet: Story = {
     ).toEqual(firstPageRows);
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       // Transparent controls expose the same project band on touch.
-      await expect(win.getComputedStyle(create.parentElement!.parentElement!).backgroundColor).toBe(
-        'rgba(0, 0, 0, 0)',
-      );
+      const band = create.closest('header');
+      for (
+        let element: HTMLElement | null = create;
+        element && element !== band;
+        element = element.parentElement
+      ) {
+        await expect(win.getComputedStyle(element).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      }
       return;
     }
     const disclosure = (

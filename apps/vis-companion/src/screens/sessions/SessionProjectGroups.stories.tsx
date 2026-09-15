@@ -23,7 +23,7 @@ const meta = {
   parameters: { layout: 'fullscreen' },
   beforeEach: ({ args }) => {
     const previous = globalThis.fetch;
-    globalThis.fetch = storyFleetFetch([fixture]);
+    globalThis.fetch = storyFleetFetch([{ ...fixture, rows: args.group.sessions }]);
     writeProjectFold(projectFoldKey(machineKey(conn), fixture.root), args.initiallyOpen);
     return () => {
       globalThis.fetch = previous;
@@ -113,29 +113,53 @@ export const AcceptNewerSession: Story = {
     const title = within(disclosure).getByText('/CryptoSafe');
     const header = title.closest('header')!;
     const updates = within(header).getByRole('button', { name: 'Show 1 newer session' });
+    // Regression: accepting arrivals must not resize the project header.
+    const pendingBounds = header.getBoundingClientRect();
     const style = (element: Element) => getComputedStyle(element);
     const rows = header.nextElementSibling!;
 
-    // Regression: the update action is metadata, never a divider or a nested disclosure.
+    // The update action shares the regular band, outside the project disclosure.
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
-    const text = canvasElement.ownerDocument.createRange();
-    text.selectNodeContents(updates);
-    await expect(
-      Math.abs(text.getBoundingClientRect().left - title.getBoundingClientRect().left),
-    ).toBeLessThan(1);
-    await expect(updates.getBoundingClientRect().top).toBeGreaterThan(
-      title.getBoundingClientRect().bottom,
+    const updateBounds = updates.getBoundingClientRect();
+    await expect(updateBounds.left).toBeGreaterThanOrEqual(
+      disclosure.getBoundingClientRect().right,
     );
+    await expect(updateBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
+    await expect(updateBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
+    await expect(header.scrollWidth).toBe(header.clientWidth);
+    for (const control of header.querySelectorAll('button, input')) {
+      const bounds = control.getBoundingClientRect();
+      await expect(bounds.left).toBeGreaterThanOrEqual(pendingBounds.left);
+      await expect(bounds.right).toBeLessThanOrEqual(pendingBounds.right);
+      await expect(
+        canvasElement.ownerDocument
+          .elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+          ?.closest('button, input'),
+      ).toBe(control);
+    }
+    await expect(title.getBoundingClientRect().width).toBeGreaterThan(0);
     await expect(style(updates).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     await expect(style(updates).borderTopColor).toBe('rgba(0, 0, 0, 0)');
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
     await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
-    await expect(within(header).getByText('4 sessions')).toBeVisible();
+    await expect(within(header).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
+    const pageCount = Math.ceil(args.group.tally.count / args.reading.pageSize);
+    if (pageCount > 1) {
+      const pager = within(header).getByRole('navigation', {
+        name: 'Pages of /CryptoSafe sessions',
+      });
+      await expect(pager).toBeVisible();
+      await expect(within(pager).getByText(`Page 1 of ${pageCount}`)).toBeInTheDocument();
+    }
+    await expect(
+      within(updates).getByText(pendingBounds.width < 512 ? '1 new' : '1 newer session'),
+    ).toBeVisible();
 
     await userEvent.click(page.getByRole('button', { name: 'Collapse /CryptoSafe' }));
     await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
     await expect(style(header).borderBottomWidth).toBe('1px');
+    await expect(header.getBoundingClientRect().height).toBe(pendingBounds.height);
     updates.focus();
     await userEvent.keyboard('{Enter}');
     await expect(args.reading.acceptUpdates).toHaveBeenCalledWith(pendingIds);
@@ -144,8 +168,48 @@ export const AcceptNewerSession: Story = {
       'aria-expanded',
       'true',
     );
-    await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(4);
+    await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(
+      Math.min(args.reading.pageSize, args.group.sessions.length),
+    );
     await expect(page.queryByRole('button', { name: /newer session/ })).toBeNull();
     await expect(style(header).borderBottomWidth).toBe('1px');
+    const acceptedBounds = header.getBoundingClientRect();
+    await expect({ width: acceptedBounds.width, height: acceptedBounds.height }).toEqual({
+      width: pendingBounds.width,
+      height: pendingBounds.height,
+    });
   },
+};
+
+// The reported header had a three-digit page total and more than a thousand sessions.
+const pagedRows = [
+  ...fixture.rows,
+  ...Array.from({ length: 1460 }, (_, index) => ({
+    ...fixture.rows[fixture.rows.length - 1],
+    id: `header-layout-${index}`,
+  })),
+];
+const pagedArgs = {
+  group: {
+    ...meta.args.group,
+    tally: { count: pagedRows.length, live: 2, awaiting: 0, unread: 0 },
+    sessions: pagedRows,
+  },
+  machine: { conn, sessions: pagedRows },
+  reading: { ...meta.args.reading, pageSize: 14 },
+};
+
+export const PhoneWithPaging: Story = {
+  ...AcceptNewerSession,
+  args: pagedArgs,
+};
+
+export const SmallPhoneWithPaging: Story = {
+  ...PhoneWithPaging,
+  globals: { viewport: { value: 'phoneSmall', isRotated: false } },
+};
+
+export const DesktopWithPaging: Story = {
+  ...PhoneWithPaging,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
