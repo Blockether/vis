@@ -1722,8 +1722,8 @@ therapy line 2"
                                           true
                                           (selection/point 7 6)
                                           {:viewport-top 2 :eff-scroll 38}))))
-  (it "marks input text rows as selectable without input padding"
-      (expect (= [{:row 11 :col 2 :width 16} {:row 12 :col 2 :width 16}]
+  (it "marks the full width of input text rows as selectable"
+      (expect (= [{:row 11 :col 0 :width 20} {:row 12 :col 0 :width 20}]
                  (input-selectable-ranges 10 2 20)))))
 
 (defdescribe
@@ -2978,6 +2978,22 @@ therapy line 2"
                      (- (long after-surface) (long before-surface)))
                   "receipt and expanded surface move by the same terminal rows"))
         (finally (reset! state/app-db old-db))))))
+
+(defdescribe input-full-width-geometry-test
+             (it "grows the composer only after text exceeds the terminal width"
+                 (doseq [cols
+                         [20 80 220]
+
+                         [length expected-rows]
+                         [[(dec cols) 1] [cols 1] [(inc cols) 2]]]
+
+                   (let [geometry (#'screen/composer-geometry
+                                   {:input
+                                    {:lines [(apply str (repeat length "x"))] :crow 0 :ccol length}}
+                                   cols
+                                   30)]
+                     (expect (= expected-rows (:text-rows geometry)))
+                     (expect (= (+ expected-rows 2) (:input-box-h geometry)))))))
 
 (defdescribe composer-attachment-geometry-test
              (it "reserves every attachment row above the prompt on every render path"

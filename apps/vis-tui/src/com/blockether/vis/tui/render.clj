@@ -439,11 +439,9 @@
         (str (subs bar 0 start) label (subs bar end)))
       bar)))
 
-;; Input-border rules share this inset; adjust it here, not in the painter.
 (def ^:private INPUT_BORDER_HORIZONTAL_PAD
-  "Cols of empty space on each end of the input-box top/bottom rules.
-   Total rule width = `cols - 2 * INPUT_BORDER_HORIZONTAL_PAD`."
-  2)
+  "Shared inset for input rules and completion overlays. Zero keeps both full-width."
+  0)
 
 (defn- draw-box-border!
   "Draw a single-line box border. Optionally embeds a centered hint
@@ -491,11 +489,8 @@
            (.setBackgroundColor g t/terminal-bg)
            (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
            (.setCharacter g (int (dec (long cols))) (int row) Symbols/SINGLE_LINE_VERTICAL)))
-       ;; Sideless variant: top + bottom rules with horizontal padding
-       ;; on each end so the rule doesn't kiss the screen edges.
-       ;; `pad` cols of empty space on each side; bar spans the inner
-       ;; (cols - 2*pad) columns. No corners, no side rails. Top hint
-       ;; embeds inside the padded bar.
+       ;; Sideless variant: full-width top and bottom rules, with no corner or
+       ;; side cells reserved outside the typing area.
        (let [pad
              INPUT_BORDER_HORIZONTAL_PAD
 
@@ -509,10 +504,10 @@
          (.putString g (int pad) (int box-bottom) ^String padded-bar))))))
 
 (defn- fill-box-interior!
-  "Fill the interior of a box with the standard box background."
+  "Fill the full width between the sideless input rules with the box background."
   [^TextGraphics g box-top box-bottom cols]
   (let [inner-w
-        (- (long cols) 2)
+        (long cols)
 
         text-top
         (inc (long box-top))
@@ -522,7 +517,7 @@
 
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)
-    (.fillRectangle g (TerminalPosition. 1 text-top) (TerminalSize. inner-w rows) \space)))
+    (.fillRectangle g (TerminalPosition. 0 text-top) (TerminalSize. inner-w rows) \space)))
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 (def input-pad-y
@@ -534,7 +529,7 @@
    (rule + pad + line + pad + rule) when three is the right minimum."
   0)
 
-(def ^:private input-pad-x "Horizontal padding (cols left/right of text inside the input box)." 2)
+(def ^:private input-pad-x "Horizontal padding (cols left/right of text inside the input box)." 0)
 
 (defn input-text-w
   "Visible text width (in columns) inside the input box for a given
@@ -542,9 +537,8 @@
    wrapped row counts and `draw-input-box!` can render with the same
    wrap point.
 
-   The input box is SIDELESS (top/bottom rules only, no `│` rails)
-   and `input-pad-x` is now 0, so the typing zone spans the full
-   terminal width - `text-w` = `cols` (clamped to >=1)."
+   The input box has no side rails or horizontal padding, so its text
+   spans the full terminal width (clamped to >=1)."
   ^long [^long cols]
   (max 1 (- cols (* 2 (long input-pad-x)))))
 
@@ -633,7 +627,8 @@
 
     {:visual-lines (into [] cat wrapped)
      :cursor-vrow (+ (long (nth offsets crow)) (long seg-idx))
-     :cursor-vcol seg-off}))
+     ;; A full-width line has no spare cell beyond its last character.
+     :cursor-vcol (min (dec text-w) seg-off)}))
 
 (defn- input-more-hint
   "Left-edge label for the input top border when the editor has more
@@ -656,7 +651,7 @@
             (str/starts-with? t "!") "!"))))
 
 (defn draw-input-box!
-  "Draw bordered input area with internal padding. Returns
+  "Draw the full-width input area between horizontal rules. Returns
    [cursor-col cursor-row] in screen coords.
 
    Long logical lines are SOFT-WRAPPED at the box width: typing past
@@ -668,9 +663,8 @@
    keybinding helpers live in the echo area (`footer/draw-echo-area!`), not here,
    so input/editor paint stays isolated from footer chrome.
 
-   No left/right side rails: the input area is framed by top and bottom
-   rules only, so the typing zone sits flush with the message column on
-   either side and the eye tracks the prompt directly without `│`-noise."
+   The rules, background, and typing area span the terminal from the first
+   column to the last, with no left/right rails or horizontal padding."
   [^TextGraphics g input box-top text-rows cols hint]
   (let [box-top
         (long box-top)
@@ -1039,9 +1033,8 @@
    `draw-dialog-chrome!` chrome idiom but in overlay form (no side
    rails, since the input box below has no side rails either).
 
-   The whole overlay is inset by `INPUT_BORDER_HORIZONTAL_PAD` cols on
-   each side so the accent stripe and rule line up exactly with the
-   input box's top/bottom rules below."
+   The overlay shares `INPUT_BORDER_HORIZONTAL_PAD` with the input rules,
+   so its full-width accent stripe and rule align with the composer below."
   ([g suggestions input-top cols] (draw-slash-command-suggestions! g suggestions input-top cols 0))
   ([g suggestions input-top cols selected-index]
    (when (seq suggestions)

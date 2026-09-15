@@ -1427,6 +1427,113 @@
                                                 :duration-ms 2300)])))]
         (expect (= 1 (count (re-seq #"2\.3s" txt))) txt))))
 
+(defdescribe
+  input-full-width-test
+  (it "paints both rules edge to edge for prompts and shell commands"
+      (doseq [cols
+              [20 80 220]
+
+              line
+              ["" "!pwd" "!&tail -f log"]]
+
+        (let [captured
+              (cap/capture!
+                {:cols cols
+                 :rows 3
+                 :paint!
+                 (fn [{:keys [g]}]
+                   (render/draw-input-box! g {:lines [line] :crow 0 :ccol 0} 0 1 cols nil))})
+
+              grid
+              (last (:frames captured))
+
+              top
+              (apply str (map :ch (nth grid 0)))
+
+              bottom
+              (apply str (map :ch (nth grid 2)))
+
+              rule
+              (apply str (repeat cols "─"))]
+
+          (expect (nil? (:error captured)))
+          (expect (= rule bottom))
+          (expect (= "─" (:ch (first (nth grid 0))) (:ch (last (nth grid 0)))))
+          (expect (if (str/blank? line)
+                    (= rule top)
+                    (str/includes? top (if (str/starts-with? line "!&") " shell & " " shell ")))))))
+  (it
+    "uses every text cell and keeps the cursor visible at wrap boundaries"
+    (doseq [cols
+            [1 2 4 20 80 220]
+
+            [line cursor]
+            [["" [0 1]] [(apply str (repeat (dec cols) "x")) [(dec cols) 1]]
+             [(apply str (repeat cols "x")) [(dec cols) 1]]
+             [(str (apply str (repeat cols "x")) "y") [(min 1 (dec cols)) 2]]]]
+
+      (let [captured
+            (cap/capture! {:cols cols
+                           :rows 4
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-input-box!
+                                       g
+                                       {:lines [line] :crow 0 :ccol (count line)}
+                                       0
+                                       2
+                                       cols
+                                       nil))})
+
+            grid
+            (last (:frames captured))
+
+            first-line
+            (subs line 0 (min cols (count line)))
+
+            second-line
+            (if (> (count line) cols) (subs line cols) "")]
+
+        (expect (nil? (:error captured)))
+        (expect (= cols (render/input-text-w cols)))
+        (expect (= cursor (:ret captured)))
+        (expect (= (str first-line (apply str (repeat (- cols (count first-line)) " ")))
+                   (apply str (map :ch (nth grid 1)))))
+        (expect (= (str second-line (apply str (repeat (- cols (count second-line)) " ")))
+                   (apply str (map :ch (nth grid 2))))))))
+  (it "clears stale text and paints the input background through both edge cells"
+      (doseq [cols [1 2 20 80]]
+        (let [captured (cap/capture!
+                         {:cols cols
+                          :rows 3
+                          :paint!
+                          (fn [{:keys [g]}]
+                            (p/put-str! g 0 1 (apply str (repeat cols "x")))
+                            (render/draw-input-box! g {:lines [""] :crow 0 :ccol 0} 0 1 cols nil))})
+              row (nth (last (:frames captured)) 1)]
+
+          (expect (nil? (:error captured)))
+          (expect (every? #(= " " (:ch %)) row))
+          (expect (= 1 (count (set (map :bg row))))))))
+  (it "retains the overflow hint inside full-width rules"
+      (let [cols
+            40
+
+            captured
+            (cap/capture!
+              {:cols cols
+               :rows 4
+               :paint!
+               (fn [{:keys [g]}]
+                 (render/draw-input-box! g {:lines ["a" "b" "c"] :crow 2 :ccol 1} 0 2 cols nil))})
+
+            grid
+            (last (:frames captured))]
+
+        (expect (nil? (:error captured)))
+        (expect (str/includes? (apply str (map :ch (first grid))) " 1 more "))
+        (expect (= "─" (:ch (first (first grid))) (:ch (last (first grid)))))
+        (expect (= (apply str (repeat cols "─")) (apply str (map :ch (last grid))))))))
+
 (defdescribe input-overflow-hint-test
              (it "shows hidden visual-row count as an N more label for the input top border"
                  (expect (= nil (input-more-hint 1 4)))
@@ -4426,9 +4533,9 @@
           margin-row
           (dec title-row)
 
-          ;; Horizontal margin matches input box rule pad (2 cols).
+          ;; Completion chrome shares the full-width input rules.
           pad
-          2
+          0
 
           inner-w
           (- cols (* 2 pad))]
@@ -4436,15 +4543,17 @@
       (render/draw-slash-command-suggestions! g suggestions input-top cols)
       ;; Title row sits ABOVE the border row (border under title).
       (expect (< title-row border-row))
-      ;; Title row: accent stripe (fillRectangle) on title-bg, inset
-      ;; by `pad` cols on each side so it lines up with the input box.
-      (expect (some #(and (= title-row (:row %)) (= t/dialog-title-bg (:bg %)) (= pad (:col %)))
+      ;; The title stripe reaches both screen edges, like the input rules.
+      (expect (some #(and (= title-row (:row %))
+                          (= t/dialog-title-bg (:bg %))
+                          (= pad (:col %))
+                          (= cols (:w %)))
                     @fills))
-      ;; Border row UNDER the title: horizontal rule, inset by `pad`,
-      ;; same column span as the title accent stripe.
+      ;; The rule under the title spans the same full width as the accent stripe.
       (expect (some #(and (= border-row (:row %))
                           (str/starts-with? (:text %) "─")
                           (= pad (:col %))
+                          (= cols (count (:text %)))
                           (= t/dialog-border (:fg %))
                           (= t/terminal-bg (:bg %)))
                     @puts))

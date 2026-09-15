@@ -975,10 +975,8 @@
         ;; … and neither rail ever wears a thumb of its own.
         (expect (every? #(not= "█" (char-at screen rail %)) ys))
         (expect (every? #(not= "█" (char-at screen (long left) %)) ys))))
-  ;; Regression: the band's box hung one column OUTSIDE the prompt's rules on
-  ;; each side — the rails sat in the terminal's own margin, so the form read as
-  ;; nailed to the screen edge instead of standing on the prompt under it.
-  (it "stands its rails on the very columns the prompt's rule ends on"
+  ;; The transient keeps its side margins above the edge-to-edge composer.
+  (it "keeps the band's inset rails within the full-width prompt rules"
       (let [{:keys [screen g]}
             (virtual-screen)
 
@@ -1004,8 +1002,8 @@
             top
             (long (first (filter #(= "┌" (char-at screen left %)) (range 30))))]
 
-        (expect (= left (long (first rule-cols))))
-        (expect (= right (long (last rule-cols))))
+        (expect (= (vec (range 80)) rule-cols))
+        (expect (< 0 left right 79))
         ;; ...and the box really is drawn there, with terminal margin outside it.
         (expect (= "┐" (char-at screen right top)))
         (expect (every? #(= " " (char-at screen % top)) (range 0 left)))
