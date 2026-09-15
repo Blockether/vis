@@ -4940,7 +4940,7 @@
 
         rows
         (if nested?
-          [[:title (str "RUN " title)] [:status status]]
+          [[:title (str "LIVE " title)] [:status status]]
           [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
            [:pad (body "")] [:status (body status)] [:pad (body "")] [:bottom (edge "└" "" "┘")]])]
 
@@ -6590,40 +6590,41 @@
 
 (defn- run-row-entries
   "Transcript receipts associated with a form by trusted ownership.
-   Owned RUN sections follow Activity at the same level; unmatched rows stay standalone."
+   Owned Live View sections follow Activity at the same level; unmatched rows stay standalone."
   ([runs max-w session-id] (run-row-entries runs max-w session-id true))
   ([runs max-w session-id leading-margin?]
    (if (empty? runs)
      []
      (into (if leading-margin? [{:line "" :meta nil}] [])
-           (mapcat
-             (fn [{:keys [view-id title reason lines elapsed-ms]}]
-               (let [verdict
-                     (some-> reason
-                             name)
+           (mapcat (fn [{:keys [view-id title reason lines elapsed-ms]}]
+                     (let [verdict
+                           (some-> reason
+                                   name)
 
-                     verdict
-                     (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
-                       (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
-                       verdict)
+                           verdict
+                           (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
+                             (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                             verdict)
 
-                     parts
-                     (remove str/blank?
-                       [title verdict
-                        (when (pos? (long (or lines 0)))
-                          (str lines (if (= 1 (long lines)) " line" " lines")))
-                        (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
+                           parts
+                           (remove str/blank?
+                             [title verdict
+                              (when (pos? (long (or lines 0)))
+                                (str lines (if (= 1 (long lines)) " line" " lines")))
+                              (when (pos? (long (or elapsed-ms 0)))
+                                (vis/format-duration elapsed-ms))])]
 
-                 [{:line (ellipsize-cols
-                           (str (if leading-margin? (str " " (band-label "RUN")) (band-label "RUN"))
-                                " "
-                                (str/join " · " parts))
-                           (max 1 (long max-w)))
-                   :meta {:kind :live-reopen
-                          :run-header? true
-                          :view-id (str view-id)
-                          :session-id (str session-id)}}]))
-             runs)))))
+                       [{:line (ellipsize-cols (str (if leading-margin?
+                                                      (str " " (band-label "LIVE"))
+                                                      (band-label "LIVE"))
+                                                    " "
+                                                    (str/join " · " parts))
+                                               (max 1 (long max-w)))
+                         :meta {:kind :live-reopen
+                                :run-header? true
+                                :view-id (str view-id)
+                                :session-id (str session-id)}}]))
+                   runs)))))
 
 (defn- place-run-rows
   "Attach run rows only to their trusted Activity owner.

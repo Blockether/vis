@@ -745,6 +745,69 @@
     (is (str/includes? (str/join "\n" (subvec (vec lines) from (inc (long to)))) "Watching"))
     (is (pos? (long (:visible geometry))))))
 
+(deftest live-view-record-close-control-test
+  ;; #235: a read-only record keeps a compact, named close target and its state.
+  (binding [interactions/hit-map (interactions/create-hit-map)]
+    (doseq [cols [24 40 96]
+            viewer? [false true]
+            reason [:completed :failed :interrupted]
+            :let [record (-> (pane)
+                             (lv/settled {:reason reason})
+                             lv/reopened
+                             (assoc :is-viewer viewer?))
+                  {:keys [frames error]} (paint-frames [record] cols 26)
+                  text (cap/frame-text (last frames))
+                  controls (filterv #(= (if viewer? :live-viewer-close :live-reopen) (:kind %))
+                             (.current interactions/hit-map))
+                  control (first controls)
+                  {:keys [row col width]} (:bounds control)]]
+
+      (is (nil? error))
+      (is (= 1 (count controls)))
+      (is (= "Close live view" (:label control)))
+      (is (= 3 width))
+      (is (str/includes? text "×"))
+      (is (not (str/includes? text "Close")))
+      (is (str/includes? text "LIVE"))
+      (when (= cols 96) (is (str/includes? text (str/capitalize (name reason)))))
+      (doseq [x (range col (+ col width))]
+        (is (= control (.lookup interactions/hit-map (int x) (int row)))))
+      (when viewer? (is (some #{["Esc" "close view"]} (lv/hint record [])))))))
+
+(deftest live-view-body-inset-and-bottom-gap-test
+  ;; #235: the final visible content row must not touch the footer boundary.
+  (doseq [cols
+          [32 40 96]
+
+          rows
+          [12 26 40]
+
+          :let [p
+                (lv/opened (apply mounted
+                             {:title "Checks" :description ""}
+                             (concat (map #(fixture/status (str %) (str "Row " %)) (range 30))
+                                     [(fixture/status "last" "Full console")])))
+
+                {:keys [frames geometry error]}
+                (paint-frames [p] cols rows)
+
+                lines
+                (str/split-lines (cap/frame-text (last frames)))
+
+                last-row
+                (first (keep-indexed #(when (str/includes? %2 "Full console") %1) lines))
+
+                [_ bottom]
+                (lv/band-rows cols rows [p] 1 3)]]
+
+    (is (nil? error))
+    (is (some? last-row))
+    (when last-row
+      (is (= 3 (str/index-of (nth lines last-row) "· Full console")))
+      (is (= (- (long bottom) 4) last-row))
+      (is (str/blank? (str/replace (nth lines (inc (long last-row))) "│" ""))))
+    (is (pos? (long (:visible geometry))))))
+
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────
 
 (deftest live-view-paint-test

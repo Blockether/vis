@@ -1830,11 +1830,11 @@
                              (when (> (long pane-count) 1) (str pane-count " views open"))])))}))
 
 (defn- paint-fold-control!
-  "Paint minimize/restore for a running view and Close for a read-only record."
+  "Paint minimize/restore for a running view and a close icon for a read-only record."
   [g {:keys [left inner-w]} row pane]
   (when pane
     (let [label
-          (cond (or (:is-viewer pane) (settled? pane)) " Close "
+          (cond (or (:is-viewer pane) (settled? pane)) " × "
                 (minimized? pane) " ▴ "
                 :else " ▾ ")
 
@@ -1852,10 +1852,22 @@
                               (settled? pane) :live-reopen
                               (minimized? pane) :live-restore
                               :else :live-minimize)
+                  :label (cond (or (:is-viewer pane) (settled? pane)) "Close live view"
+                               (minimized? pane) "Restore live view"
+                               :else "Minimize live view")
                   :view-id (view-id pane)
                   :enabled? true}))))
 
-(defn- band-title "The Live View title." [pane now-ms] (title-line pane now-ms))
+(defn- band-title
+  "The Live View title, including the recorded outcome when the run has ended."
+  [pane now-ms]
+  (str/join " · "
+            (remove str/blank?
+              ["LIVE"
+               (when (settled? pane)
+                 (if-let [reason (get-in pane [:settled :reason])]
+                   (str/capitalize (name reason))
+                   "Recorded")) (title-line pane now-ms)])))
 
 (defn- band-shape
   "PURE: what the band is made of on `region` — the live panes oldest first, the
@@ -1873,11 +1885,9 @@
         panes
         (vec (remove dormant? panes))
 
-        ;; The body opens one column inside the rails and the row painters take
-        ;; the next one, so nothing a view paints ever touches a rail — and the
-        ;; right lane stays clear for the scrollbar.
+        ;; The body begins just inside the left rail; keep the right scrollbar lane clear.
         text-w
-        (max 8 (- (dec (long (:inner-w region))) 4))
+        (max 8 (- (long (:inner-w region)) 4))
 
         ;; The pane IN FRONT is the newest view still on the band.
         front
@@ -1966,7 +1976,8 @@
        (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
          (let [left (long left)
                inner-w (long inner-w)
-               body-w (dec inner-w)
+               body-left (dec left)
+               body-w inner-w
                {:keys [front others collapsed rows-plan stop is-minimized n]} (band-shape panes
                                                                                           region)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
@@ -1989,6 +2000,9 @@
                body-top (+ (long body-top) heading-h)
                visible (- visible heading-h)
                body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
+               ;; Leave one blank row before the footer (or stop prompt) when space allows.
+               body-visible
+               (if (and (not is-minimized) (> body-visible 1)) (dec body-visible) body-visible)
                total (count rows-plan)
                start (if (and front (not is-minimized)) (offset front rows-plan body-visible) 0)
                shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
@@ -1997,26 +2011,26 @@
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            (when (>= (long sep-row) (long top-limit))
              (let [title (p/ellipsize (band-title (or front (last panes)) now-ms)
-                                      (max 1 (- inner-w 10)))]
+                                      (max 1 (- inner-w 6)))]
                (tr/draw-rule! g region sep-row (when (zero? heading-h) title))
                (when (pos? heading-h)
-                 (paint-styled! g left title-row body-w t/dialog-fg [p/BOLD] title))
+                 (paint-styled! g body-left title-row body-w t/dialog-fg [p/BOLD] title))
                (paint-fold-control! g region title-row front)))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
            (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
              (tr/draw-rule! g region hint-rule-at))
            (doseq [[idx entry] (map-indexed vector collapsed)]
-             (paint-entry! g left (+ (long body-top) (long idx)) body-w view-id entry))
+             (paint-entry! g body-left (+ (long body-top) (long idx)) body-w view-id entry))
            (doseq [[idx entry] (map-indexed vector shown)]
              (paint-entry! g
-                           left
+                           body-left
                            (+ (long body-top) (count collapsed) (long idx))
                            body-w
                            view-id
                            entry))
            (doseq [idx (range (count shown) body-visible)]
              (paint-entry! g
-                           left
+                           body-left
                            (+ (long body-top) (count collapsed) (long idx))
                            body-w
                            view-id
@@ -2028,7 +2042,7 @@
                (when (> note-rule-at (max (long sep-row) (long top-limit)))
                  (tr/draw-rule! g region note-rule-at))
                (paint-segments! g
-                                left
+                                body-left
                                 note-row
                                 body-w
                                 [{:text (:label stop) :fg t/dialog-hint}
@@ -2076,7 +2090,7 @@
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
 
 (defn inline-entries
-  "Bounded sibling RUN section using the pane's ordinary node plan.
+  "Bounded sibling LIVE section using the pane's ordinary node plan.
    Each row carries the pane geometry so painting and wheel handling agree."
   [pane width]
   (let [rows
@@ -2100,8 +2114,7 @@
            :widths (:widths (meta rows))})
 
         entries
-        (concat [{:kind :inline-title
-                  :text (str "RUN " (flat-text (get-in pane [:view :title])))}]
+        (concat [{:kind :inline-title :text (str "LIVE " (flat-text (get-in pane [:view :title])))}]
                 (subvec (vec rows) start (+ start visible))
                 (when-let [stop (stop-prompt pane)]
                   [{:kind :inline-stop :text (str (:label stop) (:note stop) "▏") :stop stop}])
@@ -2118,7 +2131,7 @@
           entries)))
 
 (defn paint-inline-entry!
-  "Paint a sibling RUN row; viewport-top translates hits to terminal rows."
+  "Paint a sibling LIVE row; viewport-top translates hits to terminal rows."
   [g left row width viewport-top {:keys [live-pane live-entry live-geometry]}]
   (binding [t/dialog-bg
             t/code-block-bg

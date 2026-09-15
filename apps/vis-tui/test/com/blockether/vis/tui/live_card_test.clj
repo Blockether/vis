@@ -18,19 +18,33 @@
 (defn live-card-message
   "Deterministic production transcript fixture for #205 and #228, including the adjacent run."
   [width
-   {:keys [reason title recorded-only? live?] :or {reason :completed title "Jenkins · build pool"}}]
-  (let [run
-        {:view-id "live-review" :title title :reason reason :lines 13 :elapsed-ms 2200}
+   {:keys [reason title recorded-only? live? owned?]
+    :or {reason :completed title "Jenkins · build pool"}}]
+  (let [owner
+        {:activity-id "activity-review"}
+
+        run
+        (cond-> {:view-id "live-review" :title title :reason reason :lines 13 :elapsed-ms 2200}
+          owned?
+          (assoc :owner owner))
 
         iteration
         {:iteration-id "iteration-review"
-         :attachments [{"source" "tool"
-                        "kind" "file"
-                        "filename" "jenkins-build-pool.live.ndjson"
-                        "media_type" "application/vnd.vis.live+ndjson"
-                        "view_id" "live-review"
-                        "size" 2048}]
-         :forms [{:code "await jenkins.watch()" :success? true :runs (if recorded-only? [] [run])}]}
+         :attachments [(cond-> {"source" "tool"
+                                "kind" "file"
+                                "filename" "jenkins-build-pool.live.ndjson"
+                                "media_type" "application/vnd.vis.live+ndjson"
+                                "view_id" "live-review"
+                                "size" 2048}
+                         owned?
+                         (assoc "owner" owner))]
+         :forms
+         [(cond-> {:code "await jenkins.watch()" :success? true :runs (if recorded-only? [] [run])}
+            owned?
+            (assoc :activity
+              {:state "succeeded"
+               :history {:id "activity-review"}
+               :rows [{:id "watch" :operation "Watch builds" :state "succeeded"}]}))]}
 
         settings
         {:show-iterations true :show-thinking false}
@@ -140,9 +154,42 @@
         (#'render/live-artifact-card-entries artifact "s" 80 {:reason :completed} true)]
 
     (is (= 2 (count entries)))
-    (is (= ["RUN jenkins" "Completed"] (mapv #(subs (:line %) 1) entries)))
+    (is (= ["LIVE jenkins" "Completed"] (mapv #(subs (:line %) 1) entries)))
     (is (every? #(= artifact (get-in % [:meta :artifact])) entries))
     (is (every? #(get-in % [:meta :activity-live?]) entries))))
+
+(deftest owned-live-recordings-keep-identity
+  ;; #235: persisted recordings must retain the Live View label beside Activity, not become RUN.
+  (doseq [width
+          [24 40 80]
+
+          reason
+          [:completed :failed :interrupted :timeout :cancelled]
+
+          recorded-only?
+          [false true]
+
+          live?
+          [false true]]
+
+    (let [message
+          (live-card-message
+            width
+            {:owned? true :reason reason :recorded-only? recorded-only? :live? live?})
+
+          entries
+          (keep-indexed #(when (:activity-live? %2) [(nth (:prewrapped-lines message) %1) %2])
+                        (:line-meta message))
+
+          [[title title-meta] [status]]
+          entries]
+
+      (is (= 2 (count entries)))
+      (is (str/starts-with? (subs title 1) "LIVE "))
+      (is (:run-header? title-meta))
+      (is (str/includes? status (if recorded-only? "Recorded" (str/capitalize (name reason)))))
+      (is (every? #(= "live-review" (get-in (second %) [:artifact :view-id])) entries))
+      (is (every? #(= "live-review" (:session-id (second %))) entries)))))
 
 (deftest live-card-pointer-and-clipping-test
   (binding [interactions/hit-map (interactions/create-hit-map)]

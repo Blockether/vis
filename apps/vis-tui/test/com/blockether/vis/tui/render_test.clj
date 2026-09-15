@@ -6192,8 +6192,8 @@ h = 8"
                  (.indexOf ^String body "Nightly")
                  (.indexOf ^String body "Watched it."))
               "both run records remain inside their execution group, before the answer")
-      (expect (str/includes? body "RUN Release · gh") "a dormant record offers open")
-      (expect (str/includes? body "RUN Nightly") "opening a record does not add a disclosure")))
+      (expect (str/includes? body "LIVE Release · gh") "a dormant record offers open")
+      (expect (str/includes? body "LIVE Nightly") "opening a record does not add a disclosure")))
   (it "invalidates the hot iteration cache when the record opens and closes"
       (render/invalidate-cache!)
       (let [trace
@@ -6216,9 +6216,9 @@ h = 8"
                   strip-ansi
                   strip-sentinels))]
 
-        (expect (str/includes? (render-row false) "RUN CI"))
-        (expect (str/includes? (render-row true) "RUN CI"))
-        (expect (str/includes? (render-row false) "RUN CI"))))
+        (expect (str/includes? (render-row false) "LIVE CI"))
+        (expect (str/includes? (render-row true) "LIVE CI"))
+        (expect (str/includes? (render-row false) "LIVE CI"))))
   (it
     "collapses tool source with its details and opens the evidence hierarchy"
     (render/invalidate-cache!)
@@ -6463,7 +6463,7 @@ h = 8"
                                                              nil
                                                              false
                                                              {:session-id "s1"})]
-        (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
+        (expect (not (str/includes? (strip-ansi (:text payload)) "LIVE")))
         (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
 
 ;; Regression, issues td-1ccd13, td-c0bd16, td-7d7211, td-5cfb8f, and td-20b238:
@@ -8731,7 +8731,7 @@ print(paths)"
 (defdescribe
   activity-live-sibling-test
   (it
-    "keeps owned RUN receipts beside Activity with matching fill and alignment"
+    "keeps owned LIVE receipts beside Activity with matching fill and alignment"
     (doseq [width [40 80]]
       (let [entries (format-iteration-entry-entries
                       {:forms [{:code "watch()"

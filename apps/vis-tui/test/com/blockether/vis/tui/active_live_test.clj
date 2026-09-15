@@ -61,7 +61,7 @@
                                        options))))
 
 (deftest live-run-is-an-activity-sibling
-  ;; #222: RUN is a sibling section, not a child of the Activity operation.
+  ;; #222: LIVE is a sibling section, not a child of the Activity operation.
   (doseq [width
           [40 80 120]
 
@@ -92,7 +92,7 @@
           run-line
           (nth lines run-index)]
 
-      (is (str/includes? run-line "RUN Build verification"))
+      (is (str/includes? run-line "LIVE Build verification"))
       (is (zero? (get-in payload [:line-meta activity-index :operation-col])))
       (is (< activity-index (dec run-index)))
       (is (str/blank? (subs (nth lines (dec run-index)) 1)))
@@ -181,7 +181,7 @@
             (is (= (:view-id disclosure) (lv/view-id pane)))
             (is (= "▾ Output · 1 lines" (str/trim (nth lines row))))
             (let [header-row (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
-                  run-row (first (keep-indexed #(when (str/includes? %2 "RUN Build") %1) lines))
+                  run-row (first (keep-indexed #(when (str/includes? %2 "LIVE Build") %1) lines))
                   background-cols
                   (fn [r]
                     (into #{}
@@ -194,7 +194,7 @@
 
               (when (and header-row run-row)
                 (is (= (.indexOf ^String (nth lines header-row) "ACTIVITY")
-                       (.indexOf ^String (nth lines run-row) "RUN")))
+                       (.indexOf ^String (nth lines run-row) "LIVE")))
                 (is (= [(apply min (background-cols header-row))
                         (apply max (background-cols header-row))]
                        [(apply min (background-cols run-row))
@@ -217,7 +217,7 @@
                     row)))))))))
 
 (deftest live-cache-disclosure-and-stop
-  ;; #222: each pane transition replaces the existing picture without a duplicate RUN row.
+  ;; #222: each pane transition replaces the existing picture without a duplicate LIVE row.
   (let [pane
         (review-pane)
 
@@ -241,10 +241,59 @@
     (is (not-any? #(= :live-reopen (:kind %)) (:line-meta after)))
     (is (< (count (:lines compact)) (count (:lines after))))
     (is (= 1 (count (filter #(str/includes? % "Build verification") (:lines compact)))))
-    (is (str/includes? (str/join "\n" (:lines compact)) "RUN Build verification"))
+    (is (str/includes? (str/join "\n" (:lines compact)) "LIVE Build verification"))
     (is (some #(= :inline-stop (get-in % [:live-entry :kind]))
               (:line-meta (review-payload armed 90))))
     (is (= :stop (:action (lv/typed armed {:kind :enter}))))))
+
+(deftest completed-live-receipts-keep-identity
+  ;; #235: settling must keep the Live View label, verdict and reopen target in both projections.
+  (doseq [width
+          [40 80]
+
+          owned?
+          [false true]
+
+          reason
+          [:completed :failed :interrupted :timeout :cancelled]
+
+          streaming?
+          [false true]]
+
+    (let [pane
+          (cond-> (lv/settled (review-pane) {:reason reason} 2000)
+            (not owned?)
+            (update :view dissoc :owner))
+
+          options
+          {:session-id "inline-review" :runs [(lv/run-row pane)] :now-ms 3000}
+
+          payload
+          (if streaming?
+            (render/progress->lines-data review-progress width {:show-iterations true} options)
+            (render/format-answer-with-thinking-data* nil
+                                                      (:iterations review-progress)
+                                                      width
+                                                      {:show-iterations true}
+                                                      nil
+                                                      false
+                                                      options))
+
+          receipts
+          (keep-indexed #(when (= :live-reopen (:kind %2)) [(nth (:lines payload) %1) %2])
+                        (:line-meta payload))
+
+          [line meta]
+          (first receipts)]
+
+      (is (= 1 (count receipts)))
+      (is (str/includes? line "LIVE"))
+      (is (str/includes? line "Build verification"))
+      (is (= (lv/view-id pane) (:view-id meta)))
+      (is (= "inline-review" (:session-id meta)))
+      (when (= width 80)
+        (is (str/includes? line (name reason)))
+        (is (str/includes? line "1 line"))))))
 
 (deftest ownerless-and-late-owner-placement
   ;; #222: no guessed form index; an owner arriving later invalidates placement.
@@ -466,7 +515,7 @@
     (is (every? false? (vals flags)))))
 
 (deftest multiple-runs-keep-sibling-separation
-  ;; #222: each owned live pane starts a separate RUN section, never another nested row.
+  ;; #222: each owned live pane starts a separate LIVE section, never another nested row.
   (let [pane
         (review-pane)
 
@@ -492,7 +541,7 @@
       (is (str/blank? (subs (nth (:lines payload) (dec row)) 1))))))
 
 (deftest sibling-header-opens-without-folding
-  ;; #222: RUN opens a transient view; the transcript never folds.
+  ;; #222: LIVE opens a transient view; the transcript never folds.
   (with-open [terminal
               (DefaultVirtualTerminal. (TerminalSize. 80 44))
 
@@ -507,7 +556,7 @@
               events (atom [])
               title (:line (first (lv/inline-entries pane 80)))]
 
-          (is (= "RUN Build verification" title))
+          (is (= "LIVE Build verification" title))
           (is (some? hit))
           (with-redefs [state/dispatch #(swap! events conj %)]
             (is (#'screen/activate-live-region! {:live-views [pane]} hit)))
@@ -551,7 +600,7 @@
         (is (str/blank? (subs (nth (:lines payload) (dec row)) 1)))))))
 
 (deftest transient-viewer-keeps-transcript-state
-  ;; #222: opening, selecting, settling and closing never fold or duplicate RUN.
+  ;; #222: opening, selecting, settling and closing never fold or duplicate LIVE.
   (let [pane
         (review-pane)
 
@@ -588,7 +637,7 @@
         (is (= (:messages original) (:messages @db)))))))
 
 (defn viewer-review-db
-  "Deterministic full production frame for the transient RUN viewer."
+  "Deterministic full production frame for the transient Live View viewer."
   [pane]
   {:session {:id "viewer-review"}
    :messages [{:role :assistant :text ""}]
@@ -618,7 +667,7 @@
     (#'screen/render-frame! ts cols 44 db 1000)))
 
 (deftest transient-viewer-full-frame-open-close
-  ;; #222: actual band has Close, targets selected live/frozen view, and clears on dismissal.
+  ;; #222, #235: the × button targets the selected live/frozen view and clears on dismissal.
   (doseq [cols
           [40 80 120]
 

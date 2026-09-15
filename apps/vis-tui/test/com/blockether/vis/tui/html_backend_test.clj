@@ -1104,7 +1104,7 @@
     :presentation {:headline "Watch Jenkins build" :summary "Build interrupted"}
     :evidence []}])
 
-;; #222: sibling ACTIVITY and RUN share terminal alignment, hit targets and background.
+;; #222, #235: sibling ACTIVITY and LIVE share alignment, hit targets and background.
 (deftest activity-live-sibling-grid-test
   (doseq [cols
           [40 80]
@@ -1149,10 +1149,10 @@
               (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
 
               live-y
-              (first (keep-indexed #(when (str/includes? %2 "RUN") %1) lines))
+              (first (keep-indexed #(when (str/includes? %2 "LIVE") %1) lines))
 
               live-x
-              (.indexOf ^String (nth lines live-y) "RUN")
+              (.indexOf ^String (nth lines live-y) "LIVE")
 
               hit
               (.lookup interactions/hit-map live-x live-y)]
