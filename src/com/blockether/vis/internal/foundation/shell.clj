@@ -3049,6 +3049,7 @@
      (str "TRANSPORT for `sh.wait(seconds)` — call the HANDLE the shell result already is, not "
           "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
           "lives here so no caller writes one.")
+     :params [{:name "id" :required? true} {:name "seconds"} {:name "offset"}]
      :inject-env? true
      :tag :observation
      :presenter :shell
@@ -3064,6 +3065,7 @@
      :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
+     :params [{:name "id" :required? true} {:name "text" :required? true} {:name "is_enter"}]
      :inject-env? true
      :tag :mutation
      :presenter :shell
@@ -3079,6 +3081,7 @@
      :result "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`."
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
+     :call {:pos ["id"]}
      :inject-env? true
      :tag :mutation
      :presenter :shell

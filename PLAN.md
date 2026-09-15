@@ -722,3 +722,82 @@ Existing unrelated worker, companion and native-test changes remain outside scop
    the core prompt remains within its unchanged 9,700-character ceiling.
    Scoped diff review is complete. No live-service restart, release, worktree or
    unrelated change is included.
+
+# Signature-first discovery across host calls
+
+**Phrase:** Inspect the call shape before requesting semantic documentation.
+
+## Context
+
+The core prompt still prefers `doc(name)` for unknown arguments. Live inspection
+shows useful signatures for `ls` and `cat`, but generic options dictionaries hide
+registered keys such as the required `kind` in `council.publish`. The shared owner
+is `src/com/blockether/vis/internal/extension/core.clj`: `symbol-signature` already
+feeds sandbox wrappers and documentation from registered call metadata. Python
+extensions already supply a portable, masked signature; preserve that authority.
+Do not duplicate metadata in a new inspection tool or alter dispatch merely to
+make an inspection string look complete. One Python signature cannot describe
+both required keyword keys and every options-dictionary overload; show the
+canonical named call, preserve existing overloads, and document that boundary.
+
+## Phases
+
+1. Expose registered host option keys through ordinary signature inspection.
+   - Rationale: avoid full documentation for parameter names and requiredness.
+   - Data: existing `:call`, `:arglists`, `:params` and portable Python contracts.
+   - Acceptance criteria: required keyword-only parameters are visible, unknown
+     defaults stay masked, live registry signatures parse, and existing positional
+     and dictionary invocations still work through the real sandbox boundary.
+   - Unknowns: which host handles need additional metadata beyond this shared owner.
+2. Consolidate a compact signature-first decision matrix in the existing prompt.
+   - Rationale: inspect only the unresolved fact, without repeating known contracts.
+   - Data: current discovery rules and the unchanged 9,700-character core ceiling.
+   - Acceptance criteria: keep semantic preconditions, narrow lookup fallback and
+     filtered schema inspection; enforce the matrix and ceiling in prompt tests.
+   - Unknowns: real-model compliance with the revised decision rules.
+3. Cross-validate inspection and invocation, then review the scoped diff.
+   - Rationale: smaller signature strings must lead to correct actual calls.
+   - Data: focused Clojure/SDK tests, real sandbox integration, relevant model E2E,
+     formatting and lint including reflection; preserve unrelated worker edits.
+   - Acceptance criteria: built-ins and Python extension functions/methods inspect
+     and execute correctly; report model traces, checks and remaining limits.
+   - Unknowns: available provider routes and any unrelated verification failures.
+
+## Plan state
+
+1. Implemented registered host option keys, closed call shapes and masked defaults
+   in the existing signature owner. Existing positional and dictionary dispatch is
+   unchanged. Real local/worker inspection covers the live registry and shell methods.
+2. Reproduced stale inspection after an extension changed its signature on reload.
+   The shared host metadata setter now invalidates only the managed callable's
+   signature prototype; the existing runtime stamper rebuilds it. Real reload and
+   twice-set signature regressions pass, including retained references and doc/keys
+   restamps. No SDK/runtime duplication or sibling changes were needed.
+3. Consolidated an ordered five-row discovery matrix. Reuse includes the system
+   prompt, prior work and recovered context; known facts skip apropos, docs and
+   signature inspection across turns, reloads and repeated calls. Only evidence of
+   changed contracts justifies refresh. Semantic discovery names a concrete missing
+   fact, not a general contract preflight. Searches stay in the known namespace;
+   result inspection reuses stored values without whole-value fallbacks, and full
+   contracts are traversed in memory rather than printed as schema branches.
+   The core prompt is 9,693 characters, below the unchanged 9,700-character ceiling.
+4. All 258 affected Clojure tests pass together, including the full extension-core
+   suite, prompt, docs, introspection, agent, reload and real sandbox boundary tests.
+   Fixed the reproduced doc-metadata failures: draft-diff's short parameter note and
+   named result keys for draft-diff and managed agents. All 66 SDK/runner/fixture
+   tests pass. Clojure formatting and Python Ruff checks pass. Clojure lint has no
+   errors or findings on changed lines; 31 existing reflection warnings remain
+   elsewhere. Documentation content/link checks and the scoped diff check pass.
+5. Final source-gateway E2E passes both scenarios on both requested routes with no
+   tool errors: OpenAI Codex/gpt-6-astra peaks at 193 and 3,158 output characters;
+   zai-coding-plan/GLM-5.3-flash peaks at 192 and 3,208, all below 6,000. Both use
+   signature inspection and focused deep-contract lookup, preserve the required
+   call order and receipts, and reuse discovery across repeated calls. Earlier
+   failures drove the explicit preflight, result-reuse and schema-branch rules;
+   the final measurements verify these runs, not universal model compliance.
+6. Implementation and verification are complete, with explicit commit/push
+   authorization. Only task-owned changes and the signature metadata setter hunk
+   in python/env.clj belong to this follow-up. Unrelated worker, activity and issue
+   reporting work stays excluded. No gates were bypassed. Issue #232 remains closed
+   from its earlier fix. Temporary test processes and REPLs have stopped; no live
+   service restart or release was performed.

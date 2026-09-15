@@ -17,7 +17,8 @@
     "contract_probe.status"
   ],
   "want_forms": [
-    "doc("
+    "signature("
   ],
+  "max_form_output_chars": 6000,
   "want_requested_route": true
 }

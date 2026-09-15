@@ -270,11 +270,10 @@
        "Works with worktree and Rift drafts, including non-Git Rift directories; Git is required. "
        "The same filename stores the next attachment version. Old drafts without a baseline refuse.")
      :params [{:name "filename" :note "stable JSON filename; default DIFF-<draft-label>.json"}
-              {:name "since"
-               :note "snapshot checkpoint returned by this draft; omit for cumulative diff"}]
+              {:name "since" :note "snapshot checkpoint; omit for cumulative diff"}]
      :call {:opt-pos ["filename" "since"]}
      :result
-     "Attachment descriptor plus checkpoint and empty. Patch bytes stay in the attachment."}))
+     "Attachment descriptor plus `checkpoint` and `empty`. Patch bytes stay in the attachment."}))
 
 (def draft-create-symbol
   (vis/symbol

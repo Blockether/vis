@@ -1386,6 +1386,7 @@
     {:activity (presenter/for-tool :read_session)
      :inject-env? true
      :tag :observation
+     :call {:opt-pos ["target"]}
      :description
      (str
        "Read ONE conversation WHOLE — `read_session()` is the current session, "
@@ -1411,6 +1412,7 @@
     {:activity (presenter/for-tool :get_session)
      :inject-env? true
      :tag :observation
+     :call {:opt-pos ["target"]}
      :description
      (str
        "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
@@ -1428,6 +1430,7 @@
     {:activity (presenter/for-tool :list_sessions)
      :inject-env? true
      :tag :observation
+     :call {:opt-pos ["search"]}
      :description
      (str "The newest-first conversation INDEX — `list_sessions()`, or `list_sessions(search=…)`, "
           "which is THE session search the TUI and the companion app run: the SERVER ranks title "

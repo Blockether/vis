@@ -5080,12 +5080,18 @@ vis.register_extension(vis.Extension(
                        "assert "
                        (pr-str (if (zero? iteration) "Greeting text." "Reloaded greeting text."))
                        " in doc('greet.hello')\n"
-                       "assert str(inspect.signature(greet.hello)) == '(name, /, *, loud=Ellipsis, note=None)'\n"
+                       "assert str(inspect.signature(greet.hello)) == "
+                       (pr-str (if (zero? iteration)
+                                 "(name, /, *, loud=Ellipsis, note=None)"
+                                 "(name, /, *, loud=Ellipsis, note=None, repeat=Ellipsis)"))
+                       "\n"
                        "assert inspect.signature(greet.hello).return_annotation is inspect.Signature.empty\n"
                        "assert all(p.annotation is inspect.Parameter.empty for p in inspect.signature(greet.hello).parameters.values())\n"
                        "value = await greet.hello('Ada', loud=True)\n"
                        "assert value.items[0].text == 'ADA'\n"
                        "assert (await greet.hello('Ada')).items[0].text == 'Ada'\n"
+                       (when (pos? iteration)
+                         "assert (await greet.hello('Ada', repeat=2)).items[0].text == 'AdaAda'\n")
                        "try:\n    value.items[0].text = 'changed'\n"
                        "except AttributeError:\n    pass\n"
                        "else:\n    raise AssertionError('mutable nested result')\n"
@@ -5095,9 +5101,12 @@ vis.register_extension(vis.Extension(
               (when (zero? iteration)
                 (write-ext! ext-dir
                             "contract_tools.py"
-                            (str/replace (slurp (io/file ext-dir "contract_tools.py"))
-                                         "Greeting text."
-                                         "Reloaded greeting text."))
+                            (-> (slurp (io/file ext-dir "contract_tools.py"))
+                                (str/replace "Greeting text." "Reloaded greeting text.")
+                                (str/replace "note: str | None = None)"
+                                             "note: str | None = None, repeat: int = 1)")
+                                (str/replace "Result(name.upper() if loud else name)"
+                                             "Result((name.upper() if loud else name) * repeat)")))
                 (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
             (finally (ep/dispose-python-context! ctx))))))))
 

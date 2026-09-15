@@ -449,78 +449,86 @@
   ;; Regression: #231 repeated discovery after /reload despite an already known contract.
   ;; These assertions pin the base prompt's decision rules, not model compliance.
   (it
-    "reuses known contracts across calls, turns, reloads and session recovery"
+    "reuses facts from system instructions, prior work and recovered context"
     (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
       (doseq
         [rule
-         ["Reuse contracts from this task or recovered session context"
-          "A new turn, `/reload`, or repeated call does not invalidate known contracts"
-          "skip `doc()`, `apropos()` and tool-spec discovery when signature and preconditions are known"]]
+         ["Reuse signatures and preconditions from the system prompt, prior work or recovered context"
+          "Skip `apropos()`, `doc()` and `inspect.signature()` for known facts"
+          "for known facts across turns, `/reload` and repeated calls"
+          "None | Call directly; skip discovery"]]
         (expect (str/includes? text rule) rule))))
+  (it "requires a missing fact or evidence of a changed contract before rediscovery"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (expect (str/includes? text "Refresh on contract-change evidence"))))
+  (it "uses known recovery without treating every operational failure as a discovery failure"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (expect (str/includes? text "operational failures use known recovery"))))
   (it
-    "discovers unknown operations but requires evidence before rediscovery"
+    "does not refresh known signatures to resolve a missing semantic detail"
     (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
       (expect
         (str/includes?
           text
-          "Discover only unknown operations, evidence of contract/registration changes, or concrete errors pointing to discovery"))))
+          "Semantics | Name the missing precondition/effect/unit/retry/limit before `doc(name)`; no general contract preflight"))
+      (expect (not (str/includes? text "Still missing after inspection")))))
   (it
-    "uses known recovery without treating every operational failure as a discovery failure"
-    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-      (expect
-        (str/includes?
-          text
-          "For operational failures, apply known recovery; read the indicated contract only if unknown or changed"))))
-  (it "consolidates discovery policy with the authoritative lookup contract in the base prompt"
-      (let [text
-            (prompt/build-system-prompt {})
+    "consolidates the decision matrix with discovery contracts in the base prompt"
+    (let [text
+          (prompt/build-system-prompt {})
 
-            section
-            (second (str/split text #"## 1\. Identity \+ Epistemic stance" 2))
+          section
+          (second (str/split text #"## 1\. Identity \+ Epistemic stance" 2))
 
-            discovery
-            (some-> section
-                    (str/split #"## 2\. Execution surfaces" 2)
-                    first)]
+          discovery
+          (some-> section
+                  (str/split #"## 2\. Execution surfaces" 2)
+                  first)]
 
-        (expect (some? discovery))
-        (when discovery
-          (doseq [rule
-                  ["Discovery is demand-driven"
-                   "identify the unresolved question affecting the next step; if none, stop reading"
-                   "use narrow `doc(name)`" "`apropos(pattern)` filters SYMBOL names"
-                   "`doc(name)` returns" "obey its stated preconditions"]]
-            (expect (str/includes? discovery rule) rule)))
-        (expect (= 1 (count (re-seq #"Discovery is demand-driven" text))))
-        (expect (= 1
-                   (count (re-seq #"identify the unresolved question affecting the next step"
-                                  text)))))))
+      (expect (some? discovery))
+      (when discovery
+        (doseq
+          [rule
+           ["Discovery is demand-driven"
+            "identify the unresolved question affecting the next step; if none, stop reading"
+            "Discovery matrix: first matching row, then reassess"
+            "Symbol name | One narrow `apropos(pattern)` in the known namespace; broaden only after no useful match"
+            "Arguments | `import inspect; print(inspect.signature(fn))`; not `doc()`"
+            "Semantics | Name the missing precondition/effect/unit/retry/limit"
+            "Nested types | Traverse available `fn.contract` in memory"
+            "`apropos(pattern)` filters SYMBOL names" "`doc(name)` returns"
+            "obey its stated preconditions"]]
+          (expect (str/includes? discovery rule) rule)))
+      (expect (= 1 (count (re-seq #"Discovery matrix:" text))))
+      (expect (= 1 (count (re-seq #"Discovery is demand-driven" text))))
+      (expect (= 1
+                 (count (re-seq #"identify the unresolved question affecting the next step" text))))
+      (expect (not (str/includes? text "Unknown call shape: use narrow `doc(name)`"))))))
 
 (defdescribe
   core-prompt-registered-python-contract-test
   ;; #232: pin invocation authority without encouraging repeated discovery or copied schemas.
-  (it "uses registered metadata when Python call shape is unknown"
+  (it "prefers signature inspection without claiming it exposes types or effects"
       (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
-        (doseq [rule ["registered signature and resolved types are authoritative for call shape"
-                      "parameter kinds, required/default status, return type and mutation tag"
-                      "Unknown call shape: use narrow `doc(name)`" "not handwritten signatures"]]
-          (expect (str/includes? text rule) rule))))
-  (it "keeps semantic documentation and discovery useful without duplicating structure"
-      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq
           [rule
-           ["Use prose for preconditions, side effects, units, retries and limits"
-            "Keep discovery summaries concise"
-            "do not duplicate signatures, default declarations or return schemas in docstrings"
-            "omit optional arguments to use their defaults; never pass the display marker `...`"]]
+           ["Registered signatures/types own kinds, requiredness/defaults, returns and mutation tag"
+            "inspection may omit types/effects"]]
           (expect (str/includes? text rule) rule))))
-  (it "filters full metadata before printing omitted schema details"
+  (it "keeps semantic documentation and default safety without duplicating structure"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq [rule ["Name the missing precondition/effect/unit/retry/limit before `doc(name)`"
+                      "obey its stated preconditions"
+                      "Do not copy signatures/defaults/schemas into docstrings"
+                      "Omit optional arguments for defaults; never pass marker `...`"]]
+          (expect (str/includes? text rule) rule))))
+  (it "filters available full metadata before printing omitted schema details"
       ;; #234: a full contract dump erased compact-doc savings in real-model E2E.
       (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
-        (doseq [rule
-                ["For omitted details, traverse the callable's `.contract` dictionary"
-                 "from `['parameters']` or `['returns']`"
-                 "print only matching leaf fields, never whole schema branches or large results"]]
+        (doseq [rule ["Traverse available `fn.contract` in memory"
+                      "`fields` is a list of `{name, type}`"
+                      "Print only matching leaves, never whole `parameters`/`returns` branches"
+                      "Inspect shape before indexing or accessing attributes"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe
@@ -529,16 +537,17 @@
   (it "keeps independent batching separate from dependent observations"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["plural arguments first" "`await gather(...)` for" "independent calls"
-                      "Print only needed fields or keys/types"
+                      "Reuse results" "print needed fields or keys/types, not whole-value fallbacks"
                       "END the block, then decide in the NEXT block"]]
           (expect (str/includes? text rule) rule))))
   (it "preserves output, shape recovery, and watched shell handles"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["keep results in variables" "`print()` is the ONE channel back"
                       "an unprinted value is DISCARDED" "a bare trailing expression is never echoed"
-                      "Inspect shape before indexing; after an error inspect keys/types, then adapt"
-                      "answers a HANDLE" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.stop()`"
-                      "each carrying status"]]
+                      "Inspect shape before indexing or accessing attributes"
+                      "use keys/types or `dir(value)`, not assumed `__dict__`"
+                      "On error inspect, then adapt" "answers a HANDLE" "`sh.logs(-50)`"
+                      "`sh.wait(s)`" "`sh.stop()`" "each carrying status"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe

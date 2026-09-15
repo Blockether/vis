@@ -286,11 +286,12 @@ no arguments has an empty `signature` string and is rendered as `name()`; that d
 not mean metadata is missing. A short semantic docstring is sufficient—do not repeat
 the signature, defaults or full return schema in it.
 
-Use the narrow callable's `doc()` or `.contract` when call shape is unknown;
-`Catalog.spec(name)` exposes the same metadata as an SDK `ToolSpec`. Prose remains
-authoritative for preconditions, side effects, safety constraints, units, retry
-behavior and non-obvious limits. A mutation tag describes an effect; it does not
-authorize it.
+When you know the callable but need its arguments, start with
+`import inspect; print(inspect.signature(tool))`. Read `doc("tool")` when you need
+preconditions, side effects, safety constraints, units, retry behavior or non-obvious
+limits. For nested types, select the relevant fields from `tool.contract`;
+`Catalog.spec(name)` exposes the same metadata as an SDK `ToolSpec`. A mutation tag
+describes an effect; it does not authorize it.
 
 This is a documentation contract, not JSON invocation or runtime validation. Python
 binds arguments; the implementation validates domain constraints. There is no manual
@@ -341,6 +342,18 @@ also described without exporting values or running factories.
 | `inspect.signature(tool)` | Names and parameter kinds; `None` or `Ellipsis` defaults; no type annotations |
 | `tool.__annotations__`, `typing.get_type_hints(tool)` | Empty dictionaries, not a supported type-discovery API |
 | `tool.__signature__` | Not supplied |
+
+Engine-provided tools also expose registered option keys as keyword-only parameters.
+For example, `inspect.signature(council.publish)` names the required `kind` argument,
+while `inspect.signature(grep)` names `query`, `paths` and the other search options.
+Optional keys with undisclosed defaults show `Ellipsis`; omit them to use the default.
+
+A host signature describes the canonical named call, not every accepted overload.
+Existing positional and options-dictionary calls still work; `Signature.bind()`
+cannot validate all those overloads. Extension functions and methods retain their
+Python parameter kinds, including positional-only and variadic arguments. MCP's
+remote tool schemas remain separate from the dispatcher's `server`, `tool` and
+`args` parameters.
 
 The original host classes and their identity do not cross the sandbox boundary.
 Type names describe host annotations. Sandbox sequences are list-like: use `len()`,

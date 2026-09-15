@@ -52,6 +52,11 @@ def test_registered_calls_create_the_exact_e2e_receipts(probe):
     assert methods["status"]["fn"]().records == 2
     scenario = json.loads((Path(__file__).parent / "scenario.json").read_text())
     assert ledger.read_text().splitlines() == scenario["want"][ledger.name]
+    # The search result already supplies the complete semantic description.
+    # Require signature inspection, not a redundant doc() call (#232).
+    assert scenario["want_forms"] == ["signature("]
+    assert scenario["max_form_output_chars"] == 6000
+    assert scenario["want_requested_route"] is True
     with pytest.raises(TypeError):
         methods["record"]["fn"]("Ada", "inbox")
     with pytest.raises(ValueError, match="positive"):

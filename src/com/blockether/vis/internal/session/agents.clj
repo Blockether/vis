@@ -225,10 +225,12 @@
                         (toggles/enabled? "subagents"))
            :tag (if (= sym 'council.subagents) :observation :mutation)
            :activity (presenter/for-tool (keyword (str sym)))
-           :call {:pos positional :rest :always}
+           :call (cond-> {:pos positional}
+                   (seq params)
+                   (assoc :rest :always))
            :description (:doc (meta v))
            :result
-           "Managed agent records with session_id, parent_id, leader_id, team_id, task, status, model and iteration usage."}
+           "Managed agent records with `session_id`, `parent_id`, `leader_id`, `team_id`, `task`, `status`, `model` and iteration usage."}
           (seq params)
           (assoc :params
             (mapv (fn [p]
