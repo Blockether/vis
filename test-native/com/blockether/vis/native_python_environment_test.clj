@@ -15,12 +15,18 @@
     (spit file text)))
 
 (defn- run-python
-  [{:keys [bin home environment]} ^File cwd overrides args]
+  [{:keys [bin home environment invocation-dir]} ^File cwd overrides args]
   (with-redefs-fn {#'native/native-environment (constantly (merge environment overrides))}
     (fn []
       (#'native/run-binary
        cwd
-       (into [(.getAbsolutePath ^File bin) (str "-Duser.home=" home) "python"] args)
+       (into (cond-> [(.getAbsolutePath ^File bin) (str "-Duser.home=" home)]
+               invocation-dir
+               (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
+
+               true
+               (conj "python"))
+             args)
        45))))
 
 (defn- with-environment
@@ -105,6 +111,28 @@
                      "Metadata-Version: 2.1\nName: native-environment-project\nVersion: 0.1.0\n")
         (f (assoc fixture :site site)))
       (finally (#'native/delete-tree! home)))))
+
+(defdescribe
+  native-python-invocation-directory-test
+  ;; Regression #237: user.dir can differ from the native process cwd too.
+  (it "uses the invocation directory for code, modules and relative or absolute files"
+      (with-environment
+        (fn [{:keys [home project] :as fixture}]
+          (let [source (str "from pathlib import Path\n"
+                            "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
+                            "print('NATIVE_CWD_OK')\n")]
+            (write-file! project "expected-cwd.txt" (.getCanonicalPath ^File project))
+            (write-file! project "cwd_probe.py" source)
+            (doseq [flags [[] ["--shared"]]
+                    args [["-c" source] ["-m" "cwd_probe"] ["./cwd_probe.py"]
+                          [(.getCanonicalPath (io/file project "cwd_probe.py"))]]]
+
+              (let [result (run-python (assoc fixture :invocation-dir project)
+                                       home
+                                       {"PYTHONPATH" "."}
+                                       (into flags (into ["--no-network"] args)))]
+                (expect (= 0 (:exit result)) (str flags " " args "\n" (:output result)))
+                (expect (str/includes? (:output result) "NATIVE_CWD_OK") (:output result)))))))))
 
 (defdescribe
   native-python-project-isolation-test
