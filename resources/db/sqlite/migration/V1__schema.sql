@@ -744,6 +744,10 @@ CREATE TABLE session_attachment (
                             CHECK (audience IN ('both', 'user', 'model')),
   commentable               INTEGER NOT NULL DEFAULT 0 CHECK (commentable IN (0, 1)),
 
+  -- Stable composer token, such as [IMAGE #3], independent of filename and row order.
+  -- NULL for attachments without a composer reference.
+  reference                 TEXT,
+
   -- TRANSCRIPTION: what a RECORDING says, in words. No provider wire carries
   -- audio, so a voice memo is transcribed once by the local speech engine on the
   -- turn that carried it and the words are stored beside the bytes: the model
