@@ -743,9 +743,10 @@ function DetailOverlay({
       role="dialog"
       aria-modal="true"
       aria-label={name}
-      className="absolute inset-0 z-40 flex flex-col bg-ink pt-[env(safe-area-inset-top)]"
+      className="absolute inset-0 z-40 flex flex-col bg-ink"
     >
       <DialogHeader
+        isUnderNotch
         isStacked
         title={name}
         subtitle={shareStatus || subtitle}
@@ -1206,11 +1207,16 @@ export function ArtifactsSheet({
       id="artifacts-surface"
       role="region"
       aria-label="Artifacts produced by the model"
-      className={`${position} inset-0 z-30 flex flex-col bg-ink pt-[env(safe-area-inset-top)]`}
+      className={`${position} inset-0 z-30 flex flex-col bg-ink`}
     >
       {/* The sheet is an opened surface, so it opens the way every other one does:
           the app's dialog band, naming itself, with the one ✕ inheriting its ink. */}
-      <DialogHeader title="Artifacts" closeLabel="Close artifacts" onClose={onClose} />
+      <DialogHeader
+        title="Artifacts"
+        isUnderNotch
+        closeLabel="Close artifacts"
+        onClose={onClose}
+      />
       <FilterStrip
         list={artifacts}
         active={filter}

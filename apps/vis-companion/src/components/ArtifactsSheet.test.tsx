@@ -638,7 +638,10 @@ describe('the artifacts surface', () => {
 
       const surface = shell.querySelector('#artifacts-surface');
       expect(surface).toBeTruthy();
-      expect(surface?.className).toContain('pt-[env(safe-area-inset-top)]');
+      expect(surface?.className).not.toContain('pt-[env(safe-area-inset-top)]');
+      const header = surface?.querySelector('header');
+      expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
+      expect(header?.className).toContain('sm:pt-0');
     } finally {
       shell.remove();
     }
@@ -708,12 +711,15 @@ describe('an opened artifact', () => {
     return { view, overlay, prose };
   };
 
-  // Regression, user report: opening an artifact replaced the safe gallery with an
-  // inset-zero detail layer whose title band sat underneath the iOS status bar.
-  it('keeps an opened artifact below the native safe area', async () => {
+  // Regression: safe-area padding outside the title band left a blank strip above
+  // the document, even in a wide app window. The band must own the phone inset.
+  it('clears the phone safe area without a blank strip above the title band', async () => {
     readable();
     const { view, overlay } = await openNote();
-    expect(overlay.className).toContain('pt-[env(safe-area-inset-top)]');
+    expect(overlay.className).not.toContain('pt-[env(safe-area-inset-top)]');
+    const header = overlay.querySelector('header');
+    expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
+    expect(header?.className).toContain('sm:pt-0');
     view.unmount();
     vi.unstubAllGlobals();
   });

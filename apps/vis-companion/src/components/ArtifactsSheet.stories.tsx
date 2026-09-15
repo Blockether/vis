@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_ARTIFACT_HISTORY, STORY_ARTIFACTS, STORY_INERT_CLIENT } from '../dev/story-data';
+import type { SessionArtifact } from '../lib/artifacts';
+import type { GatewayClient } from '../lib/gateway';
 import { ArtifactsSheet } from './ArtifactsSheet';
 
 /** The session's produced files, indexed without eagerly fetching their bytes. */
@@ -55,3 +57,50 @@ export const History: Story = { args: { artifacts: [STORY_ARTIFACT_HISTORY] } };
 
 /** A filter with no matches says so inside the same full sheet. */
 export const Empty: Story = { args: { artifacts: [] } };
+
+const note: SessionArtifact = {
+  key: 'i1:0',
+  kind: 'doc',
+  name: 'plan.md',
+  media: 'MD',
+  mediaType: 'text/markdown',
+  size: 30,
+  sizeLabel: '30 B',
+  turn: 1,
+  iterationId: 'i1',
+  index: 0,
+  version: 1,
+};
+
+/** Opening a document keeps its band flush with the top of the full-screen surface. */
+export const OpenedDocument: Story = {
+  args: {
+    client: {
+      attachmentUrl: async () => 'blob:plan',
+      attachmentBlob: async () =>
+        new Blob(['# Plan\n\nRead without a margin.'], { type: 'text/markdown' }),
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient,
+    artifacts: [note],
+    initialArtifact: note,
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await page.findByRole('heading', { name: 'Plan', level: 1 });
+    const detail = page.getByRole('dialog', { name: 'plan.md' });
+    const header = detail.querySelector('header')!;
+    await expect(header.getBoundingClientRect().top).toBe(detail.getBoundingClientRect().top);
+    await expect(getComputedStyle(detail).paddingTop).toBe('0px');
+    const body = detail.lastElementChild!;
+    await expect(body.getBoundingClientRect().top).toBe(header.getBoundingClientRect().bottom);
+    await expect(body.getBoundingClientRect().bottom).toBe(detail.getBoundingClientRect().bottom);
+
+    await userEvent.click(page.getByRole('button', { name: 'Close plan.md' }));
+    await expect(page.queryByRole('dialog', { name: 'plan.md' })).toBeNull();
+    const sheet = page.getByRole('region', { name: 'Artifacts produced by the model' });
+    await expect(sheet.querySelector('header')!.getBoundingClientRect().top).toBe(
+      sheet.getBoundingClientRect().top,
+    );
+    await expect(getComputedStyle(sheet).paddingTop).toBe('0px');
+  },
+};
