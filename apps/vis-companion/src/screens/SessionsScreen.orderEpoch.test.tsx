@@ -131,7 +131,10 @@ describe('the order the reader is looking at', () => {
     expect(rowOrder()).toEqual(['a1', 'a2']);
     const header = screen.getByRole('button', { name: 'Collapse project' }).closest('header')!;
     const updates = within(header).getByRole('button', { name: 'Show 2 newer sessions' });
-    expect(updates.textContent).toContain('2 newer sessions');
+    expect(updates).toHaveTextContent(/^2 new$/);
+    const count = within(header).getByText('4 sessions');
+    expect(count.parentElement).toContainElement(updates);
+    expect(count.parentElement).toHaveTextContent('4 sessions | 2 new');
     expect(updates.closest('button[aria-expanded]')).toBeNull();
 
     await act(async () => {

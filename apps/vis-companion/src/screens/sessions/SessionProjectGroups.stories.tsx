@@ -95,8 +95,9 @@ export const ProjectPathName: Story = {
   play: async ({ canvasElement, args }) => {
     const page = within(canvasElement);
     const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
-    await expect(within(heading).getAllByText(args.group.label)).toHaveLength(1);
-    await expect(heading.querySelector('[title]')?.textContent).toBe('4 sessions');
+    const header = heading.closest('header')!;
+    await expect(within(header).getAllByText(args.group.label)).toHaveLength(1);
+    await expect(header.querySelector('[title]')?.textContent).toBe('4 sessions');
     await userEvent.click(heading);
     await expect(page.getByRole('button', { name: `Expand ${args.group.label}` })).toBeVisible();
     await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
@@ -110,22 +111,29 @@ export const AcceptNewerSession: Story = {
     const page = within(canvasElement);
     await page.findByText('Fix balance refresh');
     const disclosure = page.getByRole('button', { name: 'Collapse /CryptoSafe' });
-    const title = within(disclosure).getByText('/CryptoSafe');
-    const header = title.closest('header')!;
+    const header = disclosure.closest('header')!;
+    const title = within(header).getByText('/CryptoSafe');
     const updates = within(header).getByRole('button', { name: 'Show 1 newer session' });
     // Regression: accepting arrivals must not resize the project header.
     const pendingBounds = header.getBoundingClientRect();
     const style = (element: Element) => getComputedStyle(element);
     const rows = header.nextElementSibling!;
 
-    // The update action shares the regular band, outside the project disclosure.
+    // Arrivals sit beside the total, on its baseline, not beside the trailing actions.
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
+    const total = within(header).getByText(`${args.group.tally.count} sessions`);
+    await expect(total.parentElement).toContainElement(updates);
+    await expect(total.parentElement).toHaveTextContent(`${args.group.tally.count} sessions | 1 new`);
+    const totalBounds = total.getBoundingClientRect();
     const updateBounds = updates.getBoundingClientRect();
-    await expect(updateBounds.left).toBeGreaterThanOrEqual(
-      disclosure.getBoundingClientRect().right,
-    );
+    await expect(updateBounds.left).toBeGreaterThan(totalBounds.right);
+    await expect(updateBounds.left - totalBounds.right).toBeLessThan(32);
+    await expect(Math.abs(updateBounds.bottom - totalBounds.bottom)).toBeLessThanOrEqual(2);
     await expect(updateBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
     await expect(updateBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
+    await expect(updateBounds.right).toBeLessThanOrEqual(
+      total.parentElement!.getBoundingClientRect().right,
+    );
     await expect(header.scrollWidth).toBe(header.clientWidth);
     for (const control of header.querySelectorAll('button, input')) {
       const bounds = control.getBoundingClientRect();
@@ -139,7 +147,7 @@ export const AcceptNewerSession: Story = {
     }
     await expect(title.getBoundingClientRect().width).toBeGreaterThan(0);
     await expect(style(updates).backgroundColor).toBe('rgba(0, 0, 0, 0)');
-    await expect(style(updates).borderTopColor).toBe('rgba(0, 0, 0, 0)');
+    await expect(style(updates).borderTopWidth).toBe('0px');
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
     await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
@@ -152,9 +160,8 @@ export const AcceptNewerSession: Story = {
       await expect(pager).toBeVisible();
       await expect(within(pager).getByText(`Page 1 of ${pageCount}`)).toBeInTheDocument();
     }
-    await expect(
-      within(updates).getByText(pendingBounds.width < 512 ? '1 new' : '1 newer session'),
-    ).toBeVisible();
+    await expect(updates).toHaveTextContent(/^1 new$/);
+    await expect(updates).toBeVisible();
 
     await userEvent.click(page.getByRole('button', { name: 'Collapse /CryptoSafe' }));
     await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
