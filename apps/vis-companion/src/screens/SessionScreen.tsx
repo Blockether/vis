@@ -11,7 +11,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
-import { insertImageReferences, referencedAttachments, restoreImageReferences } from '../lib/composer-images';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { AgentTeam } from '../components/AgentTeam';
@@ -67,6 +66,11 @@ import {
   type PendingAttachment,
   type PickAttachmentResult,
 } from '../lib/attachments';
+import {
+  insertImageReferences,
+  referencedAttachments,
+  restoreImageReferences,
+} from '../lib/composer-images';
 import { sheetDismissed } from '../lib/image-file';
 import { AttachImageContext } from '../lib/attach-image';
 import type { GatewayClient } from '../lib/gateway';
@@ -954,12 +958,18 @@ export function SessionScreen({
     (text: string, incoming: PendingAttachment[], prepend = false) => {
       const current = composerRef.current?.value ?? '';
       const restored = restoreImageReferences(
-        current, attachmentsRef.current, text, incoming, imageCounterRef.current,
+        current,
+        attachmentsRef.current,
+        text,
+        incoming,
+        imageCounterRef.current,
       );
       imageCounterRef.current = restored.counter;
-      setPrompt(prepend
-        ? [restored.text, current].filter(Boolean).join('\n\n')
-        : [current.trimEnd(), restored.text].filter(Boolean).join('\n\n'));
+      setPrompt(
+        prepend
+          ? [restored.text, current].filter(Boolean).join('\n\n')
+          : [current.trimEnd(), restored.text].filter(Boolean).join('\n\n'),
+      );
       setAttachments(restored.attachments);
     },
     [setPrompt, setAttachments],

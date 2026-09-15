@@ -179,23 +179,47 @@
             (expect (str/includes? (cap/frame-text captured) "IMAGE #1"))
             (expect (str/includes? (cap/frame-text captured) "IMAGE #2"))))))
   (it
-    "sends the stable reference beside unchanged filename and bytes"
+    "keeps file intake, token deletion and submitted bytes synchronized"
     (let
       [file
        (java.io.File/createTempFile "vis-image-reference-" ".png")
 
        encoded
-       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="]
+       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+       capabilities
+       {:media-types ["image/png"]
+        :max-files 8
+        :max-file-bytes 1024
+        :max-video-bytes 2048
+        :max-audio-bytes 3072}
+
+       previous
+       @state/app-db]
 
       (try (java.nio.file.Files/write (.toPath file)
                                       (.decode (java.util.Base64/getDecoder) encoded)
                                       (make-array java.nio.file.OpenOption 0))
-           (expect (= {:filename "original.png"
-                       :media-type "image/png"
-                       :base64 encoded
-                       :reference "[IMAGE #7]"}
-                      (first (attachments/inline-payloads [{:path (.getPath file)
-                                                            :filename "original.png"
-                                                            :media-type "image/png"
-                                                            :image-number 7}]))))
-           (finally (.delete file))))))
+           (reset! state/app-db {:input {:lines ["Compare "] :crow 0 :ccol 8}
+                                 :attachments []
+                                 :image-counter 0
+                                 :render-version 0})
+           ;; Picker, clipboard and drop all enter through this admission boundary.
+           (let [intake (attachments/admit-files capabilities [] [file])]
+             (expect (empty? (:rejected intake)))
+             (state/dispatch [:apply-attachment-intake intake]))
+           (expect (= "Compare [IMAGE #1]" (input/input->text (:input @state/app-db))))
+           (state/dispatch [:update-input
+                            (input/delete-placeholder-backward (:input @state/app-db))])
+           (expect (= "Compare " (input/input->text (:input @state/app-db))))
+           (expect (empty? (:attachments @state/app-db)))
+           (state/dispatch
+             [:apply-attachment-intake
+              (attachments/admit-files capabilities (:attachments @state/app-db) [file])])
+           (expect (= "Compare [IMAGE #2]" (input/input->text (:input @state/app-db))))
+           (expect (= [{:filename (.getName file)
+                        :media-type "image/png"
+                        :base64 encoded
+                        :reference "[IMAGE #2]"}]
+                      (attachments/inline-payloads (:attachments @state/app-db))))
+           (finally (reset! state/app-db previous) (.delete file))))))
