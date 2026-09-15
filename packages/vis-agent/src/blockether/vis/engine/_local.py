@@ -101,6 +101,7 @@ class LocalEngine(ExecutionLayer):
         self._process = None
         self._home = None
         self._buffer = b""
+        self._cleanup_complete = False
 
     def session_options(self, project=".") -> dict:
         """Resolve an existing local directory before the caller changes directory."""
@@ -234,10 +235,12 @@ class LocalEngine(ExecutionLayer):
     def close(self):
         """Stop this process, close its streams and remove its temporary database.
 
-        Repeated calls are safe. Unfinished local work cannot continue after the
-        process stops. File edits and separately running gateways are untouched.
+        Repeated calls are safe, including retrying cleanup after a signal fails.
+        A failed close still prevents new requests. Unfinished local work cannot
+        continue after the process stops. File edits and separately running
+        gateways are untouched.
         """
-        if self._closed:
+        if self._cleanup_complete:
             return
         self._closed = True
         self._clear_client_extensions()
@@ -247,22 +250,33 @@ class LocalEngine(ExecutionLayer):
         if process is not None:
             if process.stdin:
                 process.stdin.close()
+
+            def signal_process(sig):
+                # The child owns a new session. Prefer its group so subprocesses
+                # are stopped too; a denied group signal need not deny its PID.
+                if process.poll() is not None:
+                    return
+                try:
+                    os.killpg(process.pid, sig)
+                except (PermissionError, ProcessLookupError):
+                    # Popen checks for exit before signaling this owned child.
+                    # Other failures propagate: cleanup must remain retryable.
+                    process.send_signal(sig)
+
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+                signal_process(signal.SIGTERM)
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    signal_process(signal.SIGKILL)
                     process.wait()
             if process.stdout:
                 process.stdout.close()
         if self._home is not None:
             self._home.cleanup()
+        self._cleanup_complete = True
 
 
 class _LocalSession(Session):

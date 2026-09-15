@@ -93,6 +93,146 @@ def test_startup_failure_closes_owned_process(tmp_path, code, error):
     assert not os.path.exists(engine._home.name)
 
 
+@pytest.mark.parametrize("ignore_term", [False, True], ids=["term", "kill"])
+def test_close_falls_back_to_owned_process_when_group_signal_is_denied(
+    tmp_path, monkeypatch, ignore_term
+):
+    import json
+    import signal
+    import sys
+
+    from blockether.vis._contracts import GATEWAY
+
+    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    code = f"""import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else signal.SIG_DFL)
+print({hello!r}, flush=True)
+time.sleep(60)
+"""
+    engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine.connect()
+    process = engine._process
+    group_signals = []
+    direct_signals = []
+    send_signal = process.send_signal
+
+    def denied(pgid, sig):
+        assert pgid == process.pid
+        assert os.getpgid(process.pid) == process.pid != os.getpgrp()
+        group_signals.append(sig)
+        raise PermissionError("group signal denied")
+
+    def owned_signal(sig):
+        direct_signals.append(sig)
+        send_signal(sig)
+
+    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(process, "send_signal", owned_signal)
+    try:
+        engine.close()
+        expected = [signal.SIGTERM, signal.SIGKILL] if ignore_term else [signal.SIGTERM]
+        assert group_signals == direct_signals == expected
+        assert process.poll() is not None
+        assert process.stdin.closed and process.stdout.closed
+        assert not os.path.exists(engine._home.name)
+        engine.close()
+        assert group_signals == direct_signals == expected
+    finally:
+        if process.poll() is None:
+            send_signal(signal.SIGKILL)
+        process.wait(timeout=5)
+        process.stdin.close()
+        process.stdout.close()
+        engine._home.cleanup()
+
+
+def test_failed_close_is_terminal_but_cleanup_can_be_retried(tmp_path, monkeypatch):
+    import json
+    import signal
+    import sys
+
+    from blockether.vis._contracts import GATEWAY
+
+    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    code = f"import time; print({hello!r}, flush=True); time.sleep(60)"
+    engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine.connect()
+    process = engine._process
+    send_signal = process.send_signal
+
+    def denied(*args):
+        raise PermissionError("signal denied")
+
+    try:
+        with monkeypatch.context() as denied_signals:
+            denied_signals.setattr(os, "killpg", denied)
+            denied_signals.setattr(process, "send_signal", denied)
+            with pytest.raises(PermissionError, match="signal denied"):
+                engine.close()
+        assert process.poll() is None
+        assert os.path.exists(engine._home.name)
+        with pytest.raises(TransportError, match="closed"):
+            engine.connect()
+        engine.close()
+        assert process.poll() is not None
+        assert process.stdin.closed and process.stdout.closed
+        assert not os.path.exists(engine._home.name)
+        engine.close()
+    finally:
+        if process.poll() is None:
+            send_signal(signal.SIGKILL)
+        process.wait(timeout=5)
+        process.stdin.close()
+        process.stdout.close()
+        engine._home.cleanup()
+
+
+def test_close_signals_owned_group_and_reaps_its_child(tmp_path):
+    import json
+    import signal
+    import sys
+
+    from blockether.vis._contracts import GATEWAY
+
+    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    stopped = tmp_path / "child-stopped"
+    child_code = f"""import signal, sys, time
+from pathlib import Path
+def stop(sig, frame):
+    Path({str(stopped)!r}).write_text("stopped")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+print("ready", flush=True)
+time.sleep(60)
+"""
+    code = f"""import signal, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", {child_code!r}], stdout=subprocess.PIPE)
+assert child.stdout.readline().strip() == b"ready"
+def stop(sig, frame):
+    child.wait(timeout=5)
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+print({hello!r}, flush=True)
+time.sleep(60)
+"""
+    engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine.connect()
+    process = engine._process
+    try:
+        engine.close()
+        assert process.returncode == 0
+        assert stopped.read_text() == "stopped"
+        assert process.stdin.closed and process.stdout.closed
+        assert not os.path.exists(engine._home.name)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+        process.stdin.close()
+        process.stdout.close()
+        engine._home.cleanup()
+
+
 def test_request_timeout_preserves_error_and_closes_process(tmp_path):
     import json
     import sys

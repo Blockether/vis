@@ -1019,14 +1019,21 @@ new binary into the running gateway.
    binary cases pass, including real packages in JVM/native workers. Recent main
    CI still has an unassigned macOS job despite an online, idle matching runner;
    local diagnosis needs read-only access. No runner or gateway was restarted.
-7. Candidate `18ad4fe2f` is on `main`; Linux and macOS real SDK CI jobs pass.
-   New documentation and Companion regressions are repaired: all 62 documentation
-   tests and 3230 Companion tests pass (two platform skips). Story fixtures still
-   reject mutation timers, clocks, random data and live gateway clients.
-8. Full Linux CI ran 6070 cases. Its remaining gather failure asserted a runtime
-   limitation already fixed in the published runtime. The old assertion reproduces
-   locally; updated direct-call/helper contracts and all 74 environment cases pass.
-   No Vis release tag exists; green source CI and full publication remain pending.
+7. Candidate `18ad4fe2f` and follow-up `0a43fab47` are on `main`. Documentation
+   deployment and CodeQL pass. All 62 documentation tests and 3230 Companion tests
+   pass locally (two platform skips). Story fixtures still reject mutation timers,
+   clocks, random data and live gateway clients.
+8. The earlier Linux gather failure asserted a limitation already fixed in the
+   published runtime. Updated direct-call/helper contracts and all 74 environment
+   cases pass. The next Linux run exposed a conflicting public-manual assertion;
+   its red/green regression and all 43 Council host/documentation cases now pass.
+9. Follow-up fixes preserve history-pagination coverage without expensive repeated
+   role queries and make SDK process cleanup retryable after denied group signals.
+   All 824 SDK unit tests pass (38 opt-in skips). A disk-exhausted integration run
+   failed; after removing only completed-test caches, the unchanged candidate
+   passes all 42 installed-SDK/JVM cases in fresh fixture homes. Failure logs remain.
+10. The matching macOS runner is still online and idle with its CI job unassigned.
+    No Vis release tag exists; green source CI and full publication remain pending.
 
 # Shared FFF lifecycle and retention experiments
 

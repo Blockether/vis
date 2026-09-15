@@ -134,9 +134,10 @@
         (is (document/valid? "council" "kind" kind))
         (doseq [text [tool-doc prompt manual]]
           (is (str/includes? text kind))))
-      ;; User documentation preserves API names, not the agent prompt's prose.
-      (doseq [field ["entry_id" "thread_id" "reply_to" "reply_required" "improve" "autocomplain"
-                     "source_ref" "read_session"]]
+      ;; Public documentation preserves supported API names. Experimental complaint
+      ;; reporting remains covered by the tool and model instructions below.
+      (doseq [field ["entry_id" "thread_id" "reply_to" "reply_required" "source_ref"
+                     "read_session"]]
         (is (str/includes? manual field)))
       (doseq [text [tool-doc prompt]]
         (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "improve"
