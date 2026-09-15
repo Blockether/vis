@@ -166,8 +166,8 @@
       "sequence": 5,
       "operation": "council.publish",
       "presentation": {
-        "headline": "Published message",
-        "summary": "Activity review",
+        "headline": "Published Council message",
+        "summary": "",
         "content": [
           {
             "type": "markdown",

@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
@@ -16,21 +17,29 @@
 
 (deftest publication-uses-semantic-result-test
   (foundation/register!)
-  (let [published (atom nil)]
-    (with-redefs [extension/publish-activity! #(reset! published %)]
-      (#'host/result
-       {}
-       :council.publish
-       {:group_id "internal-group"}
-       {:entry_id 279
-        :kind "informational"
-        :thread_id 258
-        :title "Review"
-        :content "Useful result"}))
-    (is (= "Published message" (get @published "headline")))
-    (is (= "Review" (get @published "summary")))
-    (is (re-find #"Useful result" (pr-str (get @published "content"))))
-    (is (not (re-find #"279|258|internal-group" (pr-str @published))))))
+  (let [published
+        (atom nil)
+
+        entry
+        {:entry_id 279
+         :kind "informational"
+         :thread_id 258
+         :title "Review"
+         :content "Useful result"
+         :created_at 1789503371213
+         :source "host"
+         :reply_required true
+         :replies [{:session_id "internal-recipient" :state "pending"}]}
+
+        result
+        (with-redefs [extension/publish-activity! #(reset! published %)]
+          (#'host/result {} :council.publish {:group_id "internal-group"} entry))]
+
+    (is (= {"headline" "Published Council message"
+            "summary" ""
+            "content" [{"type" "markdown" "text" "Useful result"}]}
+           @published))
+    (is (= (wire/->wire entry) (:result result)))))
 
 (deftest publication-survives-presentation-failure-test
   ;; C24/C25: provenance is trusted, canonical and independent of stdout or Activity IO.

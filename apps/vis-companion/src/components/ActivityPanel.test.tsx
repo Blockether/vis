@@ -27,7 +27,30 @@ it('does not render technical resource IDs as expandable files', () => {
   paintActivity({ activity });
   expect(document.body.textContent).not.toContain('technical-thread-258');
   expect(document.body.textContent).not.toContain('technical-shell');
-  expect(screen.queryByRole('button', { name: /Published message/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Published Council message/ })).toBeNull();
+});
+
+it('shows only the Council publish label and message body', () => {
+  const activity = structuredClone(storyData.ACTIVITY_RESULTS);
+  activity.rows = [activity.rows[4]];
+  paintActivity({ activity });
+  expect(screen.getByRole('button', { name: /Published Council message/ })).toBeTruthy();
+  expect(document.querySelector('[data-activity-summary]')).toBeNull();
+  openEverySettledStep();
+  expect(document.body.textContent).toContain(
+    'Read and Patch now show their results after one disclosure.',
+  );
+  expect(screen.queryByRole('table')).toBeNull();
+  for (const metadata of [
+    'Activity review',
+    'informational',
+    'Created at',
+    'Source',
+    'Replies',
+    'Details truncated',
+  ]) {
+    expect(document.body.textContent).not.toContain(metadata);
+  }
 });
 
 it('keeps embedded document headings and code inside their Activity step', () => {

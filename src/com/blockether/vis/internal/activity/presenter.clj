@@ -275,7 +275,7 @@
    "_shell-wait" ["Wait for command" "Command finished" true]
    "_shell-type" ["Send command input" "Sent command input" false]
    "_shell-stop" ["Stop command" "Stopped command" true]
-   "council.publish" ["Publish message" "Published message" false]
+   "council.publish" ["Publish Council message" "Published Council message" false]
    "council.read" ["Read thread" "Read thread" false]
    "council.get" ["Read message" "Read message" false]
    "council.threads" ["List threads" "Listed threads" false]
@@ -611,7 +611,12 @@
   [op value]
   (let [headline (second (get tool-headlines op))]
     (case op
-      ("council.publish" "council.get")
+      "council.publish"
+      {"headline" headline
+       "summary" (if (not-empty (field value "content")) "" "No message content")
+       "content" (council-body value "content")}
+
+      "council.get"
       (let [message (council-message value)]
         (assoc message
           "headline" headline

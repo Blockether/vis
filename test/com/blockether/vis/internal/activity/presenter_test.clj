@@ -676,28 +676,58 @@
 
 (defdescribe
   council-activity-test
-  (it "shows the message and reply counts without the publication envelope"
-      (doseq [operation [:council.publish :council.get]]
-        (let [view (presenter/result-presentation
-                     {:operation operation}
-                     {:title "Review"
-                      :content "Tests **passed**."
-                      :entry_id 42
-                      :thread_id 42
-                      :group_id "internal-group"
-                      :created_at 1789470180407
-                      :kind "coordination"
-                      :source "host"
-                      :source_ref {:session_id "internal-author"}
-                      :ping ["internal-recipient"]
-                      :reply_required true
-                      :replies
-                      [{:session_id "internal-recipient" :state "pending"}
-                       {:session_id "internal-other" :state "replied" :reply_entry_id 43}]})]
-          (expect (= "Review · Replies: 1 pending · 1 received" (get view "summary")))
-          (expect (= [{"type" "markdown" "text" "Tests **passed**."}] (get view "content")))
-          (expect (not (re-find #"internal-|Created at|Reply required|Source|coordination"
-                                (pr-str view)))))))
+  (it "shows only the Council publish label and complete message body"
+      (let [body
+            (apply str (repeat 200 "Full **message**.\n"))
+
+            entry
+            {:title "Internal title"
+             :content body
+             :entry_id 42
+             :thread_id 42
+             :group_id "internal-group"
+             :author_session_id "internal-author"
+             :created_at 1789503371213
+             :kind "coordination"
+             :source "host"
+             :source_ref {:session_id "internal-author"}
+             :ping ["internal-recipient"]
+             :reply_required true
+             :replies [{:session_id "internal-recipient" :state "pending"}]}]
+
+        (doseq [value [entry (wire/->wire entry)]]
+          (let [view (presenter/result-presentation {:operation :council.publish} value)]
+            (expect (= {"headline" "Published Council message"
+                        "summary" ""
+                        "content" [{"type" "markdown" "text" body}]}
+                       view))
+            (expect (contract/valid-projection? (result-fixture [[:council.publish "" value
+                                                                  nil]])))))))
+  (it "names an absent published message body without exposing receipt metadata"
+      (doseq [value [nil {} {:content ""} {"content" ""} 279]]
+        (expect
+          (= {"headline" "Published Council message" "summary" "No message content" "content" []}
+             (presenter/result-presentation {:operation :council.publish} value)))))
+  (it "shows the message and reply counts when reading a message"
+      (let [view (presenter/result-presentation
+                   {:operation :council.get}
+                   {:title "Review"
+                    :content "Tests **passed**."
+                    :entry_id 42
+                    :thread_id 42
+                    :group_id "internal-group"
+                    :created_at 1789470180407
+                    :kind "coordination"
+                    :source "host"
+                    :source_ref {:session_id "internal-author"}
+                    :ping ["internal-recipient"]
+                    :reply_required true
+                    :replies [{:session_id "internal-recipient" :state "pending"}
+                              {:session_id "internal-other" :state "replied" :reply_entry_id 43}]})]
+        (expect (= "Review · Replies: 1 pending · 1 received" (get view "summary")))
+        (expect (= [{"type" "markdown" "text" "Tests **passed**."}] (get view "content")))
+        (expect (not (re-find #"internal-|Created at|Reply required|Source|coordination"
+                              (pr-str view))))))
   (it "summarizes pages and keeps each read message behind its own disclosure"
       (let [value
             {:entries [{:title "Review"
@@ -756,6 +786,7 @@
         (expect (contract/valid-projection?
                   (result-fixture [[:council.read "" {"entries" [value] "has_more" true} nil]])))))
   (it "keeps local messages and lookups end-only"
+      (expect (= "Publish Council message" (:headline (presenter/for-tool :council.publish))))
       (doseq [operation [:council.publish :council.get :council.read :council.threads
                          :council.members]]
         (expect (false? (:show-start (presenter/for-tool operation)))))))
