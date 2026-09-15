@@ -306,18 +306,8 @@ def test_all_lifecycle_states_and_optional_response_defaults(status):
     assert not child.pending_input and not child.routing_locked
 
 
-def test_documented_team_recipe(capsys):
-    import re
-    from pathlib import Path
-
-    document = Path(__file__).parents[3] / "resources/vis-docs/python-sdk.md"
-    section = (
-        document.read_text()
-        .split("## Delegate managed subagents", 1)[1]
-        .split("\n## ", 1)[0]
-    )
-    source = re.search(r"```python\n(.*?)\n```", section, re.S)
-    assert source is not None
+def test_managed_team_recipe(capsys):
+    # The public guide hides experimental teams; keep their recipe coverage here.
 
     def respond(method, path, body):
         if result := council_compatible(method, path, body):
@@ -325,10 +315,15 @@ def test_documented_team_recipe(capsys):
         return 200, [CHILD] if method == "GET" else CHILD
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
-        exec(
-            compile(source[1], str(document), "exec"),
-            {"client": client, "session_id": "leader"},
+        team = client.session("leader").council()
+        child = team.publish_spawn(
+            "Check the SDK contract; report test evidence and remaining risks",
+            iteration_budget=16,
+            key="sdk-contract",
         )
+        assert child.session_id == CHILD["session_id"]
+        for child in team.subagents():
+            print(child.task, child.status, child.iterations_used, child.usage)
         assert "Check the contract running 1" in capsys.readouterr().out
         spawn = next(
             json.loads(body)
