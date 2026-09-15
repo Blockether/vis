@@ -472,59 +472,53 @@
         session-id
         (atom nil)]
 
-    (try
-      (let [initial (lp/create-environment ::router {:db db-path})]
-        (try (let [db (:db-info initial)
-                   turn-id (persistance/db-store-session-turn!
-                             db
-                             {:parent-session-id (:session-id initial)
-                              :user-request "Complete the first turn"})]
+    (try (let [initial (lp/create-environment ::router {:db db-path})]
+           (try (let [db (:db-info initial)
+                      turn-id (persistance/db-store-session-turn!
+                                db
+                                {:parent-session-id (:session-id initial)
+                                 :user-request "Complete the first turn"})]
 
-               (reset! session-id (:session-id initial))
-               (persistance/db-store-iteration!
-                 db
-                 {:session-turn-id turn-id
-                  :code (if scoped? "print('settled')" "")
-                  :forms
-                  (if scoped? [{:scope "t1/i1/f1" :src "print('settled')" :stdout "settled"}] [])})
-               (expect (persistance/db-update-session-turn!
-                         db
-                         turn-id
-                         (cond-> {:status turn-status :ctx {"session_turn" 1}}
-                           (= :done turn-status)
-                           (assoc :content [(content/prose "The first turn is complete")])))))
-             (finally (lp/dispose-environment! initial))))
-      (let [rebuilt (lp/create-environment ::router {:db db-path :session @session-id})]
-        (try (expect (= (if (= :running turn-status) 1 0)
-                        (lp/db-sweep-orphaned-running-turns! (:db-info rebuilt))))
-             (let [ca (:ctx-atom rebuilt)
-                   turns (persistance/db-list-session-turns (:db-info rebuilt) @session-id)
-                   iterations (persistance/db-list-session-turn-iterations (:db-info rebuilt)
-                                                                           (:id (first turns)))
-                   seeded (mapv (fn [iteration]
-                                  [(:position iteration)
-                                   {:forms-vec (:forms iteration)
-                                    :preserved-thinking/replay? false
-                                    :cross-turn/turn-status (:status (first turns))}])
-                                iterations)
-                   current (apply trailer (map #(str "t2/i" %) (range 1 12)))]
+                  (reset! session-id (:session-id initial))
+                  (when scoped?
+                    (persistance/db-store-iteration!
+                      db
+                      {:session-turn-id turn-id
+                       :code "print('settled')"
+                       :forms [{:scope "t1/i1/f1" :src "print('settled')" :stdout "settled"}]}))
+                  (expect (persistance/db-update-session-turn!
+                            db
+                            turn-id
+                            (cond-> {:status turn-status :ctx {"session_turn" 1}}
+                              (= :done turn-status)
+                              (assoc :content [(content/prose "The first turn is complete")])))))
+                (finally (lp/dispose-environment! initial))))
+         (let [rebuilt (lp/create-environment ::router {:db db-path :session @session-id})]
+           (try (expect (= (if (= :running turn-status) 1 0)
+                           (lp/db-sweep-orphaned-running-turns! (:db-info rebuilt))))
+                (let [ca (:ctx-atom rebuilt)
+                      turns (persistance/db-list-session-turns (:db-info rebuilt) @session-id)
+                      iterations (persistance/db-list-session-turn-iterations (:db-info rebuilt)
+                                                                              (:id (first turns)))
+                      seeded (#'lp/seed-trailer-iters rebuilt nil [])
+                      current (apply trailer (map #(str "t2/i" %) (range 1 12)))]
 
-               (expect (= 1 (get @ca "session_turn")))
-               (expect (= 1 (count turns)))
-               (expect (= (if (= :running turn-status) :interrupted turn-status)
-                          (:status (first turns))))
-               (expect (= 1 (count iterations)))
-               (expect (= :done (:status (first iterations))))
-               (let [prior (first (#'lp/previous-turn-context rebuilt nil))]
-                 (expect (= "Complete the first turn" (:user-request prior)))
-                 (expect (= (when (= :done turn-status) "The first turn is complete")
-                            (:answer prior))))
-               (swap! ca assoc "session_turn" 2)
-               (#'lp/stamp-iter-universe! ca (into seeded current))
-               (f rebuilt))
-             (finally (lp/dispose-environment! rebuilt))))
-      (finally (doseq [file (reverse (file-seq dir))]
-                 (.delete ^java.io.File file))))))
+                  (expect (= 1 (get @ca "session_turn")))
+                  (expect (= 1 (count turns)))
+                  (expect (= (if (= :running turn-status) :interrupted turn-status)
+                             (:status (first turns))))
+                  (expect (= (if scoped? 1 0) (count iterations)))
+                  (expect (every? #(= :done (:status %)) iterations))
+                  (let [prior (first (#'lp/previous-turn-context rebuilt nil))]
+                    (expect (= "Complete the first turn" (:user-request prior)))
+                    (expect (= (when (= :done turn-status) "The first turn is complete")
+                               (:answer prior))))
+                  (swap! ca assoc "session_turn" 2)
+                  (#'lp/stamp-iter-universe! ca (into seeded current))
+                  (f rebuilt))
+                (finally (lp/dispose-environment! rebuilt))))
+         (finally (doseq [file (reverse (file-seq dir))]
+                    (.delete ^java.io.File file))))))
 
 (defn- expect-rebuilt-history-fold
   "Check that a restored prior turn folds without depending on indexed iterations."

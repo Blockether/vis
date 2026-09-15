@@ -39,6 +39,8 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.python.test-runner :as runner]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [taoensso.nippy :as nippy]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.io ByteArrayOutputStream]
@@ -140,7 +142,12 @@
         store
         (ps/db-create-connection! :memory)]
 
-    (binding [extension/*current-environment* {:db-info store}]
+    (binding [extension/*current-environment*
+              {:db-info store}
+
+              workspace/*workspace-root*
+              (.getCanonicalPath ^java.io.File ext-dir)]
+
       (try (f result {:ext-dir ext-dir :store store})
            (finally (reset! live-load nil)
                     (pyx/reload-python-extensions! {:dirs []})
@@ -171,6 +178,19 @@
   [ext sym]
   (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/fn %))
         (get-in ext [:ext/engine :ext.engine/symbols])))
+
+(defdescribe fresh-load-workspace-test
+             ;; Package skill discovery must not index the mutable checkout outside its fixture.
+             (it "binds the fixture workspace and restores the caller's workspace"
+                 (let [caller (.getCanonicalPath (workspace/cwd))]
+                   (with-fresh-loaded {}
+                                      (fn [_ {:keys [ext-dir]}]
+                                        (expect (= (.getCanonicalPath ^java.io.File ext-dir)
+                                                   (.getCanonicalPath (workspace/cwd))))
+                                        (expect (= (.getCanonicalPath ^java.io.File ext-dir)
+                                                   (.getCanonicalPath
+                                                     ^java.io.File (#'discovery/project-root))))))
+                   (expect (= caller (.getCanonicalPath (workspace/cwd)))))))
 
 (defdescribe
   dependency-errors-keep-safe-diagnostics-test
@@ -1014,7 +1034,7 @@ vis.register_extension(vis.Extension(
   extension-background-self-wake-test
   ;; #202: exercise the real trusted Python worker after its invoking call has returned.
   (it
-    "keeps host-bound identity between turns with model shell disabled"
+    "keeps a managed child's host-bound identity between turns with model shell disabled"
     (with-fresh-loaded
       {"council_watch.py"
        "from pathlib import Path
@@ -1073,9 +1093,13 @@ vis.register_extension(vis.Extension(
 
               store-session!
               (requiring-resolve
-                'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)]
+                'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)
 
-          (with-redefs [toggles/enabled? #(= "council" %)]
+              leader
+              (str (store-session! store {:channel :api}))]
+
+          (ps/db-set-session-project! store leader gid)
+          (with-redefs [toggles/enabled? #(contains? #{"council" "subagents"} %)]
             (let [unbound ((symbol-fn ext 'wake_now))]
               (expect (false? (:success? unbound)))
               (expect (str/includes? (pr-str unbound) "needs a bound Vis session")))
@@ -1087,6 +1111,23 @@ vis.register_extension(vis.Extension(
                     delivered (promise)]
 
                 (ps/db-set-session-project! store sid gid)
+                ;; #202: self-wake is restricted to owned children, even for trusted extensions.
+                (db-test/raw-query store
+                                   {:insert-into :session_agent
+                                    :values [{:session_id sid
+                                              :parent_id leader
+                                              :leader_id leader
+                                              :team_id leader
+                                              :task "Background watcher fixture"
+                                              :status "running"
+                                              :depth 1
+                                              :iteration_budget 32
+                                              :iterations_used 0
+                                              :inherited_turns 0
+                                              :spawn_key sid
+                                              :spawn_fingerprint "fixture"
+                                              :created_at 1
+                                              :checkpoint (nippy/freeze [])}]})
                 (try (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core
                                                   'runtime-waker)
                                       (atom {:eligible? (constantly true)

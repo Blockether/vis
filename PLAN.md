@@ -958,6 +958,69 @@ matching filenames, bypass hooks, rewrite Git history, or restart the live gatew
    Broader verification also reports unrelated TUI geometry and foundation/Council
    failures. No installation, release or live gateway restart is included.
 
+# Non-Windows runtime and complete product release
+
+Release the verified Linux/macOS runtime, then publish Vis only after every
+supported product gate passes. Keep Windows runtime and desktop publishing disabled.
+
+## Context
+
+The runtime checkout has unreleased reliability changes and separate Windows
+experiments. Vis has unrelated pending worker diagnostics that must remain intact.
+`vis-python-runtime/.github/workflows/` owns runtime artifacts; `.github/workflows/`
+owns Vis CI and product publication. Windows desktop steps are already commented.
+Do not restore stashes wholesale, move published tags, bypass tests or install the
+new binary into the running gateway.
+
+## 1. Prepare and release the runtime
+
+- Rationale: Vis must consume an immutable, published runtime with verified archives.
+- Data: current runtime source, preserved reliability stash, platform CI and release assets.
+- Acceptance criteria: scope non-Windows fixes, run JVM/native worker checks, disable
+  Windows jobs, publish a new version and verify all Linux/macOS archives plus the JVM jar.
+- Unknowns: outstanding reliability failures and whether the current version tag exists.
+
+## 2. Make supported CI green
+
+- Rationale: a release must not hide failing SDK, engine or app behavior.
+- Data: GitHub job diagnostics, local regressions and the new runtime pin.
+- Acceptance criteria: fix reproduced failures, regenerate the dependency audit, run
+  affected formatting/lint/tests, and obtain green supported-platform source CI.
+- Unknowns: failures beyond the observed Python 3.11 SDK log-cleanup race.
+
+## 3. Publish and verify the complete product
+
+- Rationale: successful builds alone do not prove deployment and publication.
+- Data: version mirrors, changelog, signing metadata and release completeness checks.
+- Acceptance criteria: preserve Windows exclusions, commit and push scoped changes,
+  tag the release, then verify native, desktop, mobile and package publication gates.
+- Unknowns: signing/account availability and store-side processing status.
+
+## Plan state
+
+1. Runtime `8fc943c` is publicly released as `v0.5.20`, following `v0.5.19`.
+   Linux/macOS source CI, release CI and all seven assets are verified. The cold,
+   read-only startup fix passes 232 JVM and 12 extracted-archive worker tests.
+   Windows jobs remain commented out; foreign Windows experiments are untouched.
+2. Signing metadata and all relevant stashes were checked. Windows desktop is
+   already excluded; the configured signing setup is incomplete.
+3. Earlier supported CI regressions are repaired locally. Android CI and release
+   setup explicitly select supported SDK packages; the red/green regression and
+   lint pass. Changed production code adds no reflection or boxed-math findings.
+4. Vis version mirrors and the changelog are prepared for `0.2.5`, including the
+   verified composer and draft fixes. The published runtime pin, dependency
+   preparation and generated audit are complete; 201 final-pin boundary tests pass.
+   Native test launchers now use the resolved-source protocol; TLS is red/green.
+5. The FFF timeouts came from an unbound test workspace. Fixture isolation passes
+   its red/green regression and all 346 extension/contract cases. Concurrent cold
+   runtime provisioning now shares one installation; both new regressions and all
+   11 runtime cases pass. The first full post-fix installed SDK run passes 38/38.
+6. A fresh Vis native image builds against the published runtime. All 12 affected
+   binary cases pass, including real packages in JVM/native workers. Recent main
+   CI still has an unassigned macOS job despite an online, idle matching runner;
+   local diagnosis needs read-only access. No runner or gateway was restarted.
+   No Vis release tag exists; green source CI and full publication remain pending.
+
 # Shared FFF lifecycle and retention experiments
 
 Reproduce gateway indexing costs before changing its cache budget.

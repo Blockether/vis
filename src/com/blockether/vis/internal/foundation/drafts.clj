@@ -457,7 +457,7 @@
               {:name "since" :note "snapshot checkpoint; omit for cumulative diff"}]
      :call {:opt-pos ["filename" "since"]}
      :result
-     "Single repository: attachment descriptor, checkpoint string and empty. Several: attachments, checkpoint map keyed by source, repository_count and empty. Patch bytes stay in attachments."}))
+     "Single repository: attachment descriptor with `{checkpoint, empty}` and a checkpoint string. Several: `{attachments, checkpoint, repository_count, empty}` with a checkpoint map keyed by source. Patch bytes stay in attachments."}))
 
 (def draft-create-symbol
   (vis/symbol
@@ -470,7 +470,7 @@
        "Open one draft across selected repositories and move the session into its first working copy. "
        "Original checkouts are left alone until approval. Drafts default to committed HEAD (clean=True); "
        "clean=False explicitly copies pending source work, which remains part of approval scope. "
-       "Pass roots=[project_root_path, sibling_path] to select catalog repositories without changing configuration. "
+       "Pass roots=[project_root_path, sibling_path] to select catalog repositories without changing configuration; omit roots for defaults. "
        "The nonempty list must contain distinct, nonoverlapping read/write Git repository roots. "
        "Read-only, copy-only, not-allowed and denied paths cannot be selected. "
        "All selections are validated before creation; failure preserves the original session. "
@@ -479,8 +479,7 @@
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
               {:name "clean" :note "False copies pending changes; default True"}
-              {:name "roots"
-               :note "list of read/write catalog repo Paths; first is primary; omit for defaults"}]
+              {:name "roots" :note "read/write catalog repository Paths; primary first"}]
      :call {:pos ["label"] :opt-pos ["clean" "roots"]}
      :result
      (str
@@ -502,11 +501,11 @@
        "unresolved conflict markers refuse. action='abort' cancels only merges this tool owns, retaining pre-sync checkpoints. "
        "Optional roots selects participating source or clone Paths, never arbitrary repositories.")
      :params [{:name "action" :note "start (default), continue, or abort"}
-              {:name "message" :note "optional commit subject"}
-              {:name "roots" :note "optional list of participating source or clone Paths"}]
+              {:name "message" :note "commit subject"}
+              {:name "roots" :note "participating source or clone Paths"}]
      :call {:opt-pos ["action" "message" "roots"]}
      :result
-     "String-keyed status and repositories with per-repository conflicts/commit/error. Conflicts require resolution, not approval."}))
+     "String-keyed `{status, repositories}` with per-repository conflicts/commit/error. Conflicts require resolution, not approval."}))
 
 (def draft-approve-symbol
   (vis/symbol

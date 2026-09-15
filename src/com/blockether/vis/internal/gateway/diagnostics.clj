@@ -115,7 +115,7 @@
     (spit file
           (str (wire/json-str (assoc report
                                 :schema-version 1
-                                :recorded-ms (System/currentTimeMillis)))
+                                :recorded-ms (util/now-ms)))
                "\n")
           :encoding
           "UTF-8")

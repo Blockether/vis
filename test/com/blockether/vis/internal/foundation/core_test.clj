@@ -33,7 +33,7 @@
           end-only
           '#{cat patch _shell-logs _shell-type council.read council.get council.threads
              council.members repl_status draft-status main-agent-instructions update_goal
-             council.subagents council.cancel council.route}]
+             council.publish council.subagents council.cancel council.route}]
 
       (expect (= end-only
                  (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
@@ -74,8 +74,8 @@
                 "this session's draft for the same task"
                 "Never edit the shared checkout or another session's draft" "project_root_path"
                 "next block" "Keep edits, formatting and verification in the draft" "draft_diff()"
-                "roots=[project_root_path, sibling_path]" "draft_sync()"
-                "draft_approve()" "commits and may push"
+                "roots=[project_root_path, sibling_path]" "draft_sync()" "draft_approve()"
+                "commits and may push"
                 "user or applicable project instructions authorize commit and push"
                 "Review-first, local-only and no-commit/push requests leave the draft unapproved"
                 ;; Completed merged drafts are cleanup, not a new approval gate.
@@ -197,9 +197,19 @@
           (expect (not (str/includes? prompt "clojure.repl/doc")))
           (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
           (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-          (expect (str/includes? prompt "Leadership and managed subagents"))
-          (expect (str/includes? prompt "Inherited conversation is background evidence"))
+          (expect (not (str/includes? prompt "Leadership and managed subagents")))
+          (expect (not (str/includes? prompt "Inherited conversation is background evidence")))
           (expect (< (count prompt) 3000)))))
+  (it "includes leadership guidance only when subagents are enabled"
+      (with-redefs [toggles/enabled?
+                    #(= % "subagents")
+
+                    toggles/value-of
+                    (constantly "off")]
+
+        (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
+          (expect (str/includes? prompt "Leadership and managed subagents"))
+          (expect (str/includes? prompt "Inherited conversation is background evidence")))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.context.env-digest` — it's core functionality, not extension-

@@ -2836,7 +2836,8 @@
 
         (try (expect (nil? (:error (#'lp/execute-code environment "print('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
-                            (with-redefs [svar/ask-code! (fn [_ _]
+                            (with-redefs [toggles/enabled? #(= "improve" %)
+                                          svar/ask-code! (fn [_ _]
                                                            (case (swap! calls inc)
                                                              1
                                                              (response (cond-> [timeout-code]
@@ -2848,6 +2849,7 @@
 
                                                              {:stop-reason :end
                                                               :content "unexpected retry"}))]
+
                               (lp/iteration-loop environment
                                                  "timeout regression"
                                                  {:session-turn-id tid
@@ -11521,10 +11523,10 @@
 
       (try
         (with-redefs [toggles/enabled?
-                      (constantly false)
+                      #(= "improve" %)
 
                       vis/toggle-enabled?
-                      (constantly false)
+                      #(= "improve" %)
 
                       svar/ask-code!
                       (fn [_ opts]

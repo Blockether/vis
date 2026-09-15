@@ -67,6 +67,115 @@
       (is (empty? (filter #(re-find #"\.tmp\." (.getName ^java.io.File %))
                           (.listFiles (.getParentFile home))))))))
 
+(deftest concurrent-cold-library-provisioning-test
+  ;; Startup extension loading and an HTTP MCP probe can provision concurrently.
+  (let [home
+        (temp-dir "vis-concurrent-runtime")
+
+        prior-home
+        (System/getProperty "user.home")
+
+        selected
+        (atom nil)
+
+        downloads
+        (atom 0)
+
+        installs
+        (atom 0)
+
+        entered
+        (promise)
+
+        release
+        (promise)
+
+        second-thread
+        (promise)]
+
+    (try
+      (System/setProperty "user.home" (str home))
+      (with-redefs-fn
+        {#'python-runtime/resolved-library #(deref selected)
+         #'python-runtime/download! (fn [_ archive]
+                                      (swap! downloads inc)
+                                      (deliver entered true)
+                                      @release
+                                      (io/make-parents archive)
+                                      (spit archive "fixture"))
+         #'python-runtime/install-archive!
+         (fn [_ destination]
+           (swap! installs inc)
+           (.mkdirs ^java.io.File destination)
+           (spit (io/file destination (runtime/library-name (runtime/platform))) "fixture"))
+         #'runtime/use-library!
+         (fn [destination]
+           (reset! selected (str (io/file destination (runtime/library-name (runtime/platform))))))}
+        (fn []
+          (let [first-call (future (python-runtime/ensure-library!))]
+            (try (is (true? (deref entered 5000 false)))
+                 (let [second-call (future (deliver second-thread (Thread/currentThread))
+                                           (python-runtime/ensure-library!))]
+                   (try (let [thread (deref second-thread 5000 nil)]
+                          (is (some? thread))
+                          ;; Wait for either the protected monitor or an overlapping download.
+                          (loop [remaining 5000]
+                            (when (and (pos? remaining)
+                                       (= 1 @downloads)
+                                       (not= Thread$State/BLOCKED (.getState ^Thread thread)))
+                              (Thread/sleep 1)
+                              (recur (dec remaining))))
+                          (is (= Thread$State/BLOCKED (.getState ^Thread thread)))
+                          (is (= 1 @downloads)))
+                        (deliver release true)
+                        (is (= (deref first-call 5000 ::timeout)
+                               (deref second-call 5000 ::timeout)
+                               @selected))
+                        (is (= 1 @installs))
+                        (is (= @selected (python-runtime/ensure-library!)))
+                        (is (= 1 @downloads))
+                        (finally (deliver release true) (future-cancel second-call))))
+                 (finally (deliver release true) (future-cancel first-call))))))
+      (finally (System/setProperty "user.home" prior-home) (#'python-runtime/delete-tree! home)))))
+
+(deftest failed-library-provisioning-can-retry-test
+  (let [home
+        (temp-dir "vis-runtime-retry")
+
+        prior-home
+        (System/getProperty "user.home")
+
+        selected
+        (atom nil)
+
+        attempts
+        (atom 0)]
+
+    (try
+      (System/setProperty "user.home" (str home))
+      (with-redefs-fn
+        {#'python-runtime/resolved-library #(deref selected)
+         #'python-runtime/download! (fn [_ _]
+                                      (when (= 1 (swap! attempts inc))
+                                        (throw (ex-info "fixture download failure" {}))))
+         #'python-runtime/install-archive!
+         (fn [_ destination]
+           (.mkdirs ^java.io.File destination)
+           (spit (io/file destination (runtime/library-name (runtime/platform))) "fixture"))
+         #'runtime/use-library!
+         (fn [destination]
+           (reset! selected (str (io/file destination (runtime/library-name (runtime/platform))))))}
+        (fn []
+          (is (= "fixture download failure"
+                 (try (python-runtime/ensure-library!)
+                      (catch clojure.lang.ExceptionInfo error (ex-message error)))))
+          ;; Retry from a different thread: an unreleased lock must not pass.
+          (let [retry (future (python-runtime/ensure-library!))]
+            (try (is (= (deref retry 5000 ::timeout) @selected))
+                 (is (= 2 @attempts))
+                 (finally (future-cancel retry))))))
+      (finally (System/setProperty "user.home" prior-home) (#'python-runtime/delete-tree! home)))))
+
 (deftest ensure-library-answers-a-real-runtime-test
   (testing
     "the interpreter this machine runs — already resolvable, or fetched once — and the same one on the next call"

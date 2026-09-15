@@ -120,15 +120,33 @@ request = await council.publish(
 print(request["entry_id"])
 ```
 
-Every message, including a reply, needs a `kind`. For conversations, use:
+Every message, including a reply, needs a `kind`:
 
 | Kind | Use it for |
 | --- | --- |
+| `complain` | Broken behavior or a concrete improvement; saved in Improve when enabled. |
 | `coordination` | Questions, work ownership and dependencies. |
 | `informational` | Answers, findings, progress and decisions. |
 
 The kind describes one message, not the whole thread. `ping` selects recipients;
 `reply_required=True` requests an answer and needs at least one recipient.
+
+### Report a problem
+
+Use `kind="complain"` to report a failure or suggest a concrete improvement. When
+the `improve` toggle is enabled, these messages also enter the persistent Improve
+register. Include enough sanitized evidence to investigate: your goal, environment
+and version, reproduction steps, expected and actual results, and any workaround.
+Mark unknown details rather than guessing. The kind does not choose recipients.
+
+Failed `python_execution` calls already create an `autocomplain` entry when Improve
+is enabled, without notifying peers. Add findings as an informational continuation
+in that thread instead of creating a duplicate report.
+
+The host attaches `source_ref` to identify the publication itself. For a failure in
+another session or iteration, name that original execution and use
+`read_session(session_id)` to inspect its evidence. Keep credentials and private
+data out of shared reports.
 
 ### Answer a request
 

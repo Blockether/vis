@@ -922,25 +922,26 @@ def test_real_mcp_stdio_probe_reclaims_process(
                     "timeout_ms": 1000,
                 },
             }
+            # This isolated fixture has no user data. Keep response diagnostics
+            # here without weakening GatewayError's production redaction.
+            errors = []
+            gateway_error = _client._gateway_error
+
+            def capture_error(status, content, token=None):
+                detail = content.decode("utf-8", errors="replace")
+                errors.append(detail.replace(token, "[redacted]") if token else detail)
+                return gateway_error(status, content, token)
+
+            monkeypatch.setattr(_client, "_gateway_error", capture_error)
+            monkeypatch.setattr(_local, "_gateway_error", capture_error)
             if respond:
-                result = client.post_mcp_servers_test(body=candidate)
+                try:
+                    result = client.post_mcp_servers_test(body=candidate)
+                except GatewayError:
+                    pytest.fail(f"MCP handshake failed: {errors}")
                 assert result["is_connected"] is True
                 assert [tool["name"] for tool in result["tools"]] == ["echo"]
             else:
-                # This isolated fixture has no user data. Keep response diagnostics
-                # here without weakening GatewayError's production redaction.
-                errors = []
-                gateway_error = _client._gateway_error
-
-                def capture_error(status, content, token=None):
-                    detail = content.decode("utf-8", errors="replace")
-                    errors.append(
-                        detail.replace(token, "[redacted]") if token else detail
-                    )
-                    return gateway_error(status, content, token)
-
-                monkeypatch.setattr(_client, "_gateway_error", capture_error)
-                monkeypatch.setattr(_local, "_gateway_error", capture_error)
                 with pytest.raises(GatewayError) as failure:
                     client.post_mcp_servers_test(body=candidate)
                 assert failure.value.code == "timeout", errors

@@ -300,6 +300,7 @@
                    ;; the role, this process' UTC start stamp and its pid, so two
                    ;; vis processes never rotate one file.
                    (expect (re-matches (re-pattern (str "/tmp/vis-home-probe/\\.vis/logs/"
+                                                        "\\d{4}-\\d{2}-\\d{2}/"
                                                         "(?:gateway|tui|vis)-\\d{8}T\\d{6}Z-pid"
                                                         (.pid (java.lang.ProcessHandle/current))
                                                         "\\.log"))

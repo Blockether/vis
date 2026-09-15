@@ -226,20 +226,22 @@
 
 (defn- child-argv
   "Prefer the selected runtime's packaged worker, including from a JVM host.
-   A source-only runtime uses its Java entrypoint; native Vis requires the executable."
-  [library socket guest-dir run-directory]
-  (if-let [executable (runtime/resolve-worker {:path library})]
-    [executable (str "-Duser.home=" (System/getProperty "user.home")) socket guest-dir]
-    (if (util/native-image?)
-      (throw (ex-info "The Python runtime archive has no worker executable"
-                      {:type :vis/python-worker-missing}))
-      (vec (concat
-             [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
-             (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
-             [(str "-XX:ErrorFile=" (io/file run-directory "jvm-crash-%p.log"))
-              (str "-XX:HeapDumpPath=" (io/file run-directory "jvm-heap.hprof")) "-cp"
-              (System/getProperty "java.class.path") "com.blockether.vispython.Worker" socket
-              guest-dir])))))
+   A source-only runtime uses its Java entrypoint; native Vis requires the executable.
+   Source roots are the same pre-confinement snapshot used by the boot policy."
+  [library socket guest-dir run-directory runtime-roots]
+  (let [arguments (into [socket "--resolved-sources"] (conj runtime-roots guest-dir))]
+    (if-let [executable (runtime/resolve-worker {:path library})]
+      (into [executable (str "-Duser.home=" (System/getProperty "user.home"))] arguments)
+      (if (util/native-image?)
+        (throw (ex-info "The Python runtime archive has no worker executable"
+                        {:type :vis/python-worker-missing}))
+        (vec (concat
+               [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
+               (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
+               [(str "-XX:ErrorFile=" (io/file run-directory "jvm-crash-%p.log"))
+                (str "-XX:HeapDumpPath=" (io/file run-directory "jvm-heap.hprof")) "-cp"
+                (System/getProperty "java.class.path") "com.blockether.vispython.Worker"]
+               arguments))))))
 
 (defn- worker-dir
   ^File [stamp]
@@ -396,11 +398,12 @@
                       (assoc runtime/native-path-env (str library)))]
 
           (spit log "" :append true)
-          (let [^Process process (process-jail/spawn!
-                                   (child-argv library (.getAbsolutePath socket) guest-dir dir)
-                                   nil
-                                   policy
-                                   {:extra-environment extra :merge-stderr? true})
+          (let [^Process process
+                (process-jail/spawn!
+                  (child-argv library (.getAbsolutePath socket) guest-dir dir runtime-roots)
+                  nil
+                  policy
+                  {:extra-environment extra :merge-stderr? true})
                 _ (drain-output! process log)
                 accepted (await-worker-connection server process)]
 
@@ -423,9 +426,8 @@
               (.setDaemon thread true)
               (.start thread)
               (try
-                ;; #194: the archive's worker may carry older Python than the host's
-                ;; pinned runtime dependency. Select that dependency before any imports
-                ;; from install-runtime, not the worker executable's bundled copy.
+                ;; #194: preserve the host's pinned import order before install-runtime.
+                ;; Bootstrap already uses these roots without extracting bundled sources.
                 (child/request!
                   peer
                   {"op" "exec"

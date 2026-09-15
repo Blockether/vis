@@ -534,8 +534,8 @@
                (expect (= 200
                           (try (:status (http/get input {:throw false :timeout 1000}))
                                (catch Exception _ 0))))
-               (expect (eventually #(= 1 (count @exchanges))))
-               (expect (= "ok" (:status (pauth/poll-auth! (:flow-id flow)))))
+               ;; The provider exchange precedes publication of the completed flow.
+               (expect (eventually #(= "ok" (:status (pauth/poll-auth! (:flow-id flow))))))
                (expect (= [[{:state "test-state" :verifier "test-verifier"} input]] @exchanges))
                (finally (pauth/cancel-auth! (:flow-id flow)))))))))
 

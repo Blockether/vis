@@ -1433,14 +1433,17 @@
                   (expect ext)
                   ;; Exercise both processes with the JVM and packaged native entrypoints.
                   (doseq [native? [false true]]
-                    (with-redefs-fn {#'worker/child-argv
-                                     (fn [lib socket guest-dir run-directory]
-                                       (if native?
-                                         (let [executable (runtime/resolve-worker {:path lib})]
-                                           (expect executable
-                                                   "The runtime archive must carry its worker")
-                                           [executable (str "-Duser.home=" dir) socket guest-dir])
-                                         (jvm-worker lib socket guest-dir run-directory)))}
+                    (with-redefs-fn
+                      {#'worker/child-argv
+                       (fn [lib socket guest-dir run-directory runtime-roots]
+                         (if native?
+                           (let [executable (runtime/resolve-worker {:path lib})]
+                             (expect executable "The runtime archive must carry its worker")
+                             (into [executable (str "-Duser.home=" dir) socket "--resolved-sources"]
+                                   (conj runtime-roots guest-dir)))
+                           ;; Exercise the JVM even when the archive has a worker.
+                           (with-redefs [runtime/resolve-worker (constantly nil)]
+                             (jvm-worker lib socket guest-dir run-directory runtime-roots))))}
                       (fn []
                         (let [made (ep/create-python-context
                                      {}

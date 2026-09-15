@@ -270,7 +270,8 @@ def test_shell_sweeps_old_logs_at_start_and_periodically(
     later = _aged_log(log_root / "2020-01-03" / "outside" / "shell-later.log", 15)
     swept.clear()
     deadline = time.monotonic() + 5
-    while later.exists() and time.monotonic() < deadline:
+    # File unlink and parent removal are separate steps in the sweep thread.
+    while later.parent.parent.exists() and time.monotonic() < deadline:
         assert swept.wait(1)
         swept.clear()
     assert not later.exists()

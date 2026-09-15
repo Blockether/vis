@@ -308,35 +308,53 @@
         (is (= "original" (slurp (io/file cache "source.txt"))))
         (ep/run-python-block context "held_cache_file.close()\n")))))
 
+(defn- assert-copied-cache-protection
+  [environment root]
+  (let [cache
+        (.getCanonicalPath (io/file root ".." "cache"))
+
+        available?
+        (workspace/isolated-workspaces-supported? root)]
+
+    (ep/python-context environment)
+    (is (some #{cache} (:workspace/draft-protected-roots environment)))
+    (let [opened
+          (drafts/draft-create environment "copied-cache" true)
+
+          clone
+          (:clone (first (filter #(= cache (:trunk %))
+                                 (workspace/env-filesystem-roots environment))))]
+
+      (try (if available?
+             (do (is (nil? (:error opened)) (str opened))
+                 (is (and (string? clone) (not= cache clone))))
+             ;; Filesystems without CoW must refuse, not copy or widen source access.
+             (do (is (= "workspace/capability-unavailable" (get-in opened [:error :details "type"]))
+                     (str opened))
+                 (is (= root (:root @(:workspace-atom environment))))
+                 (is (not (workspace/draft? @(:workspace-atom environment))))
+                 (is (= cache clone))))
+           (is (not (jail/draft-policy-expanded? environment)))
+           (let [result
+                 (#'lp/execute-code
+                  environment
+                  (str (when available? "(cache_path / 'source.txt').write_text('private cache')\n")
+                       "try:\n    Path("
+                       (pr-str (str cache "/source.txt"))
+                       ").write_text('escaped')\n"
+                       "except PermissionError:\n    pass\n"
+                       "else:\n    raise AssertionError('copied cache source stayed writable')\n"))]
+             (is (nil? (:error result)) (str result))
+             (when available? (is (= "private cache" (slurp (io/file clone "source.txt")))))
+             (is (= "original" (slurp (io/file cache "source.txt")))))
+           (finally (when (workspace/draft? @(:workspace-atom environment))
+                      (drafts/draft-discard environment)))))))
+
 (deftest copied-no-search-cache-is-protected-at-worker-launch
   ;; #242: private dependency copies must not invalidate the worker on the next block.
-  (with-project
-    :rift
-    :copy-only
-    (fn [environment root]
-      (let [cache (.getCanonicalPath (io/file root ".." "cache"))]
-        (ep/python-context environment)
-        (is (some #{cache} (:workspace/draft-protected-roots environment)))
-        (let [opened (drafts/draft-create environment "copied-cache" true)
-              clone (:clone (first (filter #(= cache (:trunk %))
-                                           (workspace/env-filesystem-roots environment))))]
+  (with-project :rift :copy-only assert-copied-cache-protection))
 
-          (try (is (nil? (:error opened)) (str opened))
-               (is (and (string? clone) (not= cache clone)))
-               (is (not (jail/draft-policy-expanded? environment)))
-               (let
-                 [result
-                  (#'lp/execute-code
-                   environment
-                   (str
-                     "(cache_path / 'source.txt').write_text('private cache')\n"
-                     "try:\n    Path("
-                     (pr-str (str cache "/source.txt"))
-                     ").write_text('escaped')\n"
-                     "except PermissionError:\n    pass\n"
-                     "else:\n    raise AssertionError('copied cache source stayed writable')\n"))]
-                 (is (nil? (:error result)) (str result))
-                 (is (= "private cache" (slurp (io/file clone "source.txt"))))
-                 (is (= "original" (slurp (io/file cache "source.txt")))))
-               (finally (when (workspace/draft? @(:workspace-atom environment))
-                          (drafts/draft-discard environment)))))))))
+(deftest unavailable-copy-keeps-no-search-cache-protected
+  ;; Exercise the refusal boundary even on development filesystems with CoW support.
+  (with-redefs [workspace/rift-available? (constantly {:available? false :reason :probe-failed})]
+    (with-project :rift :copy-only assert-copied-cache-protection)))

@@ -1,10 +1,9 @@
 (ns com.blockether.vis.release-bundle-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.net URL URLClassLoader]
+  (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -87,7 +86,8 @@
         (io/file root "failed-fetch")
 
         real-git
-        (str/trim (:output (run-bash ["bash" "-lc" "command -v git"] {})))]
+        ;; Login startup scripts can print diagnostics before the executable path.
+        (str/trim (:output (run-bash ["bash" "-c" "command -v git"] {})))]
 
     (try
       (spit (io/file remote "deps.edn") "{}\n")
@@ -1051,26 +1051,31 @@
       ;; stamping step of its own
       (expect (str/includes? dockerfile "COPY --from=native-export") dockerfile)
       (expect (not (str/includes? dockerfile "/opt/vis/src/resources/vis/VERSION")) dockerfile)))
-  (it "reports the stamped string verbatim from the classpath resource"
-      (let [dir
-            (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
+  (it
+    "reports the stamped string verbatim in a fresh process"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
 
-            stamped
-            (str/trim (slurp "VIS_VERSION"))
+          stamped
+          (str/trim (slurp "VIS_VERSION"))]
 
-            thread
-            (Thread/currentThread)
-
-            prior
-            (.getContextClassLoader thread)]
-
-        (spit (doto (io/file dir "vis" "VERSION") io/make-parents) (str stamped "\n"))
-        (try (.setContextClassLoader
-               thread
-               (URLClassLoader. (into-array URL [(.toURL (.toURI ^java.io.File dir))]) prior))
-             ;; what `/healthz` and `/v1/capabilities` advertise
-             (expect (= stamped (protocol/release-version)))
-             (finally (.setContextClassLoader thread prior) (delete-tree! dir))))))
+      (spit (doto (io/file dir "vis" "VERSION") io/make-parents) (str stamped "\n"))
+      ;; Build identity is intentionally cached for a process. Other tests may
+      ;; have resolved it before this fixture supplied its version resource.
+      (try
+        (let
+          [{:keys [exit output]}
+           (run-bash
+             [(str (io/file (System/getProperty "java.home") "bin" "java"))
+              "--enable-native-access=ALL-UNNAMED" "-cp"
+              (str dir File/pathSeparator (System/getProperty "java.class.path")) "clojure.main"
+              "-e"
+              "(require '[com.blockether.vis.internal.gateway.runtime :as runtime]) (print (runtime/release-version))"]
+             {})]
+          (expect (= 0 exit) output)
+          ;; JAVA_TOOL_OPTIONS can prepend JVM diagnostics to the merged stream.
+          (expect (= stamped (last (str/split-lines (str/trim output))))))
+        (finally (delete-tree! dir))))))
 
 (defdescribe
   release-native-engine-fallback-test
@@ -2765,6 +2770,25 @@
         (expect (str/includes? publisher "id: existing"))
         (expect (str/includes? publisher "if: steps.existing.outputs.published != 'true'"))
         (expect (not (str/includes? publisher "skip-existing:"))))))
+
+(defdescribe
+  android-sdk-setup-test
+  (it "requests supported Android SDK packages for CI and complete releases"
+      ;; CI 35020698566 failed before building because the action default requests obsolete tools.
+      (doseq [path [".github/workflows/android-companion.yml"
+                    ".github/workflows/mobile-release.yml"]]
+        (let [steps
+              (re-seq
+                #"(?ms)^      - uses: android-actions/setup-android@[^\n]+\n(.*?)(?=^      - |\z)"
+                (slurp path))]
+          (expect (= 1 (count steps)) path)
+          (doseq [[_ step] steps]
+            (let [packages (some-> (re-find #"(?m)^          packages: (.+)$" step)
+                                   second
+                                   (str/split #"\s+")
+                                   set)]
+              (expect (contains? packages "platform-tools") path)
+              (expect (not (contains? packages "tools")) path)))))))
 
 (defdescribe
   complete-release-gate-test

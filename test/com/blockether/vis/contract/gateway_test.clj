@@ -31,11 +31,11 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 113 (count contract/route-table)))
-    (expect (= 137 (count (contract/route-methods))))
-    (expect (= {:none 97 :json 36 :binary 4}
+    (expect (= 124 (count contract/route-table)))
+    (expect (= 153 (count (contract/route-methods))))
+    (expect (= {:none 104 :json 45 :binary 4}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 119 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 135 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 34 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
@@ -67,7 +67,7 @@
   (it "pins every built-in operation path and method from the runtime router"
       (expect (= (mapv (fn [{:keys [path operations]}]
                          {:path path :methods (set (keys operations))})
-                       contract/route-table)
+                       (sort-by :path contract/route-table))
                  (runtime-route-table))))
   (it "declares each request and successful response transport"
       (let [operation contract/operation]

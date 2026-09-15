@@ -55,48 +55,90 @@ worker_value = 41
 print(worker_value)"))))
           (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
 
-(defdescribe worker-runtime-source-selection-test
-             ;; #194: JSON-escaped forward slashes are not Python path literals.
-             (it "selects the host runtime roots as real import paths before installing the worker"
-                 (with-worker-context
-                   (fn [session]
-                     (let [result (worker/eval-str
-                                    session
-                                    com.blockether.vis-python-runtime/default-session
-                                    (str "__vis_runtime_roots__ == "
-                                         (env/py-json-literal
-                                           (vec (com.blockether.vispython.Sources/roots)))))]
-                       (expect (= "True" result) (str result)))))))
+(defdescribe
+  worker-runtime-source-selection-test
+  ;; #194: JSON-escaped forward slashes are not Python path literals.
+  (it "selects the host runtime roots as real import paths before installing the worker"
+      (with-worker-context
+        (fn [session]
+          (let [result (worker/eval-str
+                         session
+                         com.blockether.vis-python-runtime/default-session
+                         (str "sys.path[:len(__vis_runtime_roots__)] == __vis_runtime_roots__ == "
+                              (env/py-json-literal (vec
+                                                     (com.blockether.vispython.Sources/roots)))))]
+            (expect (= "True" result) (str result)))))))
 
-(defdescribe worker-runtime-source-snapshot-test
-             (it "uses one runtime-source snapshot for the boot policy and Python imports"
-                 (let [boot
-                       #'worker/boot-read-paths
+(defdescribe
+  worker-runtime-source-snapshot-test
+  (it
+    "uses one runtime-source snapshot for the boot policy, launch and Python imports"
+    (let [boot
+          #'worker/boot-read-paths
 
-                       resolve-paths
-                       @boot
+          resolve-paths
+          @boot
 
-                       snapshots
-                       (atom [])]
+          launch-argv
+          @#'worker/child-argv
 
-                   (with-redefs-fn {boot (fn [& args]
-                                           (swap! snapshots conj (nth args 2 nil))
-                                           (apply resolve-paths args))}
-                     (fn []
-                       (with-worker-context
-                         (fn [session]
-                           (expect (= 1 (count @snapshots)))
-                           (let [roots
-                                 (first @snapshots)
+          snapshots
+          (atom [])
 
-                                 result
-                                 (worker/eval-str session
-                                                  com.blockether.vis-python-runtime/default-session
-                                                  (str "__vis_runtime_roots__ == "
-                                                       (env/py-json-literal roots)))]
+          launch-snapshots
+          (atom [])]
 
-                             (expect (vector? roots))
-                             (expect (= "True" result) (str result))))))))))
+      (with-redefs-fn {boot (fn [& args]
+                              (swap! snapshots conj (nth args 2 nil))
+                              (apply resolve-paths args))
+                       #'worker/child-argv (fn [& args]
+                                             (swap! launch-snapshots conj (nth args 4 nil))
+                                             (apply launch-argv args))}
+        (fn []
+          (with-worker-context
+            (fn [session]
+              (expect (= 1 (count @snapshots)))
+              (let [roots
+                    (first @snapshots)
+
+                    result
+                    (worker/eval-str session
+                                     com.blockether.vis-python-runtime/default-session
+                                     (str "__vis_runtime_roots__ == " (env/py-json-literal roots)))]
+
+                (expect (vector? roots))
+                (expect (= [roots] @launch-snapshots))
+                (expect (= "True" result) (str result))))))))))
+
+(defdescribe
+  worker-cold-source-cache-test
+  (it "starts from the host runtime roots without extracting a cold worker cache"
+      (let [home
+            (java.nio.file.Files/createTempDirectory
+              "vis-worker-cold-sources-"
+              (make-array java.nio.file.attribute.FileAttribute 0))
+
+            cache
+            (.resolve home ".vis/python/sources")
+
+            argv
+            @#'worker/child-argv]
+
+        (try (with-redefs-fn {#'worker/child-argv
+                              (fn [& args]
+                                (let [[command & arguments] (apply argv args)]
+                                  (into [command (str "-Duser.home=" home)]
+                                        (remove #(str/starts-with? % "-Duser.home=") arguments))))}
+               #(with-worker-context (fn [session]
+                                       (expect (= "ready\n"
+                                                  (:stdout (env/run-python-block
+                                                             session
+                                                             "print(await worker_echo('ready'))"))))
+                                       (expect (not (java.nio.file.Files/exists
+                                                      cache
+                                                      (make-array java.nio.file.LinkOption 0)))))))
+             (finally (doseq [file (reverse (file-seq (.toFile home)))]
+                        (.delete ^java.io.File file)))))))
 
 (defdescribe
   shared-packages-install-authority-test
@@ -369,80 +411,97 @@ print(worker_value)"))))
         (finally (doseq [path [module packages base]]
                    (java.nio.file.Files/deleteIfExists path)))))))
 
-(defdescribe
-  worker-profiler-options-test
-  ;; Full-suite JFR reproduction: a confined worker inherited the parent's
-  ;; recording path and failed before connecting to its control socket.
-  (it "does not inherit parent recording or diagnostic destinations"
-      (expect (= ["-Xmx2g" "--enable-native-access=ALL-UNNAMED" "-XX:+HeapDumpOnOutOfMemoryError"
-                  "-Dvis.example=true"]
-                 (vec (#'worker/worker-jvm-options
-                       ["-Xmx2g" "-XX:StartFlightRecording=filename=parent.jfr"
-                        "--enable-native-access=ALL-UNNAMED"
-                        "-XX:FlightRecorderOptions=repository=parent-recordings"
-                        "-XX:ErrorFile=parent-crash.log" "-XX:HeapDumpPath=parent.hprof"
-                        "-XX:+HeapDumpOnOutOfMemoryError" "-Dvis.example=true"])))))
-  (it
-    "launches the worker without the current JVM's recording options"
-    (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
-      (expect
-        (not-any?
-          #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)" %)
-          (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs"))))))
+(defdescribe worker-profiler-options-test
+             ;; Full-suite JFR reproduction: a confined worker inherited the parent's
+             ;; recording path and failed before connecting to its control socket.
+             (it "does not inherit parent recording or diagnostic destinations"
+                 (expect (= ["-Xmx2g" "--enable-native-access=ALL-UNNAMED"
+                             "-XX:+HeapDumpOnOutOfMemoryError" "-Dvis.example=true"]
+                            (vec (#'worker/worker-jvm-options
+                                  ["-Xmx2g" "-XX:StartFlightRecording=filename=parent.jfr"
+                                   "--enable-native-access=ALL-UNNAMED"
+                                   "-XX:FlightRecorderOptions=repository=parent-recordings"
+                                   "-XX:ErrorFile=parent-crash.log" "-XX:HeapDumpPath=parent.hprof"
+                                   "-XX:+HeapDumpOnOutOfMemoryError" "-Dvis.example=true"])))))
+             (it "launches the worker without the current JVM's recording options"
+                 (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
+                   (expect (not-any? #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)"
+                                               %)
+                                     (#'worker/child-argv
+                                      nil
+                                      "/tmp/control.sock"
+                                      "/tmp/host-modules"
+                                      "/tmp/worker-logs"
+                                      ["/runtime/sources"]))))))
 
-(defdescribe
-  worker-entrypoint-test
-  (it "uses the Java entrypoint when the selected runtime has no packaged worker"
-      (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
-        (let [argv
-              (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs")]
-          (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock" "/tmp/host-modules"]
-                     (vec (take-last 3 argv)))))))
-  (it "makes runtime sources and their extraction marker readable at worker boot"
-      (let [roots
-            (vec (com.blockether.vispython.Sources/roots))
+(defdescribe worker-entrypoint-test
+             (it "uses the Java entrypoint when the selected runtime has no packaged worker"
+                 (with-redefs [com.blockether.vis.internal.util/native-image?
+                               (constantly false)
 
-            paths
-            (set (#'worker/boot-read-paths
-                  nil
-                  "/tmp/host-modules"
-                  roots
-                  (com.blockether.vis-python-runtime/packages-dir)))]
+                               com.blockether.vis-python-runtime/resolve-worker
+                               (constantly nil)]
 
-        (expect (contains? paths
-                           (.getCanonicalPath (java.io.File.
-                                                (com.blockether.vispython.Locations/sourcesDir)))))
-        (doseq [path roots]
-          (expect (contains? paths (.getCanonicalPath (java.io.File. ^String path)))))))
-  (it "launches the selected runtime executable from either a JVM or native host"
-      ;; JVM dogfooding: starting another JVM needlessly tripled per-worker RSS.
-      (doseq [native? [false true]]
-        (with-redefs [com.blockether.vis.internal.util/native-image? (constantly native?)
-                      com.blockether.vis-python-runtime/resolve-worker
-                      (fn [library]
-                        (expect (= {:path "/runtime/libvispython.so"} library))
-                        "/runtime/vis-python-worker")]
+                   (let [argv (#'worker/child-argv
+                               nil
+                               "/tmp/control.sock"
+                               "/tmp/host-modules"
+                               "/tmp/worker-logs"
+                               ["/runtime/sources"])]
+                     (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock"
+                                 "--resolved-sources" "/runtime/sources" "/tmp/host-modules"]
+                                (vec (take-last 5 argv)))))))
+             (it "makes runtime sources and their extraction marker readable at worker boot"
+                 (let [roots
+                       (vec (com.blockether.vispython.Sources/roots))
 
-          (expect (= ["/runtime/vis-python-worker"
-                      (str "-Duser.home=" (System/getProperty "user.home")) "/tmp/control.sock"
-                      "/tmp/host-modules"]
-                     (#'worker/child-argv
-                      "/runtime/libvispython.so"
-                      "/tmp/control.sock"
-                      "/tmp/host-modules"
-                      "/tmp/worker-logs"))))))
-  (it "refuses a native runtime without its worker instead of starting Vis again"
-      (with-redefs [com.blockether.vis.internal.util/native-image?
-                    (constantly true)
+                       paths
+                       (set (#'worker/boot-read-paths
+                             nil
+                             "/tmp/host-modules"
+                             roots
+                             (com.blockether.vis-python-runtime/packages-dir)))]
 
-                    com.blockether.vis-python-runtime/resolve-worker
-                    (constantly nil)]
+                   (expect (contains? paths
+                                      (.getCanonicalPath
+                                        (java.io.File.
+                                          (com.blockether.vispython.Locations/sourcesDir)))))
+                   (doseq [path roots]
+                     (expect (contains? paths (.getCanonicalPath (java.io.File. ^String path)))))))
+             (it "launches the selected runtime executable from either a JVM or native host"
+                 ;; JVM dogfooding: starting another JVM needlessly tripled per-worker RSS.
+                 (doseq [native? [false true]]
+                   (with-redefs [com.blockether.vis.internal.util/native-image? (constantly native?)
+                                 com.blockether.vis-python-runtime/resolve-worker
+                                 (fn [library]
+                                   (expect (= {:path "/runtime/libvispython.so"} library))
+                                   "/runtime/vis-python-worker")]
 
-        (expect
-          (= :vis/python-worker-missing
-             (try
-               (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs")
-               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+                     (expect (= ["/runtime/vis-python-worker"
+                                 (str "-Duser.home=" (System/getProperty "user.home"))
+                                 "/tmp/control.sock" "--resolved-sources" "/runtime/source modules"
+                                 "/runtime/extra-sources" "/tmp/host-modules"]
+                                (#'worker/child-argv
+                                 "/runtime/libvispython.so"
+                                 "/tmp/control.sock"
+                                 "/tmp/host-modules"
+                                 "/tmp/worker-logs"
+                                 ["/runtime/source modules" "/runtime/extra-sources"]))))))
+             (it "refuses a native runtime without its worker instead of starting Vis again"
+                 (with-redefs [com.blockether.vis.internal.util/native-image?
+                               (constantly true)
+
+                               com.blockether.vis-python-runtime/resolve-worker
+                               (constantly nil)]
+
+                   (expect (= :vis/python-worker-missing
+                              (try (#'worker/child-argv
+                                    nil
+                                    "/tmp/control.sock"
+                                    "/tmp/host-modules"
+                                    "/tmp/worker-logs"
+                                    ["/runtime/sources"])
+                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 (defdescribe worker-host-authorization-test
              (it "rejects callers not assigned to the connection before host dispatch"

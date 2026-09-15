@@ -126,43 +126,47 @@
     (with-open [in ^java.io.InputStream body]
       (io/copy in dest))))
 
+(defonce ^:private library-provisioning-lock (Object.))
+
 (defn ensure-library!
   "Make the interpreter for this platform resolvable, answering the library path.
 
    A no-op when the runtime already resolves one. Otherwise the cached
-   installation is used, or the platform archive is fetched into it first. Every
-   caller of the interpreter goes through `env-python/ensure-interpreter!`, which
-   calls this before starting it."
+   installation is used, or the platform archive is fetched into it first. Concurrent
+   cold callers share one installation and recheck resolution after acquiring the lock."
   []
   (or (resolved-library)
-      (let [version
-            runtime/version
+      (locking library-provisioning-lock
+        (or (resolved-library)
+            (let [version
+                  runtime/version
 
-            platform
-            (runtime/platform)
+                  platform
+                  (runtime/platform)
 
-            home
-            (io/file (Locations/runtimeDir version platform))
+                  home
+                  (io/file (Locations/runtimeDir version platform))
 
-            library
-            (io/file home (runtime/library-name platform))]
+                  library
+                  (io/file home (runtime/library-name platform))]
 
-        (when-not (.isFile library)
-          (let [url
-                (archive-url version platform)
+              (when-not (.isFile library)
+                (let [url
+                      (archive-url version platform)
 
-                archive
-                (io/file (str (.getAbsolutePath home) ".tar.gz." (.pid (ProcessHandle/current))))]
+                      archive
+                      (io/file
+                        (str (.getAbsolutePath home) ".tar.gz." (.pid (ProcessHandle/current))))]
 
-            (tel/log! {:level :info :id ::fetching-runtime :url url :home (str home)})
-            (try (download! url archive)
-                 (install-archive! archive home)
-                 (finally (.delete archive)))))
-        (when-not (.isFile library)
-          (throw (ex-info "The embedded CPython installation holds no runtime library."
-                          {:home (str home) :platform platform :version version})))
-        (runtime/use-library! (str home))
-        (.getAbsolutePath library))))
+                  (tel/log! {:level :info :id ::fetching-runtime :url url :home (str home)})
+                  (try (download! url archive)
+                       (install-archive! archive home)
+                       (finally (.delete archive)))))
+              (when-not (.isFile library)
+                (throw (ex-info "The embedded CPython installation holds no runtime library."
+                                {:home (str home) :platform platform :version version})))
+              (runtime/use-library! (str home))
+              (.getAbsolutePath library))))))
 
 (defn- configured-index-url
   []

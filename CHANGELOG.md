@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.5] - 2026-09-15
+
+### Added
+- Create and review isolated drafts across selected repositories, with synchronization and recovery for partial approval failures. Drafts remain off by default (#241, #242, #243).
+- Manage owned subagents through Council and use searchable saved Python helpers across turns.
+- Refer to staged images consistently in the Companion and TUI composers.
+
+### Fixed
+- Reduce JVM gateway memory retention and redundant work during session loading, tool execution and process cleanup.
+- Preserve Python coroutine and module execution semantics, generated result indexing, and project-local CLI environments (#240, #237, #226).
+- Keep long-session scrolling and Activity, Result and Live View controls independent in the TUI (#244).
+- Keep new sessions outside existing draft workspaces (#245) and remove extra padding around TUI composer attachments (#249).
+- Recover sessions opened inside draft folders and refresh draft status after switching, approving or discarding drafts (#246, #247).
+- Fix first-use startup of sandboxed Python tools and share runtime installation across concurrent startup requests.
+- Make SDK cleanup and authentication tests wait for completed asynchronous work, and verify draft source protection on filesystems without copy-on-write support.
+
+### Changed
+- Update the embedded Python runtime to 0.5.20 for Linux and macOS. Windows runtime artifacts and desktop packaging remain disabled.
+- Keep routine Activity summaries compact and retain detailed results, errors and execution timing.
+
 ## [v0.2.3] - 2026-09-12
 
 ### Added
@@ -6251,7 +6271,9 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.58...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.5...HEAD
+[v0.2.5]: https://github.com/Blockether/vis/compare/v0.2.3...v0.2.5
+[v0.2.3]: https://github.com/Blockether/vis/releases/tag/v0.2.3
 [v0.1.58]: https://github.com/Blockether/vis/compare/v0.1.57...v0.1.58
 [v0.1.57]: https://github.com/Blockether/vis/compare/v0.1.56...v0.1.57
 [v0.1.56]: https://github.com/Blockether/vis/compare/v0.1.55...v0.1.56

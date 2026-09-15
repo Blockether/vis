@@ -32,10 +32,11 @@
 
     (is (some? executable) "Build or stage the native Python worker before running test-native")
     (try
-      (with-redefs-fn {#'worker/child-argv (fn [_ socket guest-dir _run-directory]
-                                             [executable
-                                              (str "-Duser.home=" (.getCanonicalPath home)) socket
-                                              guest-dir])}
+      (with-redefs-fn {#'worker/child-argv (fn [_ socket guest-dir _run-directory runtime-roots]
+                                             (into [executable
+                                                    (str "-Duser.home=" (.getCanonicalPath home))
+                                                    socket "--resolved-sources"]
+                                                   (conj runtime-roots guest-dir)))}
         (fn []
           (doseq [strict [nil true false]]
             (with-redefs [config/load-config-raw

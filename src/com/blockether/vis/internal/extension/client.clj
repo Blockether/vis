@@ -5,7 +5,8 @@
             [com.blockether.vis.contract.document :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.python.host :as python-host])
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.util UUID]))
 
 (defonce ^:private registrations (atom {}))
@@ -176,7 +177,7 @@
    The caller holds its turn lock through installation. live? checks the actual lease."
   [sid owner payload live? environment]
   (validate! "client_extensions" payload)
-  (when-not (and (string? owner) (not (str/blank? owner)) (live?))
+  (when-not (and (util/non-blank-string? owner) (live?))
     (refuse! 403 :client_extension_owner "A live client lease is required"))
   (locking registrations
     (let [sid
