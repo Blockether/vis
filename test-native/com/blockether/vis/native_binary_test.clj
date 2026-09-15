@@ -1729,3 +1729,24 @@
             (expect (str/includes? (checked probe) (str "42 " (.getCanonicalPath dep-module))))))
         (expect (.isDirectory (io/file project ".venv")))
         (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-python-interactive-input-test
+  ;; Regression #229: the linked CLI must show prompts before accepting input.
+  (it "reads delayed terminal input and EOF in both file and module modes"
+      (let [dir (temp-dir "vis-native-python-tty-")]
+        (try (let [result (run-binary
+                            dir
+                            ["python3"
+                             (.getCanonicalPath
+                               (io/file
+                                 "test-native/com/blockether/vis/fixtures/python_cli_tty.py"))
+                             (.getCanonicalPath (require-binary)) "python"]
+                            240)]
+               (expect (:finished? result) (:output result))
+               (expect (= 0 (:exit result)) (:output result))
+               (expect (str/includes? (:output result) "file: interactive input and EOF passed")
+                       (:output result))
+               (expect (str/includes? (:output result) "module: interactive input and EOF passed")
+                       (:output result)))
+             (finally (delete-tree! dir))))))

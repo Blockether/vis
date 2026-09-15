@@ -62,7 +62,7 @@
     (it "runs a basic print block: exit 0, output surfaces"
         (let [{:keys [exit out]} (run-src ctx "print('hi', 1 + 1)")]
           (expect (= 0 exit))
-          (expect (re-find #"hi 2" out))))
+          (expect (= "hi 2\n" out))))
     (it "a bare trailing expression prints nothing: print is the one channel"
         (let [{:keys [exit out]} (run-src ctx "40 + 2")]
           (expect (= 0 exit))
@@ -70,6 +70,13 @@
     (it "a raised exception renders the error and exits 1"
         (let [{:keys [exit out]} (run-src ctx "raise ValueError('boom')")]
           (expect (= 1 exit))
+          (expect (re-find #"boom" out))))
+    (it "keeps output printed before an exception exactly once"
+        ;; Regression #229: live CLI output must not be replayed or lost on error.
+        (let [{:keys [exit out]} (run-src ctx "print('before-error'); raise ValueError('boom')")]
+          (expect (= 1 exit))
+          (expect (re-find #"^before-error\n" out))
+          (expect (= 1 (count (re-seq #"(?m)^before-error$" out))))
           (expect (re-find #"boom" out))))
     (it "state persists across blocks in the same context"
         (run-src ctx "carry = 7")
@@ -111,14 +118,15 @@
         ;; jailed contract, which is the one that means something.
         (tpc/with-own [jailed {} (constantly [(System/getProperty "user.dir")])
                        {:jail-enabled? true :enabled? false}]
-                      (let [{:keys [exit out]}
-                            (run-src jailed
-                                     (str "import socket\n" "try:\n"
-                                          "    socket.gethostbyname('example.com')\n"
-                                          "    print('resolved')\n"
-                                          "except Exception:\n" "    print('blocked')"))]
-                        (expect (= 0 exit))
-                        (expect (re-find #"blocked" out)))))
+                      (let [{:keys [stdout error]}
+                            (env/run-python-block jailed
+                                                  (str "import socket\n" "try:\n"
+                                                       "    socket.gethostbyname('example.com')\n"
+                                                       "    print('resolved')\n"
+                                                       "except Exception:\n"
+                                                       "    print('blocked')"))]
+                        (expect (nil? error))
+                        (expect (re-find #"blocked" stdout)))))
     (it "a network-enabled context builds without error"
         (expect (some? (python-cli-context {:network? true}))))))
 

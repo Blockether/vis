@@ -42,6 +42,7 @@
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
             [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -3180,6 +3181,9 @@
                                    {:enabled? (boolean network?)}
                                    System/in)]
 
+    ;; The CLI owns a real terminal: prompts must reach it before input() blocks.
+    ;; Agent contexts keep the default captured-output callback.
+    (python-host/install-sync-tools! python-context {"__vis_capture_stdout__" write-stdout!})
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
     ;; Forward script argv + (by default) the caller's env — real-python CLI
@@ -3211,17 +3215,12 @@
     python-context))
 
 (defn- run-python-source!
-  "Evaluate one Python source block in `ctx`, rendering its outcome to the
-   real terminal. Returns the process exit code (0 ok, 1 on a raised error).
-   The sandbox has ONE success channel, so what surfaces here is exactly what the
-   block `print(...)`ed — a bare trailing expression is never echoed, because the
-   CLI and the model read the same outcome and neither may see more than the
-   other."
+  "Evaluate one Python source block in `ctx`, streaming printed output as it is
+   written. Returns the process exit code (0 ok, 1 on a raised error). A bare
+   trailing expression is never echoed."
   [ctx code]
-  (let [{:keys [stdout error]} (env/run-python-block ctx code)]
-    (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
-          (and (some? stdout) (seq stdout)) (do (write-stdout! stdout) 0)
-          :else 0)))
+  (let [{:keys [error]} (env/run-python-block ctx code)]
+    (if error (do (stdout! (or (:message error) (pr-str error))) 1) 0)))
 
 (defn- python-repl!
   "Minimal interactive REPL over one persistent standalone sandbox `ctx`.
@@ -3355,7 +3354,7 @@
           (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n")
 
           ;; Modules own their event loop; do not wrap runpy in the tool coroutine.
-          {:keys [stdout error]}
+          {:keys [error]}
           (json/read-json (pyrt/run ctx
                                     (str "__import__('vis_runtime').run_sync_block("
                                          (pr-str code)
@@ -3363,7 +3362,6 @@
                           :key-fn
                           keyword)]
 
-      (when (seq stdout) (write-stdout! stdout))
       (if error (do (stdout! error) 1) (module-exit-code ctx)))))
 
 (defn- cli-python!

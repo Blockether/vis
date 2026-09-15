@@ -21,39 +21,56 @@
     (.delete file)))
 
 (defn- run-cli
-  [^File dir environment args]
-  (let [classpath
-        (str/join File/pathSeparator
-                  (map (fn [entry]
-                         (let [file (io/file entry)]
-                           (.getCanonicalPath file)))
-                       (str/split (System/getProperty "java.class.path")
-                                  (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))))
+  ([dir environment args] (run-cli dir environment args false))
+  ([^File dir environment args tty?]
+   (let [classpath
+         (str/join File/pathSeparator
+                   (map (fn [entry]
+                          (let [file (io/file entry)]
+                            (.getCanonicalPath file)))
+                        (str/split (System/getProperty "java.class.path")
+                                   (re-pattern (java.util.regex.Pattern/quote
+                                                 File/pathSeparator)))))
 
-        command
-        (into [(str (io/file (System/getProperty "java.home") "bin/java"))
-               "--enable-native-access=ALL-UNNAMED" "--enable-preview" "-cp" classpath
-               "clojure.main" "-m" "com.blockether.vis.core" "python"]
-              args)
+         command
+         (into [(str (io/file (System/getProperty "java.home") "bin/java"))
+                "--enable-native-access=ALL-UNNAMED" "--enable-preview" "-cp" classpath
+                "clojure.main" "-m" "com.blockether.vis.core" "python"]
+               args)
 
-        output
-        (io/file dir (str "cli-" (java.util.UUID/randomUUID) ".log"))
+         command
+         (if tty?
+           (into ["python3"
+                  (.getCanonicalPath
+                    (io/file "test-native/com/blockether/vis/fixtures/python_cli_tty.py"))]
+                 command)
+           command)
 
-        builder
-        (doto (ProcessBuilder. ^java.util.List command)
-          (.directory dir)
-          (.redirectErrorStream true)
-          (.redirectOutput output))]
+         output
+         (io/file dir (str "cli-" (java.util.UUID/randomUUID) ".log"))
 
-    (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
-      (.remove (.environment builder) key))
-    (.putAll (.environment builder) environment)
-    (let [process (.start builder)]
-      (try (.close (.getOutputStream process))
-           (when-not (.waitFor process 90 TimeUnit/SECONDS)
-             (throw (ex-info "Python CLI timed out" {:output (slurp output)})))
-           {:exit (.exitValue process) :output (slurp output)}
-           (finally (when (.isAlive process) (.destroyForcibly process)))))))
+         builder
+         (doto (ProcessBuilder. ^java.util.List command)
+           (.directory dir)
+           (.redirectErrorStream true)
+           (.redirectOutput output))]
+
+     (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
+       (.remove (.environment builder) key))
+     (.putAll (.environment builder) environment)
+     (let [process (.start builder)]
+       (try (.close (.getOutputStream process))
+            (when-not (.waitFor process (if tty? 240 90) TimeUnit/SECONDS)
+              (throw (ex-info "Python CLI timed out" {:output (slurp output)})))
+            {:exit (.exitValue process) :output (slurp output)}
+            (finally (when (.isAlive process)
+                       (doseq [^java.lang.ProcessHandle child (-> process
+                                                                  .toHandle
+                                                                  .descendants
+                                                                  .toList)]
+                         (.destroyForcibly child))
+                       (.destroyForcibly process)
+                       (.waitFor process 10 TimeUnit/SECONDS))))))))
 
 ;; Regression #226: a project must not borrow shared wheels, editable roots,
 ;; startup hooks or modules imported by those hooks before its environment loads.
@@ -419,3 +436,18 @@
             (expect (every? #(str/starts-with? (:path %) "/private/") @requests)
                     (pr-str @requests))))
         (finally (.stop server 0) (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-interactive-input-test
+  ;; Regression #229: enter input only after the prompt reaches a real terminal.
+  (it "reads delayed terminal input and EOF in both file and module modes"
+      (let [dir (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
+                                                    "vis-cli-tty-"
+                                                    (make-array FileAttribute 0)))]
+        (try (let [result (run-cli dir {} [] true)]
+               (expect (= 0 (:exit result)) (:output result))
+               (expect (str/includes? (:output result) "file: interactive input and EOF passed")
+                       (:output result))
+               (expect (str/includes? (:output result) "module: interactive input and EOF passed")
+                       (:output result)))
+             (finally (delete-tree! dir))))))
