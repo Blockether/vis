@@ -77,14 +77,6 @@ function activityStepObject(row: ActivityRow): string {
   return summary.toLowerCase() === row.operation.trim().toLowerCase() ? '' : summary;
 }
 
-function activityRowSummary(row: ActivityRow): string {
-  const object = activityStepObject(row);
-  return (row.presenter === 'shell' || row.operation.toLowerCase() === 'shell') &&
-    row.summary.trim().startsWith('running: ')
-    ? `cmd: ${object}`
-    : object;
-}
-
 /** The step's own sentence: a verb the reader knows, then what it was applied to. */
 function activityStepLead(row: ActivityRow): string {
   const verb = ACTIVITY_VERBS[row.operation.trim().toLowerCase()];
@@ -174,7 +166,7 @@ export function activityReceiptText(activity?: ActivityProjection, durationMs?: 
   const omitted = Math.max(0, activity?.omitted.rows ?? 0);
   const shown = rows.slice(0, 3);
   const left = rows.length - shown.length + omitted;
-  const subject = rows.length === 1 && left === 0 ? activityRowSummary(rows[0]) : '';
+  const subject = rows.length === 1 && left === 0 ? activityStepObject(rows[0]) : '';
   const names = [...shown.map((row) => row.operation.toUpperCase()), subject]
     .filter(Boolean)
     .join(' · ');

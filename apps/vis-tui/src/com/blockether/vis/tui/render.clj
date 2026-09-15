@@ -5262,7 +5262,7 @@
 
         summary
         (if (and (= "shell" (str/lower-case operation)) (str/starts-with? summary "running: "))
-          (str "cmd: " (subs summary (count "running: ")))
+          (subs summary (count "running: "))
           summary)]
 
     (when (and (not (str/blank? summary))

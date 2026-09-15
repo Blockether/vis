@@ -411,12 +411,12 @@
 
       (expect (= 1 (count (:rows snapshot))))
       (expect (= :shell (:operation group)))
-      (expect (= "cmd: npm test" (:summary group)))
+      (expect (= "npm test" (:summary group)))
       (expect (= (:argument-key (ffirst pairs)) (:argument-key group)))
       (expect (= (:argument-key group)
                  (:argument-key (first (:rows (activity/presentation snapshot))))))
       (expect (not= (:argument-key group) (:argument-key (first (second pairs)))))
-      (expect (= ["shell" "cmd: npm test"]
+      (expect (= ["shell" "npm test"]
                  ((juxt :operation :summary) (first (:rows (activity/presentation snapshot))))))
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"

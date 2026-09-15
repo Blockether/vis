@@ -6611,6 +6611,10 @@ h = 8"
 ;; and rendered presenter prose/default operation names instead of compact invocation evidence.
 (defdescribe
   activity-shell-command-grid-test
+  (it "shows the command without a prefix in a single-shell receipt"
+      (doseq [summary ["running: npm test" "npm test"]]
+        (expect (= "npm test"
+                   (#'render/activity-row-summary {:operation "shell" :summary summary})))))
   (it
     "paints the canonical command grid and omits duplicate default detail"
     (render/invalidate-cache!)
@@ -6632,7 +6636,7 @@ h = 8"
                   {:id "shell-2"
                    :sequence 2
                    :operation "shell"
-                   :summary (str "cmd: " long-command)
+                   :summary long-command
                    :state "succeeded"
                    :duration-ms 230}
                   {:id "tests"
@@ -6760,6 +6764,7 @@ h = 8"
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
               "Activity owns one quiet timeline surface")
+      (expect (not (str/includes? expanded-text "cmd: ")))
       (expect (str/includes? first-line "Ran npm test"))
       (expect (= 1 (count (filter #(str/includes? % "Ran npm test") lines))))
       (expect (str/includes? second-line "…") "the terminal-width command is ellipsized")
@@ -7051,10 +7056,10 @@ h = 8"
         {:id "sh-1"
          :sequence 1
          :operation "shell"
-         :summary "cmd: git push origin main"
+         :summary "git push origin main"
          :state "succeeded"
          :duration-ms 2400
-         :children [(child "sh-2" "shell" "cmd: git push origin main" "succeeded")
+         :children [(child "sh-2" "shell" "git push origin main" "succeeded")
                     (child "wait-1" "_shell-wait" "waiting up to 120s for the shell" "succeeded")
                     (child "logs-1" "_shell-logs" "reading the log of the shell" "succeeded")]}
 
@@ -7095,7 +7100,7 @@ h = 8"
 
     (it "keeps a settled step to one line when the reader explicitly folds it"
         (let [shut (lines [group bare] {"sh-1" false})]
-          (expect (re-find #"^Ran cmd.*▸" (line-with shut "Ran"))
+          (expect (re-find #"^Ran git push origin main.*▸" (line-with shut "Ran"))
                   "the operation starts at the text edge and its disclosure trails")
           (expect (= 1 (count (filter #(str/includes? % "Ran") shut)))
                   "the grouped calls wait behind the group")
@@ -7112,12 +7117,12 @@ h = 8"
               (lines [group] {"sh-1" true "sh-2" false "wait-1" false "logs-1" false})
 
               head
-              (line-with open "Ran cmd")
+              (line-with open "Ran git push origin main")
 
               wait
               (line-with open "_shell-wait")]
 
-          (expect (re-find #"^Ran cmd.*▾" head))
+          (expect (re-find #"^Ran git push origin main.*▾" head))
           (expect (= 3 (count (filter #(str/includes? % "▸") open)))
                   "three calls, three closed chevrons, and none of their outcomes")
           (expect (re-find #"^  _shell-wait.*▸" wait)
@@ -7150,7 +7155,7 @@ h = 8"
             open
             (lines [running failed] {})]
 
-        (expect (re-find #"^Running cmd.*▾" (line-with open "Running")))
+        (expect (re-find #"^Running git push origin main.*▾" (line-with open "Running")))
         (expect (some #(str/includes? % "_shell-wait") open) "the running group shows its calls")
         (expect (re-find #"^Search failed needle.*▾" (line-with open "Search failed")))
         (expect (some #(str/includes? % "no matches in 3 paths") open) "and the failure says why")
@@ -8543,7 +8548,7 @@ print(paths)"
             (str (first (filter #(str/includes? % needle) (str/split-lines text)))))
 
           plain
-          (band-text [(step "sh-1" "shell" "cmd: clojure -M:test" nil)
+          (band-text [(step "sh-1" "shell" "clojure -M:test" nil)
                       (step "grep-1" "grep" "3 files" nil)])
 
           rich-rows
@@ -8560,7 +8565,7 @@ print(paths)"
                     (when (str/includes? (str line) "3 directories") (:activity-content-col meta)))
                   (map vector lines line-meta)))]
 
-      (expect (str/starts-with? (line-with plain "Ran") "Ran cmd")
+      (expect (str/starts-with? (line-with plain "Ran") "Ran clojure -M:test")
               "an inert row reserves no disclosure gutter")
       (expect (re-find #"^Listed.*▾" (line-with rich "Listed"))
               "the disclosure follows the label, never shifting it")

@@ -649,6 +649,9 @@ describe("one form's Activity on the phone", () => {
     paintActivity({ activity: settled });
 
     expect(activityReceiptText(settled, 12_600)).toBe('SHELL · RUN_TESTS · 12.6s');
+    expect(activityReceiptText({ ...settled, rows: [settled.rows[0]] }, 66)).toBe(
+      'SHELL · git status · 66ms',
+    );
     expect(screen.getByLabelText('Operation groups').textContent).toContain('Ran git status');
     expect(screen.getByText('66ms')).toBeTruthy();
     expect(screen.getByText('12.5s')).toBeTruthy();

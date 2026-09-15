@@ -20,10 +20,10 @@
 (defn row-summary
   "Bounded already-redacted summary selected from semantic event fields. A shell
    spawn is durable command evidence, not a live-tense status: its ticker phrase
-   `running: <command>` becomes `cmd: <command>` in Activity."
+   `running: <command>` becomes the command itself in Activity."
   [{:keys [presenter phrase] :as event}]
   (or (when (and (= :shell presenter) (string? phrase) (str/starts-with? phrase "running: "))
-        (str "cmd: " (subs phrase (count "running: "))))
+        (subs phrase (count "running: ")))
       phrase
       (:label event)
       (:result-summary event)

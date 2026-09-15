@@ -46,7 +46,7 @@
                    :presenter "generic"
                    :signal "generic"
                    :state "succeeded"
-                   :summary (if (= operation "shell") "cmd: npm test" (str "src/file-" i ".clj"))
+                   :summary (if (= operation "shell") "npm test" (str "src/file-" i ".clj"))
                    :resources
                    (if (= operation "shell") [] [{:type "file" :id (str "src/file-" i ".clj")}])
                    :evidence (if (= operation "patch")
