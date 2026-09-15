@@ -3007,7 +3007,7 @@
 
 (defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
-   echo-area row, and footer with its bottom border.
+   echo-area row, and two unboxed footer rows.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -3852,7 +3852,7 @@
         header-top
         0
 
-        ;; Match full-frame geometry, including the footer's bottom border.
+        ;; Match the full-frame footer geometry.
         footer-row
         (- rows (long footer/height))
 

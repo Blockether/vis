@@ -28,39 +28,41 @@
 
 (defdescribe
   footer-edge-alignment-test
-  (it "aligns limits with the left gutter and Git with the usage row's right edge"
-      (with-redefs-fn {#'footer/model-segments (fn [_ _ ^long _row]
-                                                 [])
-                       #'footer/session-model-info (constantly {:reasoning-effort? false})}
-        (fn []
-          (doseq [cols
-                  [80 120 220]
+  (it
+    "aligns limits and Git without painting below the two status rows"
+    (with-redefs-fn {#'footer/model-segments (fn [_ _ ^long _row]
+                                               [])
+                     #'footer/session-model-info (constantly {:reasoning-effort? false})}
+      (fn []
+        (doseq [cols
+                [80 120 220]
 
-                  provider
-                  [nil :corp]]
+                provider
+                [nil :corp]]
 
-            (with-redefs-fn {#'footer/session-effective-provider (constantly provider)}
-              (fn []
-                (let [db
-                      {:messages [{:tokens {"input" 100 "output" 20} :cost {"total_cost" 0.0042}}]
-                       :workspace
-                       {"git"
-                        {"is_workspace" true "repo" "vis" "branch" "main" "is_upstream" true}}}
+          (with-redefs-fn {#'footer/session-effective-provider (constantly provider)}
+            (fn []
+              (let [db
+                    {:messages [{:tokens {"input" 100 "output" 20} :cost {"total_cost" 0.0042}}]
+                     :workspace
+                     {"git" {"is_workspace" true "repo" "vis" "branch" "main" "is_upstream" true}}}
 
-                      frame
-                      (cap/capture! {:cols cols
-                                     :rows 3
-                                     :paint! (fn [{:keys [g]}]
-                                               (footer/draw-footer! g db 0 cols 0))})
+                    frame
+                    (cap/capture! {:cols cols
+                                   :rows 3
+                                   :paint! (fn [{:keys [g]}]
+                                             (p/put-str! g 0 2 (apply str (repeat cols ".")))
+                                             (footer/draw-footer! g db 0 cols 0))})
 
-                      [git-row limits-row border-row]
-                      (mapv #(apply str (map :ch %)) (last (:frames frame)))]
+                    [git-row limits-row untouched-row]
+                    (mapv #(apply str (map :ch %)) (last (:frames frame)))]
 
-                  (expect (nil? (:error frame)))
-                  (expect (= (apply str (repeat cols "─")) border-row))
-                  (expect (str/starts-with? limits-row "  Limits"))
-                  (expect (str/ends-with? git-row "git ~/vis (main)  "))
-                  (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
+                (expect (nil? (:error frame)))
+                (expect (= 2 footer/height))
+                (expect (= (apply str (repeat cols ".")) untouched-row))
+                (expect (str/starts-with? limits-row "  Limits"))
+                (expect (str/ends-with? git-row "git ~/vis (main)  "))
+                (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
 
 (defdescribe
   inline-goal-iterations-test

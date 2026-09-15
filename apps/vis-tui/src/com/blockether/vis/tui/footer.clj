@@ -1,5 +1,5 @@
 (ns com.blockether.vis.tui.footer
-  "Two status rows and a bottom border rendered below the input box.
+  "Two unboxed status rows rendered below the input box.
 
    Codex-style three-region layout:
 
@@ -52,7 +52,7 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(def height "Total rows occupied by the status text and bottom border." 3)
+(def height "Rows reserved for the model/Git and limits/usage status lines." 2)
 
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level "balanced")
@@ -1039,7 +1039,7 @@
   (p/set-colors! g t/text-fg t/terminal-bg))
 
 (defn draw-footer!
-  "Paint two status rows and their bottom border, starting at `footer-row`, full width `cols`.
+  "Paint the two unboxed status rows starting at `footer-row`, full width `cols`.
    Reads `db` once, computes segments, fits to width, writes cells.
    Safe to call every frame (cheap; no allocations on the hot path
    beyond the spans vector)."
@@ -1050,7 +1050,6 @@
   (p/fill-rect! g 0 footer-row cols height)
   (draw-footer-row! g db footer-row cols now-ms build-segments 0)
   (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
-  (components/band-rule! g (+ (long footer-row) (dec (long height))) cols t/border-fg)
   ;; Restore neutral state for whatever paints next.
   (p/clear-styles! g)
   (p/set-colors! g t/text-fg t/terminal-bg))

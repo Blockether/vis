@@ -2998,9 +2998,9 @@ therapy line 2"
                      (expect (= (+ expected-rows 2) (:input-box-h geometry)))))))
 
 (defdescribe
-  footer-bottom-border-frame-test
+  footer-unboxed-frame-test
   (it
-    "preserves both status rows above the border on full, input and live frames"
+    "frames only the input above two status rows on full, input and live frames"
     (let [db
           {:messages [{:role :assistant
                        :text "Ready."
@@ -3022,10 +3022,10 @@ therapy line 2"
                  :rows 30
                  :paint! (fn [{:keys [screen terminal]}]
                            (let [layout (#'screen/render-frame! screen 80 30 db 1000)
-                                 full (subvec (term/grid terminal) 24)]
+                                 full (subvec (term/grid terminal) 25)]
 
                              (#'screen/render-input-frame! screen 80 30 db 1000)
-                             (let [input-frame (subvec (term/grid terminal) 24)]
+                             (let [input-frame (subvec (term/grid terminal) 25)]
                                (#'screen/render-live-bubble-frame!
                                 screen
                                 80
@@ -3034,15 +3034,15 @@ therapy line 2"
                                 1000
                                 layout)
                                (.refresh ^TerminalScreen screen)
-                               [full input-frame (subvec (term/grid terminal) 24)])))})))
+                               [full input-frame (subvec (term/grid terminal) 25)])))})))
 
           rule
           (apply str (repeat 80 "─"))]
 
       (expect (nil? (:error capture)) (str (:error capture)))
       (expect (apply = (:ret capture)))
-      (doseq [[input-top draft input-bottom model-row limits-row bottom] (:ret capture)]
-        (expect (= rule input-top input-bottom bottom))
+      (doseq [[input-top draft input-bottom model-row limits-row] (:ret capture)]
+        (expect (= rule input-top input-bottom))
         (expect (str/starts-with? draft "  draft"))
         (expect (str/includes? model-row "No git"))
         (expect (str/starts-with? limits-row "  Limits"))
@@ -3057,10 +3057,10 @@ therapy line 2"
                    (expect (= {:text-rows 1
                                :input-box-h 3
                                :composer-h 5
-                               :input-top 24
-                               :rail-top 22
+                               :input-top 25
+                               :rail-top 23
                                :rail-h 2
-                               :echo-row 21}
+                               :echo-row 22}
                               geometry)))))
 
 (defdescribe
