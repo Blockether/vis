@@ -30,6 +30,7 @@ export interface DraftMessage {
   pastes: ComposerPaste[];
   /** Highest paste id handed out, so a restored composer keeps numbering. */
   counter: number;
+  imageCounter?: number;
   /** Images and files staged in the composer, unsent work exactly like the text. */
   attachments: PendingAttachment[];
   /** Last touched, for pruning. */
@@ -125,6 +126,7 @@ function parseAttachments(value: unknown, bytes: StoredBytes): PendingAttachment
       base64,
       previewUrl: base64,
       size: typeof attachment.size === 'number' ? attachment.size : base64.length,
+      reference: typeof attachment.reference === 'string' ? attachment.reference : undefined,
     });
   }
   return out;
@@ -144,6 +146,7 @@ function parseStore(raw: string | null, bytes: StoredBytes): DraftMessageStore {
         pastes: Array.isArray(message.pastes) ? (message.pastes as ComposerPaste[]) : [],
         attachments: parseAttachments((message as { attachments?: unknown }).attachments, bytes),
         counter: typeof message.counter === 'number' ? message.counter : 0,
+        imageCounter: typeof message.imageCounter === 'number' ? message.imageCounter : 0,
         at: typeof message.at === 'number' ? message.at : 0,
       };
     }
@@ -220,6 +223,7 @@ export function writeDraftMessage(
     pastes?: Iterable<ComposerPaste>;
     attachments?: Iterable<PendingAttachment>;
     counter?: number;
+    imageCounter?: number;
   },
 ): void {
   const current = (store ??= {});
@@ -237,6 +241,15 @@ export function writeDraftMessage(
     delete current[key];
   } else {
     const previous = current[key];
+    // An annotation can change bytes without changing the attachment id or size.
+    if (
+      previous &&
+      attachments.some((attachment) => {
+        const before = previous.attachments.find((item) => item.id === attachment.id);
+        return before && before.base64 !== attachment.base64;
+      })
+    )
+      storedBytes = '';
     if (
       previous &&
       previous.text === text &&
@@ -244,10 +257,9 @@ export function writeDraftMessage(
         previous.pastes.map((paste) => paste.token),
         pastes.map((paste) => paste.token),
       ) &&
-      sameKeys(
-        previous.attachments.map((attachment) => attachment.id),
-        attachments.map((attachment) => attachment.id),
-      )
+      (previous.imageCounter ?? 0) === (message.imageCounter ?? 0) &&
+      previous.attachments.length === attachments.length &&
+      previous.attachments.every((attachment, index) => attachment === attachments[index])
     )
       return;
     current[key] = {
@@ -255,6 +267,7 @@ export function writeDraftMessage(
       pastes,
       attachments,
       counter: message.counter ?? 0,
+      imageCounter: message.imageCounter ?? 0,
       at: Date.now(),
     };
   }
@@ -356,6 +369,7 @@ function persistable(current: DraftMessageStore): {
         filename: attachment.filename,
         media_type: attachment.media_type,
         size: attachment.size,
+        reference: attachment.reference,
       });
     }
     messages[key] = { ...message, attachments };

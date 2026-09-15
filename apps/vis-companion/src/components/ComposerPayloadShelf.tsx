@@ -90,14 +90,21 @@ export function ComposerPayloadShelf({
               ) : (
                 <ExpandableImage
                   src={attachment.previewUrl}
-                  alt=""
+                  alt={attachment.filename}
                   loading="eager"
                   className="size-8 shrink-0 object-cover"
                   frameClassName="min-w-0 flex-1"
                   onApply={(edited) => commands.editAttachment(attachment.id, edited)}
                 >
-                  <span className="truncate font-mono text-chip text-dialog-hint">
-                    {attachment.filename}
+                  <span className="flex min-w-0 flex-col">
+                    {attachment.reference && (
+                      <span className="whitespace-nowrap font-mono text-chip text-dialog-foreground">
+                        {attachment.reference}
+                      </span>
+                    )}
+                    <span className="truncate font-mono text-chip text-dialog-hint">
+                      {attachment.filename}
+                    </span>
                   </span>
                 </ExpandableImage>
               )}

@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
+import { insertImageReferences, referencedAttachments } from '../lib/composer-images';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { AgentTeam } from '../components/AgentTeam';
@@ -608,6 +609,11 @@ export function SessionScreen({
       // Application edits are immediate, even if the rendering snapshot is behind
       // (including an empty snapshot while sending a newly typed message).
       if (textarea && textarea.value !== next) textarea.value = next;
+      const remaining = referencedAttachments(next, attachmentsRef.current);
+      if (remaining.length !== attachmentsRef.current.length) {
+        attachmentsRef.current = remaining;
+        setAttachmentsSnapshot(remaining);
+      }
       setPromptSnapshot(next);
     },
     [draftMessageId],
@@ -772,9 +778,40 @@ export function SessionScreen({
   // Staged files are part of the unsent message, not a side effect of the screen:
   // they are seeded from the stored draft message on the FIRST frame, exactly like
   // its text, so leaving and reopening a session does not eat the picture.
-  const [attachments, setAttachments] = useState<PendingAttachment[]>(() => [
+  const [attachments, setAttachmentsSnapshot] = useState<PendingAttachment[]>(() => [
     ...peekDraftMessage(draftMessageId).attachments,
   ]);
+  const attachmentsRef = useRef(attachments);
+  const imageCounterRef = useRef(peekDraftMessage(draftMessageId).imageCounter ?? 0);
+  const intakeGenerationRef = useRef(0);
+  useLayoutEffect(() => {
+    intakeGenerationRef.current += 1;
+    return () => {
+      intakeGenerationRef.current += 1;
+    };
+  }, [draftMessageId]);
+  const setAttachments = useCallback((update: SetStateAction<PendingAttachment[]>) => {
+    const next = typeof update === 'function' ? update(attachmentsRef.current) : update;
+    attachmentsRef.current = next;
+    setAttachmentsSnapshot(next);
+  }, []);
+  const stageAttachments = useCallback(
+    (incoming: PendingAttachment[], maximum: number) => {
+      const editor = composerRef.current;
+      const text = editor?.value ?? '';
+      const staged = insertImageReferences(
+        text,
+        editor?.selectionStart ?? text.length,
+        incoming.slice(0, maximum - attachmentsRef.current.length),
+        imageCounterRef.current,
+      );
+      imageCounterRef.current = staged.counter;
+      setAttachments([...attachmentsRef.current, ...staged.attachments]);
+      setPrompt(staged.text);
+      editor?.setSelectionRange(staged.caret, staged.caret);
+    },
+    [setAttachments, setPrompt],
+  );
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
   // Dictation and voice conversation are ONE control: a tap acts in the current
@@ -1017,6 +1054,7 @@ export function SessionScreen({
     setPastes(new Map());
     setEditingPaste(null);
     pasteCounterRef.current = 0;
+    imageCounterRef.current = peekDraftMessage(draftMessageId).imageCounter ?? 0;
     // The composer belongs to ONE session. Everything else here is reset per sid;
     // leaving the prompt behind meant the text typed for the previous session
     // stayed in the box, got re-recorded under THIS session's draft-message key,
@@ -2917,6 +2955,7 @@ export function SessionScreen({
         );
         setAttachments((current) => (current.length ? current : [...message.attachments]));
         pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
+        imageCounterRef.current = Math.max(imageCounterRef.current, message.imageCounter ?? 0);
       }
       draftMessageReadyRef.current = true;
       setDraftMessageReady(true);
@@ -2936,7 +2975,8 @@ export function SessionScreen({
       writeDraftMessage(draftMessageId, {
         text,
         pastes: pastes.values(),
-        attachments,
+        attachments: attachmentsRef.current,
+        imageCounter: imageCounterRef.current,
         counter: pasteCounterRef.current,
       });
     },
@@ -2990,6 +3030,7 @@ export function SessionScreen({
     pick: (limits: AttachmentLimits) => Promise<PickAttachmentResult>,
     dismissedNotice: string,
   ) {
+    const generation = intakeGenerationRef.current;
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -3010,7 +3051,8 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      if (generation !== intakeGenerationRef.current) return;
+      stageAttachments(result.attachments, maximum);
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       // A dismissed sheet is a decision, not a failure.
@@ -3034,6 +3076,7 @@ export function SessionScreen({
   }
 
   async function addBrowserFiles(files: File[]) {
+    const generation = intakeGenerationRef.current;
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -3050,7 +3093,8 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      if (generation !== intakeGenerationRef.current) return;
+      stageAttachments(result.attachments, maximum);
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
@@ -3062,7 +3106,12 @@ export function SessionScreen({
     pickNative: pickNativeAttachments,
   };
   function removeAttachment(id: string) {
-    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    const attachment = attachmentsRef.current.find((item) => item.id === id);
+    if (attachment?.reference) {
+      const reference = attachment.reference;
+      setPrompt((current) => current.split(reference).join(''));
+    }
+    setAttachments((current) => current.filter((item) => item.id !== id));
     setComposerNotice(null);
   }
 
@@ -3130,6 +3179,7 @@ export function SessionScreen({
   }
 
   async function addPastedMedia(files: File[]) {
+    const generation = intakeGenerationRef.current;
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -3145,7 +3195,8 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      if (generation !== intakeGenerationRef.current) return;
+      stageAttachments(result.attachments, maximum);
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
@@ -3161,6 +3212,7 @@ export function SessionScreen({
   // the viewer: the message belongs there, not only in the composer behind it.
   const attachCapturedImage = useCallback(
     async (image: Blob, filename: string) => {
+      const generation = intakeGenerationRef.current;
       const limits = capabilities?.features.attachments;
       const maximum = limits?.max_files ?? 8;
       if (attachments.length >= maximum) throw new Error(`You can attach up to ${maximum} files`);
@@ -3174,12 +3226,14 @@ export function SessionScreen({
           mediaTypes: limits?.media_types,
         },
       );
+      if (generation !== intakeGenerationRef.current)
+        throw new Error('The original message is no longer open');
       const attached = result.attachments[0];
       if (!attached) throw new Error(result.rejected[0] ?? 'This page could not be attached');
-      setAttachments((current) => [...current, attached].slice(0, maximum));
+      stageAttachments([attached], maximum);
       setComposerNotice(`${attached.filename} is attached to your message`);
     },
-    [attachments.length, capabilities],
+    [attachments.length, capabilities, stageAttachments],
   );
 
   // A picture that has not been sent yet is still EDITABLE: the viewer flattens
@@ -3316,9 +3370,13 @@ export function SessionScreen({
     // delivered the matching change event. Read the control at the press boundary
     // so the turn carries the text the operator can actually see.
     const authoredRequest = (voiceRequest ?? composerRef.current?.value ?? prompt).trim();
+    const ownedAttachments = referencedAttachments(
+      composerRef.current?.value ?? prompt,
+      attachmentsRef.current,
+    );
     const request =
       expandPastePlaceholders(authoredRequest, pastes) ||
-      (attachments.length ? 'Please inspect the attached file(s).' : '');
+      (ownedAttachments.length ? 'Please inspect the attached file(s).' : '');
     // The fallback exists only to give the model a non-blank turn. The transcript
     // shows what the human actually authored: for attachment-only turns, the media.
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
@@ -3364,7 +3422,7 @@ export function SessionScreen({
     // A locally or remotely observed running bubble means submit should enqueue without
     // replacing the answer currently streaming.
     if (running || runningTurn || queued.length) {
-      const pendingAttachments = attachments;
+      const pendingAttachments = ownedAttachments;
       const pendingPastes = pastes;
       setPrompt('');
       setAttachments([]);
@@ -3374,7 +3432,8 @@ export function SessionScreen({
       setError(null);
       try {
         const sent: GatewayAttachment[] = pendingAttachments.map(
-          ({ filename, media_type, base64 }) => ({
+          ({ filename, media_type, base64, reference }) => ({
+            reference,
             filename,
             media_type,
             base64,
@@ -3417,16 +3476,23 @@ export function SessionScreen({
           setRunningTurn(started);
         }
       } catch (cause) {
-        setPrompt(authoredRequest);
-        setPastes(pendingPastes);
-        setAttachments((current) => (current.length ? current : pendingAttachments));
+        setPrompt((current) => (current ? `${authoredRequest}
+
+${current}` : authoredRequest));
+        setPastes((current) => new Map([...pendingPastes, ...current]));
+        setAttachments((current) => [
+          ...pendingAttachments,
+          ...current.filter(
+            (attachment) => !pendingAttachments.some((pending) => pending.id === attachment.id),
+          ),
+        ]);
         setError((cause as Error).message);
         requestAnimationFrame(() => composerRef.current?.focus());
       }
       return;
     }
 
-    const pendingAttachments = attachments;
+    const pendingAttachments = ownedAttachments;
     const pendingPastes = pastes;
     // The rail as it stood BEFORE the optimistic bubble. If the gateway answers
     // "queued", this submission never owned the rail and whatever was streaming
@@ -3440,7 +3506,8 @@ export function SessionScreen({
     setError(null);
     setRunning(true);
     const sent: GatewayAttachment[] = pendingAttachments.map(
-      ({ filename, media_type, base64 }) => ({
+      ({ filename, media_type, base64, reference }) => ({
+        reference,
         filename,
         media_type,
         base64,
@@ -3513,9 +3580,16 @@ export function SessionScreen({
       setRunning(false);
       runningTurnRef.current = null;
       setRunningTurn(null);
-      setPrompt(authoredRequest);
-      setPastes(pendingPastes);
-      setAttachments((current) => (current.length ? current : pendingAttachments));
+      setPrompt((current) => (current ? `${authoredRequest}
+
+${current}` : authoredRequest));
+      setPastes((current) => new Map([...pendingPastes, ...current]));
+      setAttachments((current) => [
+        ...pendingAttachments,
+        ...current.filter(
+          (attachment) => !pendingAttachments.some((pending) => pending.id === attachment.id),
+        ),
+      ]);
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
     } finally {
@@ -4571,6 +4645,9 @@ export function SessionScreen({
                   onChange={(event) => {
                     const text = event.currentTarget.value;
                     const position = event.currentTarget.selectionStart ?? text.length;
+                    const remaining = referencedAttachments(text, attachmentsRef.current);
+                    if (remaining.length !== attachmentsRef.current.length)
+                      setAttachments(remaining);
                     recordComposerDraft(text);
                     startTransition(() => {
                       setPromptSnapshot(text);
@@ -4582,6 +4659,37 @@ export function SessionScreen({
                     });
                   }}
                   onKeyDown={(event) => {
+                    if (
+                      !event.nativeEvent.isComposing &&
+                      !event.altKey &&
+                      !event.ctrlKey &&
+                      !event.metaKey &&
+                      (event.key === 'Backspace' || event.key === 'Delete')
+                    ) {
+                      const editor = event.currentTarget;
+                      const caret = editor.selectionStart;
+                      if (caret === editor.selectionEnd) {
+                        for (const attachment of attachmentsRef.current) {
+                          const token = attachment.reference;
+                          if (!token) continue;
+                          const start = event.key === 'Backspace' ? caret - token.length : caret;
+                          if (
+                            start >= 0 &&
+                            editor.value.slice(start, start + token.length) === token
+                          ) {
+                            event.preventDefault();
+                            const text =
+                              editor.value.slice(0, start) +
+                              editor.value.slice(start + token.length);
+                            setPrompt(text);
+                            setAttachments(referencedAttachments(text, attachmentsRef.current));
+                            editor.setSelectionRange(start, start);
+                            recordComposerDraft(text);
+                            return;
+                          }
+                        }
+                      }
+                    }
                     // Asked per keystroke, so a keyboard folded onto a tablet
                     // mid-session changes the answer without a remount.
                     const enterSends = isEnterSendKeyboard();

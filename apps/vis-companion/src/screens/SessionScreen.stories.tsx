@@ -6,6 +6,8 @@ import {
   STORY_COMPOSER_SESSION as session,
   STORY_COMPOSER_SUBSCRIPTIONS as subscriptions,
   STORY_QUEUED_TURNS,
+  STORY_COMPOSER_PASTE,
+  STORY_PENDING_ATTACHMENTS,
 } from '../dev/story-data';
 import { draftMessageKey, hydrateDraftMessages, writeDraftMessage } from '../lib/draft-messages';
 import type { RunningTurn } from '../lib/running-turn';
@@ -257,4 +259,55 @@ export const ReadingLayout: Story = {
 export const ReadingLayoutPointer: Story = {
   ...ReadingLayout,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+/** Real browser file intake, stable labels and keyboard removal share the same editor. */
+export const ImageReferences: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const composer = await page.findByRole('textbox', { name: 'Message Vis' });
+    const input = page.getByLabelText('Choose attachment files');
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    canvas.getContext('2d')!.fillRect(0, 0, 16, 16);
+    const blob = await new Promise<Blob>((resolve) =>
+      canvas.toBlob((value) => resolve(value!), 'image/png'),
+    );
+    await userEvent.type(composer, 'Compare these: ');
+    await userEvent.upload(input, new File([blob], 'first.png', { type: 'image/png' }));
+    await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
+    await userEvent.upload(input, new File([blob], 'second.png', { type: 'image/png' }));
+    await expect(await page.findByText('[IMAGE #2]')).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: 'Remove first.png' }));
+    await expect(composer).toHaveValue('Compare these:  [IMAGE #2]');
+    await userEvent.click(composer);
+    await userEvent.keyboard('{End}{Backspace}');
+    await expect(page.queryByRole('button', { name: 'Remove second.png' })).not.toBeInTheDocument();
+    await userEvent.upload(input, new File([blob], 'third.png', { type: 'image/png' }));
+    await expect(await page.findByText('[IMAGE #3]')).toBeVisible();
+    await expect(composer).toHaveValue('Compare these:  [IMAGE #3]');
+  },
+ };
+
+export const ImageReferencesMixed: Story = {
+  beforeEach: async () => {
+    await hydrateDraftMessages();
+    writeDraftMessage(draftMessageKey(client.base, session.id), {
+      text: `Compare [IMAGE #1] with the notes ${STORY_COMPOSER_PASTE.token}`,
+      pastes: [STORY_COMPOSER_PASTE],
+      counter: STORY_COMPOSER_PASTE.id,
+      imageCounter: 1,
+      attachments: STORY_PENDING_ATTACHMENTS.map((attachment) => ({
+        ...attachment,
+        reference: attachment.media_type.startsWith('image/') ? '[IMAGE #1]' : undefined,
+      })),
+    });
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Edit pasted block 4' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Remove release-note.m4a' })).toBeVisible();
+  },
 };
