@@ -617,6 +617,7 @@ export function SessionScreen({
       if (remaining.length !== attachmentsRef.current.length) {
         attachmentsRef.current = remaining;
         setAttachmentsSnapshot(remaining);
+        if (!remaining.some((attachment) => attachment.reference)) imageCounterRef.current = 0;
       }
       setPromptSnapshot(next);
     },
@@ -3441,8 +3442,9 @@ export function SessionScreen({
     if (running || runningTurn || queued.length) {
       const pendingAttachments = ownedAttachments;
       const pendingPastes = pastes;
-      setPrompt('');
+      // Detach submitted payloads first: sending is not a user deletion.
       setAttachments([]);
+      setPrompt('');
       setPastes(new Map());
       setComposerNotice(null);
       setSlashDismissed(false);
@@ -3511,8 +3513,9 @@ export function SessionScreen({
     // "queued", this submission never owned the rail and whatever was streaming
     // must come back rather than stay overwritten.
     const previousLive = runningTurn;
-    setPrompt('');
+    // Detach submitted payloads first: sending is not a user deletion.
     setAttachments([]);
+    setPrompt('');
     setPastes(new Map());
     setComposerNotice(null);
     setSlashDismissed(false);
@@ -4655,8 +4658,11 @@ export function SessionScreen({
                     const text = event.currentTarget.value;
                     const position = event.currentTarget.selectionStart ?? text.length;
                     const remaining = referencedAttachments(text, attachmentsRef.current);
-                    if (remaining.length !== attachmentsRef.current.length)
+                    if (remaining.length !== attachmentsRef.current.length) {
                       setAttachments(remaining);
+                      if (!remaining.some((attachment) => attachment.reference))
+                        imageCounterRef.current = 0;
+                    }
                     recordComposerDraft(text);
                     startTransition(() => {
                       setPromptSnapshot(text);

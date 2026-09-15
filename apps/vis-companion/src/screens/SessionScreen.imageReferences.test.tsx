@@ -62,7 +62,7 @@ it("inserts an owned image reference at the caret and removes its shelf item wit
   ).not.toBeInTheDocument();
 });
 
-it("keeps duplicate tokens backed until the final one is deleted, then never reuses its number", async () => {
+it("keeps duplicate tokens backed until the final one is deleted, then restarts numbering", async () => {
   renderSessionScreen();
   await pasteImage();
   fireEvent.input(editor(), { target: { value: "[IMAGE #1] and [IMAGE #1]" } });
@@ -74,8 +74,41 @@ it("keeps duplicate tokens backed until the final one is deleted, then never reu
   ).toBeInTheDocument();
   fireEvent.input(editor(), { target: { value: " and " } });
   await pasteImage();
-  expect(editor().value).toBe(" and [IMAGE #2]");
+  expect(editor().value).toBe(" and [IMAGE #1]");
 });
+
+it("restarts after removing every image from the shelf, including a reopened draft", async () => {
+  const view = renderSessionScreen();
+  fireEvent.input(editor(), { target: { value: "Compare " } });
+  await pasteImage();
+  await pasteImage();
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo-1.png" }));
+  expect(editor().value).toBe("Compare  [IMAGE #2]");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo-2.png" }));
+  expect(editor().value).toBe("Compare  ");
+  expect(
+    peekDraftMessage(draftMessageKey("http://gateway.example.com", "s1"))
+      .imageCounter,
+  ).toBe(0);
+  view.rerenderSession("other-session");
+  view.rerenderSession("s1");
+  await pasteImage();
+  expect(editor().value).toBe("Compare  [IMAGE #1]");
+});
+
+it.each(["Backspace", "Delete"])(
+  "restarts after removing the final image with %s",
+  async (key) => {
+    renderSessionScreen();
+    await pasteImage();
+    const caret = key === "Backspace" ? editor().value.length : 0;
+    editor().setSelectionRange(caret, caret);
+    fireEvent.keyDown(editor(), { key });
+    expect(editor().value).toBe("");
+    await pasteImage();
+    expect(editor().value).toBe("[IMAGE #1]");
+  },
+);
 
 it("removes all exact shelf references without normalizing authored spaces", async () => {
   renderSessionScreen();
@@ -85,6 +118,8 @@ it("removes all exact shelf references without normalizing authored spaces", asy
   });
   fireEvent.click(screen.getByRole("button", { name: "Remove photo-1.png" }));
   expect(editor().value).toBe("    x [IMAGE #10]   ");
+  await pasteImage();
+  expect(editor().value).toBe("    x [IMAGE #10]   [IMAGE #11]");
 });
 
 it("never binds an authored literal number and sends the original filename with the reference", async () => {
@@ -181,7 +216,7 @@ it("does not send image bytes after a native deletion that has not emitted input
 });
 
 it("uses the same reference path for browser file selection and leaves recordings unnumbered", async () => {
-  vi.mocked(attachments.attachmentsFromFiles).mockResolvedValue({
+  vi.mocked(attachments.attachmentsFromFiles).mockResolvedValueOnce({
     attachments: [
       photo("chosen"),
       { ...photo("recording"), filename: "memo.wav", media_type: "audio/wav" },
@@ -199,6 +234,11 @@ it("uses the same reference path for browser file selection and leaves recording
     screen.getByRole("button", { name: "Remove memo.wav" }),
   ).toBeInTheDocument();
   fireEvent.input(editor(), { target: { value: "" } });
+  expect(
+    screen.getByRole("button", { name: "Remove memo.wav" }),
+  ).toBeInTheDocument();
+  await pasteImage();
+  expect(editor().value).toBe("[IMAGE #1]");
   expect(
     screen.getByRole("button", { name: "Remove memo.wav" }),
   ).toBeInTheDocument();

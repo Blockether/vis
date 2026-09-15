@@ -285,10 +285,10 @@ export const ImageReferences: Story = {
     await userEvent.keyboard('{End}{Backspace}');
     await expect(page.queryByRole('button', { name: 'Remove second.png' })).not.toBeInTheDocument();
     await userEvent.upload(input, new File([blob], 'third.png', { type: 'image/png' }));
-    await expect(await page.findByText('[IMAGE #3]')).toBeVisible();
-    await expect(composer).toHaveValue('Compare these:  [IMAGE #3]');
+    await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
+    await expect(composer).toHaveValue('Compare these:  [IMAGE #1]');
   },
- };
+};
 
 export const ImageReferencesMixed: Story = {
   beforeEach: async () => {
