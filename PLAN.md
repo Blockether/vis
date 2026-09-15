@@ -1032,7 +1032,14 @@ new binary into the running gateway.
    All 824 SDK unit tests pass (38 opt-in skips). A disk-exhausted integration run
    failed; after removing only completed-test caches, the unchanged candidate
    passes all 42 installed-SDK/JVM cases in fresh fixture homes. Failure logs remain.
-10. The matching macOS runner is still online and idle with its CI job unassigned.
+10. Follow-ups through `2d0ecc146` are on `main`. Both real-SDK platform jobs,
+    all ten Python matrix jobs, Android CI, documentation deployment and CodeQL pass.
+    Linux core passes 6069 cases, then exposes stale standalone-TUI fixtures.
+11. TUI regressions now exercise the inline log-search frame, explicitly open the
+    Activity disclosure and recognize both padded section rules. All 2210 TUI cases
+    pass in a clean JVM. Formatting and clj-kondo pass; the host reflection checker
+    reports the same unrelated `caption-count` warning in the committed baseline.
+12. The matching macOS runner is still online and idle with its CI job unassigned.
     No Vis release tag exists; green source CI and full publication remain pending.
 
 # Shared FFF lifecycle and retention experiments

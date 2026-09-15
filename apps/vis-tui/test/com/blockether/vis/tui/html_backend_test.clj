@@ -642,12 +642,16 @@
 
       (let [rows (activity-review-rows "failed")
             _ (paint-activity-review! screen rows {})
-            code (first (filter #(str/ends-with? (str (:node-id %)) ":code")
-                                (.current interactions/hit-map)))
-            expanded (toggle-review-region {} code)]
+            hits (.current interactions/hit-map)
+            code (first (filter #(str/ends-with? (str (:node-id %)) ":code") hits))
+            band (first (filter #(str/ends-with? (str (:node-id %)) ":#band") hits))
+            opened-band (toggle-review-region {} band)
+            expanded (toggle-review-region opened-band code)]
 
         (is (some? code))
-        (doseq [expansions [{} expanded]]
+        (is (some? band))
+        ;; Activity starts collapsed; open it before comparing its child rows.
+        (doseq [[code-expanded? expansions] [[false opened-band] [true expanded]]]
           (paint-activity-review! screen rows expansions)
           (let [lines (mapv (fn [row]
                               (apply str
@@ -658,12 +662,12 @@
                          (some #(when (str/includes? % text) (str/index-of % text)) lines))]
 
             (is (= (+ 2 (column "Vis")) (column "Inspect files")))
-            (doseq [label (if (seq expansions) ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
+            (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
               (is (= (+ 2 (column "Vis")) (column label))))
             (is (= (column "ACTIVITY") (column "Read ×3")))
             (is (some? (column "Command failed")))
             (is (not-any? #(str/includes? % "│") lines))
-            (if (seq expansions)
+            (if code-expanded?
               (do (is (= (column "CODE") (column "inspect_files()")))
                   (is (some #(re-find #"RESULT  \+2 more ▸" %) lines)))
               (do (is (nil? (column "RESULT")))
@@ -1491,8 +1495,8 @@
                                             (.getCharacterString cell))
                                     text (apply str (map glyph row))]
 
-                                ;; Section rules have padding; outer dialog rails do not.
-                                (when (re-matches #"\s*(?:│\s+)?─+\s+(?:│\s*)?" text)
+                                ;; Section rules have right padding; outer dialog rails do not.
+                                (when (re-matches #"\s*(?:│\s*)?─+\s+(?:│\s*)?" text)
                                   (filter #(= "─" (glyph %)) row))))
                             grid)]
 
