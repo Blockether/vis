@@ -7,7 +7,9 @@
    PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
    clicks open links, expand nodes, select rows in a selectable table, or fold the
    live surface down to a compact status line without stopping it. F3 opens its
-   keyboard controls. Escape ARMS a stop on the newest open view before it interrupts
+   keyboard controls. Log searches keep their query and wrapped results in this same
+   band; Escape returns from search to the view. Otherwise, Escape ARMS a stop on
+   the newest open view before it interrupts
    the turn: the band then takes one FENCED line for the comment the human types,
    Escape or Enter interrupts with it, Backspace on an empty line keeps watching.
    A view is ALWAYS stoppable; the note is what says why.
@@ -15,8 +17,8 @@
    Everything except [[paint!]] is PURE: [[opened]] builds the pane from the
    engine's own materialized view, [[patched]] is the reducer over one patch,
    [[plan]] is the paint plan, [[offset]] says where the viewport sits and
-   [[painted]] takes back what the paint measured. Lanterna shows up in [[paint!]]
-   alone, so the whole interaction is testable without a terminal.
+   [[painted]] takes back what the paint measured. Key decoding and painting are
+   the Lanterna edges; the reducers can be tested without a terminal.
 
    ONE SCROLL SURFACE. A view is a STACK of labelled nodes in declaration order,
    so three tables and two logs read as sections of one document instead of as
@@ -43,7 +45,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dialogs]
-            [com.blockether.vis.tui.frame :as frame]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
@@ -52,8 +54,7 @@
             [com.blockether.vis.contract.view :as hi-spec])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
-           [com.googlecode.lanterna.input KeyStroke KeyType]
-           [com.googlecode.lanterna.screen TerminalScreen]))
+           [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
 
@@ -1174,113 +1175,112 @@
                         :view-id (view-id pane)))))
             (tree-seq #(seq (:cells %)) :cells {:cells (plan pane 80)})))))
 
-(defn- read-log-page!
-  "Read off the UI thread, painting existing dialog chrome while Escape can cancel."
-  [^TerminalScreen screen sid view-id node-id from query]
-  (let [task
-        (future (try {:page (vis/live-view-log sid view-id node-id from 200 query)}
-                     (catch Exception _ {:error true})))
+(def log-search-page-size "Maximum matching lines read from the retained log in one request." 200)
 
-        component
-        (dialogs/select-modal-component "Searching log"
-                                        [{:label "Searching… Esc to cancel"}]
-                                        {:height :content})
+(defn log-search-opened
+  "Local search and viewport state for the existing Live View transient."
+  [node-id]
+  {:node-id node-id
+   :input (input/empty-input)
+   :from 0
+   :offset 0
+   :is-following false
+   :total 0
+   :visible 0})
 
-        state
-        (:init component)]
+(defn- log-search-input
+  [search editor]
+  (cond-> (assoc search :input editor)
+    (not= (input/input->text (:input search)) (input/input->text editor))
+    (-> (dissoc :page :error :request-id :loading? :anchor)
+        (assoc :from 0
+               :offset 0
+               :total 0
+               :is-following false))))
 
-    (try (loop [painted-size nil]
-           (.doResizeIfNecessary screen)
-           (let [size (.getTerminalSize screen)]
-             (when (not= size painted-size)
-               (let [cols (.getColumns size)
-                     rows (.getRows size)
-                     geom ((:measure component) state cols rows)]
+(defn log-search-typed
+  "Edit only the search field, or scroll its results; never touch the composer.
+   Bracketed paste is inserted as one literal line, without submitting a request."
+  [search ^KeyStroke key]
+  (let [kt
+        (.getKeyType key)
 
-                 ((:paint component) (frame/surface-graphics screen cols rows) state geom)
-                 (.setCursorPosition screen nil)
-                 (.refresh screen)))
-             (let [key (when (dialogs/modal-input-pending? screen)
-                         (dialogs/read-modal-key! screen))]
-               (cond (and key (= KeyType/Escape (.getKeyType ^KeyStroke key))) nil
-                     (future-done? task) @task
-                     :else (do (Thread/sleep 20) (recur size))))))
-         (finally (future-cancel task)))))
+        editor
+        (:input search)]
 
-(defn search-log!
-  "Read-only search of a live or archived log. Pages are bounded to 200 matches.
-   Enter opens a full, wrapped line. Explicit refresh reads new output."
-  [screen pane node-id]
-  (let [node
-        (first (filter #(= node-id (:id %))
-                       (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))
+    (cond (= kt KeyType/PasteStart) (assoc search :paste "")
+          (= kt KeyType/PasteEnd)
+          (-> search
+              (dissoc :paste)
+              (log-search-input
+                (input/paste-text editor (str/replace (or (:paste search) "") #"[\r\n\t]+" " "))))
+          (some? (:paste search)) (update search :paste str (.getText key))
+          (= kt KeyType/ArrowUp) (scrolled search -1)
+          (= kt KeyType/ArrowDown) (scrolled search 1)
+          :else (log-search-input search
+                                  (or (input/emacs-edit key editor)
+                                      (condp = kt
+                                        KeyType/ArrowLeft (input/move-left editor)
+                                        KeyType/ArrowRight (input/move-right editor)
+                                        KeyType/Home (input/move-line-start editor)
+                                        KeyType/End (input/move-line-end editor)
+                                        KeyType/Backspace (input/delete-backward editor)
+                                        KeyType/Delete (input/delete-forward editor)
+                                        KeyType/Character (if (and (not (.isCtrlDown key))
+                                                                   (some? (.getText key)))
+                                                            (input/paste-text editor (.getText key))
+                                                            editor)
+                                        editor))))))
 
-        title
-        (str "Search " (or (:label node) "Output"))
+(defn log-search-page-from
+  "The adjacent page's match offset, or nil when that page does not exist."
+  [search direction]
+  (let [from (+ (long (:from search)) (* (long direction) (long log-search-page-size)))]
+    (when (and (>= from 0)
+               (or (neg? (long direction)) (< from (long (get (:page search) "matched" 0)))))
+      from)))
 
-        prompt
-        #(dialogs/text-input-dialog! screen
-                                     title
-                                     "Literal text (empty shows all)"
-                                     :initial %
-                                     :body "Case-insensitive · entire retained log")]
+(defn log-search-requested
+  "Start a bounded read. Its identity fences out cancelled or superseded results."
+  [search from request-id]
+  (-> search
+      (dissoc :page :error :anchor)
+      (assoc :from from
+             :request-id request-id
+             :loading? true
+             :offset 0
+             :total 0
+             :is-following false)))
 
-    (when-let [query (prompt "")]
-      (loop [query query
-             from 0]
+(defn log-search-loaded
+  "Accept only the current read, including after a tab switch."
+  [search request-id result]
+  (if (and search (= request-id (:request-id search)))
+    (merge (dissoc search :loading? :request-id) result)
+    search))
 
-        (when-let [{:keys [page error]} (read-log-page! screen
-                                                        (get-in pane [:view :session-id])
-                                                        (view-id pane)
-                                                        node-id
-                                                        from
-                                                        query)]
-          (let [matched (long (or (get page "matched") 0))
-                items (into
-                        (cond-> [{:action :query :label "Change search"}
-                                 {:action :refresh
-                                  :label (if error "Could not read log. Retry" "Refresh results")}]
-                          (pos? from)
-                          (conj {:action :previous :label "Previous matches"})
+(defn log-search-plan
+  "Wrapped, numbered matches in the viewer's own scroll surface, never a dialog."
+  [{:keys [node-id page loading? error] :as search} text-w]
+  (cond loading? [{:kind :note :text "Searching…"}]
+        error [{:kind :note :text "Could not read log. Enter to retry."}]
+        (nil? page) [{:kind :note :text "Enter to search · Case-insensitive · entire retained log"}]
+        (empty? (get page "lines")) [{:kind :empty :text "No matching lines"}]
+        :else (into []
+                    (concat
+                      (for [[direction label]
+                            [[-1 "Previous matches"] [1 "Next matches"]]
 
-                          (< (+ from 200) matched)
-                          (conj {:action :next :label "Next matches"})
+                            :when (some? (log-search-page-from search direction))]
 
-                          (and (not error) (empty? (get page "lines")))
-                          (conj {:action :query :label "No matching lines. Change search"}))
-                        (map
-                          (fn [number text]
-                            {:action :line :label (str number ": " text) :text text :number number})
-                          (get page "line_numbers")
-                          (get page "lines")))
-                caption
-                (if error title (str matched " matches / " (get page "total") " lines · " query))
-                choice
-                (loop []
-
-                  (when-let [choice
-                             (dialogs/list-dialog! screen caption items {:enter-label "open"})]
-                    (if (= :line (:action choice))
-                      (do (dialogs/text-view-dialog! screen
-                                                     (str "Line " (:number choice))
-                                                     [(:text choice)])
-                          (recur))
-                      choice)))]
-
-            (case (:action choice)
-              :next
-              (recur query (+ from 200))
-
-              :previous
-              (recur query (max 0 (- from 200)))
-
-              :refresh
-              (recur query 0)
-
-              :query
-              (recur (or (prompt query) query) 0)
-
-              nil)))))))
+                        {:kind :log-search-page :direction direction :text label})
+                      (mapcat (fn [number text]
+                                (map-indexed
+                                  (fn [idx line]
+                                    {:kind :log :node-id node-id :item-id [number idx] :text line})
+                                  (p/word-wrap (str number ": " text) text-w)))
+                              (get page "line_numbers")
+                              (get page "lines"))))))
 
 (defn animating?
   "Whether the visible, expanded pane contains an active spinner."
@@ -1474,31 +1474,32 @@
    the bar says the two keys that end typing: Escape or Enter interrupt with whatever
    was written, Backspace on an empty line keeps watching."
   [pane others]
-  (if (:is-viewer pane)
-    [["F3" "controls"] ["Esc" "close view"]]
-    (let [open (remove settled? others)]
-      (if-let [note (stopping pane)]
-        (if (str/blank? note)
-          [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
-          [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-        (if (minimized? pane)
-          [["click ▴" "restore live view"]
-           ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
-          (cond-> [["F3" "controls"]]
-            (and (some? pane) (not (settled? pane)))
-            (conj ["click ▾" "minimize"])
+  (cond (:log-search pane) [["Enter" "search / refresh"] ["↑/↓" "scroll"] ["PgUp/PgDn" "matches"]
+                            ["Esc" "back"]]
+        (:is-viewer pane) [["F3" "controls"] ["Esc" "close view"]]
+        :else (let [open (remove settled? others)]
+                (if-let [note (stopping pane)]
+                  (if (str/blank? note)
+                    [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
+                    [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
+                  (if (minimized? pane)
+                    [["click ▴" "restore live view"]
+                     ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+                    (cond-> [["F3" "controls"]]
+                      (and (some? pane) (not (settled? pane)))
+                      (conj ["click ▾" "minimize"])
 
-            (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
-            (conj ["click" "select a row"])
+                      (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
+                      (conj ["click" "select a row"])
 
-            (and (some? pane) (not (settled? pane)))
-            (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+                      (and (some? pane) (not (settled? pane)))
+                      (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-            (and (some? pane) (settled? pane))
-            (conj ["click" "close the record"])
+                      (and (some? pane) (settled? pane))
+                      (conj ["click" "close the record"])
 
-            (seq open)
-            (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))))
+                      (seq open)
+                      (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1632,6 +1633,17 @@
                     :kind :live-expand
                     :view-id view-id
                     :node-id (:node-id entry)
+                    :enabled? true}))
+
+    :log-search-page
+    (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
+        (.register interactions/hit-map
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                             :col (+ (long left) 2)
+                             :width (max 0 (- (long inner-w) 3))}
+                    :kind :live-log-page
+                    :view-id view-id
+                    :direction (:direction entry)
                     :enabled? true}))
 
     (:button :log-search)
@@ -1906,6 +1918,7 @@
 
         rows-plan
         (cond minimized-front? [(minimized-row front (count panes))]
+              (:log-search front) (log-search-plan (:log-search front) text-w)
               front (plan front text-w)
               :else [])
 
@@ -1992,14 +2005,18 @@
                visible (max 1 (dec (long visible)))
                ;; Keep the description directly below the expanded title (#220).
                ;; Without a description, retain the title's blank separator row.
+               search (:log-search front)
                heading-h (if (and (not is-minimized)
-                                  (>= (- visible (count collapsed) (if stop 2 0)) 4))
+                                  (>= (- visible (count collapsed) (if stop 2 0)) (if search 6 4)))
                            (if (str/blank? (get-in front [:view :description])) 3 2)
                            0)
                title-row (if (pos? heading-h) (inc (long body-top)) (long sep-row))
                body-top (+ (long body-top) heading-h)
                visible (- visible heading-h)
-               body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
+               search-top body-top
+               search-h (if search (min 2 (max 0 (dec visible))) 0)
+               body-top (+ body-top search-h)
+               body-visible (max 1 (- visible search-h (count collapsed) (if stop 2 0)))
                ;; Leave one blank row before the footer (or stop prompt) when space allows.
                body-visible
                (if (and (not is-minimized) (> body-visible 1)) (dec body-visible) body-visible)
@@ -2016,6 +2033,24 @@
                (when (pos? heading-h)
                  (paint-styled! g body-left title-row body-w t/dialog-fg [p/BOLD] title))
                (paint-fold-control! g region title-row front)))
+           (when (= 2 search-h)
+             (let [node (first (filter #(= (:node-id search) (:id %))
+                                       (mapcat #(tree-seq :fields :fields %)
+                                               (get-in front [:view :nodes]))))
+                   page (:page search)]
+
+               (paint-styled!
+                 g
+                 body-left
+                 search-top
+                 body-w
+                 t/dialog-fg
+                 [p/BOLD]
+                 (str
+                   "Search "
+                   (or (:label node) "Output")
+                   (when page
+                     (str " · " (get page "matched") " matches / " (get page "total") " lines"))))))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
            (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
              (tr/draw-rule! g region hint-rule-at))
@@ -2073,12 +2108,23 @@
               :total (:total front)
               :visible (:visible front)
               :widths (:widths front)}
-             {:view-id view-id
-              :offset start
-              :anchor (anchor-at rows-plan start)
-              :total total
-              :visible body-visible
-              :widths (:widths (meta rows-plan))})))))))
+             (cond-> {:view-id view-id
+                      :offset start
+                      :anchor (anchor-at rows-plan start)
+                      :total total
+                      :visible body-visible
+                      :widths (:widths (meta rows-plan))}
+               search
+               (assoc :is-log-search
+                 true :cursor
+                 (when (pos? search-h)
+                   (dialogs/draw-text-input-field! g
+                                                   body-left
+                                                   (+ search-top (dec search-h))
+                                                   body-w
+                                                   (input/input->text (:input search))
+                                                   (get-in search [:input :ccol])
+                                                   "Literal text (empty shows all)")))))))))))
 
 (defn paint!
   "Paint the newest expanded Live View with one empty row above and below its title.

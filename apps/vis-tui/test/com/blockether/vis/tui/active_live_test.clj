@@ -7,6 +7,7 @@
             [com.blockether.vis.tui.html-backend-test :as html]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.input :as input]
@@ -16,6 +17,7 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def owner {:invocation-id "11111111-1111-4111-8111-111111111111"})
@@ -703,6 +705,33 @@
               (is (not-any? #(= :live-viewer-close (:kind %))
                             (.current interactions/hit-map))))))))))
 
+(deftest transient-log-search-does-not-open-a-dialog
+  ;; #235 follow-up: Search belongs to the existing LIVE transient.
+  (let [pane
+        (review-pane)
+
+        db
+        (atom (viewer-review-db pane))
+
+        dialogs-opened
+        (atom 0)]
+
+    (with-redefs [state/app-db
+                  db
+
+                  dialogs/text-input-dialog!
+                  (fn [& _]
+                    (swap! dialogs-opened inc)
+                    nil)]
+
+      (is (#'screen/activate-live-region!
+           @db
+           {:kind :live-log-search :view-id (lv/view-id pane) :node-id "output"}))
+      (is (zero? @dialogs-opened))
+      (is (= "output" (get-in @db [:live-viewer-search :node-id])))
+      (is (= (lv/view-id pane) (:live-viewer-id @db)))
+      (is (= (:input (viewer-review-db pane)) (:input @db))))))
+
 (deftest viewer-wheel-stays-inside-band
   ;; #222: an explicit viewer must not capture transcript or header wheel input.
   (let [pane
@@ -718,3 +747,212 @@
         (is (nil? (#'screen/live-band-pane db 2)))
         (is (nil? (#'screen/live-band-pane db 40)))
         (is (= (lv/view-id pane) (lv/view-id (#'screen/live-band-pane db 15))))))))
+
+(defn- viewer-lines
+  [terminal cols]
+  (mapv #(apply str
+           (map (fn [cell]
+                  (.getCharacterString ^com.googlecode.lanterna.TextCharacter cell))
+                %))
+        (grid terminal cols 44)))
+
+(deftest transient-log-search-full-frame-and-pagination
+  ;; #235 follow-up: live and recorded searches share the same band and leave the draft alone.
+  (doseq [cols
+          [40 80 120]
+
+          settled?
+          [false true]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 44))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [pane
+            (cond-> (assoc-in (review-pane) [:view :session-id] "viewer-review")
+              settled?
+              (lv/settled {:reason :completed} 2000))
+
+            pane
+            (assoc-in pane [:disclosures "output"] true)
+
+            draft
+            (input/paste-text (input/empty-input) "Keep this draft")
+
+            db
+            (atom (assoc (viewer-review-db pane) :input draft))
+
+            calls
+            (atom [])]
+
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-redefs [state/app-db db
+                        client/live-view-log
+                        (fn [& args]
+                          (swap! calls conj (vec args))
+                          {"matched" 205
+                           "total" 10000
+                           "line_numbers" [(if (zero? (long (nth args 3))) 3 9990)]
+                           "lines" [(if (zero? (long (nth args 3)))
+                                      "ERROR retained output before the visible tail"
+                                      "ERROR final-page")]})]
+
+            (paint-viewer-review! ts cols @db)
+            (let [hit (first (filter #(= :live-log-search (:kind %))
+                                     (.current interactions/hit-map)))]
+              (is (some? hit))
+              (is (#'screen/activate-live-region! @db hit)))
+            (doseq [ch "ERROR"]
+              (is (#'screen/live-log-search-key!
+                   @db
+                   (KeyStroke. (Character/valueOf (char ch)) false false))))
+            (is (not= ::timeout (deref (#'screen/read-live-log! @db 0) 2000 ::timeout)))
+            (is (= ["viewer-review" (lv/view-id pane) "output" 0 200 "ERROR"] (last @calls)))
+            (paint-viewer-review! ts cols @db)
+            (let [lines (viewer-lines terminal cols)
+                  cursor (.getCursorPosition ts)
+                  hit (first (filter #(= :live-log-page (:kind %))
+                                     (.current interactions/hit-map)))]
+
+              (is (some #(str/includes? % "Search Output") lines))
+              (is (some #(str/includes? % "3: ERROR retained") lines))
+              (is (some? cursor))
+              (is (str/includes? (nth lines (.getRow cursor)) "› ERROR"))
+              (is (= 1 (:direction hit)))
+              (is (some #(= :live-viewer-close (:kind %)) (.current interactions/hit-map))))
+            (is (not= ::timeout (deref (#'screen/page-live-log! @db 1) 2000 ::timeout)))
+            (is (= 200 (get-in @db [:live-viewer-search :from])))
+            (is (= ["viewer-review" (lv/view-id pane) "output" 200 200 "ERROR"] (last @calls)))
+            (paint-viewer-review! ts cols @db)
+            (is (some #(str/includes? % "9990: ERROR final-page") (viewer-lines terminal cols)))
+            (is (= draft (:input @db)))
+            (is (= (:view pane) (get-in @db [:live-views 0 :view])))
+            (is (#'screen/live-log-search-key! @db (KeyStroke. KeyType/Escape)))
+            (is (nil? (:live-viewer-search @db)))
+            (is (= (lv/view-id pane) (:live-viewer-id @db)))
+            (is (= draft (:input @db)))
+            (paint-viewer-review! ts cols @db)
+            (is (some #(= :live-log-search (:kind %)) (.current interactions/hit-map)))
+            (is (not-any? #(= :live-log-page (:kind %)) (.current interactions/hit-map)))))))))
+
+(deftest transient-log-search-cancels-a-pending-read-without-stopping-the-view
+  (let [pane
+        (review-pane)
+
+        db
+        (atom (viewer-review-db pane))
+
+        started
+        (promise)
+
+        release
+        (promise)]
+
+    (with-redefs [state/app-db
+                  db
+
+                  client/live-view-log
+                  (fn [& args]
+                    (deliver started args)
+                    (deref release 2000 nil)
+                    {"matched" 1 "total" 900 "lines" ["old"] "line_numbers" [1]})]
+
+      (#'screen/search-live-log! @db {:view-id (lv/view-id pane) :node-id "output"})
+      (let [task (#'screen/read-live-log! @db 0)]
+        (try (is (not= ::timeout (deref started 2000 ::timeout)))
+             (is (get-in @db [:live-viewer-search :loading?]))
+             (is (#'screen/live-log-search-key! @db (KeyStroke. KeyType/Escape)))
+             (is (nil? (:live-viewer-search @db)))
+             (is (not (lv/stopping (first (:live-views @db)))))
+             (deliver release true)
+             (is (not= ::timeout (deref task 2000 ::timeout)))
+             (is (nil? (:live-viewer-search @db)))
+             (is (= (lv/view-id pane) (:live-viewer-id @db)))
+             (finally (deliver release true)))))))
+
+(deftest transient-log-search-keyboard-submit-scroll-and-paste
+  (let [pane
+        (review-pane)
+
+        db
+        (atom (viewer-review-db pane))
+
+        requests
+        (atom [])]
+
+    (with-redefs-fn {#'state/app-db db
+                     #'screen/read-live-log! (fn [_ from]
+                                               (swap! requests conj from))}
+      (fn []
+        (state/dispatch [:live-view-search-open (lv/view-id pane) "output"])
+        (swap! db update :live-viewer-search assoc :page {"matched" 401} :total 20 :visible 5)
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/ArrowDown))
+        (is (= 1 (get-in @db [:live-viewer-search :offset])))
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/Enter))
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/PageDown))
+        (is (= [0 200] @requests))
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/PasteStart))
+        (#'screen/live-log-search-key! @db (KeyStroke. (Character/valueOf \x) false false))
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/Enter))
+        (#'screen/live-log-search-key! @db (KeyStroke. KeyType/PasteEnd))
+        (is (= [0 200] @requests))
+        (is (= "x" (str/trim (input/input->text (get-in @db [:live-viewer-search :input])))))
+        (is (= (input/empty-input) (:input @db)))
+        (state/dispatch [:live-viewer-close])
+        (is (nil? (:live-viewer-search @db)))))))
+
+(deftest transient-log-search-result-stays-with-its-tab
+  (let [search
+        #(lv/log-search-requested (lv/log-search-opened "output") 0 %)
+
+        db
+        (atom {:active-tab-id "a"
+               :tabs [{:id "a"} {:id "b"}]
+               :live-viewer-search (search :a)
+               :tab-locals {"b" {:live-viewer-search (search :b)}}})
+
+        page
+        {"matched" 0 "total" 900 "lines" []}]
+
+    (with-redefs [state/app-db db]
+      (state/dispatch [:live-view-search-result :b {:page page}])
+      (is (get-in @db [:live-viewer-search :loading?]))
+      (is (= page (get-in @db [:tab-locals "b" :live-viewer-search :page])))
+      (state/dispatch [:live-view-search-close])
+      (state/dispatch [:live-view-search-result :a {:page page}])
+      (is (nil? (:live-viewer-search @db))))))
+
+(deftest transient-log-search-retries-in-place
+  (let [pane
+        (review-pane)
+
+        db
+        (atom (viewer-review-db pane))
+
+        attempts
+        (atom 0)
+
+        empty-page
+        {"matched" 0 "total" 900 "lines" [] "line_numbers" []}]
+
+    (with-redefs [state/app-db
+                  db
+
+                  client/live-view-log
+                  (fn [& _]
+                    (if (= 1 (swap! attempts inc))
+                      (throw (ex-info "Log unavailable" {}))
+                      empty-page))]
+
+      (#'screen/search-live-log! @db {:view-id (lv/view-id pane) :node-id "output"})
+      (is (not= ::timeout (deref (#'screen/read-live-log! @db 0) 2000 ::timeout)))
+      (is (:error (:live-viewer-search @db)))
+      (is (not= ::timeout (deref (#'screen/read-live-log! @db 0) 2000 ::timeout)))
+      (is (not (:error (:live-viewer-search @db))))
+      (is (= empty-page (get-in @db [:live-viewer-search :page])))
+      (state/dispatch [:live-view-close (lv/view-id pane) {:reason :completed}])
+      (is (lv/settled? (first (:live-views @db))))
+      (is (= empty-page (get-in @db [:live-viewer-search :page])))
+      (is (= (lv/view-id pane) (:live-viewer-id @db))))))

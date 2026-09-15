@@ -13,12 +13,14 @@
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.live-view-fixture :as fixture]
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
-  (:import [com.googlecode.lanterna.screen TerminalScreen]))
+  (:import [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 ;;; ── The views under test ────────────────────────────────────────────────────
 
@@ -1690,3 +1692,102 @@
     (is (= :columns (:kind (first wide))))
     (is (= ["left" "right"] (mapv :node-id (:cells (first wide)))))
     (is (= (repeat 2 (columns/cell-width 80 2)) (mapv #(count (:text %)) (:cells (first wide)))))))
+
+(defn- type-search
+  [search text]
+  (reduce (fn [search ch]
+            (lv/log-search-typed search (KeyStroke. (Character/valueOf (char ch)) false false)))
+          search
+          text))
+
+(deftest inline-log-search-edits-only-its-query
+  ;; #235 follow-up: the transient owns a separate, single-line search editor.
+  (let [search (-> (lv/log-search-opened "output")
+                   (type-search "abcd")
+                   (lv/log-search-typed (KeyStroke. KeyType/ArrowLeft))
+                   (lv/log-search-typed (KeyStroke. KeyType/Backspace))
+                   (lv/log-search-typed (KeyStroke. KeyType/Delete))
+                   (lv/log-search-typed (KeyStroke. KeyType/Home))
+                   (type-search "X"))]
+    (is (= "Xab" (input/input->text (:input search))))
+    (is (= 1 (get-in search [:input :ccol])))
+    (is (= "Xa"
+           (-> search
+               (lv/log-search-typed (KeyStroke. KeyType/End))
+               (lv/log-search-typed (KeyStroke. KeyType/Backspace))
+               :input
+               input/input->text)))
+    (let [pasted (-> search
+                     (lv/log-search-typed (KeyStroke. KeyType/PasteStart))
+                     (type-search "one")
+                     (lv/log-search-typed (KeyStroke. KeyType/Enter))
+                     (type-search "two")
+                     (lv/log-search-typed (KeyStroke. KeyType/PasteEnd)))]
+      (is (= 1 (count (get-in pasted [:input :lines]))))
+      (is (str/includes? (input/input->text (:input pasted)) "one"))
+      (is (str/includes? (input/input->text (:input pasted)) "two"))
+      (is (not (contains? pasted :paste))))))
+
+(deftest inline-log-search-fences-stale-reads
+  (let [search
+        (type-search (lv/log-search-opened "output") "ERROR [x]")
+
+        pending
+        (lv/log-search-requested search 0 :first)
+
+        page
+        {"matched" 1 "total" 900 "lines" ["ERROR [x]"] "line_numbers" [3]}
+
+        edited
+        (type-search pending "!")
+
+        newer
+        (lv/log-search-requested search 0 :second)]
+
+    (is (:loading? pending))
+    (is (= edited (lv/log-search-loaded edited :first {:page page})))
+    (is (= newer (lv/log-search-loaded newer :first {:page page})))
+    (is (nil? (lv/log-search-loaded nil :first {:page page})))
+    (let [loaded (lv/log-search-loaded newer :second {:page page})]
+      (is (= page (:page loaded)))
+      (is (not (:loading? loaded)))
+      (is (= page (:page (lv/log-search-typed loaded (KeyStroke. KeyType/ArrowLeft)))))
+      (is (nil? (:page (type-search loaded "!")))))))
+
+(deftest inline-log-search-pages-and-wraps-literal-results
+  (let [search
+        (assoc (lv/log-search-opened "output")
+          :page {"matched" 401
+                 "total" 2000
+                 "line_numbers" [42]
+                 "lines" [(str "[tag]*ERROR* " (apply str (repeat 200 "x")) " end-marker")]})
+
+        plan
+        (lv/log-search-plan search 24)
+
+        lines
+        (mapv :text (filter #(= :log (:kind %)) plan))]
+
+    (is (nil? (lv/log-search-page-from search -1)))
+    (is (= 200 (lv/log-search-page-from search 1)))
+    (is (= 200 (lv/log-search-page-from (assoc search :from 400) -1)))
+    (is (nil? (lv/log-search-page-from (assoc search :from 400) 1)))
+    (is (= [1] (mapv :direction (filter #(= :log-search-page (:kind %)) plan))))
+    (is (> (count lines) 2))
+    (is (every? #(<= (count %) 24) lines))
+    (is (str/includes? (str/join " " lines) "[tag]*ERROR*"))
+    (is (str/includes? (last lines) "end-marker"))))
+
+(deftest inline-log-search-loading-empty-and-failure-states
+  (let [search
+        (lv/log-search-opened "output")
+
+        text
+        #(-> (lv/log-search-plan % 80)
+             first
+             :text)]
+
+    (is (str/includes? (text search) "entire retained log"))
+    (is (= "Searching…" (text (lv/log-search-requested search 0 :request))))
+    (is (= "No matching lines" (text (assoc search :page {"matched" 0 "total" 900 "lines" []}))))
+    (is (= "Could not read log. Enter to retry." (text (assoc search :error true))))))

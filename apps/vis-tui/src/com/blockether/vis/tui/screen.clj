@@ -732,9 +732,13 @@
   "Project the selected transient view without modifying its transcript state."
   [db]
   (when-let [pane (first (filter #(= (:live-viewer-id db) (lv/view-id %)) (:live-views db)))]
-    [(assoc (lv/restored pane)
-       :is-reopened true
-       :is-viewer true)]))
+    (let [search (:live-viewer-search db)]
+      [(cond-> (assoc (lv/restored pane)
+                 :is-reopened true
+                 :is-viewer true)
+         search
+         (merge (select-keys search [:offset :is-following :total :visible])
+                {:anchor (:anchor search) :log-search search}))])))
 
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
@@ -824,6 +828,54 @@
                              :level
                              :error))))))
 
+(defn- search-live-log!
+  [db {:keys [view-id node-id]}]
+  (when (some #(= view-id (lv/view-id %)) (:live-views db))
+    (state/dispatch [:live-view-search-open view-id node-id])
+    true))
+
+(defn- read-live-log!
+  "Read off the input thread while the existing transient keeps painting."
+  [db from]
+  (when-let [search (:live-viewer-search db)]
+    (when-let [pane (first (viewer-panes db))]
+      (let [request-id (random-uuid)
+            session-id (get-in pane [:view :session-id])
+            view-id (lv/view-id pane)]
+
+        (state/dispatch [:live-view-search-request from request-id])
+        (future (let [result (try {:page (vis/live-view-log session-id
+                                                            view-id
+                                                            (:node-id search)
+                                                            from
+                                                            lv/log-search-page-size
+                                                            (input/input->text (:input search)))}
+                                  (catch Exception _ {:error true}))]
+                  (state/dispatch [:live-view-search-result request-id result])))))))
+
+(defn- page-live-log!
+  [db direction]
+  (when-let [search (:live-viewer-search db)]
+    (when-let [from (lv/log-search-page-from search direction)]
+      (read-live-log! db from))))
+
+(defn- live-log-search-key!
+  "The query owns typing; Escape returns to the view without interrupting the run."
+  [db ^KeyStroke key]
+  (when (and (:live-viewer-search db)
+             key
+             (not (instance? MouseAction key))
+             (not= KeyType/EOF (.getKeyType key)))
+    (let [kt (.getKeyType key)]
+      (cond (= kt KeyType/Escape) (state/dispatch [:live-view-search-close])
+            (some? (get-in db [:live-viewer-search :paste])) (state/dispatch [:live-view-search-key
+                                                                              key])
+            (= kt KeyType/Enter) (read-live-log! db 0)
+            (= kt KeyType/PageUp) (page-live-log! db -1)
+            (= kt KeyType/PageDown) (page-live-log! db 1)
+            :else (state/dispatch [:live-view-search-key key])))
+    true))
+
 (defn- activate-live-region!
   "Activate one click region owned by the live band; true when it was consumed."
   [db hit]
@@ -850,6 +902,12 @@
     (do (state/dispatch [:live-view-restore (:view-id hit)])
         (state/dispatch [:bump-render-version])
         true)
+
+    :live-log-search
+    (search-live-log! db hit)
+
+    :live-log-page
+    (do (when (= (:view-id hit) (:live-viewer-id db)) (page-live-log! db (:direction hit))) true)
 
     :live-activate
     (do (activate-live-button! db hit) true)
@@ -2233,11 +2291,6 @@
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
 
-(defn- search-live-log!
-  [screen db {:keys [view-id node-id]}]
-  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
-    (with-dialog-lock #(lv/search-log! screen pane node-id))))
-
 (defn- attachment-capabilities!
   []
   (or (:attachment-capabilities @state/app-db)
@@ -3396,7 +3449,8 @@
                                      messages-top
                                      composer-h
                                      (System/currentTimeMillis))]
-            (state/dispatch [:live-view-painted (:view-id geom) geom]))))
+            (state/dispatch [:live-view-painted (:view-id geom) geom])
+            (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom))))))
       (binding [frame/*column-offset* 0]
         (projects/paint! (frame/surface-graphics screen screen-cols rows)
                          (if (project-sidebar-locked? db screen-cols)
@@ -6639,6 +6693,7 @@
                    (recur)
                    ;; Forms retain ordinary typing; C-x still reaches global navigation.
                    (human-input-owns-key? db key) (do (human-input-key! db key) (recur))
+                   (live-log-search-key! db key) (recur)
                    ;; An ARMED stop swallows it next: the human is typing the
                    ;; comment that travels with the interrupt, so no stroke of it
                    ;; may reach the chat editor. A form outranks it — the form owns
@@ -6662,9 +6717,7 @@
                                                                 items
                                                                 {:enter-label "activate"
                                                                  :height :content}))]
-                           (if (= :live-log-search (:kind choice))
-                             (search-live-log! screen @state/app-db choice)
-                             (activate-live-region! @state/app-db choice))))
+                           (activate-live-region! @state/app-db choice)))
                        (recur))
                    (nil? key)
                    (do
@@ -7265,8 +7318,8 @@
                                  :live-restore
                                  (activate-live-region! db hit)
 
-                                 :live-log-search
-                                 (search-live-log! screen db hit)
+                                 (:live-log-search :live-log-page)
+                                 (activate-live-region! db hit)
 
                                  :live-activate
                                  (activate-live-region! db hit)
@@ -7442,8 +7495,8 @@
                                  :live-restore
                                  (activate-live-region! db hit)
 
-                                 :live-log-search
-                                 (search-live-log! screen db hit)
+                                 (:live-log-search :live-log-page)
+                                 (activate-live-region! db hit)
 
                                  :live-activate
                                  (activate-live-region! db hit)

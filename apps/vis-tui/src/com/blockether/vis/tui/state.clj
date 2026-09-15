@@ -130,6 +130,7 @@
    :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id
    :live-turn-client-id :progress :turn-start-ms :detail-expansions :mouse-selection
    :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
+   :live-viewer-search
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -182,6 +183,7 @@
    ;; that session's tab and gives its rows back when the run ends.
    :live-views []
    :live-viewer-id nil
+   :live-viewer-search nil
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})
@@ -3117,11 +3119,44 @@
 (reg-event-db :live-view-reopen
               ;; Opening a viewer never changes the transcript or the running pane.
               (fn [db [_ view-id]]
-                (assoc db :live-viewer-id view-id)))
+                (assoc db
+                  :live-viewer-id view-id
+                  :live-viewer-search nil)))
 
 (reg-event-db :live-viewer-close
               (fn [db _]
-                (dissoc db :live-viewer-id)))
+                (dissoc db :live-viewer-id :live-viewer-search)))
+
+(reg-event-db :live-view-search-open
+              (fn [db [_ view-id node-id]]
+                (assoc db
+                  :live-viewer-id view-id
+                  :live-viewer-search (lv/log-search-opened node-id))))
+
+(reg-event-db :live-view-search-close
+              (fn [db _]
+                (dissoc db :live-viewer-search)))
+
+(reg-event-db :live-view-search-key
+              (fn [db [_ key]]
+                (cond-> db
+                  (:live-viewer-search db)
+                  (update :live-viewer-search lv/log-search-typed key))))
+
+(reg-event-db :live-view-search-request
+              (fn [db [_ from request-id]]
+                (cond-> db
+                  (:live-viewer-search db)
+                  (update :live-viewer-search lv/log-search-requested from request-id))))
+
+(reg-event-db :live-view-search-result
+              (fn [db [_ request-id result]]
+                (across-tabs
+                  db
+                  (fn [workspace]
+                    (cond-> workspace
+                      (:live-viewer-search workspace)
+                      (update :live-viewer-search lv/log-search-loaded request-id result))))))
 
 (reg-event-db :live-record-open
               (fn [db [_ session-id pane]]
@@ -3131,7 +3166,9 @@
                     (update-tab db
                                 target
                                 (fn [workspace]
-                                  (update (assoc workspace :live-viewer-id (lv/view-id pane))
+                                  (update (assoc workspace
+                                            :live-viewer-id (lv/view-id pane)
+                                            :live-viewer-search nil)
                                           :live-views
                                           (fn [panes]
                                             (conj (filterv #(not= (lv/view-id pane) (lv/view-id %))
@@ -3150,7 +3187,9 @@
 
 (reg-event-db :live-view-scroll
               (fn [db [_ view-id delta]]
-                (update-live-pane db view-id #(lv/scrolled % (long delta)))))
+                (if (and (= view-id (:live-viewer-id db)) (:live-viewer-search db))
+                  (update db :live-viewer-search lv/scrolled (long delta))
+                  (update-live-pane db view-id #(lv/scrolled % (long delta))))))
 
 (reg-event-db :live-view-expand
               (fn [db [_ view-id node-id]]
@@ -3160,7 +3199,11 @@
               ;; Pushed back by the render thread with what the frame measured, the
               ;; way `:set-layout` is — and like it, deliberately NOT a redraw request.
               (fn [db [_ view-id geometry]]
-                (update-live-pane db view-id #(lv/painted % geometry))))
+                (if (:is-log-search geometry)
+                  (cond-> db
+                    (and (= view-id (:live-viewer-id db)) (:live-viewer-search db))
+                    (update :live-viewer-search lv/painted geometry))
+                  (update-live-pane db view-id #(lv/painted % geometry)))))
 
 (reg-event-db :live-view-arm
               ;; Escape ARMS the stop instead of firing it: the band takes one row
