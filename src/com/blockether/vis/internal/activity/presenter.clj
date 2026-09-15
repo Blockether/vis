@@ -395,6 +395,11 @@
                (when (number? files) (str " · " (counted-label files "file") " checked")))))
       "No lint result")))
 
+(defn- clean-lint-result?
+  [value]
+  (and (every? #(and (number? %) (zero? %)) (map #(field value %) ["error" "warning" "info"]))
+       (empty? (field value "findings"))))
+
 (defn- session-preview
   [value limit]
   (let [limit
@@ -783,6 +788,11 @@
             (str/starts-with? op "council.") (council-presentation op value)
             (= op "repl_eval") (repl-presentation value)
             (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+            (and (= op "lint_code") (clean-lint-result? (or result value)))
+            {"headline" headline
+             "summary" summary
+             "content" []
+             "sections" [{"headline" "Lint details" "summary" "" "content" content}]}
             :else {"headline" headline "summary" summary "content" content}))))
 
 (defn for-tool
