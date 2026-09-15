@@ -102,10 +102,11 @@ describe('desktop package', () => {
 });
 
 // v0.1.43 ran before checkout on fresh Linux runners and had no ARM64 package job.
-const workflow = readFileSync(
+const workflowSource = readFileSync(
   new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n');
+const workflow = workflowSource.replace(/^[ \t]*#.*$/gm, '');
 
 describe('desktop release signing', () => {
   it('requires macOS signing credentials and notarization before uploading', () => {
@@ -151,7 +152,7 @@ describe('desktop release signing', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
   });
 
-  it('grants release caller permissions for nested OIDC signing and asset upload', () => {
+  it('grants release asset upload without Windows signing permissions', () => {
     const release = readFileSync(
       new URL('../../../.github/workflows/release.yml', import.meta.url),
       'utf8',
@@ -161,10 +162,13 @@ describe('desktop release signing', () => {
     )?.[1];
     expect(desktop).toBeDefined();
     expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
-    expect(desktop).toMatch(/    permissions:\r?\n      contents: write\r?\n      id-token: write/);
+    expect(desktop).toMatch(/    permissions:\r?\n      contents: write/);
+    expect(desktop).not.toMatch(/^\s+id-token: write/m);
+    expect(desktop).toContain('# id-token: write');
   });
 
-  it('signs with OIDC and verifies the MSI and extracted EXE before smoke and upload', () => {
+  it('retains commented Windows signing and smoke configuration', () => {
+    const workflow = workflowSource;
     for (const name of [
       'CLIENT_ID',
       'TENANT_ID',
@@ -325,12 +329,11 @@ describe('desktop release platforms', () => {
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it('runs universal macOS, native x64/ARM64 Linux and Windows x64 builders', () => {
+  it('runs only the supported macOS and Linux builders', () => {
     expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
       'macOS universal',
       'Linux x64',
       'Linux ARM64',
-      'Windows x64',
     ]);
     // Only macOS is self-hosted; other platforms use native hosted runners.
     expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
@@ -338,22 +341,14 @@ describe('desktop release platforms', () => {
       '[self-hosted, macOS, ARM64, vis-macos-arm64]',
       'ubuntu-24.04',
       'ubuntu-24.04-arm',
-      'windows-2022',
     ]);
     expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
     expect(workflow).toContain('runner: ubuntu-24.04');
     expect(workflow).toContain('runner: ubuntu-24.04-arm');
-    expect(workflow).toContain('asset: windows-x64');
-    expect(workflow).toContain('uses: azure/login@v3');
-    expect(workflow).toContain('id-token: write');
-    expect(workflow).not.toContain('azure-client-secret');
-    const smoke = workflow.indexOf('name: Smoke-test Windows installer');
-    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Sign and package Windows with Pake'));
-    expect(smoke).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
-    expect(workflow).toContain('shell: pwsh');
-    expect(workflow).toContain('msiexec.exe');
-    expect(workflow).toContain('MainWindowHandle');
-    expect(workflow).toContain('Stop-Process');
+    expect(workflow).toContain('environment: desktop-build');
+    expect(workflow).not.toMatch(/windows|azure\/login|id-token|pwsh|msiexec|Start-Process/i);
+    expect(workflowSource).toMatch(/^\s+# - runner: windows-2022$/m);
+    expect(workflowSource).toMatch(/^\s+#\s+asset: windows-x64$/m);
     expect(workflow).toContain('aarch64-apple-darwin,x86_64-apple-darwin');
     expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
   });
