@@ -2997,6 +2997,57 @@ therapy line 2"
                      (expect (= expected-rows (:text-rows geometry)))
                      (expect (= (+ expected-rows 2) (:input-box-h geometry)))))))
 
+(defdescribe
+  footer-bottom-border-frame-test
+  (it
+    "preserves both status rows above the border on full, input and live frames"
+    (let [db
+          {:messages [{:role :assistant
+                       :text "Ready."
+                       :tokens {"input" 100 "output" 20}
+                       :cost {"total_cost" 0.0042}}]
+           :input {:lines ["draft"] :crow 0 :ccol 5}
+           :scroll scroll/follow
+           :settings {}
+           :loading? true
+           :progress {:iterations [{:thinking "Checking alignment"}]}}
+
+          capture
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (with-redefs [state/app-db (atom db)
+                          timg/images-protocol (constantly nil)]
+
+              (cap/capture!
+                {:cols 80
+                 :rows 30
+                 :paint! (fn [{:keys [screen terminal]}]
+                           (let [layout (#'screen/render-frame! screen 80 30 db 1000)
+                                 full (subvec (term/grid terminal) 24)]
+
+                             (#'screen/render-input-frame! screen 80 30 db 1000)
+                             (let [input-frame (subvec (term/grid terminal) 24)]
+                               (#'screen/render-live-bubble-frame!
+                                screen
+                                80
+                                30
+                                (assoc db :layout layout)
+                                1000
+                                layout)
+                               (.refresh ^TerminalScreen screen)
+                               [full input-frame (subvec (term/grid terminal) 24)])))})))
+
+          rule
+          (apply str (repeat 80 "─"))]
+
+      (expect (nil? (:error capture)) (str (:error capture)))
+      (expect (apply = (:ret capture)))
+      (doseq [[input-top draft input-bottom model-row limits-row bottom] (:ret capture)]
+        (expect (= rule input-top input-bottom bottom))
+        (expect (str/starts-with? draft "  draft"))
+        (expect (str/includes? model-row "No git"))
+        (expect (str/starts-with? limits-row "  Limits"))
+        (expect (str/ends-with? limits-row "~$0.0042  "))))))
+
 (defdescribe composer-attachment-geometry-test
              (it "reserves every attachment row above the prompt on every render path"
                  (let [geometry (#'screen/composer-geometry
@@ -3006,10 +3057,10 @@ therapy line 2"
                    (expect (= {:text-rows 1
                                :input-box-h 3
                                :composer-h 5
-                               :input-top 25
-                               :rail-top 23
+                               :input-top 24
+                               :rail-top 22
                                :rail-h 2
-                               :echo-row 22}
+                               :echo-row 21}
                               geometry)))))
 
 (defdescribe

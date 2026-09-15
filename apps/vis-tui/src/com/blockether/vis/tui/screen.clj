@@ -2897,7 +2897,7 @@
         (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         input-top
-        (- (long rows) input-box-h 2)
+        (- (long rows) input-box-h (long footer/height))
 
         rail-h
         (attachment-rail/rail-height (:attachments db))
@@ -3007,7 +3007,7 @@
 
 (defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
-   echo-area row, and two footer rows.
+   echo-area row, and footer with its bottom border.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -3042,17 +3042,19 @@
         (volatile! {})
 
         root-frame
-        (frame/layout
-          cols
-          rows
-          {:header (header/header-rows db) :attachments rail-h :composer input-box-h :footer 2}
-          (into {}
-                (map (fn [section-id]
-                       [section-id
-                        (fn [graphics component]
-                          (when-let [paint-section (get @paint-context section-id)]
-                            (paint-section graphics component)))])
-                     frame/section-order)))
+        (frame/layout cols
+                      rows
+                      {:header (header/header-rows db)
+                       :attachments rail-h
+                       :composer input-box-h
+                       :footer footer/height}
+                      (into {}
+                            (map (fn [section-id]
+                                   [section-id
+                                    (fn [graphics component]
+                                      (when-let [paint-section (get @paint-context section-id)]
+                                        (paint-section graphics component)))])
+                                 frame/section-order)))
 
         section-bounds
         (into {}
@@ -3850,11 +3852,9 @@
         header-top
         0
 
-        ;; Footer is two rows tall (model + limits). Shortcut chrome is a
-        ;; closed helper cell above input; input top border is omitted. Must
-        ;; match full render geometry.
+        ;; Match full-frame geometry, including the footer's bottom border.
         footer-row
-        (- rows 2)
+        (- rows (long footer/height))
 
         progress-extra
         {:agent-name (get-in db [:workspace "agent_name"])
@@ -4324,7 +4324,7 @@
         (composer-geometry db cols rows)
 
         footer-row
-        (- rows 2)
+        (- rows (long footer/height))
 
         slash-suggestions
         (slash-suggestions-for-db screen db)

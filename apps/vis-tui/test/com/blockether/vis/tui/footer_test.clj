@@ -49,14 +49,15 @@
 
                       frame
                       (cap/capture! {:cols cols
-                                     :rows 2
+                                     :rows 3
                                      :paint! (fn [{:keys [g]}]
                                                (footer/draw-footer! g db 0 cols 0))})
 
-                      [git-row limits-row]
+                      [git-row limits-row border-row]
                       (mapv #(apply str (map :ch %)) (last (:frames frame)))]
 
                   (expect (nil? (:error frame)))
+                  (expect (= (apply str (repeat cols "─")) border-row))
                   (expect (str/starts-with? limits-row "  Limits"))
                   (expect (str/ends-with? git-row "git ~/vis (main)  "))
                   (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
