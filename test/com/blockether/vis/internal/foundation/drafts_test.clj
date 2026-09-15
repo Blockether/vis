@@ -11,12 +11,16 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.mpl-capture :as capture]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
+            [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.workspace.core :as ws]
+            [com.blockether.vis.internal.workspace.drafts :as lifecycle]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
             [next.jdbc :as jdbc]))
 
@@ -119,6 +123,30 @@
   "The root the foundation ctx block reports for `env` right now."
   [env]
   (get-in ((:ext/ctx-fn foundation/vis-extension) env) ["session_workspace" "root"]))
+
+;; Draft recovery reports #242 and #243: isolation must be an explicit opt-in.
+(defdescribe draft-backend-setting-test
+             (it "defaults to off and exposes the same persistent choice in both clients"
+                 (let [spec (toggles/toggle-spec ws/draft-backend-toggle-id)]
+                   (expect (= "off" (:default spec)))
+                   (expect (= :enum (:type spec)))
+                   (expect (= ["auto" "worktree" "rift" "off"] (:choices spec)))
+                   (expect (true? (:persist? spec)))
+                   (doseq [channel [:tui :web]]
+                     (expect (some #(= ws/draft-backend-toggle-id (:id %))
+                                   (toggles/toggles-for-channel channel))))))
+             (it "keeps missing or invalid settings off while honoring explicit backend choices"
+                 (binding [ws/*draft-backend* nil]
+                   (doseq [configured [nil "" "unknown" false "off" "auto" "worktree" "rift"]]
+                     (with-redefs [toggles/value-of (constantly configured)]
+                       (expect (= (if (contains? #{"auto" "worktree" "rift"} configured)
+                                    (keyword configured)
+                                    :off)
+                                  (ws/draft-backend-setting)))))))
+             (it "honors an explicit backend override even when the saved setting is off"
+                 (with-redefs [toggles/value-of (constantly "off")]
+                   (binding [ws/*draft-backend* :worktree]
+                     (expect (= :worktree (ws/draft-backend-setting)))))))
 
 (defdescribe
   draft-symbol-roundtrip-test
@@ -228,6 +256,238 @@
                                          (drafts/draft-create env "three")))))))))
 
 (defdescribe
+  draft-selected-root-test
+  (it
+    "drafts an added shared repository, lands only there and returns to the original project"
+    (with-session
+      "vis-fdraft-root"
+      (fn [base env]
+        (let [sibling (temp-dir "vis-fdraft-sibling")]
+          (try (init-repo! sibling)
+               (spit (io/file sibling "sibling.txt") "sibling repository\n")
+               (git! sibling "add" "sibling.txt")
+               (git! sibling "commit" "-q" "-m" "add sibling marker")
+               (let [env (assoc env
+                           :security-policy {:jail-enabled true
+                                             :process-jail {:allow-read-write [base sibling]}}
+                           :security/filesystem-roots [base sibling])
+                     original-head (git! base "rev-parse" "HEAD")
+                     opened (drafts/draft-create env "sibling-fix" true [sibling])
+                     result (:result opened)
+                     draft-root (get result "root")]
+
+                 (expect (true? (extension/envelope-success? opened)))
+                 (expect (= sibling (get result "repo_root")))
+                 (expect (not= sibling draft-root))
+                 (expect (= draft-root (ctx-root env)))
+                 (expect (= "sibling repository\n" (slurp (io/file draft-root "sibling.txt"))))
+                 (expect (= "x\n" (slurp (io/file draft-root "a.txt"))))
+                 (spit (io/file draft-root "fix.txt") "isolated fix\n")
+                 (expect (not (.exists (io/file sibling "fix.txt"))))
+                 (expect (not (.exists (io/file base "fix.txt"))))
+                 (let [approved (:result (drafts/draft-approve env "fix: update sibling"))
+                       discarded (:result (drafts/draft-discard env))]
+
+                   (expect (= "approved" (get approved "status")))
+                   (expect (= "isolated fix\n" (slurp (io/file sibling "fix.txt"))))
+                   (expect (= original-head (git! base "rev-parse" "HEAD")))
+                   (expect (= "M a.txt" (git! base "status" "--porcelain")))
+                   (expect (= "M a.txt" (git! sibling "status" "--porcelain")))
+                   (expect (= base (get discarded "root")))
+                   (expect (= base (ctx-root env)))))
+               (finally (delete-tree! sibling))))))))
+
+(defdescribe
+  draft-selected-root-from-directory-test
+  (it "uses the selected repository's backend even when the original project has no Git history"
+      (with-session "vis-fdraft-from-directory"
+                    (fn [_base env]
+                      (let [sibling
+                            (temp-dir "vis-fdraft-git-source")
+
+                            directory
+                            (temp-dir "vis-fdraft-plain-project")]
+
+                        (try (init-repo! sibling)
+                             (reset! (:workspace-atom env) (ws/change-root! (:db-info env)
+                                                                            (:session/state-id env)
+                                                                            directory))
+                             (let [env
+                                   (assoc env :security/filesystem-roots [sibling])
+
+                                   opened
+                                   (drafts/draft-create env "from-directory" true [sibling])]
+
+                               (expect (extension/envelope-success? opened))
+                               (expect (= sibling (get-in opened [:result "repo_root"])))
+                               (expect (= "worktree" (get-in opened [:result "backend"])))
+                               (expect (= directory
+                                          (get-in (drafts/draft-discard env) [:result "root"])))
+                               (expect (= directory (ctx-root env))))
+                             (finally (delete-tree! sibling) (delete-tree! directory))))))))
+
+(defdescribe
+  draft-selected-root-refusal-test
+  (it
+    "rejects unavailable or restricted roots before changing the session or either repository"
+    (with-session
+      "vis-fdraft-root-refuse"
+      (fn [base env]
+        (let [sibling
+              (temp-dir "vis-fdraft-root-candidate")
+
+              nested
+              (str (io/file sibling "nested"))
+
+              missing
+              (str (io/file sibling "missing"))]
+
+          (try
+            (init-repo! sibling)
+            (.mkdirs (io/file nested))
+            (let [allowed-env
+                  (assoc env
+                    :security/filesystem-roots [base sibling missing]
+                    :security-policy {:jail-enabled true
+                                      :process-jail {:allow-read-write [base sibling]}})
+
+                  cases
+                  (concat
+                    [["blank" "" allowed-env] ["missing" missing allowed-env]
+                     ["unlisted directory" nested allowed-env]
+                     ["read-only" sibling
+                      (-> allowed-env
+                          (assoc :security/filesystem-roots [base])
+                          (assoc-in [:security-policy :project-paths] {"sibling_path" sibling})
+                          (assoc-in [:security-policy :process-jail :allow-read-write] [base])
+                          (assoc-in [:security-policy :process-jail :allow-read] [sibling]))]]
+                    (for [kind
+                          [:deny-read :deny-write :deny-exec]
+
+                          path
+                          [sibling nested]]
+
+                      [(str kind " " path) sibling
+                       (assoc-in allowed-env [:security-policy :process-jail kind] [path])])
+                    (for [policy
+                          [:copy-only :not-allowed]
+
+                          path
+                          [sibling nested]]
+
+                      [(str policy " " path) sibling
+                       (assoc-in allowed-env [:security-policy :draft-policies] {path policy})]))]
+
+              (doseq [[label requested selected-env] cases]
+                (let [refused (drafts/draft-create selected-env "refused" true [requested])]
+                  (expect (false? (extension/envelope-success? refused)) label)
+                  (expect (= base (ctx-root env)))
+                  (expect (= base (:root (ws/for-session (:db-info env) (:session/state-id env)))))
+                  (expect (= 1
+                             (count (re-seq #"(?m)^worktree "
+                                            (git! sibling "worktree" "list" "--porcelain")))))))
+              (expect (= "M a.txt" (git! base "status" "--porcelain")))
+              (expect (= "M a.txt" (git! sibling "status" "--porcelain"))))
+            (finally (delete-tree! sibling))))))))
+
+(defdescribe
+  draft-selected-root-policy-test
+  (it
+    "selects a registered project under a broad writable grant and never forks it twice"
+    (with-session
+      "vis-fdraft-root-policy"
+      (fn [base env]
+        (let [catalog
+              (temp-dir "vis-fdraft-catalog")
+
+              sibling
+              (str (io/file catalog "sibling"))]
+
+          (try (.mkdirs (io/file sibling))
+               (init-repo! sibling)
+               (let [env
+                     (assoc env
+                       :security/filesystem-roots [base catalog]
+                       :security-policy {:jail-enabled true
+                                         :project-paths {"sibling_path" sibling}
+                                         :draft-policies {sibling :copy-and-apply}})
+
+                     opened
+                     (binding [ws/*filesystem-roots*
+                               [{:trunk sibling :clone sibling :draft :copy-and-apply}]]
+                       (drafts/draft-create env "registered" true [sibling]))]
+
+                 (expect (extension/envelope-success? opened))
+                 (expect (= sibling (get-in opened [:result "repo_root"])))
+                 (expect (empty? (ws/extra-root-entries (ws/for-session (:db-info env)
+                                                                        (:session/state-id env)))))
+                 (expect (= 2
+                            (count (re-seq #"(?m)^worktree "
+                                           (git! sibling "worktree" "list" "--porcelain")))))
+                 (expect (extension/envelope-success? (drafts/draft-discard env)))
+                 (expect (= base (ctx-root env))))
+               (finally (delete-tree! catalog))))))))
+
+(defdescribe
+  draft-selected-root-python-test
+  (it
+    "accepts lists of repository Paths through local and worker Python argument styles"
+    (extension/sandbox-symbol-signatures)
+    (doseq [worker? [false true]]
+      (with-session
+        "vis-fdraft-root-python"
+        (fn [base env]
+          (let [sibling (temp-dir "vis-fdraft-python-sibling")]
+            (try
+              (init-repo! sibling)
+              (let [env (assoc env :security/filesystem-roots [base sibling])
+                    ext {:ext/name "foundation-core"}
+                    bindings (into {}
+                                   (map
+                                     (fn [entry]
+                                       [(:ext.symbol/symbol entry)
+                                        (fn [& args]
+                                          (extension/invoke-symbol-wrapper ext entry args env))]))
+                                   drafts/symbols)]
+
+                (tpc/with-own
+                  [ctx bindings nil {:worker? worker?}]
+                  (let
+                    [answer
+                     (ep/run-python-block
+                       ctx
+                       (str
+                         "import inspect\nfrom pathlib import Path\n"
+                         "assert 'roots' in inspect.signature(draft_create).parameters\n"
+                         "source = Path("
+                         (pr-str sibling)
+                         ")\n"
+                         "sources = [source, Path(" (pr-str base)
+                         ")]\n" "for create, clean in [\n"
+                         "    (lambda: draft_create('python-root', roots=sources), True),\n"
+                         "    (lambda: draft_create(label='python-root', roots=sources), True),\n"
+                         "    (lambda: draft_create('python-root', clean=False, roots=sources), False),\n"
+                         "    (lambda: draft_create('python-root', False, roots=sources), False),\n"
+                         "    (lambda: draft_create('python-root', True, sources), True),\n" "]:\n"
+                         "    opened = create()\n" "    try:\n"
+                         "        assert opened['repo_root'] == str(source), dict(opened)\n"
+                         "        assert len(opened['repositories']) == 2, dict(opened)\n"
+                         "        assert opened['clean'] is clean\n"
+                         "        assert draft_status()['root'] == opened['root']\n"
+                         "        if clean:\n"
+                         "            for sync in [lambda: draft_sync('start', 'sync test', sources), lambda: draft_sync(action='start', message='sync test', roots=sources), lambda: draft_sync('start', message='sync test', roots=sources)]:\n"
+                         "                synced = sync()\n"
+                         "                assert synced['status'] == 'synced', dict(synced)\n"
+                         "                assert len(synced['repositories']) == 2\n"
+                         "    finally:\n"
+                         "        assert draft_discard()['root'] == " (pr-str base)
+                         "\n" "print('selected root round trip')\n"))]
+                    (expect (nil? (:error answer)) (pr-str answer))
+                    (expect (= "selected root round trip\n" (:stdout answer)))))
+                (expect (= base (ctx-root env))))
+              (finally (delete-tree! sibling)))))))))
+
+(defdescribe
   draft-discard-veto-test
   (it
     "a vetoed discard keeps the persisted session pinned to its draft"
@@ -264,13 +524,13 @@
                (finally (extension/unregister-op-hooks-for-owner!
                           :ext/draft-discard-veto-test))))))))
 
-(defdescribe
-  draft-symbols-test
-  (it "the sandbox names its four lifecycle tools plus draft_diff, without a draft slash command"
-      (expect (= ["draft-status" "draft-diff" "draft-create" "draft-approve" "draft-discard"]
-                 (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
-      (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
-                              (:ext/slash-commands foundation/vis-extension))))))
+(defdescribe draft-symbols-test
+             (it "the sandbox names its six draft tools, without a draft slash command"
+                 (expect (= ["draft-status" "draft-diff" "draft-create" "draft-sync" "draft-approve"
+                             "draft-discard"]
+                            (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
+                 (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
+                                         (:ext/slash-commands foundation/vis-extension))))))
 
 (defdescribe
   draft-diff-symbol-test
@@ -356,9 +616,9 @@
           (expect (contract/valid-projection? projection))
           (expect (str/includes? rendered "Captured draft diff"))
           (expect (str/includes? rendered "DIFF-feature.json"))
-          (expect (str/includes? rendered "snapshot-tree"))
-          (expect (str/includes? rendered "Empty"))
-          (expect (str/includes? rendered (str empty?)))))
+          ;; Routine draft results use the compact Activity summary.
+          (expect (str/includes? rendered (if empty? "No changes" "Diff attached")))
+          (expect (= [] (get-in row [:presentation "content"])))))
       (let [ctx (event/context)
             invocation (event/invocation ctx nil)
             details {:operation :draft_diff
@@ -377,3 +637,121 @@
         (expect (= "failed" (:state row)))
         (expect (= "No draft is active" (:error-summary row)))
         (expect (contract/valid-projection? projection))))))
+
+(defdescribe
+  multi-repository-review-test
+  (it
+    "keeps #241 colliding paths separate and validates all checkpoints before attaching"
+    (with-session
+      "vis-group-review"
+      (fn [base env]
+        (let [sibling
+              (temp-dir "vis-group-sibling")
+
+              shared
+              (temp-dir "vis-group-shared")]
+
+          (try (init-repo! sibling)
+               (init-repo! shared)
+               (let [env
+                     (assoc env
+                       :security-policy {:jail-enabled true
+                                         :process-jail {:allow-read-write [base sibling shared]}}
+                       :security/filesystem-roots [base sibling shared])
+
+                     opened
+                     (drafts/draft-create env "group-review" false [base sibling])
+
+                     sink
+                     (atom [])]
+
+                 (expect (extension/envelope-success? opened))
+                 (binding [capture/*attachment-sink* sink]
+                   (let [initial (drafts/draft-diff env)
+                         checkpoint (get-in initial [:result "checkpoint"])
+                         repositories (ws/draft-roots @(:workspace-atom env))]
+
+                     (expect (extension/envelope-success? initial))
+                     (expect (true? (get-in initial [:result "empty"])))
+                     (expect (= #{base sibling} (set (keys checkpoint))))
+                     (doseq [[index repository] (map-indexed vector repositories)]
+                       (spit (io/file (:root repository) "a.txt") (str "task " index "\n")))
+                     (let [review (drafts/draft-diff env "DIFF-group.json" checkpoint)
+                           documents (mapv #(diff/parse! (String.
+                                                           (.decode (java.util.Base64/getDecoder)
+                                                                    ^String (:base64 %))
+                                                           java.nio.charset.StandardCharsets/UTF_8))
+                                           (take-last 2 @sink))
+                           next-checkpoint (get-in review [:result "checkpoint"])]
+
+                       (expect (extension/envelope-success? review))
+                       (expect (= 2 (get-in review [:result "repository_count"])))
+                       (expect (= 2 (count (set (map #(get-in % ["source" "label"]) documents)))))
+                       (expect (every? #(str/includes? (get % "patch") "a.txt") documents))
+                       (expect (true? (get-in
+                                        (drafts/draft-diff env "DIFF-next.json" next-checkpoint)
+                                        [:result "empty"])))
+                       (doseq [invalid [(dissoc next-checkpoint sibling)
+                                        (assoc next-checkpoint sibling "not-a-checkpoint")]]
+                         (let [before (count @sink)]
+                           (expect (not (extension/envelope-success?
+                                          (drafts/draft-diff env "DIFF-invalid.json" invalid))))
+                           (expect (= before (count @sink)))))))))
+               (finally (delete-tree! sibling) (delete-tree! shared))))))))
+
+(defdescribe draft-sync-activity-test
+             (it "declares running progress and preserves sync outcomes, failures and empty results"
+                 (let [declared (:ext.symbol/activity drafts/draft-sync-symbol)]
+                   (expect (= "Synchronize draft" (:headline declared)))
+                   (expect (true? (:show-start declared)))
+                   (doseq [[outcome result error expected]
+                           [[:succeeded {:status "synced" :repositories [{:status "synced"}]} nil
+                             "Synchronized"]
+                            [:succeeded {:status "conflicts" :repositories [{:conflicts ["a.txt"]}]}
+                             nil "Resolve conflicts"]
+                            [:succeeded {:status "aborted" :repositories [{:status "aborted"}]} nil
+                             "Synchronization aborted"] [:succeeded nil nil "No draft result"]
+                            [:failed nil (ex-info "Resolve the owned merge first" {})
+                             "Resolve the owned merge first"]]]
+                     (let [ctx (event/context)
+                           invocation (event/invocation ctx nil)
+                           details {:operation :draft_sync
+                                    :presenter :generic
+                                    :activity declared
+                                    :started-at-ms (System/currentTimeMillis)}
+                           start (event/start-event ctx invocation details)
+                           terminal (event/terminal-event ctx
+                                                          invocation
+                                                          (assoc details
+                                                            :outcome outcome
+                                                            :result result
+                                                            :error error))
+                           projection (activity/presentation (activity/replay [start terminal]))]
+
+                       (expect (= "Synchronize draft" (get-in start [:presentation "headline"])))
+                       (expect (contract/valid-projection? projection))
+                       (expect (str/includes? (pr-str projection) expected)))))))
+
+(defdescribe draft-sync-failure-test
+             (it "preserves actionable #243 failures and the session pin"
+                 (with-session
+                   "vis-sync-failure"
+                   (fn [_base env]
+                     (expect (extension/envelope-success? (drafts/draft-create env "sync-failure")))
+                     (let [before (ctx-root env)]
+                       (doseq [result [{:status :partial
+                                        :repositories
+                                        [{:status :failed :repo-root before :error "blocked"}]}
+                                       (ex-info "Synchronization refused"
+                                                {:type :draft/sync-in-progress
+                                                 :hint "Use draft_sync(action=abort)."})]]
+                         (with-redefs [lifecycle/sync!
+                                       (fn [_ _]
+                                         (if (instance? Throwable result) (throw result) result))]
+                           (let [refused (drafts/draft-sync env)]
+                             (expect (not (extension/envelope-success? refused)))
+                             (expect (map? (get-in refused [:error :details])))
+                             (expect (= before (ctx-root env)))
+                             (expect (= before
+                                        (:root (ws/for-session (:db-info env)
+                                                               (:session/state-id env)))))))))))))

@@ -334,6 +334,11 @@ directory (`vis-python-runtime` → `vis_python_runtime_path`). Set `python_name
 to choose another name. `project_root_path` is the current project. Access to
 `~/.vis` is always allowed.
 
+You can ask Vis to create one draft across several added read/write repositories,
+even when their policies are `shared`. `draft_create("task", roots=[project_root_path, sibling_path])`
+selects participants without changing the catalog; the first root is primary.
+See [Work in another repository](drafts.md#work-in-another-repository).
+
 ```yaml
 # vis.yml
 workspace:
@@ -551,7 +556,7 @@ toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
-  draft_backend: auto   # auto | worktree | rift | off; require drafts for changes unless off (see drafts.md)
+  draft_backend: off    # default off; opt in with auto | worktree | rift (see drafts.md)
 ```
 
 Run `/reload` after editing.

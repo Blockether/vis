@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
@@ -761,18 +762,24 @@
                :kind kind}})))
 
 (defn- fs-access-refusal
-  "First extension-owned `:fs/access` refusal among `paths`, or nil when all
+  "First draft-policy or extension-owned `:fs/access` refusal, or nil when all
    paths are allowed. Host readers and writers use `file-read` and `file-write`."
   [env kind operation paths]
-  (when (extension/gate-hooked? :fs/access)
-    (some (fn [path]
-            (let [target (path->target path kind)]
-              (some-> (extension/run-gate-hooks :fs/access
-                                                env
-                                                {:operation operation
-                                                 :path (or (:absolute target) (str path))})
-                      (assoc :target target))))
-          paths)))
+  (some (fn [path]
+          (let [target
+                (path->target path kind)
+
+                absolute
+                (or (:absolute target) (str path))]
+
+            (or (when (= "file-write" operation)
+                  (when-let [reason (process-jail/draft-write-refusal env absolute)]
+                    {:reason reason :owner :draft :target target}))
+                (when (extension/gate-hooked? :fs/access)
+                  (some->
+                    (extension/run-gate-hooks :fs/access env {:operation operation :path absolute})
+                    (assoc :target target))))))
+        paths))
 
 (defn- fs-access-before-fn
   "Ask the `:fs/access` gate about every path this op touches, BEFORE it runs.

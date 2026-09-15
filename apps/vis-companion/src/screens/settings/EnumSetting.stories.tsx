@@ -13,7 +13,7 @@ const meta = {
       label: 'Draft backend',
       type: 'enum',
       choices: ['auto', 'worktree', 'rift', 'off'],
-      value: 'auto',
+      value: 'off',
     },
     onPick: () => {},
   },
@@ -34,7 +34,7 @@ export const ChooseBackend: Story = {
     await userEvent.tab();
     await expect(select).toHaveFocus();
     await userEvent.keyboard('{ArrowDown}');
-    await expect(page.getByRole('option', { name: 'auto' })).toHaveFocus();
+    await expect(page.getByRole('option', { name: 'off' })).toHaveFocus();
     await userEvent.keyboard('r{Enter}');
     await expect(select).toHaveTextContent('rift');
     await expect(select).toHaveFocus();

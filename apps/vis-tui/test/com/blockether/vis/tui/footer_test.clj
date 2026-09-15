@@ -532,23 +532,28 @@
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
                               (mapv :text)))))))))
-  (it "hides model-managed isolated workspace details"
+  (it "shows draft identity and the gateway's aggregate review counts"
+      ;; #241: isolated workspaces must not erase the footer's change summary.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
-            (let [texts (->> (build-segments {:messages []
-                                              :settings {}
-                                              :workspace {"root" "/internal/isolated-copy"
-                                                          "fork_ms" 1
-                                                          "git" {"is_workspace" true
-                                                                 "repo" "isolated-copy"
-                                                                 "branch" "detached"}}}
-                                             0)
-                             (filter #(= :right (:region %)))
-                             (remove fixture-seg?)
-                             (mapv :text))]
-              (expect (empty? texts)))))))
+            (doseq [[identity expected] [[{"label" "api-and-sdk"} "api-and-sdk"]
+                                         [{"id" "12345678-abcd"} "12345678"]]]
+              (let [texts (->> (build-segments {:messages []
+                                                :settings {}
+                                                :workspace
+                                                (merge {"root" "/internal/isolated-copy"
+                                                        "fork_ms" 1
+                                                        "draft_changes"
+                                                        {"modified" 2 "created" 3 "deleted" 1}
+                                                        "git" {"is_workspace" true "modified" 99}}
+                                                       identity)}
+                                               0)
+                               (filter #(= :right (:region %)))
+                               (remove fixture-seg?)
+                               (mapv :text))]
+                (expect (= [(str " DRAFT#" expected " ~2 +3 -1")] texts))))))))
   (it "renders the gateway :git fact even when the top-level root was lost"
       ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
       ;; git fact still rides on the session's `:workspace` record — the footer
@@ -657,7 +662,9 @@
                                  (filter #(= :right (:region %)))
                                  (mapv :text))))))))
   (it "renders response controls with text labels, values and shortcut hints"
-      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
+      ;; Exercise response-control layout independently of the workspace segment.
+      (with-redefs-fn {#'footer/draft-footer-spans (constantly [])
+                       #'footer/session-model-info (constantly {:name "gpt-6-astra"
                                                                 :provider :openai-codex
                                                                 :reasoning-effort? true
                                                                 :verbosity-style :openai-text})
@@ -911,3 +918,34 @@
                                                                       :dynamic {:limits []}}}}
                                                   :openai-codex
                                                   0))))))
+
+(defdescribe
+  draft-summary-test
+  (it "distinguishes clean review counts from unavailable or incomplete summaries"
+      (doseq [[fields expected] [[{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}}
+                                  " ~0 +0 -0"] [{} " (changes unavailable)"]
+                                 [{"draft_changes" {"modified" 0}} " (changes unavailable)"]
+                                 [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}
+                                   "draft_error" "Cannot read review snapshot"}
+                                  " (changes unavailable)"]]]
+        (expect (= (str " DRAFT#multi" expected)
+                   (:text (first (#'footer/draft-footer-spans (assoc fields "label" "multi"))))))))
+  (it "keeps draft identity and all review counts visible at ordinary terminal widths"
+      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
+                                                                :provider :openai-codex
+                                                                :reasoning-effort? true
+                                                                :verbosity-style :openai-text})}
+        (fn []
+          (doseq [cols [80 120]]
+            (let [db {:messages []
+                      :settings {:reasoning-level "deep" :verbosity "low"}
+                      :workspace {"fork_ms" 1
+                                  "label" "multi"
+                                  "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
+                  capture (cap/capture! {:cols cols
+                                         :rows 4
+                                         :paint! (fn [{:keys [g]}]
+                                                   (footer/draw-footer! g db 1 cols 0))})]
+
+              (expect (nil? (:error capture)))
+              (expect (str/includes? (cap/frame-text capture) "DRAFT#multi ~2 +3 -1"))))))))

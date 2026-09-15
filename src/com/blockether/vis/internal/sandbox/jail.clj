@@ -47,8 +47,10 @@
             [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.util :as util])
-  (:import (java.util HashMap)))
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace])
+  (:import (java.nio.file Path Paths)
+           (java.util HashMap)))
 
 (defn supported?
   "True when this host can confine a child at all."
@@ -78,6 +80,95 @@
                  (when (and n (<= 1 n 65535)) n))))
        distinct
        vec))
+
+(def draft-required-message
+  "Use draft_create with roots=[...] before changing project files. Shared and unselected repositories remain read-only while drafts are enabled.")
+
+(defn- beneath?
+  [path parent]
+  (let [^Path child
+        (Paths/get ^String (workspace/normalize-root path) (make-array String 0))
+
+        ^Path ancestor
+        (Paths/get ^String (workspace/normalize-root parent) (make-array String 0))]
+
+    (.startsWith child ^Path ancestor)))
+
+(defn draft-source-roots
+  "Project originals protected by the draft prerequisite; dependency caches stay available."
+  [env]
+  (let [ws
+        (or (some-> (:workspace-atom env)
+                    deref)
+            (:workspace env))
+
+        policy
+        (:security-policy env)
+
+        no-search
+        (set (map workspace/normalize-root
+                  (concat (:security/no-search-roots env)
+                          (get-in policy [:process-jail :no-search]))))]
+
+    (vec (distinct (keep workspace/normalize-root
+                         (concat [(or (:repo-root ws) (:workspace/root env))]
+                                 (:workspace/draft-protected-roots env)
+                                 (keep (fn [[path draft-policy]]
+                                         (when (contains? #{:copy-only :copy-and-apply}
+                                                          (workspace/draft-policy-id draft-policy))
+                                           path))
+                                       (:draft-policies policy))
+                                 (map :repo-root (workspace/draft-roots ws))
+                                 (remove (fn [path]
+                                           (and (contains? no-search
+                                                           (workspace/normalize-root path))
+                                                (not (.exists (java.io.File. (str path) ".git")))))
+                                   (concat (vals (:project-paths policy))
+                                           (:security/filesystem-roots env)))))))))
+
+(defn draft-policy
+  "Narrow a child policy to private copies and caches, keeping originals readable.
+   Explicit original-tree write denials also defeat a broad ancestor or implicit temp grant."
+  [policy env]
+  (if (= :off (workspace/draft-backend-setting))
+    policy
+    (let [sources
+          (draft-source-roots env)
+
+          roots
+          (when-let [f (:roots-fn policy)]
+            (f))
+
+          writable
+          (fn [paths]
+            (vec (remove #(some (fn [source]
+                                  (or (beneath? % source) (beneath? source %)))
+                                sources)
+                   paths)))]
+
+      (-> policy
+          (assoc :roots-fn (constantly (writable roots)))
+          (update :allow-read-write writable)
+          (update :allow-read #(vec (distinct (concat % roots (:allow-read-write policy) sources))))
+          (update :deny-write #(vec (distinct (concat % sources))))))))
+
+(defn draft-write-refusal
+  "Actionable host-writer refusal for an original path, independent of extension hooks."
+  [env path]
+  (when (and path
+             (not= :off (workspace/draft-backend-setting))
+             (some #(beneath? path %) (draft-source-roots env)))
+    draft-required-message))
+
+(defn draft-policy-expanded?
+  "True when a live repository was not covered by the worker's launch-time write denials."
+  [env]
+  (let [protected (:workspace/draft-protected-roots env)]
+    (and (some? protected)
+         (not= :off (workspace/draft-backend-setting))
+         (boolean (some (fn [source]
+                          (not-any? #(beneath? source %) protected))
+                        (draft-source-roots env))))))
 
 (defn runtime-policy
   "The platform-neutral confinement VALUE the runtime compiles, from a session

@@ -1232,34 +1232,86 @@
       (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
     agent-name))
 
+(def ^:private draft-status-cache-limit 128)
+
+(def ^:private draft-status-cache-ms 1000)
+
+(defonce ^:private draft-status-cache (atom {}))
+
+(defonce ^:private draft-status-reader (agent nil))
+
+(defn- read-draft-status
+  [ws]
+  (try (let [status (select-keys (drafts/status ws)
+                                 [:backend :branch :ahead :pending :repositories :draft-changes
+                                  :draft-error])]
+         (cond-> status
+           (nil? (:draft-changes status))
+           (assoc :draft-error (or (:draft-error status) "Draft changes are unavailable."))))
+       (catch Throwable _ {:draft-error "Draft changes are unavailable; retry shortly."})))
+
+(defn- cached-draft-status
+  "Bounded, single-flight background summaries. Cold reads keep draft identity
+   visible while loading; warm reads never hash repository files on the request
+   thread. Pending entries cannot be evicted, bounding the reader's queue too."
+  [ws]
+  (let [key
+        (select-keys ws [:id :root :repo-root :fork-ms :filesystem-roots])
+
+        now
+        (util/now-ms)
+
+        loading
+        {:draft-error "Draft changes are loading."}]
+
+    (locking draft-status-cache
+      (let [{:keys [value expires-at pending?]} (get @draft-status-cache key)]
+        (when (and (not pending?) (or (nil? expires-at) (>= (long now) (long expires-at))))
+          (let [entries @draft-status-cache
+                oldest (when (>= (count entries) (long draft-status-cache-limit))
+                         (first (sort-by (comp :expires-at val)
+                                         (remove (comp :pending? val) entries))))]
+
+            (when (or (contains? entries key)
+                      (< (count entries) (long draft-status-cache-limit))
+                      oldest)
+              (swap! draft-status-cache (fn [entries]
+                                          (assoc (if (and oldest (not (contains? entries key)))
+                                                   (dissoc entries (first oldest))
+                                                   entries)
+                                            key {:value (or value loading)
+                                                 :expires-at now
+                                                 :pending? true})))
+              (send-off draft-status-reader
+                        (fn [_]
+                          (let [status (read-draft-status ws)]
+                            (swap! draft-status-cache assoc
+                              key
+                              {:value status
+                               :expires-at (+ (util/now-ms) (long draft-status-cache-ms))
+                               :pending? false}))
+                          nil)))))
+        (or value loading)))))
+
 (defn session-workspace-info
-  "Workspace state for a channel surface (the web footer AND the TUI
-   directory picker), in THE canonical string-keyed wire shape:
-   `{\"id\" \"draft?\" \"root\" \"repo_root\" \"label\" \"fork_ms\"
-   \"git\"}` for the session pinned to `sid`, plus `\"backend\"` `\"branch\"`
-   `\"ahead\"` for a draft, or nil. Resolves soul → latest state → workspace;
-   never throws."
+  "Canonical wire workspace metadata for channel footers and directory pickers.
+   Draft identity is immediate; draft_changes and repositories refresh in the
+   background. Missing/failed summaries carry draft_error, never clean zeroes.
+   Resolves the latest session workspace; nil only when it cannot be resolved."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
            (let [draft? (workspace/draft? ws)]
-             (wire/canonical
-               (cond-> {:id (:id ws)
-                        :draft? draft?
-                        :root (:root ws)
-                        :agent-name (config/agent-name (:root ws))
-                        :repo-root (:repo-root ws)
-                        :label (:label ws)
-                        :fork-ms (:fork-ms ws)
-                        ;; Git working-tree status resolved HERE, in the gateway/daemon
-                        ;; that owns the repo on disk — streamed to channels as a cached
-                        ;; session fact instead of each client re-walking git locally (a
-                        ;; remote TUI has no access to the repo's filesystem, and even
-                        ;; colocated it stops every tab switch from recomputing). Cached
-                        ;; per repo root, so repeated fetches never re-walk a warm root.
-                        :git (git/workspace-status (:root ws))}
-                 draft?
-                 (merge (select-keys (drafts/status ws) [:backend :branch :ahead])))))))
+             (wire/canonical (cond-> {:id (:id ws)
+                                      :draft? draft?
+                                      :root (:root ws)
+                                      :agent-name (config/agent-name (:root ws))
+                                      :repo-root (:repo-root ws)
+                                      :label (:label ws)
+                                      :fork-ms (:fork-ms ws)
+                                      :git (git/workspace-status (:root ws))}
+                               draft?
+                               (merge (cached-draft-status ws)))))))
        (catch Throwable _ nil)))
 
 (defn- request-health-metrics

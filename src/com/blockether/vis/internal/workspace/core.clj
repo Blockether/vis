@@ -165,6 +165,29 @@
                       :mechanism (mechanism-id (entry-val e :mechanism))
                       :policy (draft-policy-id (entry-val e :policy))}))))
 
+(defn draft-roots
+  "Flat workspace records for every private copy owned by a draft. Shared roots
+   never participate; :policy distinguishes non-applying copies from approval targets."
+  [ws]
+  (when (some? (:fork-ms ws))
+    (let [identity (select-keys ws [:id :label :state :parent-workspace-id])]
+      (into
+        [(merge identity
+                (select-keys ws [:root :repo-root :workspace-backend :workspace-mechanism :fork-ms])
+                {:primary? true :policy :copy-and-apply})]
+        (keep (fn [e]
+                (when-let [{:keys [trunk clone fork-ms backend mechanism policy]} (root-entry e)]
+                  (when (not= trunk clone)
+                    (merge identity
+                           {:root clone
+                            :repo-root trunk
+                            :fork-ms fork-ms
+                            :workspace-backend backend
+                            :workspace-mechanism mechanism
+                            :primary? false
+                            :policy policy})))))
+        (:filesystem-roots ws)))))
+
 (defn- draft-policy-for
   "Draft policy for canonical `root`: its OWN catalog entry, else the policy of
    the DEEPEST configured ancestor (a nested path inherits the isolation of the
@@ -182,7 +205,8 @@
   "Canonical `[{:trunk :clone :draft}]` entries available to the current tool
    call. Includes the session's OWN draft pair, the per-root clones minted for
    that draft, configured workspace catalog entries, and immutable read/write
-   roots from the environment security snapshot. With the jail disabled, host
+   roots from the environment security snapshot. Live workspace state takes
+   precedence over the original environment snapshot. With the jail disabled, host
    filesystem roots are granted and marked no-search so explicit paths are
    unrestricted without making default searches crawl the machine.
 
@@ -207,8 +231,11 @@
                           [root (draft-policy-id policy)])))
                 (get-in env-or-roots [:security-policy :draft-policies])))
 
+        workspace-atom
+        (when environment? (:workspace-atom env-or-roots))
+
         ws
-        (when environment? (:workspace env-or-roots))
+        (when environment? (if workspace-atom @workspace-atom (:workspace env-or-roots)))
 
         primary-trunk
         (normalize-root (:repo-root ws))
@@ -222,7 +249,9 @@
         ;; Per-root clones minted for THIS draft, keyed by canonical trunk.
         persisted
         (if environment?
-          (or (:workspace/filesystem-roots env-or-roots) (:filesystem-roots ws))
+          (if workspace-atom
+            (:filesystem-roots ws)
+            (or (:workspace/filesystem-roots env-or-roots) (:filesystem-roots ws)))
           env-or-roots)
 
         clones
@@ -686,6 +715,19 @@
                (System/getProperty "vis.drafts.dir")
                (io/file (System/getProperty "user.home") ".vis" "drafts"))))
 
+(defn session-drafts-home
+  "Canonical private clone store for a stable session ID. Reserving this narrow
+   directory before worker launch permits later drafts without a global Vis grant."
+  ^String [session-id]
+  (when (str/blank? (str session-id))
+    (throw (ex-info "A private draft store needs a session ID"
+                    {:type :workspace/session-required})))
+  (file-path (io/file (drafts-home)
+                      "sessions"
+                      (str (java.util.UUID/nameUUIDFromBytes
+                             (.getBytes (str session-id)
+                                        java.nio.charset.StandardCharsets/UTF_8))))))
+
 (defn- draft-store-root
   "Backend-neutral parent storage dir for a trunk's derived workspaces."
   ^File [trunk]
@@ -785,9 +827,9 @@
   nil)
 
 (defn draft-backend-setting
-  "The configured draft backend selection: `:auto` (default), `:worktree`,
-   `:rift` or `:off`. `*draft-backend*` wins over the `draft_backend` toggle; an
-   unregistered toggle or an unknown value means `:auto`."
+  "The configured draft backend selection: `:off` (default), `:auto`,
+   `:worktree` or `:rift`. `*draft-backend*` wins over the `draft_backend` toggle;
+   an unregistered toggle or an unknown value means `:off`."
   []
   (let [raw
         (or *draft-backend* (toggles/value-of draft-backend-toggle-id))
@@ -797,7 +839,7 @@
               (string? raw) (keyword (str/trim raw))
               :else nil)]
 
-    (if (contains? #{:auto :worktree :rift :off} k) k :auto)))
+    (if (contains? #{:auto :worktree :rift :off} k) k :off)))
 
 (defn- git-worktree-availability
   "Whether `source-root` can seed a linked Git worktree: the top of a Git working
@@ -1379,7 +1421,7 @@
 
 (defn- review-snapshot!
   "Store exact working bytes as a tree: no clean filters, text conversion or commit."
-  [root]
+  [root & [transient?]]
   (let [files
         (review-paths root)
 
@@ -1428,8 +1470,8 @@
     (review-git! root ["read-tree" "--empty"])
     (when (seq files) (review-git! root ["update-index" "-z" "--index-info"] (apply str entries)))
     (let [tree (str/trim (review-git! root ["write-tree"]))]
-      ;; Refs keep every returned checkpoint alive and prove which draft owns it.
-      (review-git! root ["update-ref" (str "refs/vis-review/" tree) tree])
+      ;; Explicit review checkpoints survive collection; footer samples need no refs.
+      (when-not transient? (review-git! root ["update-ref" (str "refs/vis-review/" tree) tree]))
       tree)))
 
 (defn- initialize-review!
@@ -1447,41 +1489,73 @@
                           {:type :draft/diff-failed}))))
       (spit (io/file store "vis-fork-tree") (review-snapshot! root) :encoding "UTF-8"))))
 
+(defn- review-trees!
+  [ws since checkpoint?]
+  (let [root
+        (:root ws)
+
+        baseline
+        (io/file (review-store root) "vis-fork-tree")]
+
+    (when-not (.isFile baseline)
+      (throw (ex-info "This draft has no review baseline. Create a new draft to capture diffs."
+                      {:type :draft/diff-baseline-missing})))
+    (let [before (or since (str/trim (slurp baseline :encoding "UTF-8")))]
+      (when-not (and (string? before)
+                     (re-matches #"[0-9a-f]{40}" before)
+                     (try (= before
+                             (str/trim (review-git! root
+                                                    ["rev-parse" "--verify"
+                                                     (str "refs/vis-review/" before)])))
+                          (catch clojure.lang.ExceptionInfo _ false)))
+        (throw (ex-info "The diff checkpoint does not belong to this draft"
+                        {:type :draft/diff-invalid-checkpoint})))
+      {:root root :before before :after (review-snapshot! root (not checkpoint?))})))
+
 (defn review-diff
-  "Exact changes since the immutable fork or a checkpoint previously returned for
-   this draft. Only its primary working copy is read; shared roots and moving
-   trunk state never participate. Checkpoints are snapshot tree IDs, not commits."
+  "Exact changes in one owned copy since its immutable fork or a returned
+   checkpoint. Neither shared roots nor moving trunk state participates."
   [ws since]
   (locking review-lock
-    (let [root
-          (:root ws)
+    (let [{:keys [root before after]} (review-trees! ws since true)]
+      {:patch (review-git! root
+                           ["diff" "--no-ext-diff" "--no-textconv" "--no-color" "--binary"
+                            "--no-renames" before after "--"])
+       :checkpoint after
+       :source {"type" "draft"
+                "backend" (name (backend-id (:workspace-backend ws)))
+                "label" (str (:label ws))
+                "base_revision" before
+                "head_revision" after}})))
 
-          baseline
-          (io/file (review-store root) "vis-fork-tree")]
+(defn review-summary
+  "Exact task-only modified/created/deleted counts for one owned copy. Does not
+   render a patch, touch the working index, or retain a new checkpoint ref."
+  [ws]
+  (locking review-lock
+    (let [{:keys [root before after]}
+          (review-trees! ws nil false)
 
-      (when-not (.isFile baseline)
-        (throw (ex-info "This draft has no review baseline. Create a new draft to capture diffs."
-                        {:type :draft/diff-baseline-missing})))
-      (let [before (or since (str/trim (slurp baseline :encoding "UTF-8")))]
-        (when-not (and (string? before)
-                       (re-matches #"[0-9a-f]{40}" before)
-                       (try (= before
-                               (str/trim (review-git! root
-                                                      ["rev-parse" "--verify"
-                                                       (str "refs/vis-review/" before)])))
-                            (catch clojure.lang.ExceptionInfo _ false)))
-          (throw (ex-info "The diff checkpoint does not belong to this draft"
-                          {:type :draft/diff-invalid-checkpoint})))
-        (let [after (review-snapshot! root)]
-          {:patch (review-git! root
-                               ["diff" "--no-ext-diff" "--no-textconv" "--no-color" "--binary"
-                                "--no-renames" before after "--"])
-           :checkpoint after
-           :source {"type" "draft"
-                    "backend" (name (backend-id (:workspace-backend ws)))
-                    "label" (str (:label ws))
-                    "base_revision" before
-                    "head_revision" after}})))))
+          entries
+          (partition 2
+                     (str/split (review-git! root
+                                             ["diff" "--no-ext-diff" "--no-textconv" "--no-renames"
+                                              "--name-status" "-z" before after "--"])
+                                #"\u0000"))]
+
+      (reduce (fn [counts [status _path]]
+                (update counts
+                        (case status
+                          "A"
+                          :created
+
+                          "D"
+                          :deleted
+
+                          :modified)
+                        inc))
+              {:modified 0 :created 0 :deleted 0}
+              entries))))
 
 (defn- fork-ms-of [ws] (:fork-ms ws))
 
@@ -1853,130 +1927,92 @@
       (let [now (long (util/now-ms))]
         (if (> now seeded-at) now (do (Thread/sleep 1) (recur)))))))
 
-(defn- fork-extra-roots!
-  "Mint one private Rift clone per planned extra root (`[{:trunk :policy}]`,
-   from `draft-isolation-plan`). Returns persistable entries, each recording
-   the mechanism that physically made the clone. Best-effort per root: a root
-   that cannot be forked yields NO entry, and `env-filesystem-roots` then
-   marks that copy-policy root `:denied?` — the draft loses access rather
-   than silently writing through to the real tree."
-  [plan name]
-  (into []
-        (keep (fn [{:keys [trunk policy]}]
-                (try (let [{:keys [root backend mechanism]}
-                           (backend-fork! trunk trunk name (draft-backend-for trunk))]
-                       (cond-> {:trunk trunk
-                                :clone (file-path root)
-                                :fork-ms (fork-baseline-ms)
-                                :backend (clojure.core/name (backend-id backend))
-                                :policy (clojure.core/name (draft-policy-id policy))}
-                         mechanism
-                         (assoc :mechanism (clojure.core/name mechanism))))
-                     (catch Throwable _ nil))))
-        plan))
+(defn- fork-and-seed!
+  "Fork and initialize one participant, releasing it if seeding fails."
+  [{:keys [parent trunk name chosen clean?]}]
+  (let [{:keys [root backend] :as fork} (backend-fork! parent trunk name chosen)]
+    (try (case backend
+           :worktree
+           (if clean?
+             (record-worktree-omissions! (io/file (file-path parent)) (io/file root))
+             (carry-pending-changes! (io/file (file-path parent)) (io/file root)))
+
+           (when clean? (rift/clean! {:at root :commit "HEAD"})))
+         (initialize-review! root)
+         (assoc fork :fork-ms (fork-baseline-ms))
+         (catch Throwable t
+           (try (discard-root! backend root) (catch Throwable cleanup (.addSuppressed t cleanup)))
+           (throw t)))))
 
 (defn create!
-  "Create an isolated DRAFT with the backend `draft-backend-for` selects for the
-   fork parent — a linked Git worktree on a fresh `vis/<label>` branch, or a Rift
-   copy-on-write clone — and pin it to `:session-state-id`. Core never silently
-   falls back to a shared root: with drafts switched off this throws
-   `:workspace/drafts-disabled`, with no capable backend
-   `:workspace/capability-unavailable`.
+  "Create and pin one draft containing the primary copy and every planned extra
+   root. All participants use the same clean/pending seeding and immutable review
+   lifecycle. Failure releases every allocated copy and never pins a partial group.
 
-   Pass `:from <parent-workspace>` to clone that workspace's `:root` and inherit
-   its `:repo-root`; otherwise the parent is the user's real cwd (trunk).
-   `apply!` copies files back to repo-root; `approve!` merges into that
-   repository's default branch, which may have a different checkout.
+   :from supplies the parent and return workspace; :root selects another primary
+   source. :filesystem-roots contains extra {:trunk :policy} entries. Internal
+   :drafts-home confines all allocations to the session store reserved before its
+   worker starts. A clean Git state is required for every approval participant;
+   copy-only dependencies retain their source bytes regardless of :clean?."
+  [db-info {:keys [session-state-id label from clean? filesystem-roots root drafts-home]}]
+  (binding [*drafts-home* (or drafts-home *drafts-home*)]
+    (let [trunk (or (normalize-root root) (:repo-root from) (trunk-root))
+          parent (or (normalize-root root) (:root from) (trunk-root))
+          name (free-workspace-name trunk label)
+          plan (into [{:trunk trunk :parent parent :policy :copy-and-apply}]
+                     (comp (remove #(= (normalize-root trunk) (normalize-root (:trunk %))))
+                           (map #(assoc %
+                                   :trunk (normalize-root (:trunk %))
+                                   :parent (normalize-root (:trunk %)))))
+                     (or filesystem-roots (draft-isolation-plan)))
+          ;; Validate every backend before any participant is allocated.
+          plan (mapv (fn [{:keys [trunk parent policy] :as entry}]
+                       (let [clean? (and clean? (not= :copy-only (draft-policy-id policy)))]
+                         (when (and clean? (not (git-managed? trunk)))
+                           (throw (ex-info (str "A clean draft needs a Git-managed project: " trunk)
+                                           {:type :workspace/clean-unavailable :root trunk})))
+                         (assoc entry
+                           :chosen (draft-backend-for parent)
+                           :clean? clean?)))
+                     plan)
+          owned (atom [])]
 
-   By default the draft carries the parent's pending work: a Rift clone copies
-   it, a worktree checks HEAD out and replays the uncommitted diff plus untracked
-   files into it. `:clean? true` hands back the committed state instead — Rift
-   resets the clone (recording the omissions in its marker), a worktree simply
-   skips the replay. The baseline is captured after that seeding so it is not
-   read as an agent edit. A project that is not Git-managed has no committed
-   state to seed from, so a clean draft is refused there before anything is
-   cloned."
-  [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
-  (let [trunk
-        (or (:repo-root from) (trunk-root))
+      (try (doseq [{:keys [trunk] :as entry} plan]
+             (let [fork (fork-and-seed! (assoc entry :name (free-workspace-name trunk name)))]
+               (swap! owned conj (merge entry fork))))
+           (let [{:keys [root backend mechanism fork-ms]} (first @owned)
+                 extras (mapv (fn [{:keys [trunk root fork-ms backend mechanism policy]}]
+                                (cond-> {:trunk trunk
+                                         :clone (file-path root)
+                                         :fork-ms fork-ms
+                                         :backend (clojure.core/name (backend-id backend))
+                                         :policy (clojure.core/name (draft-policy-id policy))}
+                                  mechanism
+                                  (assoc :mechanism (clojure.core/name mechanism))))
+                              (rest @owned))
+                 ws (p/db-workspace-insert! db-info
+                                            {:repo-id (repo-id-for trunk)
+                                             :repo-root trunk
+                                             :root root
+                                             :workspace-kind :draft
+                                             :workspace-backend backend
+                                             :workspace-mechanism mechanism
+                                             :parent-workspace-id (:id from)
+                                             :state :active
+                                             :fork-ms fork-ms
+                                             :apply-fork-ms fork-ms
+                                             :filesystem-roots extras})
+                 ws (or (p/db-workspace-update-label! db-info (:id ws) name) ws)]
 
-        ;; A clean draft means "hand me this project at its committed state", so it
-        ;; is a Git question. Without a repository there is no committed state to
-        ;; seed from, and Rift would hand back the copy unchanged; refuse here,
-        ;; before anything is cloned, rather than call a draft full of pending work
-        ;; clean.
-        _
-        (when (and clean? (not (git-managed? trunk)))
-          (throw (ex-info (str "A clean draft needs a Git-managed project: "
-                               (file-path trunk)
-                               " is not a Git repository.")
-                          {:type :workspace/clean-unavailable :root (file-path trunk)})))
-
-        parent
-        (or (:root from) (trunk-root))
-
-        rid
-        (repo-id-for trunk)
-
-        nm
-        (free-workspace-name trunk label)
-
-        chosen
-        (draft-backend-for parent)
-
-        {:keys [root backend mechanism]}
-        (backend-fork! parent trunk nm chosen)
-
-        ;; BEFORE the baseline below: Rift's clean and the worktree replay both
-        ;; rewrite mtimes, and a clone that cannot be seeded must never survive
-        ;; as a half-seeded draft.
-        _
-        (try
-          (case backend
-            :worktree
-            (if clean?
-              (record-worktree-omissions! (io/file (file-path parent)) (io/file root))
-              (carry-pending-changes! (io/file (file-path parent)) (io/file root)))
-
-            (when clean? (rift/clean! {:at root :commit "HEAD"})))
-          (initialize-review! root)
-          (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t)))
-
-        ;; Seeded files must be strictly older than the persisted baseline;
-        ;; an agent edit in the baseline's own millisecond still needs to land.
-        fork-ms
-        (fork-baseline-ms)
-
-        ;; Every catalog root whose `draft` policy demands a PRIVATE copy gets one
-        ;; minted here, so the draft never writes through to the real root. The
-        ;; caller may pass an explicit plan (tests, non-interactive spawns);
-        ;; otherwise the plan comes from the roots bound for this turn.
-        extra-roots
-        (fork-extra-roots! (or filesystem-roots (draft-isolation-plan)) nm)
-
-        ws
-        (p/db-workspace-insert! db-info
-                                {:repo-id rid
-                                 :repo-root trunk
-                                 :root root
-                                 :workspace-kind :draft
-                                 :workspace-backend backend
-                                 :workspace-mechanism mechanism
-                                 :parent-workspace-id (:id from)
-                                 :state :active
-                                 :fork-ms fork-ms
-                                 :filesystem-roots extra-roots
-                                 ;; Drafts apply from their immediate fork; apply-fork-ms
-                                 ;; equals fork-ms so apply! reads one baseline uniformly.
-                                 :apply-fork-ms fork-ms})
-
-        ;; Label = the actual folder name, including collision suffixes.
-        ws
-        (or (p/db-workspace-update-label! db-info (:id ws) nm) ws)]
-
-    (when session-state-id (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
-    (fire-hook! :on-spawn ws)
-    ws))
+             (when session-state-id
+               (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
+             (fire-hook! :on-spawn ws)
+             ws)
+           (catch Throwable t
+             (doseq [{:keys [backend root]} (reverse @owned)]
+               (try (discard-root! backend root)
+                    (catch Throwable cleanup (.addSuppressed t cleanup))))
+             (throw t))))))
 
 (defn exit-to-trunk!
   "Repoint `session-state-id` back to a TRUNK workspace (the real cwd),

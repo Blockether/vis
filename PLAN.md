@@ -884,3 +884,76 @@ contract reuse case; do not change the production prompt to train to the tests.
    committed-draft retry, unrelated-work restoration and commit-hook vetoes.
    Recovery leaves the overlap guard intact and uses normal draft approval for
    the fast-forward, restoration and non-force push; the original-file backup stays.
+
+# Multi-repository drafts and recovery (#241–#243)
+
+Keep one task isolated across its selected repositories, with a reviewable and
+recoverable path to approval.
+
+## Context
+
+The single-root selector in `74d8c5916` does not create one draft spanning several
+catalog repositories. `workspace/core.clj` already persists extra clones, but their
+seeding, review and approval lifecycle is incomplete. Issues #242 and #243 describe
+the same copied-pending-work incident and a missing supported synchronization
+operation; #241 separately requires draft identity and live counts in the footer.
+The opt-in default from `8be8e9ac4` is preserved, not treated as a recovery fix.
+
+Owners are `internal/workspace/{core,drafts}.clj`, `internal/foundation/drafts.clj`,
+the sandbox/worker policy boundary, `internal/gateway/state.clj`, TUI footer refresh,
+and their tests. Council consultations 5916, 5918, 5925 and 5930 distinguish known
+lifecycle gaps from an unproven historical resume defect. Existing review snapshots
+remain immutable; shared roots never enter a task diff. Do not infer ownership from
+matching filenames, bypass hooks, rewrite Git history, or restart the live gateway.
+
+## 1. Select and create a repository group
+
+- Rationale: every selected repository must receive the same isolated lifecycle.
+- Data: catalog permissions, persisted extra-root metadata and real worktree/Rift fixtures.
+- Acceptance criteria: validate all selections before mutation; seed and capture each
+  clone; fail atomically; remap aliases and preserve unselected/restricted roots.
+- Unknowns: real worker confinement after a mid-turn workspace change.
+
+## 2. Review and recover every participant
+
+- Rationale: copied source work and task changes have different ownership and review scopes.
+- Data: #242/#243 sequence, immutable per-root checkpoints and commit-hook tests.
+- Acceptance criteria: multi-repository review/status, supported conflict-safe sync
+  with continue/abort, all-target preflight, truthful partial publication and safe retry.
+- Unknowns: additional recovery cases exposed by real Git regressions.
+
+## 3. Enforce isolation and show draft state
+
+- Rationale: a workflow prompt alone cannot prevent shared writes or explain current state.
+- Data: raw Python/worker, shell and host-edit boundaries; gateway workspace polling.
+- Acceptance criteria: enabled-mode prerequisite across writers and resume, off mode
+  unchanged; stable footer identity and live aggregate modified/created/deleted counts.
+- Unknowns: safe integration with existing uncommitted Python worker changes.
+
+## 4. Verify and close out
+
+- Rationale: a multi-repository task is complete only when every participant is accounted for.
+- Data: regression suites, boundary checks, formatting/lint/reflection and scoped diffs.
+- Acceptance criteria: preserve foreign work, commit/push only verified task changes,
+  then summarize and close resolved issues with evidence. No installation or live restart.
+- Unknowns: backend-specific failures, if reproduced, may require a separately verified Rift fix.
+
+## Plan state
+
+1. Research and consultation are complete. The copied-pending incident is covered
+   by supported synchronization; historical toggle timing remains unknown.
+2. Multi-repository creation, task review, guarded synchronization and recoverable
+   approval are implemented. Original checkout changes remain protected.
+3. The combined affected engine suite passes 688 tests; TUI identity/count refresh
+   passes 52, and draft prompt coverage passes 2. Real jailed-worker cases cover
+   remapping, retained handles, copied caches, discard and session restoration.
+4. One-shot YAML toggle hydration passes 83 CLI tests, including default OFF and
+   override restoration without persistence. The fresh pinned GraalVM CE image
+   passes five native cases covering multi-repository confinement, review
+   checkpoints and embedded Python.
+5. The prospective scoped environment passes 26 API/worker cases with unchanged
+   HEAD worker sources, without overwriting unrelated working changes. Formatting,
+   scoped lint/reflection and all 17 documentation links are checked.
+6. Three broader Python failures reproduce with the captured pre-task environment.
+   Broader verification also reports unrelated TUI geometry and foundation/Council
+   failures. No installation, release or live gateway restart is included.

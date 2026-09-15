@@ -1028,3 +1028,488 @@
                     (let [patch (:patch (drafts/diff env {:workspace-id (:id draft)}))]
                       (expect (str/includes? patch "public.txt"))
                       (expect (not (str/includes? patch "global-secret.env")))))))))))))
+
+(defdescribe
+  supported-sync-test
+  (it
+    "recovers copied pending work after its legitimate source commit without losing the task delta"
+    ;; #242/#243: no unavailable raw merge/rebase command is needed to recover.
+    (with-repo
+      "vis-supported-sync"
+      (fn [store base env]
+        (binding [ws/*draft-backend* :worktree]
+          (let [draft (drafts/create! env {:from (seed-trunk! store base) :label "recover"})
+                root (:root draft)
+                sync-fn (ns-resolve 'com.blockether.vis.internal.workspace.drafts 'sync!)]
+
+            (spit (io/file root "task.txt") "unique task delta\n")
+            (expect (try (drafts/approve! env {:workspace-id (:id draft)})
+                         false
+                         (catch clojure.lang.ExceptionInfo _ true)))
+            (expect (= "x\npending\n" (slurp (io/file base "a.txt"))))
+            (git! base "add" "a.txt" "new.txt")
+            (git! base "commit" "-q" "-m" "preserve original pending work")
+            (expect (some? sync-fn))
+            (when sync-fn
+              (expect (= :synced (:status (sync-fn env {:workspace-id (:id draft)}))))
+              (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)}))))
+              (expect (= "unique task delta\n" (slurp (io/file base "task.txt")))))))))))
+
+(defn- with-multi-draft
+  [origins? f]
+  (with-repo "vis-multi-drafts"
+             (fn [store base env]
+               (let [second (str base "-second")]
+                 (try (.mkdirs (io/file second))
+                      (init-repo! second)
+                      (doseq [root [base second]]
+                        (git! root "add" "-A")
+                        (git! root "commit" "-q" "-m" "baseline"))
+                      (let [origins (when origins?
+                                      (mapv (fn [root suffix]
+                                              (let [origin (str ws/*drafts-home* "/" suffix ".git")]
+                                                (.mkdirs (io/file ws/*drafts-home*))
+                                                (git! root "clone" "--bare" "--quiet" root origin)
+                                                (git! root "remote" "add" "origin" origin)
+                                                (git! root "fetch" "--quiet" "origin")
+                                                (git! root "remote" "set-head" "origin" "main")
+                                                origin))
+                                            [base second]
+                                            ["first" "second"]))
+                            env (assoc env :security/filesystem-roots [second])]
+
+                        (binding [ws/*draft-backend* :worktree]
+                          (let [draft (drafts/create! env
+                                                      {:from (seed-trunk! store base)
+                                                       :label "group"
+                                                       :clean? true
+                                                       :roots [base second]})]
+                            (f base second origins env draft))))
+                      (finally (delete-tree! second)))))))
+
+(defdescribe
+  multi-repository-lifecycle-test
+  (it "reviews both selected repositories and refuses every target when a later source overlaps"
+      ;; #242/#243: group preflight must not land the first target before refusing the second.
+      (with-multi-draft
+        false
+        (fn [base second _ env draft]
+          (let [[one two]
+                (ws/draft-roots draft)
+
+                heads
+                (mapv #(git! % "rev-parse" "HEAD") [base second])]
+
+            (spit (io/file (:root one) "first.txt") "first task\n")
+            (spit (io/file (:root two) "a.txt") "second task\n")
+            (spit (io/file second "a.txt") "concurrent source\n")
+            (let [before
+                  (mapv local-state [base second])
+
+                  status
+                  (drafts/status draft)]
+
+              (expect (= 2 (count (:repositories status))))
+              (expect (= {:created 1 :modified 1 :deleted 0} (:draft-changes status)))
+              (expect (str/includes? (:patch (drafts/diff env
+                                                          {:workspace-id (:id draft) :root second}))
+                                     "+second task"))
+              (expect (= :draft/git-failed (:type (approval-error env draft))))
+              (expect (= heads (mapv #(git! % "rev-parse" "HEAD") [base second])))
+              (expect (= before (mapv local-state [base second]))))
+            (git! second "add" "a.txt")
+            (git! second "commit" "-q" "-m" "preserve concurrent source")
+            (expect (= :conflicts (:status (drafts/sync! env {:workspace-id (:id draft)}))))
+            (spit (io/file (:root two) "a.txt") "second task and concurrent source\n")
+            (expect (= :synced
+                       (:status (drafts/sync! env {:workspace-id (:id draft) :action :continue}))))
+            (let [result (drafts/approve! env {:workspace-id (:id draft)})]
+              (expect (= [:approved :approved] (mapv :status (:repositories result))))
+              (expect (= "first task\n" (slurp (io/file base "first.txt"))))
+              (expect (= "second task and concurrent source\n"
+                         (slurp (io/file second "a.txt")))))))))
+  (it
+    "retains truthful partial publication and retries only with ordinary non-force pushes"
+    (with-multi-draft
+      true
+      (fn [_base second origins env draft]
+        (let [repos
+              (ws/draft-roots draft)
+
+              origin-heads
+              (mapv #(git! % "rev-parse" "main") origins)
+
+              run
+              workspace-git/run-git]
+
+          (doseq [repo repos]
+            (spit (io/file (:root repo) "task.txt") "group task\n"))
+          (let [error
+                (with-redefs [workspace-git/run-git
+                              (fn [dir args timeout]
+                                (if (and (= second (.getCanonicalPath (io/file dir)))
+                                         (= "push" (first args)))
+                                  {:exit 1 :out "" :err "injected second publication refusal"}
+                                  (run dir args timeout)))]
+                  (approval-error env draft))
+
+                commits
+                (mapv #(git! (:root %) "rev-parse" "HEAD") repos)]
+
+            (expect (= :draft/push-failed (:type error)))
+            (expect (= [:approved :landed-locally] (mapv :status (:repositories error))))
+            (expect (true? (get-in error [:repositories 0 :published])))
+            (expect (= (first commits) (git! (first origins) "rev-parse" "main")))
+            (expect (= (nth origin-heads 1) (git! (nth origins 1) "rev-parse" "main")))
+            (expect (every? #(.isDirectory (io/file (:root %))) repos))
+            (expect (true? (:published (drafts/approve! env {:workspace-id (:id draft)}))))
+            (expect (= commits (mapv #(git! % "rev-parse" "main") origins)))
+            (expect (= commits (mapv #(git! (:root %) "rev-parse" "HEAD") repos)))))))))
+
+(defdescribe
+  synchronization-conflict-test
+  (it
+    "continues edited conflict files without git-add and abort retains the pre-sync checkpoint"
+    ;; #242/#243: both recovery actions are supported draft operations, with commit hooks.
+    (with-clean-draft
+      (fn [base env draft]
+        (let [root
+              (:root draft)
+
+              calls
+              (atom 0)]
+
+          (spit (io/file root "a.txt") "draft version\n")
+          (spit (io/file base "a.txt") "source version\n")
+          (git! base "add" "a.txt")
+          (git! base "commit" "-q" "-m" "advance source")
+          (let [source (local-state base)]
+            (try
+              (extension/register-op-hook! {:op :git/commit
+                                            :phase :around
+                                            :owner :ext/sync-test
+                                            :fn (fn [_env _op args next]
+                                                  (swap! calls inc)
+                                                  (next args))})
+              (let [first (drafts/sync! env {:workspace-id (:id draft)})
+                    checkpoint (git! root "rev-parse" "HEAD")]
+
+                (expect (= :conflicts (:status first)))
+                (expect (= ["a.txt"] (get-in first [:repositories 0 :conflicts])))
+                (expect (= :draft/unresolved-conflicts
+                           (get-in (drafts/sync! env {:workspace-id (:id draft) :action :continue})
+                                   [:repositories 0 :error :type])))
+                (expect (= :aborted
+                           (:status (drafts/sync! env {:workspace-id (:id draft) :action :abort}))))
+                (expect (= checkpoint (git! root "rev-parse" "HEAD")))
+                (expect (= "draft version\n" (slurp (io/file root "a.txt"))))
+                (expect (= :conflicts (:status (drafts/sync! env {:workspace-id (:id draft)}))))
+                (spit (io/file root "a.txt") "resolved versions\n")
+                (expect (= :synced
+                           (:status (drafts/sync! env
+                                                  {:workspace-id (:id draft) :action :continue}))))
+                (expect (= 2 @calls))
+                (expect (= source (local-state base)))
+                (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)}))))
+                (expect (= "resolved versions\n" (slurp (io/file base "a.txt")))))
+              (finally (extension/unregister-op-hooks-for-owner! :ext/sync-test))))))))
+  (it "refuses abort of an unrelated merge and preserves its exact index and heads"
+      (with-clean-draft
+        (fn [base env draft]
+          (let [root (:root draft)]
+            (spit (io/file base "source.txt") "source\n")
+            (git! base "add" "source.txt")
+            (git! base "commit" "-q" "-m" "advance source")
+            (git! root "merge" "--no-ff" "--no-commit" "main")
+            (let [before [(git! root "rev-parse" "HEAD") (git! root "rev-parse" "MERGE_HEAD")
+                          (git! root "write-tree")]]
+              (expect (= :draft/sync-not-active
+                         (get-in (drafts/sync! env {:workspace-id (:id draft) :action :abort})
+                                 [:repositories 0 :error :type])))
+              (expect (= before
+                         [(git! root "rev-parse" "HEAD") (git! root "rev-parse" "MERGE_HEAD")
+                          (git! root "write-tree")]))))))))
+
+(defdescribe
+  selected-repository-validation-test
+  (it "rejects duplicate worktrees of the same Git repository before cloning anything"
+      (with-repo
+        "vis-draft-duplicate-repo"
+        (fn [store base env]
+          (let [linked (str base "-linked")]
+            (try (git! base "worktree" "add" "-q" "-b" "linked-source" linked)
+                 (let [before (git! base "worktree" "list" "--porcelain")]
+                   (binding [ws/*draft-backend* :worktree]
+                     (doseq [selection [{:roots [base linked]}
+                                        {:roots [base]
+                                         :filesystem-roots [{:trunk linked
+                                                             :policy :copy-and-apply}]}]]
+                       (expect (= :draft/duplicate-repository
+                                  (try (drafts/create!
+                                         (assoc env :security/filesystem-roots [linked])
+                                         (merge {:from (seed-trunk! store base) :label "duplicate"}
+                                                selection))
+                                       nil
+                                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+                   (expect (= before (git! base "worktree" "list" "--porcelain"))))
+                 (finally (git! base "worktree" "remove" "--force" linked))))))))
+
+(defdescribe
+  copy-only-lifecycle-test
+  (it "keeps copied dependency work reviewable without synchronizing or counting it for approval"
+      (with-repo
+        "vis-copy-only-lifecycle"
+        (fn [store base env]
+          (let [dependency (str base "-dependency")]
+            (try (.mkdirs (io/file dependency))
+                 (init-repo! dependency)
+                 (binding [ws/*draft-backend* :worktree]
+                   (let [draft (drafts/create! env
+                                               {:from (seed-trunk! store base)
+                                                :label "dependency"
+                                                :clean? true
+                                                :filesystem-roots [{:trunk dependency
+                                                                    :policy :copy-only}]})
+                         copy (last (ws/draft-roots draft))
+                         head (git! (:root copy) "rev-parse" "HEAD")
+                         pending (local-state (:root copy))]
+
+                     (expect (= 0 (:pending (drafts/status draft))))
+                     (expect (= false (get-in (drafts/status draft) [:repositories 1 :approval?])))
+                     (expect (= :synced (:status (drafts/sync! env {:workspace-id (:id draft)}))))
+                     (expect (= head (git! (:root copy) "rev-parse" "HEAD")))
+                     (expect (= pending (local-state (:root copy))))
+                     (spit (io/file (:root copy) "dependency-edit.txt") "local only\n")
+                     (expect (= 1 (get-in (drafts/status draft) [:draft-changes :created])))
+                     (expect (= :draft/root-not-approvable
+                                (try (drafts/sync! env
+                                                   {:workspace-id (:id draft) :roots [dependency]})
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+                 (finally (delete-tree! dependency))))))))
+
+(defdescribe
+  synchronization-hook-and-origin-test
+  (it
+    "retains a hook-vetoed merge for supported continuation without changing source work"
+    (with-clean-draft
+      (fn [base env draft]
+        (let [root
+              (:root draft)
+
+              calls
+              (atom 0)]
+
+          (spit (io/file root "task.txt") "task\n")
+          (spit (io/file base "source.txt") "source\n")
+          (git! base "add" "source.txt")
+          (git! base "commit" "-q" "-m" "advance target")
+          (let [before
+                (local-state base)
+
+                head
+                (git! base "rev-parse" "HEAD")]
+
+            (try (extension/register-op-hook! {:op :git/commit
+                                               :phase :around
+                                               :owner :ext/sync-veto
+                                               :fn (fn [_env _op args next]
+                                                     (if (= 2 (swap! calls inc))
+                                                       {:exit 1 :out "" :err "merge commit veto"}
+                                                       (next args)))})
+                 (let [result (drafts/sync! env {:workspace-id (:id draft)})]
+                   (expect (= :partial (:status result)))
+                   (expect (= :draft/git-failed (get-in result [:repositories 0 :error :type])))
+                   (expect (= head (git! root "rev-parse" "MERGE_HEAD")))
+                   (expect (= before (local-state base))))
+                 (finally (extension/unregister-op-hooks-for-owner! :ext/sync-veto)))
+            (expect (= :synced
+                       (:status (drafts/sync! env {:workspace-id (:id draft) :action :continue}))))
+            (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)}))))
+            (expect (= "task\n" (slurp (io/file base "task.txt")))))))))
+  (it "synchronizes fetched origin history on both worktree and Rift backends"
+      (doseq [backend [:worktree :rift]]
+        (with-origin-draft
+          backend
+          "main"
+          (fn [base origin env draft]
+            (let [peer (advanced-peer! base origin)
+                  root (:root draft)
+                  local-head (git! base "rev-parse" "HEAD")]
+
+              (git! peer "push" "--quiet" "origin" "main")
+              (spit (io/file root "task.txt") "task\n")
+              (expect (= :synced (:status (drafts/sync! env {:workspace-id (:id draft)}))))
+              (expect (= local-head (git! base "rev-parse" "HEAD")))
+              (expect (= "remote\n" (slurp (io/file root "remote.txt"))))
+              (expect (true? (:published (drafts/approve! env {:workspace-id (:id draft)}))))
+              (expect (= (git! root "rev-parse" "HEAD") (git! origin "rev-parse" "main")))))))))
+
+(defdescribe
+  synchronization-confinement-test
+  (it
+    "does not inspect external files through a replaced conflict directory"
+    (with-repo
+      "vis-sync-confined"
+      (fn [store base env]
+        (let [outside (str base "-outside")]
+          (.mkdirs (io/file base "src"))
+          (spit (io/file base "src/value.txt") "baseline\n")
+          (git! base "add" "-A")
+          (git! base "commit" "-q" "-m" "source directory")
+          (binding [ws/*draft-backend* :worktree]
+            (let [draft (drafts/create! env {:from (seed-trunk! store base) :label "confined"})
+                  root (:root draft)
+                  source (io/file root "src")]
+
+              (try
+                (spit (io/file root "src/value.txt") "draft\n")
+                (spit (io/file base "src/value.txt") "source\n")
+                (git! base "add" "src/value.txt")
+                (git! base "commit" "-q" "-m" "advance source")
+                (expect (= :conflicts (:status (drafts/sync! env {:workspace-id (:id draft)}))))
+                (.mkdirs (io/file outside))
+                (spit (io/file outside "value.txt") "external\n")
+                (delete-tree! source)
+                (java.nio.file.Files/createSymbolicLink
+                  (.toPath source)
+                  (.toPath (io/file outside))
+                  (make-array java.nio.file.attribute.FileAttribute 0))
+                (let [reads (atom 0)
+                      read slurp
+                      result (with-redefs [clojure.core/slurp
+                                           (fn [file & opts]
+                                             (when (and (instance? java.io.File file)
+                                                        (= (str outside "/value.txt")
+                                                           (.getCanonicalPath ^java.io.File file)))
+                                               (swap! reads inc))
+                                             (apply read file opts))]
+                               (drafts/sync! env {:workspace-id (:id draft) :action :continue}))]
+
+                  (expect (= 0 @reads))
+                  (expect (= :synced (:status result))))
+                (finally (java.nio.file.Files/deleteIfExists (.toPath source))
+                         (delete-tree! outside))))))))))
+
+(defdescribe
+  multi-repository-approval-hook-test
+  (it "allows a secondary repository guard to veto the whole approval before any target moves"
+      (with-multi-draft
+        false
+        (fn [base second _ env draft]
+          (let [sources
+                [base second]
+
+                heads
+                (mapv #(git! % "rev-parse" "HEAD") sources)
+
+                observed
+                (atom [])]
+
+            (doseq [repo (ws/draft-roots draft)]
+              (spit (io/file (:root repo) "task.txt") "task\n"))
+            (try (extension/register-op-hook!
+                   {:op :draft/approve
+                    :phase :around
+                    :owner :ext/multi-veto
+                    :fn (fn [_env _op args next]
+                          (let [source (:repo-root (first args))]
+                            (swap! observed conj source)
+                            (if (= second source)
+                              (extension/failure {:error {:message "secondary repository veto"}})
+                              (next args))))})
+                 (expect (= :draft/blocked (:type (approval-error env draft))))
+                 (expect (= sources @observed))
+                 (expect (= heads (mapv #(git! % "rev-parse" "HEAD") sources)))
+                 (finally (extension/unregister-op-hooks-for-owner! :ext/multi-veto))))))))
+
+(defdescribe
+  group-root-boundary-test
+  (it "rejects the obsolete singular root option instead of bypassing vector validation"
+      (with-repo "vis-root-option"
+                 (fn [store base env]
+                   (binding [ws/*draft-backend* :worktree]
+                     (let [before (git! base "worktree" "list" "--porcelain")]
+                       (expect (= :draft/invalid-roots
+                                  (try (drafts/create! env
+                                                       {:from (seed-trunk! store base)
+                                                        :label "obsolete"
+                                                        :root base})
+                                       nil
+                                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                       (expect (= before (git! base "worktree" "list" "--porcelain"))))))))
+  (it
+    "lets a secondary create guard veto before any repository is cloned"
+    (with-repo
+      "vis-create-guard"
+      (fn [store base env]
+        (let [second
+              (str base "-second")
+
+              observed
+              (atom [])]
+
+          (try (.mkdirs (io/file second))
+               (init-repo! second)
+               (let [sources
+                     [base second]
+
+                     before
+                     (mapv #(git! % "worktree" "list" "--porcelain") sources)]
+
+                 (extension/register-op-hook!
+                   {:op :draft/create
+                    :phase :around
+                    :owner :ext/create-root-veto
+                    :fn (fn [_env _op args next]
+                          (let [source (:repo-root (first args))]
+                            (swap! observed conj source)
+                            (if (= second source)
+                              (extension/failure {:error {:message "secondary create veto"}})
+                              (next args))))})
+                 (binding [ws/*draft-backend* :worktree]
+                   (expect (= :draft/blocked
+                              (try (drafts/create!
+                                     (assoc env :security/filesystem-roots [second])
+                                     {:from (seed-trunk! store base) :label "veto" :roots sources})
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                 (expect (= sources @observed))
+                 (expect (= before (mapv #(git! % "worktree" "list" "--porcelain") sources))))
+               (finally (extension/unregister-op-hooks-for-owner! :ext/create-root-veto)
+                        (delete-tree! second)))))))
+  (it
+    "lets a secondary sync guard veto before any draft is checkpointed or merged"
+    (with-multi-draft
+      false
+      (fn [_base second _ env draft]
+        (let [repos
+              (ws/draft-roots draft)
+
+              observed
+              (atom [])]
+
+          (doseq [repo repos]
+            (spit (io/file (:root repo) "task.txt") "pending task\n"))
+          (let [before (mapv #(vector (git! (:root %) "rev-parse" "HEAD") (local-state (:root %)))
+                             repos)]
+            (try (extension/register-op-hook!
+                   {:op :draft/sync
+                    :phase :around
+                    :owner :ext/sync-root-veto
+                    :fn (fn [_env _op args next]
+                          (let [source (:repo-root (first args))]
+                            (swap! observed conj source)
+                            (if (= second source)
+                              (extension/failure {:error {:message "secondary sync veto"}})
+                              (next args))))})
+                 (expect (= :draft/blocked
+                            (try (drafts/sync! env {:workspace-id (:id draft)})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                 (expect (= (mapv :repo-root repos) @observed))
+                 (expect (= before
+                            (mapv #(vector (git! (:root %) "rev-parse" "HEAD")
+                                           (local-state (:root %)))
+                                  repos)))
+                 (finally (extension/unregister-op-hooks-for-owner! :ext/sync-root-veto)))))))))

@@ -649,8 +649,9 @@
                   (expect finished? output)
                   (expect (= 0 exit) output)))
               (overlay! project port)
+              ;; #242: draft review keeps the source checkout confined.
               (spit (io/file project ".vis/config.yml")
-                    "\ntoggles:\n  draft_backend: worktree\n"
+                    (str "\ntoggles:\n  draft_backend: worktree\n" "\njail:\n  enabled: true\n")
                     :append
                     true)
               (let [database (io/file dir "sessions")
