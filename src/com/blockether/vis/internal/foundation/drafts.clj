@@ -33,10 +33,12 @@
     "## Draft workflow\n"
     "- `draft_backend` is enabled: this is standing authorization to create drafts without asking. Isolate every change-making task (code, tests, documentation and configuration) in its own session-owned draft. Read-only questions, analysis and diff previews do not require a draft.\n"
     "- Check `session[\"workspace\"]` or `draft_status()`. Use `draft_create(\"task-name\")` before editing, or continue this session's draft for the same task. Never edit the shared checkout or another session's draft. Creation defaults to committed HEAD; use `clean=False` only when the task includes the pending checkout changes.\n"
+    "- For a new clean task, fetch origin and base the draft on `origin/<target_branch>` before editing (create, then fast-forward the clean draft if needed). Without origin, use the committed local target. Never reset or overwrite unrelated checkout work; report divergent history instead.\n"
     "- After creation, use `project_root_path` and `session[\"workspace\"]` from the next block, not cached checkout paths. Keep edits, formatting and verification in the draft.\n"
     "- If drafts are unavailable or blocked, report the blocker; never silently fall back to shared-checkout edits or bypass the draft tools with an ad-hoc worktree or clone.\n"
     "- Use `draft_diff()` for a requested review. `draft_approve()` commits and may push: call it only after relevant checks pass and the user or applicable project instructions authorize commit and push. Review-first, local-only and no-commit/push requests leave the draft unapproved.\n"
-    "- Approval leaves the draft open. Before `draft_discard()`, confirm destructive discard with the user; unapproved changes are lost, approved work remains. Read `doc(\"drafts\")` for backend limits and approval recovery.\n"))
+    "- When a task is complete, use `draft_status()` and Git to verify no pending changes, all draft commits merged into the target, and required publication succeeded. Then call `draft_discard()` without asking: cleanup of a completed, merged draft is already authorized. Do not discard an active task's draft merely because it is clean.\n"
+    "- Confirm destructive discard only when unapproved changes or unmerged commits would be lost. Keep incomplete drafts and drafts awaiting review or required publication. Read `doc(\"drafts\")` for backend limits and approval recovery.\n"))
 
 (defn prompt
   "Contribute the draft workflow for enabled backends; off contributes nothing."

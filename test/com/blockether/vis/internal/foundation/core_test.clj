@@ -58,28 +58,33 @@
 
 (defdescribe
   draft-workflow-prompt-test
-  (it "requires the draft workflow for every enabled backend and the default"
-      (let [value-of toggles/value-of]
-        (doseq [backend [nil "auto" "worktree" "rift"]]
-          (with-redefs [toggles/value-of (fn [id]
-                                           (if (= "draft_backend" id) backend (value-of id)))]
-            (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-              (doseq
-                [required
-                 ["## Draft workflow" "standing authorization to create drafts without asking"
-                  "every change-making task (code, tests, documentation and configuration)"
-                  "Read-only questions, analysis and diff previews do not require a draft"
-                  "draft_status()" "draft_create(\"task-name\")" "before editing"
-                  "this session's draft for the same task"
-                  "Never edit the shared checkout or another session's draft" "project_root_path"
-                  "next block" "Keep edits, formatting and verification in the draft" "draft_diff()"
-                  "draft_approve()" "commits and may push"
-                  "user or applicable project instructions authorize commit and push"
-                  "Review-first, local-only and no-commit/push requests leave the draft unapproved"
-                  "draft_discard()" "confirm destructive discard"
-                  "If drafts are unavailable or blocked, report the blocker"
-                  "never silently fall back to shared-checkout edits"]]
-                (expect (str/includes? prompt required) (str backend ": " required))))))))
+  (it
+    "requires the draft workflow for every enabled backend and the default"
+    (let [value-of toggles/value-of]
+      (doseq [backend [nil "auto" "worktree" "rift"]]
+        (with-redefs [toggles/value-of (fn [id]
+                                         (if (= "draft_backend" id) backend (value-of id)))]
+          (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
+            (doseq
+              [required
+               ["## Draft workflow" "standing authorization to create drafts without asking"
+                "every change-making task (code, tests, documentation and configuration)"
+                "Read-only questions, analysis and diff previews do not require a draft"
+                "draft_status()" "draft_create(\"task-name\")" "before editing"
+                "this session's draft for the same task"
+                "Never edit the shared checkout or another session's draft" "project_root_path"
+                "next block" "Keep edits, formatting and verification in the draft" "draft_diff()"
+                "draft_approve()" "commits and may push"
+                "user or applicable project instructions authorize commit and push"
+                "Review-first, local-only and no-commit/push requests leave the draft unapproved"
+                ;; Completed merged drafts are cleanup, not a new approval gate.
+                "fetch origin" "origin/<target_branch>" "before editing" "no pending changes"
+                "all draft commits merged into the target" "required publication succeeded"
+                "draft_discard()` without asking" "Do not discard an active task"
+                "Confirm destructive discard only when unapproved changes or unmerged commits would be lost"
+                "If drafts are unavailable or blocked, report the blocker"
+                "never silently fall back to shared-checkout edits"]]
+              (expect (str/includes? prompt required) (str backend ": " required))))))))
   (it "removes the workflow when switched off and restores it when re-enabled"
       (let [value-of toggles/value-of]
         (doseq [backend ["auto" "off" "rift"]]

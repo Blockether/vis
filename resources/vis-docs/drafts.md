@@ -24,9 +24,15 @@ fast-forwards the default branch, restores unrelated local work and pushes to
 Vis needs your request or permission in your project instructions. Ask to review
 first to keep the draft unapproved. Approval leaves it open for further work.
 
-Discarding a draft removes its unapproved changes and returns the session to the
-original checkout. Work already approved stays on the default branch. Ask Vis to
-confirm what will be lost before discarding.
+Once your task is complete, Vis checks that the draft has no pending changes, all
+its commits are merged into the target branch, and any required push succeeded.
+It then removes the completed draft without asking again. For your next task, Vis
+starts a fresh draft from the latest `origin` target branch, or the committed
+local target when no remote is configured.
+
+Discarding an unfinished draft can lose unapproved changes or unmerged commits,
+so Vis asks for confirmation first. Drafts awaiting review or a required push stay
+open. Work already merged stays on the target branch.
 
 ## Sandbox tools
 
