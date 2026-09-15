@@ -1305,33 +1305,44 @@
         (expect (string/includes? deleted "3 \u2192 2 lines (-1)"))
         (expect (string/includes? deleted "1..1  \u2192 deleted"))
         (expect (= "B\ne\n" (slurp rel)))))
-  (it "a stale anchor is refused with the fresh one attached and nothing is written"
-      (let [rel
-            (write-temp! "patch/stale.txt" "alpha\nbeta\ngamma\n")
+  (it
+    "a stale anchor is refused with the fresh one attached and nothing is written"
+    (let [rel
+          (write-temp! "patch/stale.txt" "alpha\nbeta\ngamma\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+          cat-tool
+          (comp :result (private-fn "cat-tool"))
 
-            stale
-            (anchor-at (cat-tool rel) 2)
+          stale
+          (anchor-at (cat-tool rel) 2)
 
-            _
-            (patch-span rel stale stale "BETA")
+          _
+          (patch-span rel stale stale "BETA")
 
-            before
-            (slurp rel)
+          before
+          (slurp rel)
 
-            thrown
-            (try (patch-span rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
+          thrown
+          (try (patch-span rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (some? thrown))
-        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/starts-with? (ex-message thrown)
-                                     "patch refused at edit 1 of 1 — nothing was written."))
-        ;; The recovery is IN the refusal: one retry, not a re-read.
-        (expect (string/includes? (ex-message thrown) "current anchor at 2 →"))
-        (expect (string/includes? (ex-message thrown) (hashline/line-anchor 2 "BETA")))
-        (expect (= before (slurp rel)))))
+      (expect (some? thrown))
+      (expect (= :anchor-mismatch (:reason (ex-data thrown))))
+      (expect (string/starts-with? (ex-message thrown)
+                                   "patch refused at edit 1 of 1 — nothing was written."))
+      ;; Recovery policy lives in the system prompt, not in each refusal.
+      (expect (= (str "patch refused at edit 1 of 1 — nothing was written.\n"
+                      "  "
+                      (:path (ex-data thrown))
+                      ": stale from "
+                      stale
+                      "; current "
+                      (hashline/line-anchor 2 "BETA")
+                      ".\n"
+                      "  cat("
+                      (pr-str (:path (ex-data thrown)))
+                      ", 1, 5)")
+                 (ex-message thrown)))
+      (expect (= before (slurp rel)))))
   ;; Regression (session 633cdc58): a nearby line/hash contradiction relocated
   ;; the write to the hash's line instead of refusing the mixed anchor.
   (it "a nearby range mismatch is refused instead of relocating the write"
@@ -1351,7 +1362,9 @@
 
         (expect (some? thrown))
         (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "current range →"))
+        (expect (string/includes? (ex-message thrown)
+                                  (str "; current " (hashline/line-anchor 2 "beta")
+                                       " .. " (hashline/line-anchor 3 "gamma"))))
         (expect (= (hashline/line-anchor 2 "beta") (:current-from-anchor (ex-data thrown))))
         (expect (= (hashline/line-anchor 3 "gamma") (:current-to-anchor (ex-data thrown))))
         (expect (= before (slurp rel)))))
@@ -1369,7 +1382,8 @@
 
         (expect (some? thrown))
         (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "never relocates a write"))))
+        (expect (string/includes? (ex-message thrown) ": stale from 160:"))
+        (expect (string/includes? (ex-message thrown) ", 157, 163)"))))
   (it "a bare line number is refused — patch verifies, it does not guess"
       (let [rel
             (write-temp! "patch/bare.txt" "alpha\nbeta\n")
@@ -1380,6 +1394,77 @@
         (expect (some? thrown))
         (expect (= :anchor-malformed (:reason (ex-data thrown))))
         (expect (= "alpha\nbeta\n" (slurp rel))))))
+
+(defdescribe
+  patch-compact-refusal-test
+  (it
+    "reports argument and anchor failures without examples or echoed payloads"
+    (let [rel
+          (write-temp! "patch/compact.txt" "alpha\nbeta\n")
+
+          patch-tool
+          (private-fn "patch-tool")
+
+          a1
+          (hashline/line-anchor 1 "alpha")
+
+          a2
+          (hashline/line-anchor 2 "beta")
+
+          large-input
+          (apply str (repeat 10000 "x"))]
+
+      (doseq [[edits reason detail line-count]
+              [[[] :edits-missing "edits must be a non-empty list of maps" 2]
+               [large-input :edits-missing "edits must be a non-empty list of maps" 2]
+               [[large-input] :edit-not-a-map "edit 1/1 must be a map" 2]
+               [[{"replace" "x"}] :anchor-missing "edit 1/1 missing `from`" 2]
+               [[{"from" a1}] :replacement-missing "edit 1/1 missing `replace`" 2]
+               [[{"from" a1 "replacement" "x"}] :edit-unknown-key
+                "unknown keys: \"replacement\"; allowed: from, to, replace" 2]
+               [[{"from" large-input "replace" "x"}] :anchor-malformed
+                "invalid from anchor; expected line:hash" 2]
+               [[{"from" a1 "to" "2" "replace" "x"}] :anchor-malformed
+                "invalid to anchor; expected line:hash" 2]
+               [[{"from" "99:abc" "replace" "x"}] :anchor-line-out-of-range
+                "from line 99 out of range; file has 2 lines" 2]
+               [[{"from" a1 "to" "99:abc" "replace" "x"}] :anchor-line-out-of-range
+                "to line 99 out of range; file has 2 lines" 2]
+               [[{"from" a2 "to" a1 "replace" "x"}] :anchor-range-inverted
+                "from line 2 is after to line 1" 2]
+               [[{"from" a1 "to" (hashline/line-anchor 2 "stale") "replace" "x"}] :anchor-mismatch
+                (str "; current " a1 " .. " a2) 3]
+               [[{"from" a1 "to" a2 "replace" "x"} {"from" a2 "replace" "y"}] :edits-overlap
+                "lines 1..2 and 2..2" 2]]]
+        (let [thrown (try (patch-tool rel edits) nil (catch clojure.lang.ExceptionInfo e e))
+              message (ex-message thrown)]
+
+          (expect (= reason (:reason (ex-data thrown))))
+          (expect (string/includes? message detail))
+          (expect (= line-count (count (string/split-lines message))))
+          (expect (< (count message) 350))
+          (expect (= "alpha\nbeta\n" (slurp rel)))))))
+  (it "omits long current lines and quotes the suggested read path"
+      (let [text
+            (apply str (repeat 10000 "x"))
+
+            rel
+            (write-temp! "patch/quoted-\"path.txt" (str "first\n" text "\nlast\n"))
+
+            thrown
+            (try (patch-span rel (hashline/line-anchor 2 "stale") nil "wrong target")
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))
+
+            message
+            (ex-message thrown)]
+
+        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
+        (expect (string/includes? message (hashline/line-anchor 2 text)))
+        (expect (string/includes? message (str "cat(" (pr-str (:path (ex-data thrown))) ", 1, 5)")))
+        (expect (= 3 (count (string/split-lines message))))
+        (expect (< (count message) 350))
+        (expect (= (str "first\n" text "\nlast\n") (slurp rel))))))
 
 (defdescribe
   patch-parse-gate-test
@@ -1404,7 +1489,9 @@
         (expect (some? thrown))
         (expect (= :parse-broken (:reason (ex-data thrown))))
         (expect (string/includes? (ex-message thrown) "would not parse"))
-        (expect (string/includes? (ex-message thrown) "parsed clean before this edit"))
+        (expect (string/includes? (ex-message thrown) "clojure: ERROR at replacement line "))
+        (expect (<= (count (string/split-lines (ex-message thrown))) 3))
+        (expect (not (string/includes? (ex-message thrown) "parsed clean before this edit")))
         (expect (= "(ns gate)\n\n(defn ok [] 1)\n" (slurp rel)))))
   (it "an ALREADY broken file still accepts an edit — you must be able to repair it"
       (let [rel
@@ -1704,7 +1791,7 @@
 
         (expect (some? thrown))
         (expect (= :replacement-missing (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "\"replace\": \"\""))
+        (expect (string/includes? (ex-message thrown) "missing `replace`"))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   ;; Regression: `patch(path, from, to)` — the model naming a SPAN and forgetting
   ;; the text — wrote the string `6:70a` over line 3 and reported success. The
@@ -1748,7 +1835,7 @@
             (try (patch-tool rel []) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :edits-missing (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "patch(path, edits)"))
+        (expect (string/includes? (ex-message thrown) "edits must be a non-empty list of maps"))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   ;; Regression: a replacement copied straight out of `cat` kept its `line:hash│ `
   ;; gutter and landed in the file verbatim, silently — the gutter is an ADDRESS.

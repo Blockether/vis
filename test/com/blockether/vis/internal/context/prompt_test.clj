@@ -1423,9 +1423,10 @@
   (it "distinguishes stale-anchor recovery from invalid replacement syntax"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["use a FRESH ANCHOR from the last result or re-read the target"
+                      "A refused patch writes nothing" "read only the indicated region if needed"
                       "confirm the intended target before retrying"
-                      "A parse refusal means fix the replacement syntax, not the anchors"
-                      "never retry it unchanged"]]
+                      "For parse errors, fix replacement syntax, not anchors"
+                      "never retry unchanged"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe

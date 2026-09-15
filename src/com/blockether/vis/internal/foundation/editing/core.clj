@@ -3292,21 +3292,19 @@
 ;; patch
 
 (defn- anchor-window-hint
-  "The `cat(...)` call that re-reads the neighbourhood of `line` — appended to a
-   refusal so recovery is ONE call and never a hunt for the region again."
+  "A bounded read window around a refused anchor."
   [rel ^long line]
-  (str "cat(\""
-       rel
-       "\", "
+  (str "cat("
+       (str/replace (json/write-json-str rel) "\\/" "/")
+       ", "
        (max 1 (- line (long diff/context-lines)))
        ", "
        (+ line (long diff/context-lines))
        ")"))
 
 (defn- patch-refusal!
-  "Raise ONE refusal. A refusal RAISES rather than returning a row: a returned
-   failure row is skimmable, and this one carries the anchor that fixes the call.
-   `lines` are the message's body lines, already indented by the caller."
+  "Raise a compact diagnostic with structured refusal data. Recovery policy belongs
+   in the system prompt; `message-lines` carry only the cause and coordinates."
   ([rel refusal message-lines]
    (patch-refusal! rel refusal message-lines "patch refused — nothing was written."))
   ([rel refusal message-lines head]
@@ -3316,12 +3314,10 @@
                      :path rel)))))
 
 (defn- anchor-refusal!
-  "Turn a `hashline` resolution error into the patch refusal the model reads.
-   Each shape names WHAT disagreed and hands back the exact current anchor or
-   range for a one-step retry; atomically, it also names WHICH edit failed."
+  "Report the failed edit, cause, current anchors and optional read window."
   [rel
-   {:keys [reason which hash stated-line current-anchor current-from-anchor current-to-anchor
-           current-text line lines from-line to-line anchor edit-index edit-count]}]
+   {:keys [reason which hash stated-line current-anchor current-from-anchor current-to-anchor line
+           lines from-line to-line edit-index edit-count]}]
   (let [slot
         (if (= :to which) "to" "from")
 
@@ -3347,37 +3343,30 @@
       refusal
       (case reason
         :anchor-malformed
-        [(str "  " rel "  " slot " " (pr-str anchor))
-         "  an anchor is `<line>:<hash>`, exactly as cat and grep print it (e.g. 4439:a80)."
-         "  a bare line number is not accepted: patch verifies the content it overwrites."]
+        [(str "  " rel ": invalid " slot " anchor; expected line:hash.")]
 
         :anchor-line-out-of-range
-        [(str "  " rel "  " slot " names line " line) (str "  the file has " lines " lines.")]
+        [(str "  " rel ": " slot " line " line " out of range; file has " lines " lines.")]
 
         :anchor-mismatch
-        [(str "  " rel "  " slot " " stated-line ":" hash)
-         (str "  line "
+        [(str "  "
+              rel
+              ": stale "
+              slot
+              " "
               stated-line
-              " now hashes "
-              (hashline/line-hash current-text)
-              "; patch requires the hash to match that exact line.")
-         "  patch never relocates a write by searching for the hash on another line."
-         (if (and current-from-anchor current-to-anchor)
-           (str "  current range →  " current-from-anchor " .. " current-to-anchor)
-           (str "  current anchor at "
-                stated-line
-                " →  "
-                current-anchor
-                hashline/hashline-gutter
-                current-text))
-         (str "  retry with that " (if (and current-from-anchor current-to-anchor) "range" "anchor")
-              ", or re-read: " (anchor-window-hint rel stated-line))]
+              ":"
+              hash
+              "; current "
+              (if (and current-from-anchor current-to-anchor)
+                (str current-from-anchor " .. " current-to-anchor)
+                current-anchor)
+              ".") (str "  " (anchor-window-hint rel stated-line))]
 
         :anchor-range-inverted
-        [(str "  " rel "  `from` resolves to line " from-line ", after `to`'s line " to-line ".")
-         "  order the span: `from` first, `to` last."]
+        [(str "  " rel ": from line " from-line " is after to line " to-line ".")]
 
-        [(str "  " rel "  " slot " could not be resolved (" (name reason) ").")])
+        [(str "  " rel ": " slot " " (name reason) ".")])
       ;; The batch is atomic, so ONE stale anchor refuses every edit in the call:
       ;; the coordinate is what turns "an anchor is stale" into "edit 2 of 5 is".
       (str "patch refused"
@@ -3439,27 +3428,28 @@
           {:content (:content repair)
            :clause
            (str "  parse: clean (delimiters repaired: " (str/join ", " (:notes repair)) ")")}
-          (patch-refusal!
-            rel
-            {:reason :parse-broken :error-line (:line e)}
-            (into [(str "  " rel "  " span-label)
-                   (str "  "
-                        (name lang)
-                        ": "
-                        (if (:missing? e) "MISSING" "ERROR")
-                        " node at line "
-                        (:line e)
-                        ", col "
-                        (:col e)
-                        (when-let [t (some-> (:text e)
-                                             str
-                                             str/trim
-                                             not-empty)]
-                          (str " — near `" (subs t 0 (min 60 (count t))) "`")))
-                   "  the file parsed clean before this edit, so the replacement introduced it."]
-                  (when-let [why (:why repair)]
-                    [(str "  " why " — re-read the region and fix the replacement.")]))
-            "patch refused — the edit would not parse; nothing was written."))))))
+          (patch-refusal! rel
+                          {:reason :parse-broken :error-line (:line e)}
+                          (into [(str "  "
+                                      rel
+                                      ": "
+                                      span-label
+                                      "; "
+                                      (name lang)
+                                      ": "
+                                      (if (:missing? e) "MISSING" "ERROR")
+                                      " at replacement line "
+                                      (:line e)
+                                      ", col "
+                                      (:col e)
+                                      (when-let [t (some-> (:text e)
+                                                           str
+                                                           str/trim
+                                                           not-empty)]
+                                        (str " — near " (pr-str (subs t 0 (min 60 (count t)))))))]
+                                (when-let [why (:why repair)]
+                                  [(str "  repair: " why)]))
+                          "patch refused — the edit would not parse; nothing was written."))))))
 
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written, how
@@ -3564,30 +3554,20 @@
    that meant to edit and never said what, and a non-map entry is the positional
    call this verb no longer has."
   [rel edits]
-  (let
-    [batch
-     (normalize-edits-arg edits)
-
-     shape-lines
-     ["  patch(path, edits) takes a LIST of edit maps:"
-      "    patch(path, [{\"from\": \"41:9c2\", \"replace\": \"…\"},"
-      "                 {\"from\": \"88:0af\", \"to\": \"90:7ab\", \"replace\": \"…\"}])"
-      "  `to` defaults to `from`, `replace: \"\"` deletes the span, and the edits may be listed in any order."]]
-
+  (let [batch (normalize-edits-arg edits)]
     (when-not (and (sequential? batch) (seq batch))
       (patch-refusal! rel
                       {:reason :edits-missing}
-                      (cons (str "  " rel "  edits " (pr-str edits)) shape-lines)))
+                      [(str "  " rel ": edits must be a non-empty list of maps.")]))
     (into
       []
       (map-indexed
         (fn [i entry]
-          (let [at (str "  " rel "  edit " (inc (long i)) " of " (count batch) " ")]
+          (let [at (str "  " rel ": edit " (inc (long i)) "/" (count batch) " ")]
             (when-not (map? entry)
               (patch-refusal! rel
                               {:reason :edit-not-a-map :edit-index i}
-                              (cons (str at "is " (pr-str entry) ", not an edit map.")
-                                    shape-lines)))
+                              [(str at "must be a map.")]))
             (let [unknown (remove #{"from" "to" "replace"}
                             (map #(if (keyword? %) (name %) (str %)) (keys entry)))
                   from (edit-field entry "from")
@@ -3597,22 +3577,18 @@
                 (patch-refusal!
                   rel
                   {:reason :edit-unknown-key :edit-index i :unknown-keys (vec unknown)}
-                  (cons (str at
-                             "carries "
-                             (str/join ", " (map pr-str unknown))
-                             " — the only keys are from, to and replace.")
-                        shape-lines)))
+                  [(str at
+                        "unknown keys: "
+                        (str/join ", " (map pr-str unknown))
+                        "; allowed: from, to, replace.")]))
               (when (nil? from)
                 (patch-refusal! rel
                                 {:reason :anchor-missing :edit-index i}
-                                (cons (str at "names no `from` anchor.") shape-lines)))
+                                [(str at "missing `from`.")]))
               (when (nil? replacement)
-                (patch-refusal!
-                  rel
-                  {:reason :replacement-missing :edit-index i}
-                  [(str at "is from " (pr-str (str from)) ", but carries no `replace`.")
-                   "  an absent replacement is NOT a deletion — patch will not guess at erasing lines."
-                   "  to DELETE the span, say so: {\"from\": anchor, \"replace\": \"\"}."]))
+                (patch-refusal! rel
+                                {:reason :replacement-missing :edit-index i}
+                                [(str at "missing `replace`.")]))
               {:index i :from from :to (or (edit-field entry "to") from) :replace replacement})))
         batch))))
 
@@ -3630,9 +3606,17 @@
         (patch-refusal!
           rel
           {:reason :edits-overlap :edit-index (:index a) :other-edit-index (:index b)}
-          [(str "  " rel "  edit " i " covers lines " (:from-line a) ".." (:to-line a))
-           (str "  " rel "  edit " j " covers lines " (:from-line b) ".." (:to-line b))
-           "  two edits over the same line have no defined result; make them ONE edit over the whole span."]
+          [(str "  "
+                rel
+                ": lines "
+                (:from-line a)
+                ".."
+                (:to-line a)
+                " and "
+                (:from-line b)
+                ".."
+                (:to-line b)
+                ".")]
           (str "patch refused — edits " i " and " j " overlap; nothing was written."))))))
 
 (defn- patch-file!
