@@ -445,6 +445,60 @@
         (expect (str/includes? text rule) rule)))))
 
 (defdescribe
+  core-prompt-demand-driven-discovery-test
+  ;; Regression: #231 repeated discovery after /reload despite an already known contract.
+  ;; These assertions pin the base prompt's decision rules, not model compliance.
+  (it
+    "reuses known contracts across calls, turns, reloads and session recovery"
+    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+      (doseq
+        [rule
+         ["Reuse contracts from this task or recovered session context"
+          "A new turn, `/reload`, or repeated call does not invalidate known contracts"
+          "skip `doc()`, `apropos()` and tool-spec discovery when signature and preconditions are known"]]
+        (expect (str/includes? text rule) rule))))
+  (it
+    "discovers unknown operations but requires evidence before rediscovery"
+    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+      (expect
+        (str/includes?
+          text
+          "Discover only unknown operations, evidence of contract/registration changes, or concrete errors pointing to discovery"))))
+  (it
+    "uses known recovery without treating every operational failure as a discovery failure"
+    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+      (expect
+        (str/includes?
+          text
+          "For operational failures, apply known recovery; read the indicated contract only if unknown or changed"))))
+  (it
+    "consolidates discovery policy with the authoritative lookup contract in the base prompt"
+    (let [text
+          (prompt/build-system-prompt {})
+
+          section
+          (second (str/split text #"## 1\. Identity \+ Epistemic stance" 2))
+
+          discovery
+          (some-> section
+                  (str/split #"## 2\. Execution surfaces" 2)
+                  first)]
+
+      (expect (some? discovery))
+      (when discovery
+        (doseq
+          [rule
+           ["Discovery is demand-driven"
+            "identify the unresolved question affecting the next step; if none, stop reading"
+            "Use the narrowest exact contract; avoid broad indexes or full docs when a known signature suffices"
+            "`apropos(pattern)` filters SYMBOL names" "`doc(name)` returns"
+            "obey its stated preconditions"]]
+          (expect (str/includes? discovery rule) rule)))
+      (expect (= 1 (count (re-seq #"Discovery is demand-driven" text))))
+      (expect
+        (= 1 (count (re-seq #"identify the unresolved question affecting the next step" text)))))))
+
+(defdescribe
   core-prompt-execution-invariants-test
   ;; Compression must retain executable contracts, not just capability names.
   (it "keeps independent batching separate from dependent observations"
@@ -561,7 +615,8 @@
       ;; 8.1k → 8.7k for bounded helper discovery, explicit cleanup and verified Improve proposals.
       ;; 8.7k → 8.5k: fingerprints and Improve proposals moved to the `doc("defs")` page;
       ;; the prompt keeps helper policy and how the saved definitions follow the namespace.
-      (expect (< (count text) 8500))
+      ;; 8.5k → 9.1k for #231: one demand-driven discovery policy, including recovery and reuse.
+      (expect (< (count text) 9100))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
