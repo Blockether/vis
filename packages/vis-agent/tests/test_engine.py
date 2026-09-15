@@ -255,6 +255,7 @@ def sdk_fixture(
     transport,
     *,
     council=False,
+    subagents=False,
     tool_code=None,
     before_reply=None,
     project_extensions=None,
@@ -292,7 +293,7 @@ def sdk_fixture(
             json.dumps(
                 {
                     "providers": [] if managed else [{"id": "sdk-fixture"}],
-                    "toggles": {"council": council},
+                    "toggles": {"council": council, "subagents": subagents},
                     "default_provider": "sdk-fixture",
                     "default_model": "sdk-test",
                 }
@@ -801,6 +802,7 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         monkeypatch,
         transport,
         council=True,
+        subagents=True,
         before_reply=before_reply,
         tool_code=(
             "if session['agent']['role'] == 'leader':\n"
