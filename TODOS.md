@@ -60,3 +60,113 @@ commit only this task, and push to `main`. Record results below as work complete
   regression passed, verifying real archive files, terminal reads and ordered SSE replay.
 - The running gateway was not restarted or replaced. These checks verify the new
   code and image, not a reduction in the old process's live RSS.
+
+# Gateway indexing and retention experiments
+
+## FFF: reproduced and corrected
+
+- [x] Verify sharing across workers. Two distinct confined Python worker processes
+  called into one host pool and reused the identical native index: one creation.
+  Canonical aliases reused it; a different root or ignore policy correctly did not.
+- [x] Keep borrowed indexes addressable. The old capacity sweep evicted a borrowed
+  root and a second borrower constructed another index for that root. A regression
+  failed before the fix. Acquisition and eviction now share a short pool lock;
+  native work stays outside it. Active entries can temporarily exceed six slots,
+  then release trims idle entries back to the existing budget.
+- [x] Scope write invalidation. One write previously caused both of two unrelated
+  roots to rescan. Notifications now identify the changed path; overlapping roots
+  resync, unrelated drafts do not. A failed rescan no longer advances the epoch or
+  runs a potentially incomplete search; writes arriving during a scan remain pending.
+- [x] Instrument creation, reuse, acquire/release, active-user count, eviction reason,
+  initial/resync duration and scan-permit wait. `workspace.fff-index/pool-stats`
+  returns bounded totals and current entries without building indexes. Structured
+  `::lifecycle` logs carry details; high-frequency reuse/lease events are debug-level.
+- [x] Reproduce capacity thrashing with real native indexes over isolated draft-like
+  fixture roots, not user worktrees. Three passes, 32 files per root, 2 ms between
+  switches: six roots produced 6 builds, 12 reuses and 0 evictions; seven roots
+  produced 21 builds, 0 reuses and 15 capacity evictions. Measured elapsed times were
+  127/314 ms and summed initial-scan times 72/245 ms, with no write rescans or permit
+  waits. These are controlled small-fixture measurements, not a gateway CPU benchmark.
+- [ ] Capture a representative gateway workload using these events. Measure distinct
+  root/policy demand inside the ten-minute window, scan frequency, latency, native
+  CPU and resident memory before changing capacity. The experiment proves how seven
+  cyclic roots thrash six slots, not that the historical gateway followed that pattern.
+  Do not merge divergent worktree contents or increase the pool blindly.
+
+## GC and class loaders: experiments complete, production changes pending
+
+- [x] Compare current 10/25 heap-free ratios with defaults in clean Java 25.0.3 JVMs,
+  retaining the other flags and 5 GiB ceiling. Each ran 10 warmups, 500 reflection
+  suite repetitions (10,500 passing cases), 65 seconds idle, then explicit GC.
+  Active process CPU was 12,130/12,108 ms; concurrent collection counts were 6/4.
+  Idle process CPU was 67/43 ms with no additional collection counts. After GC,
+  both used about 47.9 MB heap; committed heap was 109.1/251.7 MB. This single paired
+  workload did not reproduce near-secondly marking. Collection-time counters are
+  not GC-thread CPU, and committed heap is not total process memory.
+- [ ] Capture actual GC causes and per-thread CPU during representative turn activity;
+  repeat paired latency/RSS measurements before changing `deps.edn` ratios.
+- [x] Separate loader retention from ordinary warm linting. Repeated full reflection
+  suites retained about 6,821 live DynamicClassLoaders after explicit GC, versus
+  814 initially. The suite includes deliberate `load-string`/dependency compilation.
+  Three hundred warm compile-warning repetitions changed live loaders only 706→707.
+  A diagnostic JVM with immediate soft-reference aging reduced live loaders to 692
+  after GC; Clojure's class cache uses soft references. This is not proof of an
+  unreclaimable gateway leak, nor a recommendation to change soft-reference policy.
+- [ ] Correlate actual gateway loader growth with cold dependency/macro/type compilation,
+  inspect retaining roots, and verify unloading under memory pressure. Distinguish
+  live loaders from cumulative loaded-class counts.
+
+## Draft cleanup: requested policy, not yet automatic
+
+- [ ] Remove genuinely abandoned/cancelled/approved drafts through the canonical
+  workspace backend after preserving recoverable work and releasing every user.
+  Current approval is repeatable and is not a terminal workspace state; cancelling
+  a turn or subagent does not prove its draft is disposable. Existing draft suites
+  passed 46 workspace and 20 foundation tests and confirm these lifecycle boundaries.
+- [ ] For approval cleanup, verify every root is safely published/merged, including
+  copy-only roots; preserve dirty/unpushed/unique work. Check other live session
+  references, exit the draft and synchronize confinement before asynchronous release.
+  Preserve the approval result/history when cleanup is vetoed or retried.
+- [ ] Retry discarded-root cleanup through backend release rather than directly deleting
+  leftovers and bypassing Git worktree/branch bookkeeping. Age alone is not approval
+  to delete. No trustworthy live terminal-draft candidate list was established, and
+  no user draft was removed in these experiments.
+
+## Runtime retention: newest version plus live users
+
+- [x] Reproduce release churn: 17 fresh runtime versions in each fixture store all
+  survived the current fourteen-day sweep. Add the read-only
+  `foundation.housekeeping/runtime-retention-plan`: numeric version ordering,
+  newest release plus the required pin retained, unknown names/symlinks retained,
+  other versions explicitly marked `:liveness-unverified`. Fifteen candidates per
+  fixture store remained untouched.
+- [x] Read-only live inventory found 29 runtime directories and 23 source directories,
+  with newest installed version 0.5.16 and loaded-host pin 0.5.15. The plan listed
+  27 runtime and 21 source candidates, not safe deletion approvals; no size claim.
+- [ ] Replace age-only retention with newest-version retention after trustworthy
+  cross-process liveness checks. Keep any older version still required by a running
+  process, then remove it after its last user exits. New lock files alone cannot
+  prove that legacy processes are not using a version. No runtime was deleted and
+  the current destructive sweep policy is unchanged.
+- [ ] Low priority: remove leftover socket directories only after proving their owner
+  is gone. Python worker memory was not identified as a defect in these experiments.
+
+## Verification
+
+- Initial verification passed 306 cases; follow-up selected suites pass 309 with the
+  committed runtime pin `be7ccea`, including native FFF and confined worker boundaries.
+  Independent review found no correctness blocker; initial scan failure timing and
+  pool identity now have a failing-before/passing-after regression. Formatting and
+  scoped clj-kondo checks passed. The general analyzer reports 67 reflection warnings;
+  the baseline contains matching warnings, and additional FFF findings did not reproduce in a clean
+  compiler reload. Fresh-JVM reflection/boxed-math reloads emitted no warnings in
+  changed FFF/editor code; housekeeping retains an existing Thread-constructor
+  warning outside the diff. No warning suppressions were added.
+- The live gateway was not restarted. Native-build optimization and native-image
+  rebuilds were excluded. These results verify local source, not deployment or a
+  measured reduction in the old gateway's CPU/RSS. Owned experiment workers and REPLs
+  are stopped; existing concurrent checkout work remains separate. Follow-up delivery
+  now validates and pushes each scoped item rather than ending at the experiment plan.
+- The concurrent, uncommitted runtime `0.5.19` bump fails one confined-worker startup:
+  bundled sources cannot be extracted inside the jail. That separate release failure
+  is reported to its owner; it is not part of the FFF commit or its runtime pin.

@@ -586,3 +586,65 @@
         (with-homes {:python python} #(housekeeping/sweep-stale! nil))
         (expect (.exists pinned))
         (expect (not (.exists other))))))
+
+(defdescribe
+  runtime-retention-plan-test
+  (it "shows release churn that the age-only sweep retains, without deleting candidates"
+      (let [python
+            (tmp-dir "vis-hk-release-churn")
+
+            versions
+            (mapv #(str "0.5." %) (range 17))]
+
+        (doseq [kind
+                ["runtime" "sources"]
+
+                version
+                versions]
+
+          (touch! python (str kind "/" version "/library") 0 "runtime"))
+        (with-homes
+          {:python python}
+          (fn []
+            ;; Seventeen fresh releases fit inside the fourteen-day window.
+            (let [swept
+                  (housekeeping/sweep-stale! {:runtime-version "0.5.15"})
+
+                  plan
+                  (housekeeping/runtime-retention-plan {:runtime-version "0.5.15"})]
+
+              (expect (zero? (:deleted swept)))
+              (expect (true? (:is-dry-run plan)))
+              (doseq [target (:targets plan)]
+                (expect (= "0.5.16" (:latest-version target)))
+                (expect (= #{"0.5.15" "0.5.16"} (set (map :version (:retained target)))))
+                (expect (= 15 (count (:candidates target))))
+                (expect (every? #(= :liveness-unverified (:reason %)) (:candidates target)))
+                (expect (every? #(.exists (io/file (:root %))) (:candidates target)))))))))
+  (it "retains unknown and linked directories, and reports missing stores without mutation"
+      (let [python
+            (tmp-dir "vis-hk-plan-unknown")
+
+            outside
+            (tmp-dir "vis-hk-plan-outside")
+
+            link
+            (io/file python "runtime" "9.9.9")]
+
+        (touch! python "runtime/0.5.9/library" 0 "runtime")
+        (touch! python "runtime/0.5.10/library" 0 "runtime")
+        (touch! python "runtime/dev/library" 0 "runtime")
+        (Files/createSymbolicLink (.toPath link) (.toPath outside) (make-array FileAttribute 0))
+        (with-homes {:python python}
+                    (fn []
+                      (let [[runtime sources] (:targets (housekeeping/runtime-retention-plan
+                                                          {:runtime-version "0.5.9"}))]
+                        (expect (= "0.5.10" (:latest-version runtime)))
+                        (expect (empty? (:candidates runtime)))
+                        (expect (= #{:pinned :latest :unrecognized-version :linked-directory}
+                                   (set (map :reason (:retained runtime)))))
+                        (expect (empty? (:candidates sources)))
+                        (expect (empty? (:retained sources)))
+                        (expect (nil? (:latest-version sources)))
+                        (expect (false? (:unavailable? sources)))
+                        (expect (not (.exists (io/file python "sources"))))))))))

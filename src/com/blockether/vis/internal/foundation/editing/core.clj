@@ -3795,7 +3795,7 @@
                (str "patch refused — nothing was written.\n  " (:message failure))
                {:type :ext.foundation.editing/patch-refused :reason (:reason failure) :path rel}))
       (let [_
-            (fff-index/note-fs-write!)
+            (fff-index/note-fs-write! f)
 
             new-lines
             (hashline/split-content-lines written-content)]

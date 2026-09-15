@@ -13,12 +13,14 @@
        (fff/search idx …) (fff/grep idx …))
 
    - the index is watcher-live (`:watch? true`) and resynced before the body
-     runs when this process wrote anything since it was last synced,
-   - the body must NOT close `idx`; the pool owns it (LRU + idle TTL),
-   - every filesystem mutation this process performs must call `note-fs-write!`
-     so the next search reads its own writes."
+     runs when this process wrote inside its tree since it was last synced,
+   - all gateway workers share the pool and the same root/policy index,
+   - the body must NOT close `idx`; borrowed indexes cannot be evicted,
+   - filesystem mutations call `note-fs-write!` with the changed path so the
+     next search reads its own writes without rescanning unrelated drafts."
   (:require [com.blockether.fff :as fff]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel])
   (:import [java.io File]))
 
 (def ^:private scan-timeout-ms
@@ -59,9 +61,9 @@
   (max 2 (quot (.availableProcessors (Runtime/getRuntime)) 2)))
 
 (def ^:private scan-max-concurrency
-  "Permit count for `scan-semaphore`: the max number of FRESH fff index
-   scans (grep — everything that goes through
-   `open!`) allowed to run at once. A fresh scan spins fff's own worker
+  "Permit count for `scan-semaphore`: the max number of initial fff index
+   scans and explicit read-your-writes rescans allowed to run at once.
+   A scan spins fff's own worker
    threads over the whole tree — cheap for a small repo (~11ms), but up to the
    `scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED
    `gather(rg, rg, …)` of N searches could fan out into N simultaneous
@@ -86,9 +88,9 @@
    is free, then ALWAYS release it — even when `thunk` throws, or the waiting
    thread is interrupted (turn `cancel!` / eval timeout, which surfaces as an
    `InterruptedException` from `.acquire` and propagates, releasing nothing it
-   never took). Guards ONLY the index BUILD (create + `wait-for-scan`);
-   searching an already-scanned index is cheap and needs no permit, so the
-   permit is dropped the moment the scan is ready — maximizing scan overlap."
+   never took). Guards initial builds and explicit rescans; searching an
+   already-synchronized index is cheap and needs no permit. The permit is
+   dropped as soon as the scan is ready, maximizing scan overlap."
   [thunk]
   (.acquire ^java.util.concurrent.Semaphore scan-semaphore)
   (try (thunk) (finally (.release ^java.util.concurrent.Semaphore scan-semaphore))))
@@ -106,6 +108,29 @@
    Cost is page cache, not heap: fff reads these files itself, and vis streams
    them line by line (`search-file-content`) rather than slurping them."
   (* 256 1024 1024))
+
+(defonce ^:private lifecycle-counters (atom {}))
+
+(defn- record-event!
+  "Bounded process totals plus structured lifecycle logs; never retain event history."
+  [event data]
+  (swap! lifecycle-counters (fn [counters]
+                              (cond-> (update-in counters [:events event] (fnil inc 0))
+                                (= event :evict)
+                                (update-in [:evictions (:reason data)] (fnil inc 0))
+
+                                (= event :scan)
+                                (update :scan-ms (fnil + 0) (:scan-ms data))
+
+                                (= event :scan)
+                                (update :queued-ms (fnil + 0) (or (:queued-ms data) 0))
+
+                                (= event :scan)
+                                (update-in [:scans (:reason data) (:status data)] (fnil inc 0)))))
+  (tel/log! {:level (if (#{:acquire :reuse :release :invalidate} event) :debug :info)
+             :id ::lifecycle
+             :data (assoc data :event event)}
+            "FFF index lifecycle"))
 
 (defn- open!
   "Create a FRESH fff instance scoped to `root`, blocking until its initial
@@ -142,6 +167,8 @@
   (^java.io.Closeable [^File root] (open! root true nil))
   (^java.io.Closeable [^File root respect-ignore-files?] (open! root respect-ignore-files? nil))
   (^java.io.Closeable [^File root respect-ignore-files? overlay]
+   (open! root respect-ignore-files? overlay nil))
+  (^java.io.Closeable [^File root respect-ignore-files? overlay event-data]
    (when-not (.isDirectory root)
      (throw (ex-info "rg fff index root must be a directory"
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
@@ -150,66 +177,92 @@
        (fn []
          (let [queued-ms (quot (- (System/nanoTime) requested-at) 1000000)
                k (.getCanonicalPath root)
-               idx (try (fff/create
-                          {:base-path k
-                           :watch? true
-                           :ai-mode? true
-                           :enable-content-indexing? true
-                           :enable-mmap-cache? false
-                           ;; content budget: fff skips files past this SILENTLY,
-                           ;; and its 10 MB default made grep miss needles that
-                           ;; live in big logs/dumps (issue #63 follow-up).
-                           :cache-budget-max-file-size max-content-file-size
-                           ;; see docstring — never open fff's LMDB dbs.
-                           :frecency-db-path nil
-                           :history-db-path nil
-                           :respect-ignore-files? (boolean respect-ignore-files?)
-                           ;; ignore overlay — fff honors it in BOTH the scan
-                           ;; walk and the live watcher, which is why vis no
-                           ;; longer walks trees in Clojure for `.rgignore` or
-                           ;; the `:grep` config overlay.
-                           :custom-ignore-filenames (:custom-ignore-filenames overlay)
-                           :exclude-globs (:exclude-globs overlay)
-                           :unignore-globs (:unignore-globs overlay)})
-                        (catch Throwable t
-                          (throw (ex-info
-                                   (str "rg requires fff for directory search, but fff failed for "
-                                        k)
-                                   {:type :ext.foundation.editing/fff-unavailable :path k}
-                                   t))))
-               scan-started-at (System/nanoTime)]
+               scan-started-at (System/nanoTime)
+               idx (try
+                     (fff/create
+                       {:base-path k
+                        :watch? true
+                        :ai-mode? true
+                        :enable-content-indexing? true
+                        :enable-mmap-cache? false
+                        ;; content budget: fff skips files past this SILENTLY,
+                        ;; and its 10 MB default made grep miss needles that
+                        ;; live in big logs/dumps (issue #63 follow-up).
+                        :cache-budget-max-file-size max-content-file-size
+                        ;; see docstring — never open fff's LMDB dbs.
+                        :frecency-db-path nil
+                        :history-db-path nil
+                        :respect-ignore-files? (boolean respect-ignore-files?)
+                        ;; ignore overlay — fff honors it in BOTH the scan
+                        ;; walk and the live watcher, which is why vis no
+                        ;; longer walks trees in Clojure for `.rgignore` or
+                        ;; the `:grep` config overlay.
+                        :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                        :exclude-globs (:exclude-globs overlay)
+                        :unignore-globs (:unignore-globs overlay)})
+                     (catch Throwable t
+                       (record-event! :scan
+                                      (merge event-data
+                                             {:root k
+                                              :reason :initial
+                                              :status :failed
+                                              :queued-ms queued-ms
+                                              :scan-ms (quot (- (System/nanoTime) scan-started-at)
+                                                             1000000)}))
+                       (throw (ex-info
+                                (str "rg requires fff for directory search, but fff failed for " k)
+                                {:type :ext.foundation.editing/fff-unavailable :path k}
+                                t))))]
 
-           (when-not (fff/wait-for-scan idx scan-timeout-ms)
-             (.close ^java.io.Closeable idx)
-             (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
-                   in-flight (- (long scan-max-concurrency)
-                                (long (.availablePermits ^java.util.concurrent.Semaphore
-                                                         scan-semaphore)))]
+           (try (when-not (fff/wait-for-scan idx scan-timeout-ms)
+                  (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
+                        in-flight (- (long scan-max-concurrency)
+                                     (long (.availablePermits ^java.util.concurrent.Semaphore
+                                                              scan-semaphore)))]
 
-               (throw
-                 (ex-info (str "rg fff scan did not complete in time for "
-                               k
-                               " — queued "
-                               queued-ms
-                               "ms for one of "
-                               scan-max-concurrency
-                               " scan permits, then "
-                               scan-ms
-                               "ms inside fff with "
-                               in-flight
-                               " scan(s) in flight")
-                          {:type :ext.foundation.editing/fff-scan-timeout
-                           :path k
-                           :timeout-ms scan-timeout-ms
-                           :queued-ms queued-ms
-                           :scan-ms scan-ms
-                           :scans-in-flight in-flight}))))
-           idx))))))
+                    (throw
+                      (ex-info (str "rg fff scan did not complete in time for "
+                                    k
+                                    " — queued "
+                                    queued-ms
+                                    "ms for one of "
+                                    scan-max-concurrency
+                                    " scan permits, then "
+                                    scan-ms
+                                    "ms inside fff with "
+                                    in-flight
+                                    " scan(s) in flight")
+                               {:type :ext.foundation.editing/fff-scan-timeout
+                                :path k
+                                :timeout-ms scan-timeout-ms
+                                :queued-ms queued-ms
+                                :scan-ms scan-ms
+                                :scans-in-flight in-flight}))))
+                (record-event! :scan
+                               (merge event-data
+                                      {:root k
+                                       :reason :initial
+                                       :status :ready
+                                       :queued-ms queued-ms
+                                       :scan-ms (quot (- (System/nanoTime) scan-started-at)
+                                                      1000000)}))
+                idx
+                (catch Throwable t
+                  (.close ^java.io.Closeable idx)
+                  (record-event! :scan
+                                 (merge event-data
+                                        {:root k
+                                         :reason :initial
+                                         :status :failed
+                                         :queued-ms queued-ms
+                                         :scan-ms (quot (- (System/nanoTime) scan-started-at)
+                                                        1000000)}))
+                  (throw t)))))))))
 
 (def ^:private pool-size
-  "How many pooled fff indexes (root × ignore-policy) stay live at once. Each
-   holds a native path+content index for a whole tree, so this is a memory
-   budget: past it the least-recently-used entry is retired."
+  "Idle retention budget for root × ignore-policy indexes. Borrowed entries stay
+   addressable even above the budget: evicting them would let another worker build
+   a duplicate native index. Release trims the least-recently-used idle entries."
   6)
 
 (def ^:private idle-ttl-ms
@@ -219,70 +272,94 @@
   (* 10 60 1000))
 
 (defonce ^:private pool
-  ;; key [canonical-root respect-ignore-files?] -> entry. The index itself is a
-  ;; `delay`, so the pool slot is claimed ATOMICALLY (one builder per key, no
-  ;; stampede) while the expensive build happens outside the swap.
+  ;; Claiming a slot/lease and selecting eviction victims share this monitor.
+  ;; Native construction, scanning and closing always happen outside it.
   (atom {}))
 
+(defonce ^:private index-sequence (java.util.concurrent.atomic.AtomicLong. 0))
+
+(defn- entry-data
+  [entry]
+  {:index-id (:index-id entry)
+   :pool-key (:key entry)
+   :active-users (.get ^java.util.concurrent.atomic.AtomicInteger (:leases entry))})
+
+(defn pool-stats
+  "Process-wide lifecycle totals and current leases, without forcing a cold index.
+   Counters distinguish initial scans, reuse, invalidation and eviction reasons;
+   structured `::lifecycle` logs carry per-root scan duration and index identity."
+  []
+  {:limit pool-size
+   :idle-ttl-ms idle-ttl-ms
+   :counters @lifecycle-counters
+   :entries (mapv (fn [entry]
+                    (assoc (entry-data entry) :ready? (realized? (:idx entry))))
+                  (vals @pool))})
+
 (defn- retire!
-  "Close a pooled entry's index — ONCE, and only when no lease still holds it.
-   An unrealized delay is never forced (that would build an index just to close
-   it); the losing racer no-ops on the `:closed` CAS. Runs under the entry's
-   monitor so it cannot interleave with a lease being TAKEN in
-   `with-index*` — otherwise an eviction could observe `leases=0` and
-   close an index a just-arrived searcher is about to use."
+  "Close a retired entry once, after its last lease returns. Eviction and lease
+   acquisition share the pool monitor; the closed CAS also protects concurrent
+   release/failure cleanup. Never force an unrealized index just to close it."
   [entry]
   (let [^java.util.concurrent.atomic.AtomicBoolean lock (:closed entry)]
     (when (locking lock
             (and (zero? (.get ^java.util.concurrent.atomic.AtomicInteger (:leases entry)))
                  (.compareAndSet lock false true)))
       (let [d (:idx entry)]
-        (when (realized? d) (try (.close ^java.io.Closeable @d) (catch Throwable _ nil)))))))
+        (when (realized? d)
+          (try (.close ^java.io.Closeable @d)
+               (record-event! :close (entry-data entry))
+               (catch Throwable _ nil)))))))
 
 (defn- sweep!
-  "Evict idle + over-budget pool entries, never `keep-key` (the caller's). Uses
-   `swap-vals!` so the victim set is derived from the map that actually landed,
-   not from a swap body that may have been retried."
+  "Retire idle/over-budget entries, never borrowed entries or `keep-key`.
+   Selection is atomic with taking a lease, so a live index stays shared even
+   when workers simultaneously acquire roots under capacity pressure."
   [keep-key]
   (let [now
         (util/now-ms)
 
-        [old new]
-        (swap-vals!
-          pool
-          (fn [m]
-            (let [live
-                  (reduce-kv
-                    (fn [acc k e]
-                      (if (and (not= k keep-key)
-                               (zero? (.get ^java.util.concurrent.atomic.AtomicInteger (:leases e)))
-                               (> (- now
-                                     (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
-                                  (long idle-ttl-ms)))
-                        acc
-                        (assoc acc k e)))
-                    {}
-                    m)
-
-                  over
-                  (- (count live) (long pool-size))]
-
-              (if (pos? over)
-                (->> (dissoc live keep-key)
+        victims
+        (locking pool
+          (let [available
+                (->> @pool
+                     (remove (fn [[k e]]
+                               (or (= k keep-key)
+                                   (pos? (.get ^java.util.concurrent.atomic.AtomicInteger
+                                               (:leases e))))))
                      (sort-by (fn [[_ e]]
-                                (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e))))
-                     (take over)
-                     (map key)
-                     (apply dissoc live))
-                live))))]
+                                (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))))
 
-    (doseq [[k e]
-            old
+                expired
+                (filterv (fn [[_ e]]
+                           (> (- now (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
+                              (long idle-ttl-ms)))
+                  available)
 
-            :when (not (contains? new k))]
+                expired-keys
+                (set (map key expired))
 
-      (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead e) true)
-      (retire! e))))
+                over
+                (- (count @pool) (count expired) (long pool-size))
+
+                capacity
+                (take (max 0 over) (remove #(contains? expired-keys (key %)) available))
+
+                victims
+                (into (mapv (fn [[k e]]
+                              [k e :idle])
+                            expired)
+                      (map (fn [[k e]]
+                             [k e :capacity]))
+                      capacity)]
+
+            (swap! pool #(apply dissoc % (map first victims)))
+            victims))]
+
+    (doseq [[_ entry reason] victims]
+      (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
+      (record-event! :evict (assoc (entry-data entry) :reason reason))
+      (retire! entry))))
 
 (def ^:private idle-reap-interval-ms
   "Maximum scheduling delay after an idle index's TTL expires."
@@ -317,38 +394,68 @@
         (.start runner))))
   nil)
 
-(def ^:private write-epoch
-  "Bumped by `note-fs-write!` on EVERY mutation this process performs. A pooled
-   index only pays for a rescan when this moved past the epoch it last synced to,
-   so the steady state (search after search, nothing written) costs zero syscalls."
-  (java.util.concurrent.atomic.AtomicLong. 0))
-
 (defn note-fs-write!
-  "Tell the fff index pool that THIS process just mutated the filesystem. Cheap
-   (one atomic increment); call it from every write/copy/move/delete path so the
-   next search sees your write."
-  []
-  (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong write-epoch))
+  "Invalidate pooled trees overlapping the changed path's directory. Taking the
+   parent also covers ancestor ignore-file changes and directory replacement.
+   Unrelated draft roots keep their read-your-writes epoch and do not rescan."
+  [^File path]
+  (let [canonical
+        (.getCanonicalFile path)
+
+        changed
+        (.toPath (or (.getParentFile canonical) canonical))]
+
+    (locking pool
+      (doseq [[[root-path] entry]
+              @pool
+
+              :let [indexed
+                    (.toPath (File. ^String root-path))]
+              :when (or (.startsWith indexed changed) (.startsWith changed indexed))]
+
+        (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong (:write-epoch entry))
+        (record-event! :invalidate (entry-data entry)))))
+  nil)
 
 (defn- resync!
-  "Pull a POOLED index up to date before searching it. fff's watcher is live but
-   ASYNCHRONOUS — a file written <50ms ago may not be indexed yet, and \"write a
-   file, then immediately grep for what you wrote\" is a normal move. `rescan!`
-   is the deterministic, read-your-writes rebuild (file index AND content index),
-   but it costs 25ms-600ms depending on tree size, so it runs ONLY when
-   `write-epoch` moved since this entry last synced. Untouched tree =>
-   nothing to do.
-
-   Serialized per entry: two concurrent searches on the same index would
-   otherwise each pay a full rebuild for the SAME write. The epoch is read
-   BEFORE the rescan, so a write that lands mid-rescan still forces the next
-   one."
+  "Serialize read-your-writes rescans per shared index. A write during a rescan
+   remains pending; failed scans never advance the synchronized epoch."
   [entry idx]
-  (let [^java.util.concurrent.atomic.AtomicLong synced (:synced-epoch entry)]
-    (when (< (.get synced) (.get ^java.util.concurrent.atomic.AtomicLong write-epoch))
+  (let [^java.util.concurrent.atomic.AtomicLong synced
+        (:synced-epoch entry)
+
+        ^java.util.concurrent.atomic.AtomicLong written
+        (:write-epoch entry)]
+
+    (when (< (.get synced) (.get written))
       (locking synced
-        (let [now (.get ^java.util.concurrent.atomic.AtomicLong write-epoch)]
-          (when (< (.get synced) now) (fff/rescan! idx scan-timeout-ms) (.set synced now)))))))
+        (let [now (.get written)]
+          (when (< (.get synced) now)
+            (let [requested-at (System/nanoTime)]
+              (with-scan-permit*
+                (fn []
+                  (let [started-at (System/nanoTime)
+                        data (assoc (entry-data entry)
+                               :reason :write
+                               :queued-ms (quot (- started-at requested-at) 1000000))]
+
+                    (try (when-not (fff/rescan! idx scan-timeout-ms)
+                           (throw (ex-info "FFF read-your-writes rescan timed out"
+                                           {:type :ext.foundation.editing/fff-scan-timeout
+                                            :path (first (:key entry))
+                                            :timeout-ms scan-timeout-ms})))
+                         (.set synced now)
+                         (record-event! :scan
+                                        (assoc data
+                                          :status :ready
+                                          :scan-ms (quot (- (System/nanoTime) started-at) 1000000)))
+                         (catch Throwable t
+                           (record-event! :scan
+                                          (assoc data
+                                            :status :failed
+                                            :scan-ms (quot (- (System/nanoTime) started-at)
+                                                           1000000)))
+                           (throw t)))))))))))))
 
 (defn- pool-key
   "The pool identity of a lease: canonical root path, ignore policy and the
@@ -361,80 +468,69 @@
              (vec (get overlay k)))
            [:custom-ignore-filenames :exclude-globs :unignore-globs]))])
 
+(defn- new-entry
+  [lease k]
+  (let [users
+        (java.util.concurrent.atomic.AtomicInteger. 0)
+
+        id
+        (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong index-sequence)]
+
+    {:key k
+     :index-id id
+     :idx (delay (let [data {:pool-key k :index-id id :active-users (.get users)}]
+                   (record-event! :create data)
+                   (open! (:root lease) (:respect-ignore-files? lease) (:overlay lease) data)))
+     :leases users
+     :last-used (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
+     :closed (java.util.concurrent.atomic.AtomicBoolean. false)
+     :dead (java.util.concurrent.atomic.AtomicBoolean. false)
+     :write-epoch (java.util.concurrent.atomic.AtomicLong. 0)
+     :synced-epoch (java.util.concurrent.atomic.AtomicLong. 0)}))
+
 (defn with-index*
-  "Call `f` with a POOLED fff index for `lease`'s root + ignore policy. The entry
-   is leased for the call, so a concurrent eviction defers its close to the last
-   lease holder instead of yanking a live index. A build that THROWS is removed
-   from the pool (a poisoned slot would fail every later search)."
+  "Call `f` with the process-wide index shared by every worker for this root and
+   ignore policy. Borrowed indexes remain in the pool under capacity pressure.
+   Failed builds are removed so a later call can retry."
   [lease f]
-  (let [^File root
-        (:root lease)
-
-        respect-ignore-files?
-        (:respect-ignore-files? lease)
-
-        k
+  (let [k
         (pool-key lease)
 
-        entry
-        ;; Claim the slot and TAKE the lease under the entry's monitor, retrying
-        ;; when we raced an eviction that already closed this index. Without the
-        ;; retry a >TTL-idle entry could be closed between the pool lookup and the
-        ;; lease increment, and the search would run against a closed handle.
-        (loop []
+        [entry reused?]
+        (locking pool
+          (let [existing
+                (get @pool k)
 
-          (let [e
-                (-> (swap! pool
-                      (fn [m]
-                        (cond-> m
-                          (not (contains? m k))
-                          (assoc k
-                            {:idx (delay (open! root respect-ignore-files? (:overlay lease)))
-                             :leases (java.util.concurrent.atomic.AtomicInteger. 0)
-                             ;; born "just used": a 0 here would look ancient to a
-                             ;; concurrent sweep and evict the entry before its first
-                             ;; search.
-                             :last-used (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
-                             :closed (java.util.concurrent.atomic.AtomicBoolean. false)
-                             :dead (java.util.concurrent.atomic.AtomicBoolean. false)
-                             ;; A fresh index is built AFTER this entry lands, so it
-                             ;; already reflects the epoch we record here.
-                             :synced-epoch (java.util.concurrent.atomic.AtomicLong.
-                                             (.get ^java.util.concurrent.atomic.AtomicLong
-                                                   write-epoch))}))))
-                    (get k))
+                entry
+                (or existing (new-entry lease k))]
 
-                ^java.util.concurrent.atomic.AtomicBoolean lock
-                (:closed e)
+            (when-not existing (swap! pool assoc k entry))
+            (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
+            (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
+            [entry (some? existing)]))]
 
-                taken?
-                (locking lock
-                  (when-not (.get lock)
-                    (.set ^java.util.concurrent.atomic.AtomicLong (:last-used e) (util/now-ms))
-                    (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases e))
-                    true))]
-
-            (if taken?
-              e
-              (do (swap! pool (fn [m]
-                                (if (identical? (get m k) e) (dissoc m k) m)))
-                  (recur)))))]
-
-    (try (start-idle-reaper!)
-         (let [idx (try @(:idx entry)
-                        (catch Throwable t
-                          (swap! pool (fn [m]
-                                        (if (identical? (get m k) entry) (dissoc m k) m)))
-                          (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
-                          (throw t)))]
+    (try (record-event! :acquire (entry-data entry))
+         (when reused? (record-event! :reuse (entry-data entry)))
+         (start-idle-reaper!)
+         (let [idx (try
+                     @(:idx entry)
+                     (catch Throwable t
+                       (let [removed?
+                             (locking pool
+                               (when (identical? (get @pool k) entry) (swap! pool dissoc k) true))]
+                         (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
+                         (when removed?
+                           (record-event! :evict (assoc (entry-data entry) :reason :build-failed))))
+                       (throw t)))]
            (sweep! k)
            (resync! entry idx)
            (f idx))
          (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
-                  (when (and (zero? (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger
-                                                      (:leases entry)))
-                             (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry)))
-                    (retire! entry))))))
+                  (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
+                  (record-event! :release (entry-data entry))
+                  (when (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry))
+                    (retire! entry))
+                  (sweep! nil)))))
 
 (defn lease
   "One pool key: which root, under which ignore policy, with which ignore

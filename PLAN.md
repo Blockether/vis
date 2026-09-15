@@ -957,3 +957,59 @@ matching filenames, bypass hooks, rewrite Git history, or restart the live gatew
 6. Three broader Python failures reproduce with the captured pre-task environment.
    Broader verification also reports unrelated TUI geometry and foundation/Council
    failures. No installation, release or live gateway restart is included.
+
+# Shared FFF lifecycle and retention experiments
+
+Reproduce gateway indexing costs before changing its cache budget.
+
+## Context
+
+`workspace/fff_index.clj` owns the process-wide pool; editing tools and the file
+picker lease its indexes. Controlled switching reproduces capacity thrashing; the
+historical gateway workload remains unverified. `foundation/housekeeping.clj` owns
+runtime retention and draft cleanup. Existing release work in this checkout,
+including the preceding plan, remains separate.
+Do not merge divergent draft contents, increase the pool limit without evidence,
+optimize native builds, or restart the live gateway.
+
+## 1. Reproduce and measure indexing
+
+- Rationale: distinguish repeated construction, unnecessary rescans, and capacity pressure.
+- Data: lifecycle events, active leases, scan/queue durations, existing index/editor suites.
+- Acceptance criteria: reproduce same-root concurrent users and switching among draft roots;
+  verify worker sharing and retain deterministic regressions for defects found.
+- Unknowns: whether active eviction or global write invalidation duplicates scanning.
+
+## 2. Correct lifecycle and retention policy
+
+- Rationale: reuse one index per root and ignore policy without retaining dead resources.
+- Data: phase-one measurements, canonical terminal draft states, runtime ownership.
+- Acceptance criteria: instrument and fix reproduced sharing defects, then implement safe
+  terminal-draft/latest-runtime cleanup. Preserve active processes and recoverable work;
+  clean up only through validated canonical lifecycle transitions.
+- Unknowns: safe live cleanup candidates and required older runtimes.
+
+## 3. Record experiments and verify
+
+- Rationale: separate measured causes from plausible explanations.
+- Data: controlled GC/class-loader experiments and isolated retention fixtures.
+- Acceptance criteria: validate each remaining item in `TODOS.md`, fix measured defects,
+  run affected tests/format/lint/reflection, cross-check the design, and push scoped commits.
+  Stop owned test processes; do not restart the live gateway or build a native image.
+- Unknowns: whether historical gateway CPU/loader growth reproduces in current code.
+
+## Plan state
+
+1. Reproduced active eviction duplicating an index, unrelated-root write rescans, and
+   seven-root/six-slot capacity thrashing. Real confined workers share one host index.
+2. Lifecycle instrumentation, active-entry pinning, scoped invalidation and failed-rescan
+   handling are implemented. The six-slot budget and separate root/policy identities stay.
+3. GC and loader experiments are recorded in `TODOS.md`; neither justifies a production
+   tuning change. Runtime retention planning is read-only. Draft cleanup remains a TODO
+   with verified lifecycle/safety requirements, not a claim that approval is terminal.
+4. Initial local verification passed 306 affected tests. Follow-up independent review
+   confirms the shared-host design; scan failures now retain timing and pool identity.
+   Compiler reflection checks remain clean in changed FFF/editor code.
+5. Delivery is in progress: verify and push FFF first, then examine GC and class loaders,
+   implement safe draft/runtime retention, and validate each resulting change. Concurrent
+   release and editor-refusal work stays separate. No live gateway restart or native build.

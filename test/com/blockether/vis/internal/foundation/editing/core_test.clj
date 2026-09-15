@@ -96,7 +96,7 @@
   (let [rel (str (temp-root) "/" name)]
     (fs/create-dirs (fs/parent rel))
     (spit (fs/file rel) content)
-    ((fff-index-fn "note-fs-write!"))
+    ((fff-index-fn "note-fs-write!") (fs/file rel))
     rel))
 
 (defn- temp-dir-path
@@ -2873,7 +2873,11 @@
 
                    (.setExecutable file true)
                    (let [result
-                         (with-redefs [fff-index/note-fs-write! #(swap! notices inc)]
+                         (with-redefs [fff-index/note-fs-write! (fn [^java.io.File changed]
+                                                                  (expect
+                                                                    (= (.getCanonicalFile file)
+                                                                       (.getCanonicalFile changed)))
+                                                                  (swap! notices inc))]
                            (patch-span path (hashline/line-anchor 2 "echo one") nil "echo two"))]
                      (expect (:success? result))
                      (expect (= 1 @notices))
@@ -2899,7 +2903,8 @@
                                        (throw (java.io.IOException. "interrupted write")))
 
                                      fff-index/note-fs-write!
-                                     #(swap! notices inc)]
+                                     (fn [_]
+                                       (swap! notices inc))]
 
                          (try (patch-span path (hashline/line-anchor 1 "before") nil "after")
                               nil
@@ -4338,7 +4343,7 @@
             ;; every Vis write path calls this; it is what makes the NEXT search
             ;; rescan instead of waiting on the (async, ~100ms) watcher
             _
-            ((fff-index-fn "note-fs-write!"))
+            ((fff-index-fn "note-fs-write!") (fs/file (temp-root) "fffpool/fresh.txt"))
 
             hit
             (files fresh)]
@@ -4394,7 +4399,7 @@
             (.get synced)
 
             _
-            (do (note!) (run))
+            (do (note! (fs/file (temp-root) "fffnoscan/seed.txt")) (run))
 
             after
             (.get synced)]
@@ -4934,7 +4939,7 @@
               (.write w "ZZBIGNEEDLEZZ big\n"))
 
             _
-            ((fff-index-fn "note-fs-write!"))
+            ((fff-index-fn "note-fs-write!") big)
 
             dir
             (temp-dir-path "greplarge")]

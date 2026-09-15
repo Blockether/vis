@@ -354,6 +354,61 @@
             {:file-count (count versions) :deleted 0 :bytes 0 :dirs-removed 0}
             versions)))
 
+(defn runtime-retention-plan
+  "Preview keeping the newest installed release and this binary's pinned runtime.
+
+   Returns `{:is-dry-run true :runtime-version :targets}`, with `:latest-version`,
+   `:retained` and `:candidates` for each runtime/source store. Candidates are NOT
+   safe-to-delete findings: their process liveness is unverified. No files are
+   changed, and this does not alter `sweep-stale!` or its age-based policy.
+
+   Numeric three-part releases are ordered numerically, not by mtime or string.
+   Unknown version names and symlinked directories are retained. `:runtime-version`
+   overrides the current binary's pin for fixture experiments. Missing stores
+   report empty vectors; unreadable stores report `:unavailable? true`."
+  ([] (runtime-retention-plan nil))
+  ([{:keys [runtime-version]}]
+   (let [pinned (or runtime-version runtime/version)]
+     {:is-dry-run true
+      :runtime-version pinned
+      :targets (mapv
+                 (fn [kind]
+                   (let [root (python-dir kind)
+                         files (.listFiles root)
+                         entries
+                         (mapv (fn [^File dir]
+                                 (let [version (.getName dir)
+                                       parts (some->> (re-matches #"(\d+)\.(\d+)\.(\d+)" version)
+                                                      rest
+                                                      (mapv parse-long))]
+
+                                   {:version version
+                                    :root (.getAbsolutePath dir)
+                                    :order (when (and (seq parts) (every? some? parts)) parts)
+                                    :linked? (Files/isSymbolicLink (.toPath dir))}))
+                               (filter #(.isDirectory ^File %) files))
+                         latest (->> entries
+                                     (filter #(and (:order %) (not (:linked? %))))
+                                     (sort-by :order)
+                                     last
+                                     :version)
+                         rows (mapv (fn [{:keys [version order linked?] :as entry}]
+                                      (assoc (dissoc entry :order :linked?)
+                                        :reason (cond linked? :linked-directory
+                                                      (nil? order) :unrecognized-version
+                                                      (= pinned version) :pinned
+                                                      (= latest version) :latest
+                                                      :else :liveness-unverified)))
+                                    (sort-by :version entries))]
+
+                     {:kind kind
+                      :root (.getAbsolutePath root)
+                      :latest-version latest
+                      :unavailable? (and (.exists root) (nil? files))
+                      :retained (filterv #(not= :liveness-unverified (:reason %)) rows)
+                      :candidates (filterv #(= :liveness-unverified (:reason %)) rows)}))
+                 ["runtime" "sources"])})))
+
 (def ^:private sweep-targets
   "Every directory Vis fills on its own that holds nothing anyone can recover —
    the one list, so a new producer is bounded by being added here rather than by
