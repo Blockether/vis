@@ -289,3 +289,40 @@
                                                                      ["sync"]
                                                                      {:shared? true})))
                                             "workspace directory")))))))
+
+(deftest extension-environment-probe-uses-workspace-test
+  (with-uv-fixture "exit 0\n"
+                   (fn [dir _]
+                     (let [member
+                           (doto (io/file dir "member") .mkdir)
+
+                           environment
+                           (io/file dir ".venv")]
+
+                       (spit (io/file dir "pyproject.toml")
+                             "[tool.uv.workspace]\nmembers=['member']\n")
+                       (spit (io/file member "pyproject.toml")
+                             "[project]\nname='extension-member'\nversion='1.0.0'\n")
+                       (is (false? (python-runtime/project-environment-exists? member)))
+                       (.mkdir (io/file member ".venv"))
+                       (is (false? (python-runtime/project-environment-exists? member)))
+                       ;; An invalid environment must fail its readiness check, not select shared packages.
+                       (spit environment "not an environment")
+                       (is (true? (python-runtime/project-environment-exists? member)))
+                       (io/delete-file environment)
+                       (.mkdir environment)
+                       (is (true? (python-runtime/project-environment-exists? member)))
+                       (is (not (.exists (io/file dir "uv.lock"))))
+                       (is (not (.exists (io/file member "uv.lock"))))))))
+
+(deftest extension-environment-probe-keeps-errors-test
+  (doseq [[script message] [["exit 0\n" "workspace directory"]
+                            ["echo WORKSPACE_FAILURE >&2; exit 23\n" "WORKSPACE_FAILURE"]]]
+    (with-uv-fixture script
+                     (fn [dir uv]
+                       (with-redefs-fn {#'python-runtime/bundled-uv! (constantly uv)}
+                         (fn []
+                           (is (str/includes?
+                                 (.getMessage (failure #(python-runtime/project-environment-exists?
+                                                          dir)))
+                                 message))))))))

@@ -4748,11 +4748,61 @@ vis.register_extension(vis.Extension(
           (expect (= 1 (get-in first-step ["__vis_attrs__" "exit_code"]))))))))
 
 (defdescribe
+  project-extension-shared-fallback-test
+  (it
+    "uses shared packages until an environment exists, unless sync is explicit"
+    (let [project
+          (temp-dir)
+
+          calls
+          (atom [])]
+
+      (try
+        (write-ext! project "pyproject.toml" "[project]\nname='shared-fallback'\nversion='1.0.0'\n")
+        (with-redefs [python-runtime/ensure-project!
+                      (fn [dir]
+                        (swap! calls conj :sync)
+                        dir)
+
+                      python-runtime/prepared-project
+                      (fn [dir]
+                        (swap! calls conj :check)
+                        dir)]
+
+          (doseq [existing?
+                  [false true]
+
+                  :let [_
+                        (when existing? (.mkdir (io/file project ".venv")))]
+                  automatic?
+                  [false true]
+
+                  sync?
+                  [false true]]
+
+            (reset! calls [])
+            (let [selected?
+                  (or existing? sync?)
+
+                  frozen
+                  (#'pyx/prepare-root!
+                   {:roots [project]
+                    :project project
+                    :automatic? automatic?
+                    :sync-projects? sync?})]
+
+              (try (expect (= (when selected? (str project)) (:packages frozen)))
+                   (expect (= (if selected? [(if (or automatic? sync?) :sync :check)] []) @calls))
+                   (expect (= existing? (.exists (io/file project ".venv"))))
+                   (finally (#'pyx/delete-tree! (:dir frozen)))))))
+        (finally (#'pyx/delete-tree! project))))))
+
+(defdescribe
   project-extension-environment-isolation-test
-  ;; Regression #226: project workers must never activate shared .pth hooks or
+  ;; Regression #226: existing project workers must never activate shared .pth hooks or
   ;; cache shared imports, at registration or when realized for an agent session.
   (it
-    "isolates two project environments while retaining shared extension packages"
+    "isolates existing environments and uses shared packages for unprepared projects"
     (with-shared-packages
       (fn [shared]
         (let
@@ -4786,21 +4836,28 @@ vis.register_extension(vis.Extension(
 
            sources
            (merge
-             {"shared.py" (source "isolation-shared" "isolation_shared")}
+             {"shared.py" (source "isolation-shared" "isolation_shared")
+              "declared.py" (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
+                                 "# project = 'missing/current'\n# ///\n"
+                                 (source "isolation-declared" "isolation_declared"))
+              "missing/current/uv.lock" "version = 1\n"}
              (into
                {}
                (mapcat
                  (fn [name]
-                   [[(str name "/current/pyproject.toml")
-                     (str
-                       "[project]\nname='isolation-"
-                       name
-                       "'\nversion='1.0.0'\n"
-                       "description='Environment probe'\nrequires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
-                       "[tool.vis]\ncategory='tools'\n")]
-                    [(str name "/current/extension.py")
-                     (source (str "isolation-" name) (str "isolation_" name))]])
-                 ["one" "two"])))]
+                   (cond->
+                     [[(str name "/current/pyproject.toml")
+                       (str
+                         "[project]\nname='isolation-"
+                         name
+                         "'\nversion='1.0.0'\n"
+                         "description='Environment probe'\nrequires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
+                         "[tool.vis]\ncategory='tools'\n")]
+                      [(str name "/current/extension.py")
+                       (source (str "isolation-" name) (str "isolation_" name))]]
+                     (not= name "missing")
+                     (conj [(str name "/current/.venv/pyvenv.cfg") "home = fixture\n"])))
+                 ["one" "two" "missing"])))]
 
           (.mkdirs shared-editable)
           (spit (io/file shared "isolation_collision.py") "VALUE = 'shared'\n")
@@ -4821,15 +4878,24 @@ vis.register_extension(vis.Extension(
               (spit (io/file site "project.pth") (str (.getCanonicalPath editable) "\n"))))
           (with-redefs [python-runtime/ensure-project!
                         (fn [project]
-                          (io/file home (.getName (.getParentFile ^java.io.File project))))]
+                          (let [name (.getName (.getParentFile ^java.io.File project))]
+                            (when (= "missing" name)
+                              (throw (ex-info "Missing environments must use shared packages" {})))
+                            (io/file home name)))
+
+                        python-runtime/prepared-project
+                        (fn [_]
+                          (throw (ex-info "Missing environments must not require sync" {})))]
+
             (with-fresh-loaded
               sources
               (fn [result _]
                 (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
-                (doseq [name ["one" "two" "shared"]]
+                (doseq [name ["one" "two" "shared" "missing" "declared"]]
                   (let [ext (registered (str "isolation-" name))
-                        shared? (= name "shared")
-                        expected {"value" name
+                        shared? (contains? #{"shared" "missing" "declared"} name)
+                        value (if shared? "shared" name)
+                        expected {"value" value
                                   "shared" shared?
                                   "editable" shared?
                                   "hook" shared?
@@ -4863,7 +4929,7 @@ vis.register_extension(vis.Extension(
                           (expect (nil? (:error reply)) (pr-str (:error reply)))
                           (expect
                             (= (str "True "
-                                    name
+                                    value
                                     (if shared? " True True True False" " False False False True"))
                                (str/trim (:stdout reply)))))
                         (finally (ep/dispose-python-context! ctx))))))))))))))
@@ -4871,7 +4937,7 @@ vis.register_extension(vis.Extension(
 (defdescribe
   pyproject-package-reload-test
   (it
-    "prepares a pyproject package automatically and reloads source with last-good fallback"
+    "prepares an existing pyproject environment and reloads source with last-good fallback"
     (let [prepares
           (atom 0)
 
@@ -4884,7 +4950,8 @@ vis.register_extension(vis.Extension(
                       (when @fail? (throw (ex-info "fixture preparation failure" {})))
                       (io/file (runtime/packages-dir)))]
         (with-fresh-loaded
-          {"greeter/current/pyproject.toml"
+          {"greeter/current/.venv/pyvenv.cfg" "home = fixture\n"
+           "greeter/current/pyproject.toml"
            (str
              "[project]\nname='vis-greeter'\nversion='1.0.0'\n"
              "description='Greeting tools'\nrequires-python='>=3.11'\n"

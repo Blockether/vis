@@ -324,6 +324,25 @@
           (finally (when (.isAlive ^Process process) (kill-installer! process))
                    (future-cancel output))))))
 
+(defn project-environment-exists?
+  "Check for uv's environment without creating it or resolving dependencies.
+   Workspace members share the workspace environment; UV_PROJECT_ENVIRONMENT
+   overrides .venv and relative overrides resolve against the workspace root.
+   An existing but invalid environment still needs preparation, not shared fallback."
+  [^File project]
+  (let [workspace
+        (io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
+
+        path
+        (or (not-empty (System/getenv "UV_PROJECT_ENVIRONMENT")) ".venv")
+
+        environment
+        (io/file path)]
+
+    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
+      (throw (ex-info "uv did not report an existing workspace directory" {})))
+    (.exists (if (.isAbsolute environment) environment (io/file workspace path)))))
+
 (defn- project-packages
   "Ask uv's project interpreter for its site-packages; do not guess workspace paths."
   ^File [^File project]

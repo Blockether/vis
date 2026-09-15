@@ -62,9 +62,11 @@ Host functions exposed from Clojure apply their own permission checks. See
 
 `python_execution` imports explicitly installed shared packages from
 **`~/.vis/python/packages`**, which is read-only to sandbox code. Extensions without
-a uv project also use that directory. Project extensions instead use dependencies
-from their uv environment in separate trusted workers, without shared-package
-fallback. Preparing an extension does not add its dependencies to `python_execution`.
+a project environment also use that directory, even if they declare a uv project or
+have a `pyproject.toml`. Startup and plain `/reload` do not create a missing `.venv`.
+Extensions with an existing uv environment use its dependencies in separate trusted
+workers, without shared-package fallback. Preparing that environment does not add its
+dependencies to `python_execution`. Use `/reload --sync` to create it deliberately.
 
 Imports do not install packages. Use `vis-agent python --shared -m pip install <package>`
 for shared sandbox packages and `vis-agent python --shared -m <module>` to run a

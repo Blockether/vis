@@ -341,7 +341,8 @@ managed installation. Local source links follow their development workflow inste
 | Change | Action |
 | --- | --- |
 | Edit an entry, helper module, declared source root or bundled skill | `/reload`; call the tool on the next turn |
-| Change a package's dependencies | Deliberately update `uv.lock` if needed, then `/reload` |
+| Change dependencies in an existing package environment | Deliberately update `uv.lock` if needed, then `/reload` |
+| Change dependencies used from shared packages | Run [shared sync](extension-development.md#install-a-project-into-shared-packages), then `/reload` |
 | Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-project-environment) |
 | Change a managed GitHub version | Explicit `extension update` or `extension rollback`, then `/reload` |
 | Uninstall | Remove the package’s `current` link, then `/reload`; keep version directories or remove them separately, without deleting a linked development checkout |
@@ -410,18 +411,25 @@ Keep the implementation under the selected package directory. Do not put a PEP 7
 block in this package's `extension.py`. See [Extension design](extension-design.md#keep-the-entrypoint-small)
 for the complete registration and implementation.
 
-At startup and `/reload`, Vis runs bundled upstream `uv sync` for these packages,
-selecting the gateway's embedded Python with `--python`. uv manages the project's
-lock and environment, including default dependency groups and removal of extraneous
-packages. It can update an existing lock. Vis's
+At startup and plain `/reload`, a package without a uv environment uses
+`~/.vis/python/packages`. Vis does not create `.venv` just because the package has a
+`pyproject.toml`. Install its dependencies with
+[shared sync](extension-development.md#install-a-project-into-shared-packages), or
+use `/reload --sync` to create a separate environment deliberately.
+
+For an existing environment, Vis runs bundled upstream `uv sync`, selecting the
+gateway's embedded Python with `--python`. uv manages the project's lock and environment,
+including default dependency groups and removal of extraneous packages. It can update
+an existing lock. Vis's
 [`python.index_url`](configuration.md#python-package-index) supplies uv's default
 index unless its index environment is already set. Override it with uv's
 `--default-index`; uv still manages named indexes and package source configuration.
 
-Each loaded project uses its own trusted worker and imports dependencies from its uv
-environment, normally `.venv`. These dependencies are not installed into shared sandbox
-packages. Source-only edits need reload. Build backends and executable `.pth` files are
-trusted code. Imports in `python_execution` never install packages.
+A project with an environment uses its own trusted worker and imports dependencies
+from that environment, normally `.venv`, without shared-package fallback. These
+dependencies are not installed into shared sandbox packages. Source-only edits need
+reload. Build backends and executable `.pth` files are trusted code. Imports in
+`python_execution` never install packages.
 
 ## Bundled skills
 

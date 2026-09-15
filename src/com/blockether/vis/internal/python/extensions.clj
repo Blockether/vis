@@ -2077,10 +2077,13 @@
          (catch Throwable t (delete-tree! dest) (throw t)))))
 
 (defn- prepare-root!
-  "Snapshot source roots and prepare declared dependencies before evaluating any entry."
+  "Snapshot sources and select an existing project environment or shared packages.
+   Only explicit sync prepares a missing project environment."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects?]}]
   (let [frozen (freeze-root! roots)]
-    (try (let [packages (when project
+    (try (let [packages (when (and project
+                                   (or sync-projects?
+                                       (python-runtime/project-environment-exists? project)))
                           (str ((if (or automatic? sync-projects?)
                                   python-runtime/ensure-project!
                                   python-runtime/prepared-project)

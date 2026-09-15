@@ -181,15 +181,26 @@
                         "Sync never imports entrypoints")
                     (is (= ["sync" "sync" "run"] (mapv second @calls)))
                     (reset! calls []))
-                  (let [result (pyx/reload-python-extensions! opts)]
+                  (when-not declarative?
+                    (is (= 1 (:failed (pyx/reload-python-extensions! opts))))
+                    (is (str/includes? (:error (first (pyx/load-failures))) "ModuleNotFoundError"))
+                    (is (not (.exists (io/file source ".venv"))))
+                    (is (not (.exists (io/file source "uv.lock"))))
+                    (is
+                      (= ["workspace"] (mapv second @calls))
+                      "A missing environment uses shared packages without installing dependencies")
+                    (reset! calls []))
+                  (let [result (pyx/reload-python-extensions! (cond-> opts
+                                                                (not declarative?)
+                                                                (assoc :sync-projects? true)))]
                     (is (= 0 (:failed result))
                         (pr-str {:failures (pyx/load-failures) :uv @diagnostics})))
                   (is (= 42 (invoke)))
                   (is (.isFile (io/file source "uv.lock")))
                   (is (.isDirectory (io/file source ".venv")))
-                  (is (= (if declarative? ["sync" "run"] ["sync" "sync" "run"])
+                  (is (= (if declarative? ["workspace" "sync" "run"] ["sync" "sync" "run"])
                          (mapv second @calls))
-                      "Cold preparation installs; warm preparation only checks uv's environment")
+                      "Explicit cold preparation installs; an existing environment is checked")
                   (reset! calls [])
                   (when declarative?
                     (is (= ["cached"] (mapv #(get % "status") (pyx/sync-packages! {:trust true}))))
@@ -197,7 +208,7 @@
                     (is (= ["--check" "--offline"] (subvec (first @calls) 2 4)))
                     (reset! calls []))
                   (is (= 0 (:failed (pyx/reload-python-extensions! opts))))
-                  (is (= ["sync" "run"] (mapv second @calls))
+                  (is (= ["workspace" "sync" "run"] (mapv second @calls))
                       "uv owns checking whether an unchanged environment needs updating")
                   (spit (io/file source "src/center_logic.py")
                         (str/replace code
@@ -206,7 +217,7 @@
                   (is (= 42 (invoke)))
                   (is (= 0 (:failed (pyx/reload-python-extensions! opts))))
                   (is (= 43 (invoke)))
-                  (is (= ["sync" "run" "sync" "run"] (mapv second @calls)))
+                  (is (= ["workspace" "sync" "run" "workspace" "sync" "run"] (mapv second @calls)))
                   (spit (io/file source "extension.py") "raise ValueError('broken edit')\n")
                   (is (= 1 (:failed (pyx/reload-python-extensions! opts))))
                   (is (= 43 (invoke)))))
