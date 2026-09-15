@@ -109,6 +109,10 @@ Whole skill body."}
         (expect (= java.util.regex.PatternSyntaxException
                    (try (dc/search es "[") nil (catch Throwable t (class t))))))))
 
+(defdescribe experimental-guide-discovery-test
+             (it "does not offer the experimental planning guide through doc or apropos"
+                 (expect (not (contains? (set (map :name (dc/entries))) "working-with-plans")))))
+
 (defdescribe index-text-test
              "`doc()` is CURATED: a hand-ordered short list that names where the rest is."
              (it "prints only curated names that exist, and points at apropos"

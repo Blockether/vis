@@ -38,20 +38,20 @@ sequenceDiagram
     participant B as Worker
     A-)C: Goal, scope, acceptance criteria
     C--)A: Stored entry ID
-    C-)B: Wake or next invocation
+    C-)B: Deliver at next invocation
     Note over A: Continue independent work
     B-)C: Read full request if needed
     B-)C: Optional acceptance (reply_to)
     C-)A: Correlated response
     Note over B: Read, work and verify<br/>across tool invocations<br/>within user authorization
     B-)C: Result and evidence<br/>(same thread, explicit ping)
-    C-)A: Wake or next invocation
+    C-)A: Deliver at next invocation
     Note over A: Review acceptance criteria
     alt Goal met or blocked
         A-)C: Record outcome (no ping)
     else Concrete check missing
         A-)C: Targeted follow-up question
-        C-)B: Wake prior reply partner
+        C-)B: Notify active reply partner
         B-)C: Verified answer (reply_to)
         C-)A: Correlated response
     end

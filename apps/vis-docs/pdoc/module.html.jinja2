@@ -1,5 +1,22 @@
 {% extends "default/module.html.jinja2" %}
 
+{# Keep experimental APIs out of pages, member navigation and pdoc's search index. #}
+{% macro is_public(doc) %}
+    {% set experimental = [
+        "blockether.vis.engine.Subagent",
+        "blockether.vis.engine.Council.publish_spawn",
+        "blockether.vis.engine.Council.subagents",
+        "blockether.vis.engine.Council.cancel",
+        "blockether.vis.engine.Council.route",
+        "blockether.vis.engine.Council.wake",
+        "blockether.vis.extension.Host.council_wake",
+        "blockether.vis.extension.council",
+    ] %}
+    {% if doc.fullname not in experimental and not doc.fullname.startswith("blockether.vis.engine.Subagent.") %}
+        {{ default_is_public(doc) }}
+    {% endif %}
+{% endmacro %}
+
 {% block head %}<link rel="stylesheet" href="/assets/theme.css">{% endblock %}
 
 {% block body %}

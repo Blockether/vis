@@ -551,34 +551,10 @@ toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
-  subagents: false      # experimental; managed child sessions and automatic team wakes
-  improve: false        # experimental; failure intake, proposals and review
-  improve_mode: human   # off | human | automatic; used only when improve is enabled
-  plans: false          # experimental; planning and review in interactive sessions
   draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
 ```
 
 Run `/reload` after editing.
-
-### Experimental features
-
-Open **Settings → Experimental** in either client to opt in. **Subagents**,
-**Improve** and **Plan before coding** are independent switches, all off by default.
-The **Experimental** badge marks features that you must explicitly enable. Settings
-are saved on the gateway and shared by its clients.
-
-- **Subagents** allows managed child sessions, delegation and automatic team wakes.
-  Turning it off blocks new children, wakes and subsequent child iterations. Existing
-  teams are kept; a running iteration is not interrupted. Council conversations
-  between independent sessions remain available.
-- **Improve** allows automatic failure reports, the proposal register and reviews.
-  Turning it off stops intake and review operations without deleting existing records.
-  **Improve mode** appears only while the feature is enabled. Its saved value cannot
-  enable Improve by itself; choose `human` for manual review or `automatic` for scheduled
-  review, which can incur model charges.
-- **Plan before coding** adds planning prompts and document review actions to
-  interactive sessions. It does not change one-shot CLI requests or remove existing
-  documents. See [Plan before coding](working-with-plans.md) for the approval workflow.
 
 ## Session titling
 

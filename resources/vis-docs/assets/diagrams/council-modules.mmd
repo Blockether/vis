@@ -33,10 +33,10 @@ flowchart TB
     accTitle: Council implementation modules
     accDescr: Model tools and bound SDK or extension events enter the Council domain. Canonical contracts validate data, SQLite persists messages and replies, and the existing gateway runtime and model loop deliver them. There is no separate agent scheduler.
     Host["Model tools<br/>council/host"] --> Core["Council policy<br/>council/core"]
-    SDK["Bound SDK / extension<br/>publish and self-wake"] --> Core
+    SDK["Bound SDK<br/>publish and read"] --> Core
     Contracts["Portable contracts<br/>vis-contract/council"] -. validation .-> Core
-    Core <-->|entries, pings, replies| Store[("SQLite<br/>log and improve")]
-    Core -->|eligible wake| Runtime["Gateway runtime<br/>state"]
+    Core <-->|entries, pings, replies| Store[("SQLite<br/>message log")]
+    Core -->|notify active session| Runtime["Gateway runtime<br/>state"]
     Runtime -->|ordinary turn| Loop["Model loop<br/>input and final-answer gate"]
     Core -->|attributed input| Loop
     Loop -->|tool execution| Host

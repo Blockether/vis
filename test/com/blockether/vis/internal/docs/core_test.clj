@@ -143,6 +143,21 @@
           (expect (str/includes? html (str "href=\"" path "\"")))
           (expect (str/includes? html (str "src=\"" path "\""))))))))
 
+(defdescribe
+  experimental-feature-docs-test
+  (it
+    "omits experimental guides and instructions from the published manual"
+    (let [{:keys [pages]} (docs/collect)]
+      (expect (not (contains? (set (map :slug pages)) "working-with-plans")))
+      (expect (nil? (io/resource "vis-docs/working-with-plans.md")))
+      (doseq [{:keys [slug md]} pages]
+        (expect
+          (not
+            (re-find
+              #"(?im)subagents?|publish_spawn|autocomplain|complain_entry_id|working-with-plans|plan before (?:coding|doing)|`improve`|\*\*Improve\*\*|^\s+improve(?:_mode)?:"
+              md))
+          slug)))))
+
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)
 
 (defdescribe rewrite-md-links-test

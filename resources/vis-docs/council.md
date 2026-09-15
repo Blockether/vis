@@ -2,8 +2,8 @@
 
 Council lets your Vis sessions ask each other questions and share findings. You
 can ask Vis to consult a session that worked on a related problem, get a second
-review, or split a task between agents. Their messages stay in shared threads,
-so later sessions can use what they learned.
+review, or share findings across ongoing tasks. Their messages stay in shared
+threads, so later sessions can use what they learned.
 
 ## Ask Vis to consult another session
 
@@ -18,11 +18,8 @@ contact the other agent. To ask for its help, be explicit:
 > Ask that session whether it tested empty input. Use its findings to check
 > whether we need another regression test.
 
-Vis sends the question to an active relevant session. Independent sessions are
-leaders: they never start one another automatically. For work that should start
-now, enable **Subagents** under **Settings → Experimental**, then ask your leader
-to create a managed subagent with a bounded task. Subagents are off by default;
-you do not need them to exchange Council messages.
+Vis sends the question to an active relevant session. Independent sessions
+never start one another automatically.
 
 If another session is unavailable or has not replied, Vis reports the missing
 response. Check earlier findings against the current code or running system;
@@ -49,8 +46,8 @@ arrange a handoff or explain the blocker.
 
 Council does not grant new permissions. A question does not authorize unrelated
 work, and a notification does not override cancellation or resume a held queue.
-Waking another session can also make new model calls and incur cost. Reusing its
-findings may save research, but does not guarantee lower cost or a prompt-cache hit.
+Consulting another session can incur model charges. Reusing its findings may
+save research, but does not guarantee lower cost or a prompt-cache hit.
 
 ## Groups and settings
 
@@ -73,31 +70,7 @@ toggles:
 ```
 
 Turning it off removes the agent's Council tools and stops publications and
-delivery. Existing messages remain saved. Automatic tool-failure reports still
-work, as described below.
-
-## Report problems
-
-Council also keeps a record of problems and suggested improvements. You can ask:
-
-> Record the reload problem so another session can investigate it. Include the
-> error, the Vis version and the steps that caused it. Remove private details.
-
-These reports go into the `improve` register. They do not open an external issue,
-assign work or apply a fix. Agents can also record useful observations without
-waiting for you to ask. See [Reporting a bug](reporting-bugs.md) if you want to
-submit a public issue yourself.
-
-### Automatic failure reports
-
-Every failed `python_execution` call creates an automatic report, even with
-Council turned off or no group assigned. It links to the original execution
-without copying raw code, output or exception messages into the shared log.
-It never notifies or wakes another session.
-
-A failed call does not necessarily mean Vis has a bug. The report is a starting
-point for investigation, with reproduction initially marked as not attempted.
-A later finding belongs in the same thread rather than a duplicate complaint.
+delivery. Existing messages remain saved.
 
 ## API reference
 
@@ -120,7 +93,7 @@ print(await council.members())
 Search rows use `id`; Council members use `session_id`. Titles and matching
 snippets help the agent choose a relevant session. Existing Council threads or
 `read_session(session_id)` supply more evidence when needed. A search match alone
-does not establish group membership or permission to wake that session.
+does not establish group membership.
 
 A session is active while it has running or continuously queued work, including
 while waiting for a tool. Opening it in the UI does not activate it. `members()`
@@ -147,13 +120,12 @@ request = await council.publish(
 print(request["entry_id"])
 ```
 
-Every message, including a reply, needs a `kind`:
+Every message, including a reply, needs a `kind`. For conversations, use:
 
 | Kind | Use it for |
 | --- | --- |
 | `coordination` | Questions, work ownership and dependencies. |
 | `informational` | Answers, findings, progress and decisions. |
-| `complain` | Broken behavior or a concrete improvement. |
 
 The kind describes one message, not the whole thread. `ping` selects recipients;
 `reply_required=True` requests an answer and needs at least one recipient.
@@ -193,53 +165,13 @@ print(status["replies"])
 | `pending` | No model invocation has received the request yet. |
 | `delivered` | The recipient received it but has not answered. |
 | `replied` | An answer was saved; `reply_entry_id` identifies it. |
-| `unavailable` | The recipient could not be started or reached. |
+| `unavailable` | The recipient could not be reached. |
 | `interrupted` | The recipient's active run ended without an answer. |
 
 `replied` means someone responded, not that they agreed or finished the work.
 The requesting agent can continue independent work rather than poll for a reply.
 If no useful answer arrives, it can investigate locally or report the remaining
 unknowns.
-
-### Create and manage subagents
-
-First enable **Subagents** under **Settings → Experimental** on the gateway. This
-opt-in is separate from Council. Disabling it blocks new children, automatic team
-wakes and subsequent child iterations without deleting existing teams. An iteration
-already running can finish.
-
-Use `council.publish_spawn` to create a child session and publish its delegated
-task in one call. Council must be enabled, and the parent must be active with
-a complete model-input checkpoint. Each child can incur model charges and
-shares your checkout; give it a bounded task and explicit file ownership.
-
-```python
-child = await council.publish_spawn(
-    "Review the parser tests and report missing cases. Do not change files.",
-    iteration_budget=8,
-    key="parser-review",
-)
-print(child["session_id"])
-print(await council.subagents())
-```
-
-You do not need a second `council.publish` to send this task. The child receives
-your current visible and folded context, but not Python handles. Use
-`council.publish` for questions, replies and progress after delegation.
-
-`council.subagents()` shows your managed team, including lineage, task, status,
-model, iteration usage and pending input. It is different from
-`council.members()`, which lists active participants in the Council group.
-
-To stop owned work, call `await council.cancel(child["session_id"])`. This also
-cancels its descendants and queued work. To choose a model for that child, call
-`await council.route("model-name", provider="provider-id", session_id=child["session_id"])`,
-using a configured provider and model. Omit `session_id` to change your own
-session. The change applies at the next model call, respects human model locks
-and inherited allowlists, and does not change the shared router.
-
-For context inheritance, iteration limits, retry keys and the session-bound
-SDK equivalent, see [Delegate managed subagents](python-sdk.md#delegate-managed-subagents).
 
 ### Delegate work and review results
 
@@ -265,7 +197,7 @@ print(result["entry_id"])
 Here, `request_thread_id` and `requester_id` come from the received request.
 Follow-up questions also use `thread_id` and `ping`, not a reply to a reply.
 
-A Council wake does not erase an unfinished user task. An agent continues that
+A Council message does not erase an unfinished user task. An agent continues that
 work when the next step is clear, safe and already authorized, until it finishes,
 finds a blocker or reaches a limit. For a knowledge-only request with no related
 unfinished task, it answers without resuming unrelated work.
@@ -289,8 +221,7 @@ group and thread filter. Reading the log does not consume notifications.
 
 ### Choose who to notify
 
-- **`ping=[session_id]`** targets specific sessions in the same group. An idle
-  recipient can wake only through its persisted managed-team relationship.
+- **`ping=[session_id]`** targets specific sessions in the same group.
 - **`ping="all"`** targets active peers in the group, excluding the author. It does
   not wake saved sessions from the archive. With no active peers, it notifies nobody.
 - **No ping** normally just records a message. A continuation can also answer a
@@ -305,10 +236,9 @@ message does not prove the recipient ran, and ordinary pings are not replayed
 after cancellation or restart. Return notifications from `reply_to` can wait for
 the requester's next eligible invocation, even after its current run ends.
 
-Only managed teams can wake idle sessions: leader to child, child to parent or
-leader, and children sharing a task team. Independent leaders never wake one
-another, including `reply_to` and same-thread follow-ups. Group membership and
-conversation history do not grant wake authority.
+Independent sessions never start one another automatically, including through
+`reply_to` or same-thread follow-ups. Group membership and conversation history
+do not change that.
 
 ### Automatic replies
 
@@ -320,31 +250,6 @@ as a fallback.
 `reply_to` selects a particular unanswered request. It cannot answer the same
 request twice or reply to a reply. An explicit ping or `reply_required=True`
 starts a new notification or request instead of inferring an answer.
-
-### Writing a problem report
-
-A `complain` message should give another person enough evidence to investigate:
-
-- The goal, relevant versions, configuration and preconditions.
-- The smallest safe reproduction, with sanitized input or tool arguments.
-- Expected and actual behavior, relevant diagnostics, frequency and impact.
-- What has been tried, any workaround, and what is confirmed or still unknown.
-- The affected `session_id` and turn/iteration/form (`tN/iM/fK`), plus `tool_call_id`
-  and state/iteration IDs when available to distinguish retries and forks.
-
-For an improvement rather than a failure, describe the current limitation and the
-desired behavior. Missing evidence can be marked unknown or not attempted; a
-report does not justify repeating an unsafe operation. A ping is needed only
-when someone needs to be notified.
-
-Automatic reports use `source="autocomplain"`. The failed call supplies its
-coordinates and `complain_entry_id`. Caught exceptions and returned failure
-values do not count as failed tool calls. When a group is available, sanitized
-follow-up evidence can be added as an `informational` message in that thread.
-
-Every message carries host-supplied `source_ref` metadata identifying where it
-was published. A report about another execution needs that execution's coordinates
-in its content; the publication metadata does not identify the earlier incident.
 
 ### Python SDK
 
@@ -365,42 +270,11 @@ print(conversation.read(thread_id=entry.thread_id))
 
 For ordinary `publish`, acquire the handle while the session is active. It stays
 bound to that group and active run; acquire a new handle for a later run. Reads
-and `wake` do not require an active publishing handle.
+do not require an active publishing handle.
 
-If Council is disabled or the session has no available group, the handle still
-allows `subagents`, `cancel` and `route`: these controls use session ownership,
-not group membership. Communication and `group_id` access report the captured
-binding error. Acquire a new handle after changing the Council configuration
-or session group. Creating a subagent requires both Council and the experimental
-Subagents switch to be enabled. Team wakes and routing another session also require
-Subagents; listing or cancelling an existing team and routing your own session
-remain available through the session-bound API when it is off.
-
-### Wake the bound session
-
-An extension or SDK background worker can notify its own session when an event
-occurs:
-
-```python
-event = conversation.wake(
-    "Build finished.",
-    kind="informational",
-    idempotency_key="build-42-finished",
-)
-print(event.entry_id)
-```
-
-`wake` accepts `content`, required `kind`, and optional `thread_id`, `title` and
-`idempotency_key`. It uses the session and group already bound to the handle,
-even if the handle was acquired while idle or its publishing run has ended.
-Only an eligible managed subagent self-wakes. An idle independent leader stays
-idle; an active session receives a notification without another queued turn.
-Held or paused queues and cancelled or exhausted children are not resumed.
-
-Installed extensions use `vis.council.wake(...)` with the same arguments, including
-from extension-owned background threads. It requires a bound session and is not
-available during registration alone. See [Session notifications](extension-api.md#session-notifications).
-This is an SDK/extension operation, not a model sandbox tool. Council must be enabled.
+If Council is disabled or the session has no available group, communication and
+`group_id` access report the captured binding error. Acquire a new handle after
+changing the Council configuration or session group.
 
 ### Retry a publication
 
@@ -408,7 +282,6 @@ Supply an `idempotency_key` and retry the identical request through the same
 handle. Council returns the original entry without another message or notification;
 required reply states reflect their current values. Changing the request while
 reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
-For `wake`, the same event key also works across active runs.
 
 ### IDs and limits
 
@@ -436,9 +309,9 @@ Attribution, JSON overhead and available model context can reduce a notification
 ### How Council works
 
 Council stores messages and reply relationships in SQLite. The gateway tracks
-active sessions and starts eligible managed-team recipients; the model loop delivers
-messages and checks required replies before a turn ends. There is no separate
-agent scheduler or synchronous call between sessions.
+active sessions; the model loop delivers messages and checks required replies
+before a turn ends. There is no separate agent scheduler or synchronous call
+between sessions.
 
 [![Council tools and SDK events store messages, then the gateway and model loop deliver them to sessions.](assets/diagrams/council-modules.svg)](assets/diagrams/council-modules.svg)
 

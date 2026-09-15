@@ -116,8 +116,7 @@ attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
 
 Here `specification` and `report` are the Markdown strings you produced. Read-only
 prevents human comment saves, not a producer's later update under the same filename.
-See [specification review](working-with-plans.md) for the review workflow and
-[draft diffs](drafts.md) for reviewable patches from an isolated working copy.
+See [draft diffs](drafts.md) for reviewable patches from an isolated working copy.
 
 ## Sandbox versus project Python
 

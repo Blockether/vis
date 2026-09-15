@@ -118,7 +118,7 @@ class CouncilPage:
 
 @dataclass(frozen=True, slots=True)
 class Council:
-    """Communicate with other sessions and control a managed agent team.
+    """Communicate with other Vis sessions.
 
     Obtain this handle with `Session.council`, rather than constructing it with
     internal binding fields. The handle captures its session's group and current
@@ -127,13 +127,9 @@ class Council:
     Use `members` to discover active peers, `publish` to send a message and `get`
     to inspect replies. Publication, delivery and a completed answer are separate
     states. `threads` and `read` return cursor-based pages of conversation history.
-    Use `publish_spawn` for a delegated child and `subagents` for the managed team;
-    group membership alone does not confer ownership of another session.
 
-    Communication requires an available Council group. Session-level team controls
-    remain accessible when Council communication is disabled. A disabled or missing
+    Communication requires an available Council group. A disabled or missing
     group is reported when a communication operation or `group_id` needs it.
-    Host policy still governs wake eligibility, permissions and model routing.
     """
 
     _session: Any

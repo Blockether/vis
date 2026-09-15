@@ -32,7 +32,9 @@ so the reference can include APIs not yet released on PyPI.
 and excludes private implementation modules. The template in `pdoc/` generates
 module and class/member indexes from pdoc's public API inventory and uses the manual's
 typography. Public methods inherited from private SDK bases are rendered on the public
-class, rather than silently omitted. pdoc owns signatures, cross-references and search.
+class, rather than silently omitted. Experimental APIs are omitted from pages,
+navigation and search by the template's `is_public` macro. pdoc owns signatures
+and cross-references.
 
 Inline CSS and JavaScript are extracted into content-addressed assets to preserve
 the site's Content Security Policy. No engine, gateway or model call is needed.

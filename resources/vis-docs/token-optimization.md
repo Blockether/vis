@@ -81,12 +81,9 @@ print(defs("summarize_rows", details=True))
 Restoring a definition does not prove its dependencies are ready. Recheck its
 preconditions after a restart; do not assume live handles have been restored.
 
-If the same capability proves useful across sessions, ask Vis to propose it in
-Improve before turning it into an extension. A useful proposal includes concrete
-uses, a helper name and source fingerprint, sanitized source or evidence,
-required globals and preconditions, and verification tied to that source version.
-A proposal does not create an extension or authorize promotion; creating one
-requires a separate request and the [extension contract](extending.md).
+If the same capability proves useful across sessions, you can ask Vis to turn it
+into an [extension](extending.md). Review its dependencies, preconditions and
+verification first; a reusable helper does not become an extension automatically.
 
 ## Reuse another session's findings
 
@@ -96,9 +93,9 @@ start from scratch. The other agent can answer from its saved context, so the
 current conversation needs only the relevant findings, not the whole transcript.
 Vis still needs to check that those findings apply to the current code.
 
-A consultation can avoid repeated research, but waking a session may make new
-model calls. Reusing findings does not guarantee a prompt-cache hit or lower
-cost; it is most useful when the other session knows something relevant.
+A consultation can avoid repeated research, but it can also incur model charges.
+Reusing findings does not guarantee a prompt-cache hit or lower cost; it is most
+useful when the other session knows something relevant.
 
 ## Addresses, not copies
 
@@ -148,8 +145,8 @@ as `fold_measurement` for session introspection.
 
 For a code change, the agent can locate a function with `grep`, read the relevant
 lines with `cat`, apply a `patch` and run the affected tests. It does not need to
-load whole files or repeat the old code in the edit. Reusable helpers can be
-reviewed for an Improve proposal before you request an [extension](extending.md).
+load whole files or repeat the old code in the edit. You can request an
+[extension](extending.md) when a helper becomes useful across sessions.
 
 ## See also
 

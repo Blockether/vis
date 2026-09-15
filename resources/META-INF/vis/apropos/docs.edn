@@ -13,7 +13,6 @@
  {:kind "doc" :name "gateway-service" :resource "vis-docs/gateway-service.md"}
  {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}
  {:kind "doc" :name "context-and-prompts" :resource "vis-docs/context-and-prompts.md"}
- {:kind "doc" :name "working-with-plans" :resource "vis-docs/working-with-plans.md"}
  {:kind "doc" :name "exporting-sessions" :resource "vis-docs/exporting-sessions.md"}
  {:kind "doc" :name "skills" :resource "vis-docs/skills.md"}
  {:kind "doc" :name "queue-and-cancel" :resource "vis-docs/queue-and-cancel.md"}

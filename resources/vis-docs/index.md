@@ -428,7 +428,6 @@ A value `<= 0` disables an eviction threshold.
 
 - [Configuration](configuration.md) — providers, models and project settings.
 - [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
-- [Plan before coding](working-with-plans.md) — review a specification before starting implementation.
 - [Skills](skills.md) — reusable task instructions.
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
 - [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.

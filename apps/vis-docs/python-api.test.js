@@ -36,7 +36,9 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
   const dom = new JSDOM(read(prefix + 'blockether/vis/engine.html'));
   try {
     const document = dom.window.document;
-    for (const name of exports) expect(document.getElementById(name), name).not.toBeNull();
+    expect(exports).toContain('Subagent');
+    for (const name of exports.filter((name) => name !== 'Subagent'))
+      expect(document.getElementById(name), name).not.toBeNull();
     for (const name of [
       'Agent.run',
       'Agent.send',
@@ -52,6 +54,19 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
     expect(document.querySelector('.view-source-button')).toBeNull();
     expect(document.body.textContent).toContain('development API');
     expect(document.querySelector('meta[name="generator"]').content).toMatch(/^pdoc /);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('experimental APIs stay out of generated pages, navigation and search', () => {
+  const experimental =
+    /\bSubagent\b|publish_spawn|subagents|council_wake|Council\.(?:cancel|route|wake)/i;
+  for (const name of files) expect(experimental.test(read(prefix + name)), name).toBe(false);
+  expect(experimental.test(read(prefix + 'search.js')), 'search index').toBe(false);
+  const dom = new JSDOM(read(prefix + 'blockether/vis/extension.html'));
+  try {
+    expect(dom.window.document.getElementById('council')).toBeNull();
   } finally {
     dom.window.close();
   }
