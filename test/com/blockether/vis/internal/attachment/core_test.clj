@@ -743,6 +743,27 @@
           (expect (empty? (:skipped out)))
           (expect (= ["image/bmp"] (mapv :media-type (:attached out))))
           (expect (= (b64 bmp) (:base64 (first (:attached out)))))))
+    (it "preserves validated image references from inline uploads without renaming files"
+        (let [out (attachments/prepare-inline-attachments
+                    [{:base64 tiny-png-b64 :filename "same.png" :reference "[IMAGE #2]"}
+                     {"base64" tiny-png-b64 "filename" "same.png" "reference" "[IMAGE #7]"}])]
+          (expect (= ["[IMAGE #2]" "[IMAGE #7]"] (mapv :reference (:attached out))))
+          (expect (= ["same.png" "same.png"] (mapv :filename (:attached out))))))
+    (it "ignores invalid references and image labels on non-image media"
+        (doseq [reference [nil 1 "IMAGE #1" "[IMAGE #0]" "[IMAGE #01]" "[IMAGE #1]\nextra"]]
+          (expect (nil? (:reference (first (:attached (attachments/prepare-inline-attachments
+                                                        [{:base64 tiny-png-b64
+                                                          :filename "shot.png"
+                                                          :reference reference}])))))))
+        (expect (nil? (:reference (first (:attached (attachments/prepare-inline-attachments
+                                                      [{:base64 tiny-mp4-b64
+                                                        :filename "clip.mp4"
+                                                        :reference "[IMAGE #1]"}])))))))
+    (it "keeps the reference on an image rejected by intake limits"
+        (let [out (attachments/prepare-inline-attachments
+                    [{:base64 tiny-png-b64 :filename "shot.png" :reference "[IMAGE #4]"}]
+                    {:max-images 0})]
+          (expect (= "[IMAGE #4]" (:reference (first (:skipped out)))))))
     (it "still attaches a PNG"
         (let [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64
                                                             :filename "a.png"}])]

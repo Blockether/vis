@@ -207,34 +207,34 @@
               "A row below with NO description is one nothing has looked at. Those files are real\n   and on disk, so to inspect their CONTENT open them with PIL / an imaging library.\n\n"
               "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n"))
           (str/join "\n"
-                    (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
+                    (concat (map-indexed (fn [i {:keys [media-type size-label] :as image}]
                                            (str "- image "
                                                 (inc (long i))
                                                 ": "
-                                                path
+                                                (attachments/image-label image)
                                                 " ("
                                                 media-type
                                                 ", "
                                                 size-label
                                                 ") — attached to this message"))
                                          attached)
-                            (map
-                              (fn [{:keys [path reason transcription transcription-status] :as row}]
-                                (let [{:keys [text model]} (described-for row)]
-                                  (str "- "
-                                       path
-                                       " — NOT attached: "
-                                       reason
-                                       ;; A RECORDING arrives with its own words already in
-                                       ;; hand: no wire carries audio, and the local speech
-                                       ;; engine transcribed it when the human staged it.
-                                       ;; Quoted here, the model reads what was said instead
-                                       ;; of being told a file exists — and when there are no
-                                       ;; words, it is told THAT rather than nothing.
-                                       (transcript-lines transcription transcription-status)
-                                       (when text
-                                         (str "\n  " model " looked at it and reported: " text)))))
-                              skipped))))))))
+                            (map (fn [{:keys [reason transcription transcription-status] :as row}]
+                                   (let [{:keys [text model]} (described-for row)]
+                                     (str "- "
+                                          (attachments/image-label row)
+                                          " — NOT attached: "
+                                          reason
+                                          ;; A RECORDING arrives with its own words already in
+                                          ;; hand: no wire carries audio, and the local speech
+                                          ;; engine transcribed it when the human staged it.
+                                          ;; Quoted here, the model reads what was said instead
+                                          ;; of being told a file exists — and when there are no
+                                          ;; words, it is told THAT rather than nothing.
+                                          (transcript-lines transcription transcription-status)
+                                          (when text
+                                            (str "\n  " model
+                                                 " looked at it and reported: " text)))))
+                                 skipped))))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn.

@@ -1018,6 +1018,48 @@
                (expect (= "image/png" (get (first rows) "media_type")))
                (expect (= "QUJD" (get (first rows) "base64"))))
              (finally (reset! registry saved)))))
+  (it
+    "keeps distinct image references with the same filename in live bytes and queue previews"
+    (let [sid
+          (str (java.util.UUID/randomUUID))
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry
+
+          images
+          [{:filename "clipboard.png"
+            :media-type "image/png"
+            :base64 "QUJD"
+            :reference "[IMAGE #2]"}
+           {:filename "clipboard.png"
+            :media-type "image/png"
+            :base64 "REVG"
+            :reference "[IMAGE #5]"}]]
+
+      (try (reset! registry {sid {:turns {"t1" {:turn_id "t1"
+                                                :session_id sid
+                                                :status "queued"
+                                                :request "Compare [IMAGE #5] and [IMAGE #2]"
+                                                :attachments images}}}})
+           (let [rows
+                 (state/turn-attachments sid "t1")
+
+                 previews
+                 (#'state/attachment-previews "Compare [IMAGE #5] and [IMAGE #2]" images nil)]
+
+             (expect (= ["[IMAGE #2]" "[IMAGE #5]"] (mapv #(get % "reference") rows)))
+             (expect (= ["QUJD" "REVG"] (mapv #(get % "base64") rows)))
+             (expect (= ["[IMAGE #2]" "[IMAGE #5]"] (mapv :reference previews)))
+             (expect (every? #(not (contains? % :base64)) previews))
+             (expect (= 2
+                        (count (#'state/attachment-previews
+                                ""
+                                (conj images (dissoc (first images) :reference))
+                                nil)))))
+           (finally (reset! registry saved)))))
   (it "falls back to the attachment store for a turn that has already landed"
       (let [sid
             (str (java.util.UUID/randomUUID))

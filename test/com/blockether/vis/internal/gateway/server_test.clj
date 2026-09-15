@@ -319,18 +319,17 @@
                         (.getBytes (wire/json-str {:request "inspect"
                                                    :attachments [{:upload_id upload-id
                                                                   :filename "shot.png"
+                                                                  :reference "[IMAGE #3]"
                                                                   :media_type "image/png"
                                                                   :size (alength body-bytes)}]})
                                    "UTF-8"))}) attachment (first (:attachments @submitted))]
          (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= "shot.png"
                                                                                 (:filename
                                                                                   attachment)))
-         (is (= "image/png" (:media-type attachment))) (is (= "binary-image"
-                                                              (String.
-                                                                (.decode
-                                                                  (java.util.Base64/getDecoder)
-                                                                  ^String (:base64 attachment))
-                                                                "UTF-8")))))))
+         (is (= "[IMAGE #3]" (:reference attachment))) (is (= "image/png" (:media-type attachment)))
+         (is (= "binary-image"
+                (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 attachment))
+                         "UTF-8")))))))
 
 (deftest markdown-upload-survives-turn-intake
   (let [sid
