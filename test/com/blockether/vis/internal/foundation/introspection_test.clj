@@ -546,6 +546,32 @@
         (expect (not (str/includes? core "gateway/events")))
         (expect (not (str/includes? core "read_session"))))))
 
+;; Regression (session 6073ae2a): an unconditional read-once instruction made an
+;; unrelated Activity audit read its own history before starting the task.
+(defdescribe
+  demand-driven-introspection-prompt-test
+  (it
+    "requires a concrete task need instead of a session-start preflight"
+    (with-redefs [vis/toggle-enabled? #(= "introspection" %)]
+      (doseq [text [(introspection/prompt {}) (#'foundation/combined-prompt {})]]
+        (doseq
+          [required
+           ["Read session history only when a concrete task question needs" "session diagnostics"
+            "evidence from a referenced conversation"
+            "required context missing from the conversation"
+            "Do not call `read_session` merely because a session or turn starts, or after `/reload`."]]
+          (expect (str/includes? text required)))
+        (expect (not (str/includes? text "Call `await read_session()` once."))))))
+  (it "preserves targeted reads and reuses evidence in the injected prompt"
+      (with-redefs [vis/toggle-enabled? #(= "introspection" %)]
+        (let [text (#'foundation/combined-prompt {})]
+          (doseq [required ["For current-session evidence, use `await read_session()`."
+                            "Reuse the result unless newer evidence is needed."
+                            "tool rows overlap, never sum them" "transcript/turns/iterations/blocks"
+                            "await list_sessions(search=" "vis_session_id#<uuid>"
+                            "never dump whole structures"]]
+            (expect (str/includes? text required)))))))
+
 (defdescribe introspection-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
                  (doseq [symbol introspection/all-symbols]
