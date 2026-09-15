@@ -1297,21 +1297,30 @@
   "Canonical wire workspace metadata for channel footers and directory pickers.
    Draft identity is immediate; draft_changes and repositories refresh in the
    background. Missing/failed summaries carry draft_error, never clean zeroes.
+   A trunk row rooted inside a draft is marked recovery_required, not owned.
    Resolves the latest session workspace; nil only when it cannot be resolved."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
-           (let [draft? (workspace/draft? ws)]
+           (let [draft? (workspace/draft? ws)
+                 recovery (when-not draft? (workspace/draft-location db (:root ws)))]
+
              (wire/canonical (cond-> {:id (:id ws)
-                                      :draft? draft?
+                                      :draft? (boolean (or draft? recovery))
                                       :root (:root ws)
                                       :agent-name (config/agent-name (:root ws))
-                                      :repo-root (:repo-root ws)
-                                      :label (:label ws)
+                                      :repo-root
+                                      (if recovery (:source-root recovery) (:repo-root ws))
+                                      :label (if recovery (:label recovery) (:label ws))
                                       :fork-ms (:fork-ms ws)
                                       :git (git/workspace-status (:root ws))}
                                draft?
-                               (merge (cached-draft-status ws)))))))
+                               (merge (cached-draft-status ws))
+
+                               recovery
+                               (assoc :recovery-required
+                                 true :draft-error
+                                 "Draft ownership needs recovery."))))))
        (catch Throwable _ nil)))
 
 (defn- request-health-metrics

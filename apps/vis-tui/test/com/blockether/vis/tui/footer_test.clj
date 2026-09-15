@@ -533,7 +533,7 @@
                               (remove fixture-seg?)
                               (mapv :text)))))))))
   (it "shows draft identity and the gateway's aggregate review counts"
-      ;; #241: isolated workspaces must not erase the footer's change summary.
+      ;; #241 and #247: render the gateway's draft identity and aggregate review counts.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
@@ -544,7 +544,7 @@
                                                 :settings {}
                                                 :workspace
                                                 (merge {"root" "/internal/isolated-copy"
-                                                        "fork_ms" 1
+                                                        "is_draft" true
                                                         "draft_changes"
                                                         {"modified" 2 "created" 3 "deleted" 1}
                                                         "git" {"is_workspace" true "modified" 99}}
@@ -553,7 +553,7 @@
                                (filter #(= :right (:region %)))
                                (remove fixture-seg?)
                                (mapv :text))]
-                (expect (= [(str " DRAFT#" expected " ~2 +3 -1")] texts))))))))
+                (expect (= [(str " DRAFT (" expected ")") "CHANGES ~2 +3 -1"] texts))))))))
   (it "renders the gateway :git fact even when the top-level root was lost"
       ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
       ;; git fact still rides on the session's `:workspace` record — the footer
@@ -674,7 +674,7 @@
           (doseq [cols [80 120]]
             (let [db {:messages []
                       :settings {:reasoning-level "deep" :verbosity "low"}
-                      :workspace {"fork_ms" 1}}
+                      :workspace {"is_draft" true}}
                   capture (cap/capture! {:cols cols
                                          :rows 4
                                          :paint! (fn [{:keys [g]}]
@@ -921,16 +921,19 @@
 
 (defdescribe
   draft-summary-test
-  (it "distinguishes clean review counts from unavailable or incomplete summaries"
-      (doseq [[fields expected] [[{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}}
-                                  " ~0 +0 -0"] [{} " (changes unavailable)"]
-                                 [{"draft_changes" {"modified" 0}} " (changes unavailable)"]
-                                 [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}
-                                   "draft_error" "Cannot read review snapshot"}
-                                  " (changes unavailable)"]]]
-        (expect (= (str " DRAFT#multi" expected)
-                   (:text (first (#'footer/draft-footer-spans (assoc fields "label" "multi"))))))))
-  (it "keeps draft identity and all review counts visible at ordinary terminal widths"
+  ;; #247: the workspace abstraction and change state must be readable without Git glyphs.
+  (it "distinguishes changes, clean, unavailable, and recovery states"
+      (doseq [[fields expected]
+              [[{"draft_changes" {"modified" 2 "created" 3 "deleted" 1}} "CHANGES ~2 +3 -1"]
+               [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}} "CLEAN"]
+               [{} "CHANGES UNAVAILABLE"] [{"draft_changes" {"modified" 0}} "CHANGES UNAVAILABLE"]
+               [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}
+                 "draft_error" "Cannot read review snapshot"} "CHANGES UNAVAILABLE"]
+               [{"recovery_required" true "draft_changes" {"modified" 0 "created" 0 "deleted" 0}}
+                "RECOVERY REQUIRED"]]]
+        (expect (= [" DRAFT (multi)" expected]
+                   (mapv :text (#'footer/draft-footer-spans (assoc fields "label" "multi")))))))
+  (it "keeps the draft name and review counts visible at ordinary terminal widths"
       (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
                                                                 :provider :openai-codex
                                                                 :reasoning-effort? true
@@ -939,8 +942,8 @@
           (doseq [cols [80 120]]
             (let [db {:messages []
                       :settings {:reasoning-level "deep" :verbosity "low"}
-                      :workspace {"fork_ms" 1
-                                  "label" "multi"
+                      :workspace {"is_draft" true
+                                  "label" "finish-dev-env-live-view"
                                   "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
                   capture (cap/capture! {:cols cols
                                          :rows 4
@@ -948,4 +951,30 @@
                                                    (footer/draw-footer! g db 1 cols 0))})]
 
               (expect (nil? (:error capture)))
-              (expect (str/includes? (cap/frame-text capture) "DRAFT#multi ~2 +3 -1"))))))))
+              (expect (str/includes? (cap/frame-text capture)
+                                     "DRAFT (finish-dev-env-live-view) CHANGES ~2 +3 -1")))))))
+  (it "keeps the change state visible when a long draft name is shortened"
+      (let [segments
+            (#'footer/draft-footer-spans
+             {"label" "finish-dev-env-live-view-with-a-long-name"
+              "draft_changes" {"modified" 2 "created" 3 "deleted" 1}})
+
+            [fitted _]
+            (#'footer/shrink-to-fit segments 40)]
+
+        (expect (str/starts-with? (:text (first fitted)) " DRAFT ("))
+        (expect (= "CHANGES ~2 +3 -1" (:text (last fitted))))))
+  (it "uses canonical draft identity rather than treating the fork timestamp as a UI flag"
+      (with-redefs-fn {#'footer/session-model-info (constantly {:reasoning-effort? false})}
+        (fn []
+          (doseq [[workspace expected]
+                  [[{"is_draft" true "label" "feature" "recovery_required" true}
+                    [" DRAFT (feature)" "RECOVERY REQUIRED"]]
+                   [{"is_draft" false
+                     "fork_ms" 1
+                     "git" {"is_workspace" true "repo" "vis" "branch" "main" "is_upstream" true}}
+                    [" git ~/vis (main)"]]]]
+            (expect (= expected
+                       (->> (#'footer/build-segments {:workspace workspace :settings {}} 0)
+                            (filter #(= :right (:region %)))
+                            (mapv :text)))))))))

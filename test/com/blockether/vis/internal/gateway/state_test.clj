@@ -71,6 +71,9 @@
                 workspace/for-session
                 (constantly ws)
 
+                persistance/db-workspace-list-drafts
+                (constantly [])
+
                 config/agent-name
                 (constantly "Vis")
 
@@ -83,6 +86,44 @@
   {:id "draft-regression" :root "/draft" :repo-root "/source" :label "feature" :fork-ms 1})
 
 (defdescribe
+  session-workspace-recovery-test
+  ;; #247: a trunk row rooted inside a draft still needs a draft label in the footer.
+  (it "identifies a draft-rooted trunk without presenting it as owned or clean"
+      (let [trunk {:id "misrooted-session" :root "/draft/subdir" :repo-root "/draft/subdir"}]
+        (with-draft-workspace
+          trunk
+          (fn []
+            (with-redefs [persistance/db-workspace-list-drafts (constantly [draft-workspace])
+                          drafts/status (fn [_]
+                                          (throw (AssertionError. "unexpected draft summary")))]
+
+              (let [info (state/session-workspace-info "session")]
+                (expect (true? (get info "is_draft")))
+                (expect (true? (get info "recovery_required")))
+                (expect (= "misrooted-session" (get info "id")))
+                (expect (= "feature" (get info "label")))
+                (expect (= "/source/subdir" (get info "repo_root")))
+                (expect (= "/draft/subdir" (get info "root")))
+                (expect (nil? (get info "fork_ms")))
+                (expect (not (contains? info "draft_changes")))
+                (expect (= "Draft ownership needs recovery." (get info "draft_error")))
+                (expect (empty? @@#'state/draft-status-cache))))))))
+  (it "marks an unrecognized draft directory for recovery rather than as ordinary Git"
+      (with-draft-workspace {:id "orphan-session"
+                             :root "/draft-store-regression/orphan"
+                             :repo-root "/draft-store-regression/orphan"}
+                            (fn []
+                              (with-redefs-fn {#'workspace/drafts-home
+                                               (constantly (io/file "/draft-store-regression"))}
+                                (fn []
+                                  (let [info (state/session-workspace-info "session")]
+                                    (expect (true? (get info "is_draft")))
+                                    (expect (true? (get info "recovery_required")))
+                                    (expect (nil? (get info "repo_root")))
+                                    (expect (nil? (get info "fork_ms")))
+                                    (expect (not (contains? info "draft_changes"))))))))))
+
+(defdescribe
   session-workspace-draft-test
   ;; #241: a failing summary must not erase the draft identity or claim clean zeroes.
   (it "retains draft identity when the draft status reader fails"
@@ -92,6 +133,7 @@
           (with-redefs [drafts/status (fn [_]
                                         (throw (ex-info "summary unavailable" {})))]
             (let [loading (state/session-workspace-info "session")]
+              (expect (true? (get loading "is_draft")))
               (expect (= "draft-regression" (get loading "id")))
               (expect (= "feature" (get loading "label")))
               (expect (= "Draft changes are loading." (get loading "draft_error"))))
@@ -176,6 +218,8 @@
                                                             (throw (AssertionError.
                                                                      "unexpected draft read")))]
                                 (let [info (state/session-workspace-info "session")]
+                                  (expect (false? (get info "is_draft")))
+                                  (expect (not (contains? info "recovery_required")))
                                   (expect (= "draft-regression" (get info "id")))
                                   (expect (not (contains? info "draft_changes")))
                                   (expect (not (contains? info "draft_error")))))))))

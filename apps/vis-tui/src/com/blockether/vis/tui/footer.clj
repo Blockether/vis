@@ -212,7 +212,7 @@
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
 (defn- draft-footer-spans
-  [{:strs [id label draft_changes draft_error]}]
+  [{:strs [id label draft_changes draft_error recovery_required]}]
   (let [identity
         (or (not-empty label)
             (some-> id
@@ -224,16 +224,24 @@
         (map #(get draft_changes %) ["modified" "created" "deleted"])
 
         summary
-        (if (and (not draft_error) (every? number? counts))
-          (let [[modified created deleted] counts]
-            (str " ~" modified " +" created " -" deleted))
-          " (changes unavailable)")]
+        (cond recovery_required "RECOVERY REQUIRED"
+              (or draft_error (not-every? number? counts)) "CHANGES UNAVAILABLE"
+              (every? zero? counts) "CLEAN"
+              :else (let [[modified created deleted] counts]
+                      (str "CHANGES ~" modified " +" created " -" deleted)))]
 
-    [{:text (str " DRAFT#" identity summary)
+    [{:text (str " DRAFT (" identity ")")
       :fg t/footer-fg-strong
       :bold? true
       :region :right
       :priority 2
+      :tint :git}
+     {:text summary
+      :fg t/footer-fg-strong
+      :bold? true
+      :region :right
+      :priority 2
+      :join-left? true
       :tint :git}]))
 
 (def ^:private session-cost-keys
@@ -551,8 +559,8 @@
         ws
         (:workspace db)
 
-        isolated-workspace?
-        (some? (get ws "fork_ms"))
+        draft?
+        (true? (get ws "is_draft"))
 
         ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
         ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
@@ -565,7 +573,7 @@
         (get ws "git")
 
         git-spans
-        (if isolated-workspace? (draft-footer-spans ws) (git-footer-spans git-status))]
+        (if draft? (draft-footer-spans ws) (git-footer-spans git-status))]
 
     (cond-> (vec git-spans)
       ;; Response controls read reasoning → verbosity → fast, matching Companion.
