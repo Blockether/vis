@@ -30,6 +30,10 @@ const STORAGE_KEY = 'vis.snapshots.v1';
 const DURABLE_KINDS = new Set([
   'sessions',
   'sessions-pin',
+  // The head window can contain only one busy project. Keep every project header
+  // and each visited project's first page beside it for a complete cold paint.
+  'projects-overview',
+  'project-head',
   'session',
   'transcript',
   'setting',

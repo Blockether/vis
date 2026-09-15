@@ -652,11 +652,9 @@ export interface ProjectPage {
  * The project windows ONE reader is holding, and the validator each was issued
  * under (`listProjectPage`).
  *
- * The pins used to live on the client, in a static map with a cap: a budget shared
- * by every project of every machine, evicted oldest-first by a rule that could not
- * know which page a reader was looking at. A window belongs to whoever is READING
- * it — the project group — so it is passed in, prefetched into, and dropped when
- * that group unmounts. There is nothing left to cap.
+ * Deeper windows belong to the project group and disappear when it unmounts.
+ * Each project's head is also snapshotted for cold paint; its validator stays
+ * attached to the exact gateway, root, page size and draft overlay it answered.
  */
 export type ProjectWindows = Map<string, { etag: string; page: ProjectPage }>;
 
@@ -673,6 +671,9 @@ export type ProjectWindows = Map<string, { etag: string; page: ProjectPage }>;
  * parked on a human arrive there too (see `listSessions`).
  */
 const SESSIONS_PAGE = 20;
+
+// Keep one screen-sized head per project, not the wide reads used to jump pages.
+const MAX_PROJECT_HEAD_ROWS = 100;
 
 /** The first window of the list: the one page that is asked for with no cursor. */
 const HEAD_CURSOR = '';
@@ -2870,6 +2871,7 @@ export class GatewayClient {
 
   /** Drop every snapshot of one session — it is gone or is being replaced. */
   forgetSession(sid: string): void {
+    this.forgetProjectHeads(sid, this.cachedSession(sid)?.workspace?.root);
     const transcriptKey = this.snapshotKey('transcript', sid);
     snapshots.delete(this.snapshotKey('session', sid));
     dropSnapshot(transcriptKey);
@@ -3069,8 +3071,9 @@ export class GatewayClient {
    * (`ProjectWindows`): the window is pinned there under the question it answered —
    * this gateway, this project, this page size, this cursor, this device's overlay —
    * so a page the reader walks back to costs one 304 with no body and hands back the
-   * SAME rows array. Prefetching the pages ahead writes into that store, and closing
-   * the group forgets all of it.
+   * SAME rows array. Prefetching the pages ahead writes into that store.
+   * `persistHead` marks the visible first page, not a wider read for a page jump.
+   * That bounded head survives unmount and restart, one snapshot per project.
    */
   async listProjectPage(
     root: string,
@@ -3078,6 +3081,7 @@ export class GatewayClient {
     after: string,
     pins: ProjectWindows,
     signal?: AbortSignal,
+    persistHead = false,
   ): Promise<ProjectPage> {
     // The overlay rides down here too: a session holding words typed on THIS device
     // is in this device's list and in nobody else's, so a page cut without it is a
@@ -3085,7 +3089,7 @@ export class GatewayClient {
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(',');
     const key = this.projectWindowKey(root, limit, after);
-    const pin = pins.get(key);
+    const pin = this.heldProjectWindow(root, limit, after, pins);
     const res = await this.requestFull<{
       sessions?: Session[];
       awaiting?: Session[];
@@ -3098,9 +3102,16 @@ export class GatewayClient {
       }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}`,
       undefined,
       signal,
-      pin ? { 'If-None-Match': pin.etag } : undefined,
+      pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
     );
-    if (res.status === 304 && pin) return pin.page;
+    const remember = (window: { etag: string; page: ProjectPage }): ProjectPage => {
+      if (persistHead && !after && limit <= MAX_PROJECT_HEAD_ROWS)
+        writeSnapshot(this.snapshotKey('project-head', root), { key, ...window });
+      if (window.etag) pins.set(key, window);
+      else pins.delete(key);
+      return window.page;
+    };
+    if (res.status === 304 && pin) return remember(pin);
     // A row the wire repeated keeps the object the group is already rendering, so a
     // page that only gained a title does not re-render every row on it.
     const rows = reconcileRows(pin?.page.rows ?? null, res.data?.sessions ?? []);
@@ -3115,12 +3126,7 @@ export class GatewayClient {
       nextCursor: res.data?.next_cursor ?? '',
       awaiting,
     };
-    if (!res.etag) {
-      pins.delete(key);
-      return page;
-    }
-    pins.set(key, { etag: res.etag, page });
-    return page;
+    return remember({ etag: res.etag ?? '', page });
   }
 
   /**
@@ -3137,7 +3143,38 @@ export class GatewayClient {
     after: string,
     pins: ProjectWindows,
   ): ProjectPage | null {
-    return pins.get(this.projectWindowKey(root, limit, after))?.page ?? null;
+    return this.heldProjectWindow(root, limit, after, pins)?.page ?? null;
+  }
+
+  private heldProjectWindow(
+    root: string,
+    limit: number,
+    after: string,
+    pins: ProjectWindows,
+  ): { etag: string; page: ProjectPage } | null {
+    const key = this.projectWindowKey(root, limit, after);
+    const pin = pins.get(key);
+    if (pin) return pin;
+    if (after) return null;
+    const saved = readSnapshot<{ key: string; etag: string; page: ProjectPage }>(
+      this.snapshotKey('project-head', root),
+    );
+    return saved?.key === key ? saved : null;
+  }
+
+  /** A local mutation must not reappear from a project's saved head after restart. */
+  private forgetProjectHeads(sid: string, root?: string): void {
+    const prefix = `${this.snapshotKey('project-head')}\u0000`;
+    for (const [key, value] of snapshots) {
+      if (!key.startsWith(prefix)) continue;
+      const { page } = value as { page: ProjectPage };
+      if (
+        (root && key === this.snapshotKey('project-head', root)) ||
+        page.rows.some((row) => row.id === sid) ||
+        page.awaiting.some((row) => row.id === sid)
+      )
+        snapshots.delete(key);
+    }
   }
 
   /** The question a project window answered, as one string. */
@@ -3331,6 +3368,7 @@ export class GatewayClient {
       row,
       readSnapshot<SessionGoal>(this.snapshotKey('goal', sid)),
     );
+    this.forgetProjectHeads(sid, merged.workspace?.root);
     writeSnapshot(this.snapshotKey('session', sid), merged);
     const rows = this.cachedSessions();
     if (rows) {

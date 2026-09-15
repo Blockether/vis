@@ -121,7 +121,235 @@ describe('GatewayClient session-list validators', () => {
     await expect(client.listSessions()).resolves.toBe(cached);
     expect(secondFetch).toHaveBeenCalledOnce();
   });
+
+  // A busy project's rows can fill the head window. The other project headers
+  // must survive a restart even when revalidation returns no response body.
+  it('restores every project and its totals before a cold-start 304', async () => {
+    const rows = Array.from({ length: 20 }, (_, index) => ({
+      id: `alpha-${index}`,
+      title: `Alpha ${index}`,
+      workspace: { root: '/Users/dev/alpha' },
+    }));
+    const overview = {
+      projects: [
+        { root: '/Users/dev/alpha', name: 'alpha', session_count: 1200 },
+        { root: '/Users/dev/beta', name: 'beta', session_count: 35 },
+      ],
+      project_count: 2,
+      session_count: 1235,
+      live_count: 0,
+      awaiting_count: 0,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ sessions: rows, total: 1235, overview }), {
+          headers: { ETag: '"projects-v1"' },
+        }),
+      ),
+    );
+    const first = await import('./gateway');
+    const warm = new first.GatewayClient(conn);
+    await warm.listSessions();
+    expect(warm.cachedProjectsOverview()).toEqual(overview);
+    first.persistGatewayCaches();
+
+    vi.resetModules();
+    const fetches = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      expect(new Headers(init.headers).get('If-None-Match')).toBe('"projects-v1"');
+      return Promise.resolve(new Response(null, { status: 304 }));
+    });
+    vi.stubGlobal('fetch', fetches);
+    const second = await import('./gateway');
+    const cold = new second.GatewayClient(conn);
+    expect(cold.cachedProjectsOverview()).toEqual(overview);
+    const cached = cold.cachedSessions();
+    await expect(cold.listSessions()).resolves.toBe(cached);
+    expect(cold.projectsOverview()).toEqual(overview);
+    expect(fetches).toHaveBeenCalledOnce();
+  });
 });
+
+describe('GatewayClient project-page snapshots', () => {
+  it('restores independent project heads and validators across a cold start', async () => {
+    const cases = [
+      { conn, root: '/Users/dev/alpha', id: 'alpha' },
+      { conn, root: '/Users/dev/beta', id: 'beta' },
+      { conn: { url: 'http://second.example.com' }, root: '/Users/dev/alpha', id: 'other' },
+    ];
+    const first = await import('./gateway');
+    const pages = [];
+    for (const entry of cases) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              sessions: [{ id: entry.id, title: entry.id }],
+              total: 1,
+              awaiting: [],
+            }),
+            { headers: { ETag: `"${entry.id}"` } },
+          ),
+        ),
+      );
+      pages.push(
+        await new first.GatewayClient(entry.conn).listProjectPage(
+          entry.root,
+          15,
+          '',
+          new Map(),
+          undefined,
+          true,
+        ),
+      );
+    }
+    first.persistGatewayCaches();
+
+    vi.resetModules();
+    const second = await import('./gateway');
+    for (const [index, entry] of cases.entries()) {
+      const fetches = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+        expect(new Headers(init.headers).get('If-None-Match')).toBe(`"${entry.id}"`);
+        return Promise.resolve(new Response(null, { status: 304 }));
+      });
+      vi.stubGlobal('fetch', fetches);
+      const cold = new second.GatewayClient(entry.conn);
+      const pins = new Map();
+      const page = cold.heldProjectPage(entry.root, 15, '', pins);
+      expect(page).toEqual(pages[index]);
+      expect(cold.heldProjectPage(entry.root, 20, '', pins)).toBeNull();
+      expect(cold.heldProjectPage(entry.root, 15, 'another-page', pins)).toBeNull();
+      await expect(
+        cold.listProjectPage(entry.root, 15, '', pins, undefined, true),
+      ).resolves.toBe(page);
+      expect(pins.size).toBe(1);
+      expect(fetches).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('keeps one bounded head per project without retaining jumps or deeper pages', async () => {
+    const fetches = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ sessions, total: 200 }), { headers: { ETag: '"head"' } }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const client = new gateway.GatewayClient(conn);
+    const pins = new Map();
+    const root = '/Users/dev/alpha';
+    await client.listProjectPage(root, 15, '', pins, undefined, true);
+    const resized = await client.listProjectPage(root, 20, '', pins, undefined, true);
+    await client.listProjectPage(root, 60, '', pins);
+    await client.listProjectPage(root, 150, '', pins, undefined, true);
+    await client.listProjectPage(root, 20, 'deeper', pins, undefined, true);
+    gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(cold.heldProjectPage(root, 20, '', new Map())).toEqual(resized);
+    expect(cold.heldProjectPage(root, 15, '', new Map())).toBeNull();
+    expect(cold.heldProjectPage(root, 150, '', new Map())).toBeNull();
+    expect(cold.heldProjectPage(root, 20, 'deeper', new Map())).toBeNull();
+  });
+
+  it('never reuses a project validator for a different draft overlay', async () => {
+    const fetches = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ sessions, total: 1 }), { headers: { ETag: '"head"' } }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const drafts = await import('./draft-messages');
+    const client = new GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    await client.listProjectPage(root, 15, '', new Map(), undefined, true);
+    drafts.writeDraftMessage(drafts.draftMessageKey(client.base, 'session-2'), {
+      text: 'Unsent work',
+    });
+    expect(client.heldProjectPage(root, 15, '', new Map())).toBeNull();
+    await client.listProjectPage(root, 15, '', new Map(), undefined, true);
+    expect(String(fetches.mock.calls[1][0])).toContain('dirty=session-2');
+    expect(new Headers(fetches.mock.calls[1][1].headers).get('If-None-Match')).toBeNull();
+  });
+
+  it('replaces a saved validator when the new head has no ETag', async () => {
+    const fetches = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sessions, total: 1 }), {
+          headers: { ETag: '"old"' },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [], total: 0 })));
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const client = new gateway.GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    const pins = new Map();
+    await client.listProjectPage(root, 15, '', pins, undefined, true);
+    const empty = await client.listProjectPage(root, 15, '', pins, undefined, true);
+    gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(cold.heldProjectPage(root, 15, '', new Map())).toEqual(empty);
+    const reload = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      expect(new Headers(init.headers).get('If-None-Match')).toBeNull();
+      return Promise.resolve(new Response(JSON.stringify({ sessions: [], total: 0 })));
+    });
+    vi.stubGlobal('fetch', reload);
+    await cold.listProjectPage(root, 15, '', new Map(), undefined, true);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it.each(['forget', 'rename', 'star'])(
+    'invalidates only affected project heads after %s',
+    async (action) => {
+      const { GatewayClient } = await import('./gateway');
+      const client = new GatewayClient(conn);
+      const other = new GatewayClient({ url: 'http://second.example.com' });
+      const root = '/Users/dev/alpha';
+      const beta = '/Users/dev/beta';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ sessions, total: 1 }), { headers: { ETag: '"head"' } }),
+          ),
+        ),
+      );
+      await client.listProjectPage(root, 15, '', new Map(), undefined, true);
+      const otherPage = await other.listProjectPage(root, 15, '', new Map(), undefined, true);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ sessions: [{ id: 'untouched' }], total: 1 }), {
+              headers: { ETag: '"beta"' },
+            }),
+          ),
+        ),
+      );
+      const betaPage = await client.listProjectPage(beta, 15, '', new Map(), undefined, true);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ ...sessions[0], title: 'Changed', favorite_rank: 1 })),
+        ),
+      );
+      if (action === 'forget') client.forgetSession('session-1');
+      else if (action === 'rename') await client.renameSession('session-1', 'Changed');
+      else await client.setSessionFavorite('session-1', true);
+      expect(client.heldProjectPage(root, 15, '', new Map())).toBeNull();
+      expect(client.heldProjectPage(beta, 15, '', new Map())).toBe(betaPage);
+      expect(other.heldProjectPage(root, 15, '', new Map())).toBe(otherPage);
+    },
+  );
+});
+
 describe('GatewayClient canonical queued turn state', () => {
   it('rejects an incomplete session response without caching it or making a fallback request', async () => {
     const fetchMock = vi

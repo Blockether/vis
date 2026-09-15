@@ -132,12 +132,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   // the place survives everything the fleet does under the reader, which an offset
   // into an ordering recomputed per request could not (`state/list-sessions-page`).
   const cursors = useRef(new Map<number, string>([[0, '']]));
-  // THE WINDOWS THIS GROUP HOLDS, and the validator each was issued under
-  // (`GatewayClient.listProjectPage`). They used to live in a static map on the client,
-  // capped at 24 for the whole fleet and evicted oldest-first: a budget shared by every
-  // project of every machine, spent by a rule that could not know which page anybody
-  // was looking at. A window belongs to whoever READS it — this store is read ahead
-  // into, answered from, and forgotten with the group.
+  // Deeper windows belong to this group. The client also snapshots each project's
+  // head, so projects outside the machine's head window survive a remount.
   const pins = useRef<ProjectWindows>(new Map());
   // The question the last read asked, so a page TURN paints what is already held and a
   // poll that only moved the list under an unchanged page repaints nothing.
@@ -149,7 +145,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     rows: Session[];
     total: number;
     awaiting: Session[];
-  } | null>(null);
+  } | null>(() => {
+    const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map());
+    return held ? { start: 0, rows: held.rows, total: held.total, awaiting: held.awaiting } : null;
+  });
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
@@ -227,7 +226,14 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
     void (async () => {
       try {
-        const answer = await api.listProjectPage(root, limit, after, pins.current, control.signal);
+        const answer = await api.listProjectPage(
+          root,
+          limit,
+          after,
+          pins.current,
+          control.signal,
+          start === 0,
+        );
         if (!live) return;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
         setPaged({

@@ -37,6 +37,56 @@ afterEach(() => {
 // the size this screen measured, so the header's count and the pager's arithmetic are
 // one number and no page needs the fleet downloaded first.
 describe('gateway-backed project pages', () => {
+  // Regression: only the machine's head window survived leaving the screen, so
+  // one busy project painted first and every other open project filled in later.
+  it('loads open projects concurrently and restores their rows before revalidation', async () => {
+    window.innerHeight = 844;
+    const sessions = [
+      ...Array.from({ length: 120 }, (_, index) =>
+        listSession({
+          id: `alpha-${index}`,
+          title: `Alpha ${index}`,
+          workspace: { root: '/Users/dev/alpha' },
+          modified_at: at(200 - index),
+        }),
+      ),
+      listSession({ id: 'beta', title: 'Beta session', workspace: { root: '/Users/dev/beta' } }),
+    ];
+    const first = renderSessionsScreen({ machines: [{ sessions, holdsPages: true }] });
+    const conns = first.conns;
+    try {
+      fireEvent.click(await first.findByLabelText('Expand beta'));
+      // Both requests are in flight while neither project's page has answered.
+      await waitFor(() => expect(pageReads(first)).toHaveLength(2));
+      expect(
+        pageReads(first).map((read) => new URL(read, conns[0].url).searchParams.get('root')),
+      ).toEqual(['/Users/dev/alpha', '/Users/dev/beta']);
+      expect(first.queryByText('Beta session')).not.toBeInTheDocument();
+      first.releasePages();
+      await first.findByText('Beta session');
+      await settle();
+    } finally {
+      first.unmount();
+      first.releasePages();
+      await settle();
+      first.restore();
+    }
+
+    const again = renderSessionsScreen({ machines: [{ sessions, holdsList: true }], at: conns });
+    try {
+      // The same frame contains both projects, without waiting for any response.
+      expect(again.getByText('Alpha 0')).toBeVisible();
+      expect(again.getByText('Beta session')).toBeVisible();
+      expect(again.getByLabelText('Collapse alpha')).toBeVisible();
+      expect(again.getByLabelText('Collapse beta')).toBeVisible();
+    } finally {
+      again.unmount();
+      again.releasePages();
+      await settle();
+      again.restore();
+    }
+  });
+
   it('keeps the current page visible and inactive while the project is folded', async () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
