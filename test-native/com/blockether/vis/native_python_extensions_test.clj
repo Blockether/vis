@@ -1,12 +1,14 @@
 (ns com.blockether.vis.native-python-extensions-test
   "Python extension registration during isolated native gateway startup."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.native-binary-test :as native]
             [com.blockether.vis.native-speech-startup-test :as startup]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.io File]
+  (:import [com.sun.net.httpserver HttpServer]
+           [java.io File]
            [java.net ServerSocket]
            [java.util.concurrent TimeUnit]))
 
@@ -69,6 +71,89 @@
                  (expect (str/includes? output expected) output))
                (finally (when (.isAlive child) (#'native/kill-tree! child)))))
         (finally (#'native/delete-tree! home))))))
+
+(defdescribe
+  native-record-subscription-test
+  ;; #240: exercise generated records across the native extension worker boundary.
+  (it
+    "supports immutable field-name access on top-level and nested tool results"
+    (let [dir
+          (#'native/temp-dir "vis-native-record-subscription-")
+
+          original-stream
+          @#'native/stream-body
+
+          original-whole
+          @#'native/whole-body
+
+          calls
+          (atom 0)
+
+          code
+          (str "from dataclasses import FrozenInstanceError\n" "result = await records()\n"
+               "assert result['items'] is result.items\n" "item = result['items'][0]\n"
+               "assert item['url'] == item.url == 'https://gateway.example.com/240'\n"
+               "try:\n    item['missing']\n"
+               "except KeyError as exc:\n    assert 'url' in str(exc) and 'missing' in str(exc)\n"
+               "else:\n    raise AssertionError('unknown field accepted')\n"
+               "try:\n    item[0]\n" "except TypeError:\n    pass\n"
+               "else:\n    raise AssertionError('positional field accepted')\n"
+               "try:\n    item['url'] = 'changed'\n"
+               "except TypeError:\n    pass\n"
+               "else:\n    raise AssertionError('mutable subscription')\n"
+               "try:\n    item.url = 'changed'\n" "except FrozenInstanceError:\n    pass\n"
+               "else:\n    raise AssertionError('mutable attribute')\n"
+               "print('Native record subscription ' + 'verified')")
+
+          reply
+          (fn [stream? text]
+            (if (= 1 (swap! calls inc))
+              (#'native/python-tool-body code 1 stream?)
+              ((if stream? original-stream original-whole) text)))]
+
+      (try
+        (let [entry (io/file dir ".vis/extensions/records.py")]
+          (io/make-parents entry)
+          (spit
+            entry
+            (str
+              "from dataclasses import dataclass\n"
+              "import blockether.vis.extension as vis\n"
+              "@dataclass(frozen=True)\nclass CreatedIssue:\n    url: str\n"
+              "@dataclass(frozen=True)\nclass Results:\n    items: tuple[CreatedIssue, ...]\n"
+              "def find() -> Results:\n"
+              "    \"Return the fixture records.\"\n"
+              "    return Results((CreatedIssue('https://gateway.example.com/240'),))\n"
+              "def _render(*, result, error, **_):\n"
+              "    summary = str(error) if error else f'{len(result.items)} records'\n"
+              "    return vis.ActivityPresentation('Read records', summary)\n"
+              "vis.register_extension(vis.Extension(name='record-subscription', alias='records', "
+              "description='Native record fixture', symbols=[vis.Symbol(find, name='records', "
+              "activity=vis.Activity(label='Read records', show_start=False, render=_render))]))\n")))
+        (with-redefs-fn {#'native/stream-body #(reply true %) #'native/whole-body #(reply false %)}
+          (fn []
+            (let [{:keys [server asked port]} (#'native/start-stub-provider!
+                                               "Record check complete")]
+              (try (#'native/overlay! dir port)
+                   (let [{:keys [finished? exit output]}
+                         (#'native/run-binary
+                          dir
+                          [(.getAbsolutePath ^File (#'native/require-binary))
+                           (str "-Duser.home=" (.getAbsolutePath ^File dir)) "--db"
+                           (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                           "Run the supplied Python fixture and finish."]
+                          180)
+                         tools (->> @asked
+                                    (mapcat #(get (json/read-json (:body %)) "messages"))
+                                    (filter #(= "tool" (get % "role")))
+                                    (map #(str (get % "content"))))]
+
+                     (expect finished? output)
+                     (expect (= 0 exit) output)
+                     (expect (some #(str/includes? % "Native record subscription verified") tools)
+                             (str output "\nTool results: " (pr-str tools))))
+                   (finally (.stop ^HttpServer server 0))))))
+        (finally (#'native/delete-tree! dir))))))
 
 (defdescribe
   native-editable-sdk-startup-test

@@ -126,6 +126,12 @@ public fields when shape and meaning matter. The [tested example](extension-desi
 shows field descriptions with `Annotated`. Private fields and original methods do
 not cross into the sandbox.
 
+Generated records support both `result.url` and `result["url"]`, including nested
+records. An unknown field raises `KeyError` listing the available fields;
+non-string indices raise `TypeError`. Field assignment remains unsupported.
+These records are not mappings: names such as `items`, `keys` and `get` remain
+available for your fields rather than becoming mapping methods.
+
 ### Object namespaces
 
 `vis.Symbol(Greeter(), name="greet")` exports `greet.hello(...)` in the

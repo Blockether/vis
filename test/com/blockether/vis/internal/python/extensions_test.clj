@@ -5088,7 +5088,16 @@ vis.register_extension(vis.Extension(
                        "assert inspect.signature(greet.hello).return_annotation is inspect.Signature.empty\n"
                        "assert all(p.annotation is inspect.Parameter.empty for p in inspect.signature(greet.hello).parameters.values())\n"
                        "value = await greet.hello('Ada', loud=True)\n"
-                       "assert value.items[0].text == 'ADA'\n"
+                       ;; Regression #240: subscription survives the real extension boundary and reload.
+                       "assert value['items'] is value.items\n"
+                       "assert value['items'][0]['text'] == value.items[0].text == 'ADA'\n"
+                       "assert value['opaque'] is None and value['missing'] is None\n"
+                       "try:\n    value['unknown']\n"
+                       "except KeyError as exc:\n    assert 'items' in str(exc) and 'unknown' in str(exc)\n"
+                       "else:\n    raise AssertionError('unknown field accepted')\n"
+                       "try:\n    value['items'][0]['text'] = 'changed'\n"
+                       "except TypeError:\n    pass\n"
+                       "else:\n    raise AssertionError('mutable subscription')\n"
                        "assert (await greet.hello('Ada')).items[0].text == 'Ada'\n"
                        (when (pos? iteration)
                          "assert (await greet.hello('Ada', repeat=2)).items[0].text == 'AdaAda'\n")
