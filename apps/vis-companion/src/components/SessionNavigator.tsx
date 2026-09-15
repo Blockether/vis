@@ -667,7 +667,7 @@ export function MachineTab({
 /**
  * The verb of one project: start a session in it.
  *
- * Repeated project actions use amber ink without a border or a circular fill.
+ * Repeated project actions use neutral ink without a border or a circular fill.
  * The compact 32px layout box keeps a 44px touch target through `IconButton`.
  * `where` stays in the tooltip and `machine` in the accessible name. Creation
  * replaces the plus with a spinner without changing the header's width.
@@ -689,7 +689,6 @@ export function NewSessionButton({
   const title = where ? `New session on ${machine}, in ${where}` : label;
   return (
     <IconButton
-      variant="primary"
       density="compact"
       disabled={disabled || isBusy}
       aria-busy={isBusy || undefined}

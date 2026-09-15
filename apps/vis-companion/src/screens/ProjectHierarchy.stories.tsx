@@ -60,6 +60,8 @@ export const GroupedSessions: Story = {
     // Regression: repeated project pluses and row controls must stay unframed.
     const create = within(header).getByRole('button', { name: /^New session/ });
     const face = style(create);
+    // Regression: the plus must use the header's neutral ink, not the theme's accent.
+    await expect(face.color).toBe(style(title).color);
     const box = create.getBoundingClientRect();
     await expect(box.width).toBe(box.height);
     await expect(parseFloat(face.borderRadius)).toBe(0);
@@ -98,4 +100,9 @@ export const GroupedSessions: Story = {
       rowHeight,
     );
   },
+};
+
+export const GroupedSessionsDark: Story = {
+  ...GroupedSessions,
+  globals: { theme: 'blockether-dark' },
 };

@@ -392,8 +392,11 @@ describe('NewSessionButton', () => {
   const html = (props: Partial<Parameters<typeof NewSessionButton>[0]> = {}) =>
     renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} {...props} />);
 
-  it('is the yellow one: the verb of the screen, not a row of a menu', () => {
-    expect(html()).toContain('New session');
+  // Regression: the project plus used accent ink instead of the standard icon color.
+  it('uses the same neutral ink as other header actions', () => {
+    for (const props of [{}, { isBusy: true }, { disabled: true }]) {
+      expect(html(props)).toContain('text-white enabled:hover:text-accent-ink');
+    }
   });
 
   // Regression, user report ("make those buttons less verbose — nine yellow slabs
