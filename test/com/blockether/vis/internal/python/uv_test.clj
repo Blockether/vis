@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.python.uv-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
@@ -195,3 +196,96 @@
 
               (is (= 23 result))
               (is (= args (when (.isFile recorded) (str/split-lines (slurp recorded))))))))))))
+
+(deftest shared-sync-options-test
+  (is (= {:selection [["--locked"] ["--group" "dev"] ["--all-extras"]
+                      ["--no-emit-package" "excluded"]]
+          :common [["--offline"]]
+          :location [["--project" "path with spaces"]]}
+         (#'python-runtime/shared-sync-args
+          ["--locked" "--group=dev" "--all-extras" "--no-install-package" "excluded" "--offline"
+           "--project=path with spaces"])))
+  (doseq [args [["--group"] ["--group="] ["--group" "--offline"] ["--locked=yes"]
+                ["--target" "/elsewhere"] ["--python" "other"] ["--active"] ["--exact"] ["--check"]
+                ["--dry-run"] ["--script" "tool.py"] ["--output-file" "other"]]]
+    (is (some? (failure #(#'python-runtime/shared-sync-args args))) (pr-str args))))
+
+(deftest shared-sync-help-and-invalid-command-do-not-launch-test
+  (with-redefs-fn {#'python-runtime/bundled-uv!
+                   #(throw (ex-info "uv must not launch for help or invalid options" {}))}
+    (fn []
+      (with-open [bytes
+                  (java.io.ByteArrayOutputStream.)
+
+                  stream
+                  (java.io.PrintStream. bytes)]
+
+        (with-redefs [config/original-stdout stream]
+          (is (= 0 (python-runtime/uv-command! ["sync" "--help"] {:shared? true})))
+          (is (str/includes? (.toString bytes "UTF-8") "--all-groups"))
+          (is (str/includes? (.toString bytes "UTF-8") "unrelated"))))
+      (is (str/includes? (.getMessage (failure #(python-runtime/uv-command! ["run" "python"]
+                                                                            {:shared? true})))
+                         "supports uv sync only")))))
+
+(deftest shared-sync-stages-and-cleanup-test
+  (python-runtime/ensure-library!)
+  (doseq [[export-exit install-exit] [[0 0] [23 0] [0 17]]]
+    (with-uv-fixture
+      (str "printf '%s\n' \"$@\" > \"$0.$1.args\"\n"
+           "printf '%s' \"${UV_DEFAULT_INDEX:-}\" > \"$0.$1.index\"\n"
+           "case \"$1\" in\n"
+           "  workspace) dirname \"$0\";;\n"
+           "  export) exit "
+           export-exit
+           ";;\n"
+           "  pip) exit "
+           install-exit
+           ";;\nesac\n")
+      (fn [dir uv]
+        (let [packages (str (io/file dir "shared"))
+              configure-index! @#'python-runtime/uv-index!]
+
+          (with-redefs-fn {#'python-runtime/bundled-uv! (constantly uv)
+                           #'runtime/packages-dir (constantly packages)
+                           #'config/load-config-raw
+                           (constantly {"python" {"index_url"
+                                                  "https://gateway.example.com/simple"}})
+                           #'python-runtime/uv-index! (fn [^ProcessBuilder builder]
+                                                        (doto (.environment builder)
+                                                          (.remove "UV_DEFAULT_INDEX")
+                                                          (.remove "UV_INDEX_URL"))
+                                                        (configure-index! builder))}
+            (fn []
+              (is (= (if (zero? export-exit) install-exit export-exit)
+                     (python-runtime/uv-command! ["sync" "--locked" "--group" "dev" "--offline"]
+                                                 {:shared? true})))
+              (let [export (str/split-lines (slurp (io/file (str uv ".export.args"))))
+                    options (set export)
+                    lock-file (io/file (second (drop-while #(not= "--output-file" %) export)))
+                    install-file (io/file (str uv ".pip.args"))]
+
+                (is (every? options ["--locked" "--group" "dev" "--offline" "pylock.toml"]))
+                (is (= (.getCanonicalFile dir) (.getCanonicalFile (.getParentFile lock-file))))
+                (is (not (.exists lock-file)))
+                (is (= (zero? export-exit) (.exists install-file)))
+                (doseq [phase (if (zero? export-exit)
+                                ["workspace" "export" "pip"]
+                                ["workspace" "export"])]
+                  (is (= "https://gateway.example.com/simple"
+                         (slurp (io/file (str uv "." phase ".index")))))))
+              (when (zero? export-exit)
+                (let [install (str/split-lines (slurp (io/file (str uv ".pip.args"))))]
+                  (is (= packages (second (drop-while #(not= "--target" %) install))))
+                  (is (not-any? #{"--exact" "sync" "--group" "--locked"} install)))))))))))
+
+(deftest shared-sync-refuses-empty-workspace-path-test
+  (python-runtime/ensure-library!)
+  (with-uv-fixture "exit 0\n"
+                   (fn [_ uv]
+                     (with-redefs-fn {#'python-runtime/bundled-uv! (constantly uv)}
+                       (fn []
+                         (is (str/includes? (.getMessage (failure #(python-runtime/uv-command!
+                                                                     ["sync"]
+                                                                     {:shared? true})))
+                                            "workspace directory")))))))

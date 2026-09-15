@@ -3390,11 +3390,11 @@
         exit
         (case mode
           :uv
-          (try (when (or shared? (not network?) (not inherit-env?) (seq env-overrides))
+          (try (when (or (not network?) (not inherit-env?) (seq env-overrides))
                  (throw (ex-info
                           "Python sandbox options do not apply to uv; put uv directly after python"
                           {})))
-               (python-runtime/uv-command! argv)
+               (python-runtime/uv-command! argv {:shared? shared?})
                (catch Throwable t (stderr! (.getMessage t)) 1))
 
           :code
@@ -3500,6 +3500,7 @@
      :cmd/examples
      ["vis-agent python --shared -c \"import requests; print(requests.__version__)\""
       "vis-agent python --shared -m pip install requests   # shared sandbox packages"
+      "vis-agent python --shared uv sync --all-groups --all-extras   # shared project dependencies"
       "vis-agent python uv sync --project ./einmal --locked   # prepare extension dependencies"
       "vis-agent python -m pytest tests/ -q   # module run as __main__"
       "vis-agent python -m pytest tests/   # src layout inferred from project metadata"
@@ -4635,6 +4636,9 @@
   ;; uv owns every following token, including help, version and child-program flags.
   (when (= ["python" "uv"] (take 2 raw-args))
     (System/exit (python-runtime/uv-command! (drop 2 raw-args))))
+  (when (= ["python" "--shared" "uv"] (take 3 raw-args))
+    (System/exit (try (python-runtime/uv-command! (drop 3 raw-args) {:shared? true})
+                      (catch Throwable t (stderr! (.getMessage t)) 1))))
   (system-trust/install!)
   (let [main-started
         (System/nanoTime)

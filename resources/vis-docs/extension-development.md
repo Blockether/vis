@@ -243,6 +243,45 @@ Build backends and executable `.pth` lines are trusted code. A failed load canno
 roll back project or shared package changes. Imports in `python_execution` never install
 packages, and the shared directory is read-only there.
 
+## Install a project into shared packages
+
+To make a uv project's libraries available in `python_execution`, explicitly sync
+it into Vis's shared packages.
+
+Shared installs can change versions used by every shared consumer. Only sync
+projects you trust: build backends run with your OS user's permissions.
+
+```bash
+vis-agent python --shared uv sync --project ./einmal
+
+# Include every dependency group and optional extra:
+vis-agent python --shared uv sync --project ./einmal --all-groups --all-extras
+
+# Require the existing lockfile to remain unchanged:
+vis-agent python --shared uv sync --project ./einmal --locked
+```
+
+This installs into `~/.vis/python/packages` (or `VIS_PYTHON_PACKAGES`) using Vis's
+embedded Python. uv resolves the project and its sources, honors `uv.lock`, and
+includes default dependency groups. The project and local editable dependencies
+remain editable. You do not create or manage an exported requirements file.
+
+Run `/reload` after installation to refresh Vis workers. To run a shared package
+from the CLI, including inside a project, use `vis-agent python --shared -m your_package`.
+Shared sync does not prepare `.venv` or change which environment project extensions use.
+
+**Shared sync retains unrelated packages**, including packages previously installed
+from groups you no longer select. All shared consumers use the same installed versions.
+
+Use `--group`, `--extra`, `--no-dev` and related selection flags to choose dependencies;
+`--frozen` skips lock updates, and `--no-install-project` installs dependencies without
+the project itself. Configure private indices through uv project configuration,
+`UV_*` environment variables, or Vis's `python.index_url`.
+
+`vis-agent python --shared uv sync --help` lists supported options. Shared sync does
+not support `--check`, `--dry-run`, `--active`, or choosing another interpreter.
+Without `--shared`, `vis-agent python uv ...` remains ordinary upstream uv.
+
 ## See also
 
 - [Extension design](extension-design.md) — tool boundaries and test expectations.

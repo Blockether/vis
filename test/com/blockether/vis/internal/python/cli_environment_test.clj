@@ -5,10 +5,13 @@
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.blockether.vispython Interpreter]
+           [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io File]
+           [java.net InetSocketAddress]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent TimeUnit]))
+           [java.util.concurrent TimeUnit]
+           [java.util.zip ZipEntry ZipOutputStream]))
 
 (set! *warn-on-reflection* true)
 
@@ -149,3 +152,270 @@
                 (expect (str/includes? (:output result) "vis-agent python uv sync")
                         (:output result))))))
         (finally (delete-tree! dir))))))
+
+(defn- shared-fixture-wheel!
+  ^File [^File project module]
+  (let [dist
+        (str module "-1.0.0.dist-info/")
+
+        wheel
+        (io/file project (str module "-1.0.0-py3-none-any.whl"))]
+
+    (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
+      (doseq [[path text] {(str module ".py") "VALUE = 42\n"
+                           (str dist "METADATA")
+                           (str "Metadata-Version: 2.1\nName: " module "\nVersion: 1.0.0\n")
+                           (str dist "WHEEL")
+                           "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+                           (str dist "RECORD") ""}]
+        (.putNextEntry zip (ZipEntry. ^String path))
+        (.write zip (.getBytes ^String text "UTF-8"))
+        (.closeEntry zip)))
+    wheel))
+
+(defdescribe
+  python-cli-shared-sync-test
+  (it
+    "syncs locked editable projects and selected groups into shared packages without pruning"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target")
+                                                                            .mkdirs))
+                                                                 "vis-shared-sync-"
+                                                                 (make-array FileAttribute 0))))
+
+          project
+          (doto (io/file dir "project with spaces") .mkdirs)
+
+          shared
+          (doto (io/file dir "shared packages") .mkdirs)
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (.getPath shared)
+           "UV_PROJECT_ENVIRONMENT" "untouched-environment"
+           "UV_PYTHON" "not-the-embedded-python"}
+
+          sync!
+          (fn [& args]
+            (run-cli dir
+                     environment
+                     (into ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"]
+                           args)))
+
+          probe!
+          (fn [code]
+            (run-cli project environment ["--shared" "--no-network" "-c" code]))]
+
+      (try
+        (spit
+          (io/file project "pyproject.toml")
+          (str "[project]\nname = 'vis-editable-fixture'\nversion = '0.0.1'\n"
+               "requires-python = '>=3.12'\ndependencies = ['shared-base==1.0.0']\n"
+               "[project.optional-dependencies]\nextra = ['shared-extra==1.0.0']\n"
+               "[dependency-groups]\ndev = ['shared-dev==1.0.0']\n"
+               "[build-system]\nrequires = []\nbuild-backend = 'backend'\nbackend-path = ['.']\n"
+               "[tool.uv.sources]\n" "shared-base = {path = 'shared_base-1.0.0-py3-none-any.whl'}\n"
+               "shared-dev = {path = 'shared_dev-1.0.0-py3-none-any.whl'}\n"
+               "shared-extra = {path = 'shared_extra-1.0.0-py3-none-any.whl'}\n"))
+        (io/copy (io/file "test/com/blockether/vis/internal/python/fixtures/editable_backend.py")
+                 (io/file project "backend.py"))
+        (io/make-parents (io/file project "src/shared_project.py"))
+        (spit (io/file project "src/shared_project.py") "VALUE = 7\n")
+        (doseq [module ["shared_base" "shared_dev" "shared_extra"]]
+          (shared-fixture-wheel! project module))
+        (spit (io/file shared "unrelated.py") "VALUE = 'kept'\n")
+        (io/make-parents (io/file project ".venv/sentinel"))
+        (spit (io/file project ".venv/sentinel") "untouched")
+        (let [result (sync!)]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (.isFile (io/file project "uv.lock")))
+        (expect (not (.exists (io/file project "untouched-environment"))))
+        (expect (= "untouched" (slurp (io/file project ".venv/sentinel"))))
+        (let [result
+              (probe!
+                (str "import shared_project, shared_base, shared_dev, unrelated, importlib.util\n"
+                     "assert importlib.util.find_spec('shared_extra') is None\n"
+                     "print('SHARED_SYNC', shared_project.VALUE, shared_base.VALUE, "
+                     "shared_dev.VALUE, unrelated.VALUE)"))]
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "SHARED_SYNC 7 42 42 kept") (:output result)))
+        (let [lock
+              (slurp (io/file project "uv.lock"))
+
+              result
+              (sync! "--locked" "--all-groups" "--all-extras")]
+
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (= lock (slurp (io/file project "uv.lock")))))
+        (spit (io/file project "src/shared_project.py") "VALUE = 8\n")
+        (let [result (sync! "--frozen" "--no-dev")]
+          (expect (= 0 (:exit result)) (:output result)))
+        (let [result (probe! (str "import shared_project, shared_extra, shared_dev, unrelated\n"
+                                  "print('RETAINED', shared_project.VALUE, shared_extra.VALUE, "
+                                  "shared_dev.VALUE, unrelated.VALUE)"))]
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "RETAINED 8 42 42 kept") (:output result)))
+        (spit (io/file project "pyproject.toml")
+              (str/replace (slurp (io/file project "pyproject.toml"))
+                           "requires-python = '>=3.12'"
+                           "requires-python = '>=3.13'"))
+        (let [lock
+              (slurp (io/file project "uv.lock"))
+
+              result
+              (sync! "--locked")]
+
+          (expect (not= 0 (:exit result)) (:output result))
+          (expect (= lock (slurp (io/file project "uv.lock")))))
+        (expect (not-any? #(re-find #"^(requirements.*|pylock.*)\.(txt|toml)$" (.getName ^File %))
+                          (.listFiles project)))
+        (finally (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-shared-workspace-sync-test
+  (it
+    "discovers the workspace root from a member and supports an empty selection"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-workspace-"
+                                                                 (make-array FileAttribute 0))))
+
+          project
+          (doto (io/file dir "workspace") .mkdirs)
+
+          member
+          (doto (io/file project "member") .mkdirs)
+
+          shared
+          (io/file dir "shared")
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (str shared)}
+
+          sync!
+          (fn [& options]
+            (run-cli dir
+                     environment
+                     (into ["--shared" "uv" "sync" "--directory" (str member) "--package=member"
+                            "--offline"]
+                           options)))]
+
+      (try (shared-fixture-wheel! project "shared_base")
+           (spit
+             (io/file project "pyproject.toml")
+             (str
+               "[tool.uv.workspace]\nmembers = ['member']\n"
+               "[tool.uv.sources]\nshared-base = {path = 'shared_base-1.0.0-py3-none-any.whl'}\n"))
+           (spit (io/file member "pyproject.toml")
+                 (str "[project]\nname = 'member'\nversion = '0.1.0'\nrequires-python = '>=3.12'\n"
+                      "dependencies = ['shared-base']\n[dependency-groups]\nempty = []\n"))
+           (let [result (sync!)]
+             (expect (= 0 (:exit result)) (:output result)))
+           (expect (.isFile (io/file project "uv.lock")))
+           (expect (.isFile (io/file shared "shared_base.py")))
+           (expect (not (.exists (io/file member "uv.lock"))))
+           (expect (not (.exists (io/file project ".venv"))))
+           (let [result (sync! "--locked" "--only-group" "empty")]
+             (expect (= 0 (:exit result)) (:output result)))
+           (expect (.isFile (io/file shared "shared_base.py")))
+           (expect (not-any? #(str/starts-with? (.getName ^File %) "pylock.") (file-seq project)))
+           (finally (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-shared-index-sync-test
+  (it
+    "keeps named-index artifacts and authentication through both shared sync stages"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-index-"
+                                                                 (make-array FileAttribute 0))))
+
+          project
+          (doto (io/file dir "project") .mkdirs)
+
+          shared
+          (io/file dir "shared")
+
+          server
+          (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+          requests
+          (atom [])
+
+          authorization
+          (str "Basic "
+               (.encodeToString (java.util.Base64/getEncoder)
+                                (.getBytes "fixture:fixture-password" "UTF-8")))]
+
+      (try
+        (let [wheel (Files/readAllBytes (.toPath (shared-fixture-wheel! project "shared_base")))]
+          (.createContext
+            server
+            "/"
+            (reify
+              HttpHandler
+                (handle [_ exchange]
+                  (let
+                    [^HttpExchange exchange exchange
+                     path (.getPath (.getRequestURI exchange))
+                     authorized? (= authorization
+                                    (.getFirst (.getRequestHeaders exchange) "Authorization"))
+                     body
+                     (cond
+                       (not authorized?) (.getBytes "Authentication required" "UTF-8")
+                       (= path "/private/simple/shared-base/")
+                       (.getBytes
+                         "<a href='/private/files/shared_base-1.0.0-py3-none-any.whl'>fixture</a>"
+                         "UTF-8")
+                       (= path "/private/files/shared_base-1.0.0-py3-none-any.whl") wheel
+                       :else (.getBytes "Not found" "UTF-8"))
+                     status (cond (not authorized?) 401
+                                  (#{"/private/simple/shared-base/"
+                                     "/private/files/shared_base-1.0.0-py3-none-any.whl"}
+                                   path)
+                                  200
+                                  :else 404)]
+
+                    (swap! requests conj {:path path :authorized? authorized?})
+                    (try (when-not authorized?
+                           (.set (.getResponseHeaders exchange)
+                                 "WWW-Authenticate"
+                                 "Basic realm=fixture"))
+                         (.set
+                           (.getResponseHeaders exchange)
+                           "Content-Type"
+                           (if (str/ends-with? path ".whl") "application/octet-stream" "text/html"))
+                         (.sendResponseHeaders exchange status (alength ^bytes body))
+                         (with-open [out (.getResponseBody exchange)]
+                           (.write out ^bytes body))
+                         (finally (.close exchange)))))))
+          (.start server)
+          (let [base (str "http://127.0.0.1:" (.getPort (.getAddress server)))
+                environment {"VIS_PYTHON_PACKAGES" (str shared)
+                             "UV_DEFAULT_INDEX" (str base "/public/simple")
+                             "UV_INDEX_FIXTURE_USERNAME" "fixture"
+                             "UV_INDEX_FIXTURE_PASSWORD" "fixture-password"}]
+
+            (spit (io/file project "pyproject.toml")
+                  (str "[project]\nname='shared-index-project'\nversion='0.1.0'\n"
+                       "requires-python='>=3.12'\ndependencies=['shared-base==1.0.0']\n"
+                       "[[tool.uv.index]]\nname='fixture'\nurl='" base
+                       "/private/simple'\nexplicit=true\n"
+                       "[tool.uv.sources]\nshared-base={index='fixture'}\n"))
+            (let [result (run-cli dir
+                                  environment
+                                  ["--shared" "uv" "sync" "--project" (str project) "--no-cache"])]
+              (expect (= 0 (:exit result)) (:output result)))
+            (let [result (run-cli
+                           project
+                           environment
+                           ["--shared" "--no-network" "-c"
+                            "import shared_base; print('PRIVATE_INDEX', shared_base.VALUE)"])]
+              (expect (= 0 (:exit result)) (:output result))
+              (expect (str/includes? (:output result) "PRIVATE_INDEX 42") (:output result)))
+            (expect (>= (count (filter #(and (:authorized? %)
+                                             (= "/private/files/shared_base-1.0.0-py3-none-any.whl"
+                                                (:path %)))
+                                       @requests))
+                        2)
+                    (pr-str @requests))
+            (expect (every? #(str/starts-with? (:path %) "/private/") @requests)
+                    (pr-str @requests))))
+        (finally (.stop server 0) (delete-tree! dir))))))

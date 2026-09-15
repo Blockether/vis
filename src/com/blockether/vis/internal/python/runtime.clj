@@ -28,7 +28,7 @@
             [taoensso.telemere :as tel])
   (:import [com.blockether.vispython Interpreter Locations]
            [java.io File]
-           [java.lang ProcessHandle]
+           [java.lang ProcessBuilder$Redirect ProcessHandle]
            [java.nio.file CopyOption Files StandardCopyOption]
            [java.util.concurrent TimeUnit]))
 
@@ -405,15 +405,216 @@
                              (assoc (ex-data cause) :type ::project-preparation-failed)
                              cause)))))))
 
+(def ^:private shared-sync-selection-options
+  {"--locked" 0
+   "--frozen" 0
+   "--extra" 1
+   "--all-extras" 0
+   "--no-extra" 1
+   "--group" 1
+   "--all-groups" 0
+   "--no-group" 1
+   "--only-group" 1
+   "--no-dev" 0
+   "--only-dev" 0
+   "--no-default-groups" 0
+   "--package" 1
+   "--all-packages" 0
+   "--no-editable" 0
+   "--no-editable-package" 1
+   "--no-install-project" 0
+   "--no-install-workspace" 0
+   "--no-install-local" 0
+   "--no-install-package" 1})
+
+(def ^:private shared-sync-common-options
+  {"--offline" 0
+   "--no-cache" 0
+   "--cache-dir" 1
+   "--refresh" 0
+   "--refresh-package" 1
+   "--config-file" 1
+   "--no-config" 0
+   "--system-certs" 0
+   "--allow-insecure-host" 1
+   "--no-progress" 0
+   "--index-strategy" 1
+   "--keyring-provider" 1
+   "--no-build-isolation" 0
+   "--no-build-isolation-package" 1
+   "--no-build" 0
+   "--no-build-package" 1
+   "--no-binary" 0
+   "--no-binary-package" 1
+   "--link-mode" 1})
+
+(def ^:private shared-sync-location-options {"--project" 1 "--directory" 1})
+
+(defn- shared-sync-args
+  [args]
+  (loop [args
+         (seq args)
+
+         options
+         {:selection [] :common [] :location []}]
+
+    (if-let [arg (first args)]
+      (let [[flag inline] (str/split arg #"=" 2)
+            [kind arity] (some (fn [[kind supported]]
+                                 (when-let [arity (get supported flag)]
+                                   [kind arity]))
+                               [[:selection shared-sync-selection-options]
+                                [:common shared-sync-common-options]
+                                [:location shared-sync-location-options]])]
+
+        (when-not kind
+          (throw
+            (ex-info
+              "Unsupported shared sync option; run vis-agent python --shared uv sync --help. Use ordinary uv sync for other environments."
+              {})))
+        (when (or (and (zero? arity) inline)
+                  (and (= 1 arity)
+                       (or (str/blank? (or inline (second args)))
+                           (str/starts-with? (or inline (second args)) "-"))))
+          (throw (ex-info (str flag " requires " (if (zero? arity) "no value" "a value")) {})))
+        (let [value (when (= 1 arity) (or inline (second args)))
+              flag (str/replace flag "--no-install-" "--no-emit-")]
+
+          (recur (if (and (= 1 arity) (nil? inline)) (nnext args) (next args))
+                 (update options
+                         kind
+                         conj
+                         (cond-> [flag]
+                           value
+                           (conj value))))))
+      options)))
+
+(defn- shared-sync-help!
+  []
+  (.println
+    config/original-stdout
+    (str
+      "Usage: vis-agent python --shared uv sync [OPTIONS]\n\n"
+      "Install a uv project's locked dependencies and editable project into Vis shared packages.\n"
+      "Uses embedded Python; leaves .venv and unrelated shared packages alone.\n"
+      "Existing versions can change. Run /reload after installing.\n\n"
+      "Supported options (VALUE marks an argument):\n"
+      (str/join "\n"
+                (for [[flag arity] (sort (merge shared-sync-selection-options
+                                                shared-sync-common-options
+                                                shared-sync-location-options))]
+                  (str "  " flag (when (= 1 arity) " VALUE"))))
+      "\n  --help\n\n"
+      "Configure indices with python.index_url, uv project configuration, or UV_* environment variables.\n"
+      "Shared sync always retains unrelated packages; --check, --dry-run, --active and interpreter overrides are not supported."))
+  0)
+
+(defn- shared-sync-process!
+  [^File cwd args discard-stdout?]
+  (let [builder
+        (doto (ProcessBuilder. ^java.util.List args) (.directory cwd) uv-index! (.inheritIO))]
+    (when discard-stdout? (.redirectOutput builder ProcessBuilder$Redirect/DISCARD))
+    (.waitFor (.start builder))))
+
+(defn- shared-uv-sync!
+  [args]
+  (when-not (= "sync" (first args))
+    (throw (ex-info "--shared supports uv sync only; use vis-agent python uv for other uv commands."
+                    {})))
+  (if (some #{"--help" "-h"} (rest args))
+    (shared-sync-help!)
+    (let [{:keys [selection common location]}
+          (shared-sync-args (rest args))
+
+          uv
+          (bundled-uv!)
+
+          python
+          (Interpreter/pythonExecutable)
+
+          cwd
+          (io/file (System/getProperty "user.dir"))
+
+          directory
+          (or (some #(when (= "--directory" (first %)) (second %)) (reverse location))
+              (System/getenv "UV_WORKING_DIR"))
+
+          effective-cwd
+          (if directory
+            (let [path (io/file directory)]
+              (if (.isAbsolute path) path (io/file cwd directory)))
+            cwd)
+
+          ;; pip discovers configuration at the workspace root. Resolve explicit
+          ;; path options before changing directories so their meaning stays intact.
+          common
+          (mapv (fn [[flag value :as option]]
+                  (if (and (#{"--config-file" "--cache-dir"} flag)
+                           (not (.isAbsolute (io/file value))))
+                    [flag (.getCanonicalPath (io/file effective-cwd value))]
+                    option))
+                common)
+
+          discovery
+          (concat (mapcat identity location)
+                  (mapcat identity (filter #(#{"--config-file" "--no-config"} (first %)) common)))
+
+          project
+          (io/file (str/trim (run-uv! cwd (into [uv "workspace" "dir"] discovery))))]
+
+      (when-not (and (.isAbsolute project) (.isDirectory project))
+        (throw (ex-info "uv did not report an existing workspace directory" {})))
+      ;; uv writes local sources relative to the workspace root, and reads them
+      ;; relative to the pylock's parent. Never put this file in the system temp dir.
+      (let [lock-file
+            (Files/createTempFile (.toPath project)
+                                  "pylock.vis-"
+                                  ".toml"
+                                  (make-array java.nio.file.attribute.FileAttribute 0))
+
+            interpreter
+            ["--python" python "--no-python-downloads"]
+
+            common
+            (vec (mapcat identity common))]
+
+        (try (let [exit (shared-sync-process! cwd
+                                              (into [uv "export" "--format" "pylock.toml"
+                                                     "--output-file" (str lock-file)]
+                                                    (concat (mapcat identity location)
+                                                            (mapcat identity selection)
+                                                            common
+                                                            interpreter))
+                                              true)]
+               (if-not (zero? exit)
+                 exit
+                 (let [packages (runtime/packages-dir)
+                       exit (shared-sync-process! cwd
+                                                  (into [uv "pip" "install" "--target" packages
+                                                         "--requirements" (str lock-file)
+                                                         "--no-deps" "--directory"
+                                                         (.getCanonicalPath project)]
+                                                        (concat common interpreter))
+                                                  false)]
+
+                   (when (zero? exit)
+                     (.println
+                       config/original-stderr
+                       (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))
+                   exit)))
+             (finally (Files/deleteIfExists lock-file)))))))
+
 (defn uv-command!
   "Run bundled upstream uv with unchanged arguments and stdio; return its exit code.
+   Explicit :shared? opts select Vis's shared sync workflow, never a project venv.
    Vis's python.index_url supplies UV_DEFAULT_INDEX unless uv's index environment
    is already set. Explicit uv CLI options retain upstream precedence."
-  [args]
-  (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
-                      (.directory (io/file (System/getProperty "user.dir")))
-                      uv-index!
-                      (.inheritIO)))))
+  ([args]
+   (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
+                       (.directory (io/file (System/getProperty "user.dir")))
+                       uv-index!
+                       (.inheritIO)))))
+  ([args {:keys [shared?]}] (if shared? (shared-uv-sync! args) (uv-command! args))))
 
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,
