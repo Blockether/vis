@@ -214,18 +214,30 @@ it('reaches the tail without accumulating prior rows and returns to earlier oper
     </ActivityHistoryContext.Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  // #212: query the named paging control, not every row's accessible button name.
+  // Keep role, visibility and enabled checks on the actual control we click.
+  const clickPage = (name: string) => {
+    const button = screen.getByLabelText(name);
+    expect(button).toHaveRole('button');
+    expect(button).toBeVisible();
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+  };
   for (let i = 0; i < 4; i++) {
-    fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
+    clickPage('Show more operations');
     await screen.findByText(`Operation ${(i + 2) * 32}`);
     expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(32);
+    expect(screen.queryByText(`Operation ${i * 32 + 1}`)).toBeNull();
   }
   expect(screen.getByText('Operation 159')).toBeVisible();
   expect(screen.getByText('Operation 160')).toBeVisible();
   expect(screen.queryByText('Operation 1')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Show earlier operations' }));
+  expect(screen.queryByLabelText('Show more operations')).toBeNull();
+  clickPage('Show earlier operations');
   expect(await screen.findByText('Operation 1')).toBeVisible();
   expect(screen.queryByText('Operation 160')).toBeNull();
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(32);
+  expect(load.mock.calls.map(([, after]) => after)).toEqual([32, 64, 96, 128, 0]);
 });
 
 it.each(['revision', 'cursor', 'id', 'after'])(
