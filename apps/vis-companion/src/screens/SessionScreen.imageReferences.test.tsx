@@ -249,3 +249,105 @@ it("recovers a failed image send without discarding a newer composed message", a
     screen.getByRole("button", { name: "Remove photo-2.png" }),
   ).toBeInTheDocument();
 });
+
+it.each(["running", "queued"])(
+  "restarts image numbering for a fresh composer after a %s submission",
+  async (status) => {
+    const submitTurn = vi
+      .fn()
+      .mockResolvedValue({ turn_id: "accepted", status });
+    renderSessionScreen({ client: { submitTurn } });
+    await pasteImage();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await act(async () => {});
+    expect(editor().value).toBe("");
+    await pasteImage();
+    expect(editor().value).toBe("[IMAGE #1]");
+  },
+);
+
+it("does not reset numbering after success when newer authored work already exists", async () => {
+  let accept!: (value: { turn_id: string; status: string }) => void;
+  const submitTurn = vi.fn().mockReturnValue(
+    new Promise((resolve) => {
+      accept = resolve;
+    }),
+  );
+  renderSessionScreen({ client: { submitTurn } });
+  await pasteImage();
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await pasteImage();
+  await act(async () => accept({ turn_id: "accepted", status: "running" }));
+  await pasteImage();
+  expect(editor().value).toBe("[IMAGE #2] [IMAGE #3]");
+});
+
+it("rebases a cancelled queued image instead of binding an authored literal", async () => {
+  const events = subscriptionHub();
+  const submitTurn = vi
+    .fn()
+    .mockResolvedValue({ turn_id: "queued-image", status: "queued" });
+  renderSessionScreen({ client: { submitTurn }, subscriptions: events });
+  await pasteImage();
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await act(async () => {});
+  fireEvent.input(editor(), { target: { value: "Literal [IMAGE #1]" } });
+  await act(async () => {
+    events.emit({
+      type: "turn.queued.deleted",
+      seq: 100,
+      turn_id: "queued-image",
+      reason: "cancelled",
+      request: "[IMAGE #1]",
+    } as unknown as SseEvent);
+  });
+  await waitFor(() =>
+    expect(editor().value).toBe("Literal [IMAGE #1]\n\n[IMAGE #2]"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo-1.png" }));
+  expect(editor().value).toBe("Literal [IMAGE #1]\n\n");
+});
+
+it("keeps a newer image number when restoring a queued image from an earlier message", async () => {
+  const events = subscriptionHub();
+  const submitTurn = vi
+    .fn()
+    .mockResolvedValue({ turn_id: "queued-image", status: "queued" });
+  renderSessionScreen({ client: { submitTurn }, subscriptions: events });
+  await pasteImage();
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await act(async () => {});
+  await pasteImage();
+  await act(async () => {
+    events.emit({
+      type: "turn.queued.deleted",
+      seq: 100,
+      turn_id: "queued-image",
+      reason: "cancelled",
+      request: "[IMAGE #1]",
+    } as unknown as SseEvent);
+  });
+  await waitFor(() => expect(editor().value).toBe("[IMAGE #1]\n\n[IMAGE #2]"));
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo-1.png" }));
+  expect(editor().value).toBe("[IMAGE #1]\n\n");
+  expect(
+    screen.getByRole("button", { name: "Remove photo-2.png" }),
+  ).toBeInTheDocument();
+});
+
+it("rebases a failed send around a newer unowned literal", async () => {
+  let fail!: (reason: Error) => void;
+  const submitTurn = vi.fn().mockReturnValue(
+    new Promise((_resolve, reject) => {
+      fail = reject;
+    }),
+  );
+  renderSessionScreen({ client: { submitTurn } });
+  await pasteImage();
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  fireEvent.input(editor(), { target: { value: "Literal [IMAGE #1]" } });
+  await act(async () => fail(new Error("Unavailable")));
+  expect(editor().value).toBe("[IMAGE #2]\n\nLiteral [IMAGE #1]");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo-1.png" }));
+  expect(editor().value).toBe("\n\nLiteral [IMAGE #1]");
+});

@@ -11,7 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
-import { insertImageReferences, referencedAttachments } from '../lib/composer-images';
+import { insertImageReferences, referencedAttachments, restoreImageReferences } from '../lib/composer-images';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { AgentTeam } from '../components/AgentTeam';
@@ -950,6 +950,21 @@ export function SessionScreen({
   // never auto-sent. The draft is persisted per session, so leaving the screen (or
   // the app) does not lose it. Same contract the TUI honours in `:sync-queued-turn`
   // / `:restore-pending-to-input`.
+  const restoreComposerImages = useCallback(
+    (text: string, incoming: PendingAttachment[], prepend = false) => {
+      const current = composerRef.current?.value ?? '';
+      const restored = restoreImageReferences(
+        current, attachmentsRef.current, text, incoming, imageCounterRef.current,
+      );
+      imageCounterRef.current = restored.counter;
+      setPrompt(prepend
+        ? [restored.text, current].filter(Boolean).join('\n\n')
+        : [current.trimEnd(), restored.text].filter(Boolean).join('\n\n'));
+      setAttachments(restored.attachments);
+    },
+    [setPrompt, setAttachments],
+  );
+
   const restoreCancelledQueued = useCallback((turnId: string | undefined, request: string) => {
     if (!turnId) return;
     const done = restoredQueueRef.current;
@@ -965,9 +980,7 @@ export function SessionScreen({
     const authored = authoredQueueRef.current.get(turnId);
     authoredQueueRef.current.delete(turnId);
     const text = (authored?.request || request || '').trim();
-    if (text) {
-      setPrompt((current) => [current.trimEnd(), text].filter(Boolean).join('\n\n'));
-    }
+    if (text || authored?.attachments.length) restoreComposerImages(text, authored?.attachments ?? []);
     if (authored?.pastes.size) {
       setPastes((current) => {
         const next = new Map(current);
@@ -975,13 +988,7 @@ export function SessionScreen({
         return next;
       });
     }
-    if (authored?.attachments.length) {
-      setAttachments((current) => {
-        const seen = new Set(current.map((item) => item.id));
-        return [...current, ...authored.attachments.filter((item) => !seen.has(item.id))];
-      });
-    }
-  }, []);
+  }, [restoreComposerImages]);
   // The bytes are kept on the CLIENT, not in this screen: leaving the session
   // unmounts `SessionScreen`, and a running turn whose images lived only in screen
   // state came back text-only until the persisted row landed on top.
@@ -3475,17 +3482,13 @@ export function SessionScreen({
           setSubmitScrollRequest((request) => request + 1);
           setRunningTurn(started);
         }
+        if (composerRef.current?.value === '' && !attachmentsRef.current.length) {
+          imageCounterRef.current = 0;
+          recordComposerDraft('');
+        }
       } catch (cause) {
-        setPrompt((current) => (current ? `${authoredRequest}
-
-${current}` : authoredRequest));
+        restoreComposerImages(authoredRequest, pendingAttachments, true);
         setPastes((current) => new Map([...pendingPastes, ...current]));
-        setAttachments((current) => [
-          ...pendingAttachments,
-          ...current.filter(
-            (attachment) => !pendingAttachments.some((pending) => pending.id === attachment.id),
-          ),
-        ]);
         setError((cause as Error).message);
         requestAnimationFrame(() => composerRef.current?.focus());
       }
@@ -3576,20 +3579,16 @@ ${current}` : authoredRequest));
         });
         if (unacknowledged) setRunning(true);
       }
+      if (composerRef.current?.value === '' && !attachmentsRef.current.length) {
+        imageCounterRef.current = 0;
+        recordComposerDraft('');
+      }
     } catch (cause) {
       setRunning(false);
       runningTurnRef.current = null;
       setRunningTurn(null);
-      setPrompt((current) => (current ? `${authoredRequest}
-
-${current}` : authoredRequest));
+      restoreComposerImages(authoredRequest, pendingAttachments, true);
       setPastes((current) => new Map([...pendingPastes, ...current]));
-      setAttachments((current) => [
-        ...pendingAttachments,
-        ...current.filter(
-          (attachment) => !pendingAttachments.some((pending) => pending.id === attachment.id),
-        ),
-      ]);
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
     } finally {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   insertImageReferences,
   referencedAttachments,
+  restoreImageReferences,
 } from "./composer-images";
 import type { PendingAttachment } from "./attachments";
 
@@ -49,5 +50,41 @@ describe("composer image references", () => {
       attachments: [],
       counter: 3,
     });
+  });
+
+  it("rebases incoming collisions simultaneously without renumbering survivors", () => {
+    const current = { ...image, id: "newer", reference: "[IMAGE #1]" };
+    const first = { ...image, reference: "[IMAGE #1]" };
+    const second = { ...image, id: "second", reference: "[IMAGE #2]" };
+    const restored = restoreImageReferences(
+      "[IMAGE #1] literal [IMAGE #2]",
+      [current],
+      "[IMAGE #1] [IMAGE #2] [IMAGE #1]",
+      [first, second],
+      2,
+    );
+    expect(restored.text).toBe("[IMAGE #3] [IMAGE #4] [IMAGE #3]");
+    expect(restored.attachments).toEqual([
+      current,
+      { ...first, reference: "[IMAGE #3]" },
+      { ...second, reference: "[IMAGE #4]" },
+    ]);
+    expect(restored.counter).toBe(4);
+  });
+
+  it("reuses an already restored attachment and ignores deleted incoming tokens", () => {
+    const current = { ...image, reference: "[IMAGE #5]" };
+    const restored = restoreImageReferences(
+      "[IMAGE #5]",
+      [current],
+      "[IMAGE #1]",
+      [
+        { ...image, reference: "[IMAGE #1]" },
+        { ...image, id: "deleted", reference: "[IMAGE #2]" },
+      ],
+      5,
+    );
+    expect(restored.text).toBe("[IMAGE #5]");
+    expect(restored.attachments).toEqual([current]);
   });
 });

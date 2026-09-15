@@ -41,3 +41,41 @@ export function insertImageReferences(
     counter,
   };
 }
+
+/** Restore only incoming ownership; existing image numbers and literal tokens stay intact. */
+export function restoreImageReferences(
+  currentText: string,
+  current: PendingAttachment[],
+  text: string,
+  incoming: PendingAttachment[],
+  counter: number,
+) {
+  for (const match of `${currentText}\n${text}`.matchAll(/\[IMAGE #(\d+)\]/g))
+    counter = Math.max(counter, Number(match[1]));
+  const replacements = new Map<string, string>();
+  const attachments = [...current];
+  for (const attachment of referencedAttachments(text, incoming)) {
+    const existing = current.find((item) => item.id === attachment.id);
+    if (existing) {
+      if (attachment.reference && existing.reference)
+        replacements.set(attachment.reference, existing.reference);
+      continue;
+    }
+    const reference = attachment.reference;
+    if (reference && currentText.includes(reference)) {
+      const next = `[IMAGE #${++counter}]`;
+      replacements.set(reference, next);
+      attachments.push({ ...attachment, reference: next });
+    } else {
+      attachments.push(attachment);
+    }
+  }
+  return {
+    text: text.replace(
+      /\[IMAGE #\d+\]/g,
+      (token) => replacements.get(token) ?? token,
+    ),
+    attachments,
+    counter,
+  };
+}
