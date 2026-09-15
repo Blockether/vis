@@ -334,6 +334,10 @@ directory (`vis-python-runtime` → `vis_python_runtime_path`). Set `python_name
 to choose another name. `project_root_path` is the current project. Access to
 `~/.vis` is always allowed.
 
+You can ask Vis to create a draft of an added read/write repository, even when
+its policy is `shared`. This selects that repository for the current task without
+changing the catalog. See [Work in another repository](drafts.md#work-in-another-repository).
+
 ```yaml
 # vis.yml
 workspace:

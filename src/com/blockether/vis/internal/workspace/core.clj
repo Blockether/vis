@@ -1884,7 +1884,8 @@
    `:workspace/capability-unavailable`.
 
    Pass `:from <parent-workspace>` to clone that workspace's `:root` and inherit
-   its `:repo-root`; otherwise the parent is the user's real cwd (trunk).
+   its `:repo-root`. An explicit `:root` selects another source and landing
+   repository without losing the parent workspace used to return after discard.
    `apply!` copies files back to repo-root; `approve!` merges into that
    repository's default branch, which may have a different checkout.
 
@@ -1896,9 +1897,9 @@
    read as an agent edit. A project that is not Git-managed has no committed
    state to seed from, so a clean draft is refused there before anything is
    cloned."
-  [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
+  [db-info {:keys [session-state-id label from clean? filesystem-roots root]}]
   (let [trunk
-        (or (:repo-root from) (trunk-root))
+        (or (normalize-root root) (:repo-root from) (trunk-root))
 
         ;; A clean draft means "hand me this project at its committed state", so it
         ;; is a Git question. Without a repository there is no committed state to
@@ -1913,7 +1914,7 @@
                           {:type :workspace/clean-unavailable :root (file-path trunk)})))
 
         parent
-        (or (:root from) (trunk-root))
+        (or (normalize-root root) (:root from) (trunk-root))
 
         rid
         (repo-id-for trunk)
@@ -1952,7 +1953,9 @@
         ;; caller may pass an explicit plan (tests, non-interactive spawns);
         ;; otherwise the plan comes from the roots bound for this turn.
         extra-roots
-        (fork-extra-roots! (or filesystem-roots (draft-isolation-plan)) nm)
+        (fork-extra-roots! (remove #(= (normalize-root trunk) (normalize-root (:trunk %)))
+                             (or filesystem-roots (draft-isolation-plan)))
+                           nm)
 
         ws
         (p/db-workspace-insert! db-info

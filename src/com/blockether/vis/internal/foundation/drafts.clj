@@ -32,7 +32,7 @@
   (str
     "## Draft workflow\n"
     "- `draft_backend` is enabled: this is standing authorization to create drafts without asking. Isolate every change-making task (code, tests, documentation and configuration) in its own session-owned draft. Read-only questions, analysis and diff previews do not require a draft.\n"
-    "- Check `session[\"workspace\"]` or `draft_status()`. Use `draft_create(\"task-name\")` before editing, or continue this session's draft for the same task. Never edit the shared checkout or another session's draft. Creation defaults to committed HEAD; use `clean=False` only when the task includes the pending checkout changes.\n"
+    "- Check `session[\"workspace\"]` or `draft_status()`. Use `draft_create(\"task-name\")` before editing, or continue this session's draft for the same task. For an added read/write root, pass `root=<its Path variable>`; a shared root can be isolated for this task without changing configuration. Never edit the shared checkout or another session's draft. Creation defaults to committed HEAD; use `clean=False` only when the task includes the pending checkout changes.\n"
     "- For a new clean task, fetch origin and base the draft on `origin/<target_branch>` before editing (create, then fast-forward the clean draft if needed). Without origin, use the committed local target. Never reset or overwrite unrelated checkout work; report divergent history instead.\n"
     "- After creation, use `project_root_path` and `session[\"workspace\"]` from the next block, not cached checkout paths. Keep edits, formatting and verification in the draft.\n"
     "- If drafts are unavailable or blocked, report the blocker; never silently fall back to shared-checkout edits or bypass the draft tools with an ad-hoc worktree or clone.\n"
@@ -50,7 +50,10 @@
 
 (defn- db-of [env] (or (:db-info env) (:db env)))
 
-(defn- boundary-env [env] {:db-info (db-of env) :session-id (:session-id env)})
+(defn- boundary-env
+  [env]
+  (assoc (select-keys env [:session-id :security-policy :security/filesystem-roots])
+    :db-info (db-of env)))
 
 (defn- state-id-of
   "The session state the draft pins to: the env's, else the session's latest."
@@ -88,10 +91,18 @@
           str/trim
           not-empty))
 
-(defn- clean-arg
-  "`draft_create(name, clean=True)` or `draft_create(name, {\"clean\": true})`."
-  [x]
-  (not (false? (if (map? x) (get x "clean" (get x :clean true)) x))))
+(defn- create-args
+  "Normalize positionals and the map that carries Python keyword arguments."
+  [label clean root]
+  (let [options (into {}
+                      (comp (filter map?)
+                            cat
+                            (map (fn [[k v]]
+                                   [(keyword k) v])))
+                      [label clean root])]
+    {:label (if (map? label) (:label options) label)
+     :clean? (not (false? (get options :clean clean)))
+     :root (if (map? root) (:root options) (or root (:root options)))}))
 
 (defn- failure [message] (extension/failure {:error {:message message}}))
 
@@ -166,13 +177,16 @@
                (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (defn draft-create
-  "Open a draft of the trunk and move the session into it."
-  [env label & [clean]]
+  "Open a draft of the selected source and move the session into it."
+  [env label & [clean root]]
   (let [db
         (db-of env)
 
         state-id
         (state-id-of env)
+
+        {:keys [label clean? root]}
+        (create-args label clean root)
 
         label
         (some-> label
@@ -180,33 +194,26 @@
                 str/trim
                 not-empty)
 
-        clean?
-        (clean-arg clean)
-
         current
-        (current-workspace env)
-
-        repo-root
-        (or (:repo-root current) (:root current) (workspace/trunk-root))]
+        (current-workspace env)]
 
     (cond (or (nil? db) (nil? state-id)) (failure "Drafts need a persisted session.")
           (nil? label) (failure "Name the draft: draft_create(\"name\").")
           (workspace/draft? current) (failure (str "Already in draft '" (:label current)
                                                    "': draft_approve() what should land, "
                                                    "then draft_discard() before opening another."))
-          (not (workspace/isolated-workspaces-supported? repo-root))
-          (failure (str "Drafts are not available here. "
-                        (workspace/isolation-unavailable-hint repo-root)))
-          :else
-          (try (let [ws (drafts/create!
-                          (boundary-env env)
-                          {:session-state-id state-id :label label :from current :clean? clean?})]
-                 (sync-confinement! env ws)
-                 (extension/success {:op :draft-create
-                                     :result (wire/canonical (assoc (drafts/status ws)
-                                                               :in-draft true
-                                                               :clean clean?))}))
-               (catch clojure.lang.ExceptionInfo e (refusal e))))))
+          :else (try (let [ws (drafts/create! (boundary-env env)
+                                              {:session-state-id state-id
+                                               :label label
+                                               :from current
+                                               :clean? clean?
+                                               :root root})]
+                       (sync-confinement! env ws)
+                       (extension/success {:op :draft-create
+                                           :result (wire/canonical (assoc (drafts/status ws)
+                                                                     :in-draft true
+                                                                     :clean clean?))}))
+                     (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (defn draft-approve
   "Commit the session draft and merge it into the repository's local default branch."
@@ -300,14 +307,18 @@
      :tag :mutation
      :description
      (str
-       "Open a draft — an isolated working copy of this repository — and move the session into it. "
+       "Open a draft — an isolated working copy of this repository, or an added read/write root — and move the session into it. "
        "The trunk checkout is left alone until approval. Drafts default to committed HEAD (clean=True); "
        "clean=False explicitly copies pending trunk work and can cause overlap refusals on approval. "
+       "Pass root=<Path> to select a session filesystem root without changing its configured draft policy. "
+       "Read-only, copy-only, not-allowed and overlapping denied paths cannot be selected. "
+       "Approval lands in the selected repository; discard returns to the original project. "
        "Approval preserves unrelated local work. Discard the current draft before opening another. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
-              {:name "clean" :note "False copies pending changes; default True"}]
-     :call {:pos ["label"] :opt-pos ["clean"]}
+              {:name "clean" :note "False copies pending changes; default True"}
+              {:name "root" :note "existing read/write session root; omit for the current project"}]
+     :call {:pos ["label"] :opt-pos ["clean" "root"]}
      :result
      (str
        "String-keyed `{in_draft: true, workspace_id, label, root, repo_root, backend, mechanism, "
