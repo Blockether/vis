@@ -657,6 +657,121 @@
           (when (= 80 cols) (expect (str/includes? text "Check review deployment ×2"))))))))
 
 (defdescribe
+  merged-read-activity-test
+  (let [rows
+        (:rows (activity-contract/from-wire
+                 (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-reads.json")))))
+
+        first-read
+        (first rows)
+
+        second-read
+        (second rows)
+
+        grouped
+        (fn [rows]
+          (#'render/activity-operation-rows rows))]
+
+    (it "merges one file's ranges without replacing invocations or their first identity"
+        (let [group
+              (first (grouped rows))
+
+              merged
+              (first (:children group))]
+
+          (expect (= "Read ×2" (get-in group [:presentation :headline])))
+          (expect (= 1 (count (:children group))))
+          (expect (= "read-1" (:id merged)))
+          (expect (= 3 (:duration-ms merged)))
+          (expect (= "~/vis/PLAN.md · lines 583–584, 615–616"
+                     (get-in merged [:presentation :summary])))
+          (expect (= (vec (mapcat #(get-in % [:presentation :content]) rows))
+                     (get-in merged [:presentation :content])))
+          (expect (= 2 (count rows)))))
+    (it "keeps changed snapshots even when their requested ranges repeat"
+        (let [changed
+              (assoc-in second-read
+                [:presentation :summary]
+                (get-in first-read [:presentation :summary]))
+
+              merged
+              (get-in (grouped [first-read changed]) [0 :children 0])]
+
+          (expect (= 2 (count (get-in merged [:presentation :content]))))
+          (expect (= (get-in first-read [:presentation :summary])
+                     (get-in merged [:presentation :summary])))))
+    (it "preserves empty excerpts, summaries, resources and evidence"
+        (let [empty-read
+              (-> second-read
+                  (assoc :resources [{:type "file" :id "PLAN.md"}]
+                         :evidence [{:kind "result" :text "Empty read result"}])
+                  (assoc-in [:presentation :summary] "~/vis/PLAN.md")
+                  (assoc-in [:presentation :content] [{:type "code" :text ""}]))
+
+              merged
+              (get-in (grouped [first-read empty-read]) [0 :children 0])]
+
+          (expect (= "~/vis/PLAN.md · lines 583–584; ~/vis/PLAN.md"
+                     (get-in merged [:presentation :summary])))
+          (expect (= "" (:text (last (get-in merged [:presentation :content])))))
+          (expect (= (:resources empty-read) (:resources merged)))
+          (expect (= (:evidence empty-read) (:evidence merged)))))
+    (it "keeps first-invocation order and leaves other operations untouched"
+        (let [merged
+              (get-in (grouped (reverse rows)) [0 :children 0])
+
+              other
+              (assoc second-read :operation "grep")]
+
+          (expect (= "read-1" (:id merged)))
+          (expect (= (vec (mapcat #(get-in % [:presentation :content]) rows))
+                     (get-in merged [:presentation :content])))
+          (expect (= [first-read other] (#'render/merge-read-rows [first-read other])))))
+    (it "retains partial markers and never invents a total duration"
+        (let [partial
+              (-> second-read
+                  (dissoc :duration-ms)
+                  (assoc :is-truncated true))
+
+              merged
+              (get-in (grouped [first-read partial]) [0 :children 0])]
+
+          (expect (:is-truncated merged))
+          (expect (nil? (:duration-ms merged)))))
+    (it "leaves unknown identity, other targets and unusual results separate"
+        (doseq [other
+                [(dissoc second-read :read-key)
+                 (assoc second-read :read-key (apply str (repeat 64 "d")))
+                 (assoc second-read :read-key "")
+                 (assoc second-read
+                   :state "failed"
+                   :error-summary "Read refused") (assoc second-read :state "running")
+                 (assoc second-read :state "cancelled") (assoc second-read :children [first-read])
+                 (assoc-in second-read
+                   [:presentation :sections]
+                   [{:headline "Details" :summary "" :content []}])
+                 (assoc-in second-read [:presentation :headline] "Custom read")
+                 (assoc-in second-read [:presentation :content] [{:type "text" :text "Note"}])]]
+          (expect (= 2 (count (:children (first (grouped [first-read other]))))))))
+    (it "retains one disclosure for both excerpts at narrow and wide widths"
+        (doseq [width [36 100]]
+          (let [entries (#'render/activity-detail-entries
+                         {:node-id "reads"
+                          :activity-rows rows
+                          :activity-expanded? (fn [_ _]
+                                                true)}
+                         width
+                         "fixture")
+                text (str/join "\n" (map :line entries))]
+
+            (expect (str/includes? text "Verify the affected tests."))
+            (expect (str/includes? text "Plan state:"))
+            (expect (= 1
+                       (count (filter #(and (= :activity-row (get-in % [:meta :kind]))
+                                            (= "read-1" (get-in % [:meta :item-id])))
+                                      entries)))))))))
+
+(defdescribe
   repeated-activity-arguments-test
   (let [fixture
         (-> (io/resource "vis-contract/fixtures/activity-arguments.json")

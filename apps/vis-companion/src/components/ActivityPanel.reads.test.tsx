@@ -1,0 +1,146 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import readFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-reads.json';
+import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
+import { ActivityPanel } from './ActivityPanel';
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+function reads(): ActivityProjection {
+  return structuredClone(readFixture) as ActivityProjection;
+}
+
+function openReads(activity = reads()) {
+  const view = render(<ActivityPanel activity={activity} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  const group = screen.queryByRole('button', { name: /Read ×/ });
+  if (group) fireEvent.click(group);
+  return view;
+}
+
+it('accepts opaque read target identities and rejects malformed ones', () => {
+  expect(activityProjectionFromWire(readFixture)).toEqual(readFixture);
+  for (const key of ['', 'a'.repeat(63), 'A'.repeat(64), 42, null]) {
+    const activity = structuredClone(readFixture);
+    Object.assign(activity.rows[0], { read_key: key });
+    expect(activityProjectionFromWire(activity)).toBeNull();
+  }
+});
+
+it('merges distinct ranges of one file into one disclosure without changing invocation counts', () => {
+  const activity = reads();
+  openReads(activity);
+  expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent(
+    '2 operations',
+  );
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+  const row = document.querySelector('[data-activity-row="0:read-1"]')!;
+  const toggle = within(row as HTMLElement).getByRole('button');
+  expect(toggle).toHaveTextContent('PLAN.md · lines 583–584, 615–616');
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(within(row as HTMLElement).getByLabelText('Duration 3ms')).toBeTruthy();
+  fireEvent.click(toggle);
+  const content = row.querySelector('[data-activity-content]')!;
+  expect(content.textContent).toContain('583 │ Verify the affected tests.');
+  expect(content.textContent).toContain('616 │ Review the final diff.');
+  expect(content.children).toHaveLength(2);
+  expect(activity).toEqual(readFixture);
+});
+
+it('keeps an open read mounted when another range arrives', () => {
+  const activity = reads();
+  const view = openReads({ ...activity, rows: activity.rows.slice(0, 1) });
+  const row = document.querySelector('[data-activity-row]')!;
+  fireEvent.click(within(row as HTMLElement).getByRole('button'));
+  const content = row.querySelector('[data-activity-content]')!;
+  const firstCode = content.firstElementChild!;
+  view.rerender(<ActivityPanel activity={activity} />);
+  expect(row.isConnected).toBe(true);
+  expect(content.isConnected).toBe(true);
+  expect(firstCode.isConnected).toBe(true);
+  expect(within(row as HTMLElement).getByRole('button', { expanded: true })).toBeTruthy();
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+  expect(content.textContent).toContain('616 │ Review the final diff.');
+});
+
+it.each([
+  'missing',
+  'different',
+  'failed',
+  'running',
+  'cancelled',
+  'sections',
+  'children',
+  'errors',
+  'custom',
+])('keeps %s reads separate instead of hiding evidence', (reason) => {
+  const activity = reads();
+  const row = activity.rows[1];
+  if (reason === 'missing') delete row.read_key;
+  if (reason === 'different') row.read_key = 'd'.repeat(64);
+  if (reason === 'failed') {
+    row.state = 'failed';
+    row.error_summary = 'Permission denied';
+  }
+  if (reason === 'running' || reason === 'cancelled') row.state = reason;
+  if (reason === 'sections')
+    row.presentation!.sections = [{ headline: 'Details', summary: '', content: [] }];
+  if (reason === 'children') row.children = [{ ...activity.rows[0], id: 'child' }];
+  if (reason === 'errors') row.evidence = [{ kind: 'error', text: 'Read evidence' }];
+  if (reason === 'custom') row.presentation!.headline = 'Inspect file';
+  openReads(activity);
+  expect(document.querySelectorAll('[data-activity-depth="0"]')).toHaveLength(2);
+  if (reason === 'failed')
+    expect(screen.getAllByText('Permission denied').length).toBeGreaterThan(0);
+});
+
+it('retains overlapping snapshots, empty results and truncation without inventing durations', () => {
+  const activity = reads();
+  activity.rows[1].presentation!.summary = activity.rows[0].presentation!.summary;
+  activity.rows[1].presentation!.content = [
+    { type: 'code', text: '583 │ Updated plan text.' },
+    { type: 'code', text: '' },
+  ];
+  activity.rows[1].is_truncated = true;
+  delete activity.rows[1].duration_ms;
+  openReads(activity);
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+  const row = document.querySelector('[data-activity-row]')!;
+  expect(within(row as HTMLElement).queryByLabelText(/^Duration /)).toBeNull();
+  fireEvent.click(within(row as HTMLElement).getByRole('button'));
+  expect(row.textContent).toContain('583 │ Verify the affected tests.');
+  expect(row.textContent).toContain('583 │ Updated plan text.');
+  expect(row.textContent).toContain('Details truncated');
+});
+
+it('keeps empty reads and captions without line ranges in the merged disclosure', () => {
+  const activity = reads();
+  activity.rows.forEach((row) => {
+    row.presentation!.summary = '~/vis/empty.txt';
+    row.presentation!.content = [{ type: 'code', text: '' }];
+  });
+  openReads(activity);
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+  const row = document.querySelector('[data-activity-row]')!;
+  const toggle = within(row as HTMLElement).getByRole('button');
+  expect(toggle).toHaveTextContent('~/vis/empty.txt');
+  fireEvent.click(toggle);
+  expect(row.querySelector('[data-activity-content]')!.children).toHaveLength(2);
+});
+
+it('copies the original reads rather than the merged display', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  openReads();
+  fireEvent.click(screen.getByRole('button', { name: 'Copy activity' }));
+  await screen.findByRole('button', { name: 'Copied' });
+  const copied = writeText.mock.calls[0][0] as string;
+  expect(copied.match(/cat \[succeeded\]/g)).toHaveLength(2);
+  expect(copied).toContain('~/vis/PLAN.md · lines 583–584');
+  expect(copied).toContain('~/vis/PLAN.md · lines 615–616');
+  expect(copied).not.toContain('a'.repeat(64));
+});

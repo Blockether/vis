@@ -23,6 +23,7 @@ import { activityHistoryPage } from '../dev/activity-history';
 import { activityProjectionFromWire } from '../lib/activity';
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import readSessionFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-read-session.json';
+import readFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-reads.json';
 
 /**
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
@@ -727,4 +728,39 @@ export const ReadSession: Story = {
 export const ReadSessionNarrow: Story = {
   ...ReadSession,
   decorators: [(Story) => <div className="w-80 max-w-full"><Story /></div>],
+};
+
+export const SameFileReads: Story = {
+  args: { activity: activityProjectionFromWire(readFixture)! },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: /Read ×2/ }));
+    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+    const toggle = canvas.getByRole('button', { name: /Read.*PLAN.md.*583–584, 615–616/ });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.getByLabelText('Duration 3ms')).toBeVisible();
+    toggle.focus();
+    await userEvent.keyboard('{Enter}');
+    const content = canvasElement.querySelector('[data-activity-content]')!;
+    await expect(content).toBeVisible();
+    await expect(content.textContent).toContain('583 │ Verify the affected tests.');
+    await expect(content.textContent).toContain('616 │ Review the final diff.');
+    await expect(content.children).toHaveLength(2);
+    await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
+    await userEvent.keyboard(' ');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(toggle);
+  },
+};
+
+export const SameFileReadsNarrow: Story = {
+  ...SameFileReads,
+  decorators: [
+    (Story) => (
+      <div className="w-80 max-w-full">
+        <Story />
+      </div>
+    ),
+  ],
 };

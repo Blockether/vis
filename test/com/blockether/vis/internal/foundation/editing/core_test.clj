@@ -10,6 +10,7 @@
             [babashka.fs :as fs]
             [clojure.set]
             [clojure.string :as string]
+            [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
@@ -4597,6 +4598,43 @@
                                    "t1/i1")]
                       (expect (nil? (:error result)))
                       (expect (= "True\n" (:stdout result))))))
+  (it
+    "gives string and Path reads the same target identity across the sandbox boundary"
+    (let [rel
+          (write-temp! "cat/read-identity.txt" "alpha\nbeta\ngamma\n")
+
+          events
+          (atom [])]
+
+      (tpc/with-own
+        [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+        (let [result
+              (binding [extension/*tool-event-context*
+                        (activity-event/context)
+
+                        extension/*tool-event-sink*
+                        #(swap! events conj %)]
+
+                (ep/run-python-block ctx
+                                     (str "p = Path("
+                                          (pr-str rel)
+                                          ")\n"
+                                          "print(cat(str(p), 1, 1))\n"
+                                          "print(cat(p, 2, 3))\n")
+                                     "t1/i3"))
+
+              starts
+              (filterv #(and (= :cat (:operation %)) (= :start (:phase %))) @events)
+
+              terminals
+              (filterv #(and (= :cat (:operation %)) (= :terminal (:phase %))) @events)]
+
+          (expect (nil? (:error result)))
+          (expect (= 2 (count starts) (count terminals)))
+          (expect (every? :read-key starts))
+          (expect (apply = (map :read-key starts)))
+          (expect (= (mapv :read-key starts) (mapv :read-key terminals)))
+          (expect (not= (:argument-key (first starts)) (:argument-key (second starts))))))))
   ;; Regression: `cat` answered its anchored text as a BARE STRING, so the FIRST
   ;; real call from the sandbox died at the extension boundary with "Symbol 'cat'
   ;; must return a canonical :envelope map"; and because its declared parameter

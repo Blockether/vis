@@ -45,6 +45,9 @@
     (:argument-key event)
     (assoc :argument-key (:argument-key event))
 
+    (:read-key event)
+    (assoc :read-key (:read-key event))
+
     (:summary-format event)
     (assoc :summary-format (:summary-format event))
 
@@ -344,8 +347,8 @@
 
 (defn- presentation-row
   [{:keys [id sequence operation presenter classification state summary group-token argument-key
-           resources duration-ms result-summary error-summary evidence children is-truncated
-           summary-format result-format presentation]}]
+           read-key resources duration-ms result-summary error-summary evidence children
+           is-truncated summary-format result-format presentation]}]
   (cond-> {:id (str id)
            :sequence (long sequence)
            :operation (enum-name operation)
@@ -360,6 +363,9 @@
 
     argument-key
     (assoc :argument-key argument-key)
+
+    read-key
+    (assoc :read-key read-key)
 
     group-token
     (assoc :group-token (str group-token))

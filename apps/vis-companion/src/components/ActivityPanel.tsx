@@ -884,6 +884,64 @@ function groupFacts(rows: readonly ActivityRow[]): string {
     .join(' · ');
 }
 
+/** Coalesce read presentations, never the invocations used by counts, history or copy. */
+function mergeReadRows(rows: readonly ActivityRow[]): ActivityRow[] {
+  const groups: ActivityRow[][] = [];
+  const byTarget = new Map<string, ActivityRow[]>();
+  for (const row of rows) {
+    const presentation = row.presentation;
+    const key =
+      row.operation === 'cat' &&
+      row.state === 'succeeded' &&
+      presentation?.headline === 'Read' &&
+      presentation.content.every((block) => block.type === 'code') &&
+      !presentation.sections?.length &&
+      !row.children?.length &&
+      !row.error_summary &&
+      !row.evidence.some((item) => item.kind === 'error' || item.kind === 'diff')
+        ? row.read_key
+        : undefined;
+    const existing = key ? byTarget.get(key) : undefined;
+    if (existing) existing.push(row);
+    else {
+      const group = [row];
+      groups.push(group);
+      if (key) byTarget.set(key, group);
+    }
+  }
+  return groups.map((reads) => {
+    const first = reads[0];
+    if (reads.length === 1) return first;
+    const summaries = reads.map((row) => row.presentation!.summary);
+    const ranges = summaries.map((summary) => /^(.*) · lines (\d+–\d+)$/.exec(summary));
+    const summary = ranges.every((range) => range !== null)
+      ? `${ranges[0]![1]} · lines ${[...new Set(ranges.map((range) => range![2]))].join(', ')}`
+      : [...new Set(summaries)].join('; ');
+    return {
+      ...first,
+      argument_key: undefined,
+      duration_ms: reads.every((row) => row.duration_ms !== undefined)
+        ? reads.reduce((sum, row) => sum + row.duration_ms!, 0)
+        : undefined,
+      resources: [
+        ...new Map(
+          reads
+            .flatMap((row) => row.resources)
+            .map((resource) => [JSON.stringify([resource.type, resource.id]), resource]),
+        ).values(),
+      ],
+      evidence: reads.flatMap((row) => row.evidence),
+      is_truncated: reads.some((row) => row.is_truncated),
+      presentation: {
+        ...first.presentation!,
+        summary,
+        // Keep separate excerpts, including overlaps and changed snapshots.
+        content: reads.flatMap((row) => row.presentation!.content),
+      },
+    };
+  });
+}
+
 function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
   const singleton = group.rows.length === 1;
   // A visible singleton stays visible when it becomes a group. Keep the same
@@ -934,7 +992,7 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
         >
           {repeated
             ? group.rows.map((row) => <ActivityStep key={row.id} row={row} />)
-            : argumentGroups(group.rows).map((argumentsGroup) => (
+            : argumentGroups(mergeReadRows(group.rows)).map((argumentsGroup) => (
                 <ActivityGroup
                   key={argumentsGroup.id}
                   group={{

@@ -170,6 +170,39 @@
         (expect (= 3 (reduce + (vals (:counts projection)))))
         (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:rows projection)))))))
 
+(defdescribe
+  read-identity-test
+  (it "retains target identity through lifecycle and wire projection without merging invocations"
+      (let [ctx
+            (event/context)
+
+            events
+            (vec (concat
+                   (event-pair ctx :cat :succeeded "first excerpt" {:args ["PLAN.md" 583 591]})
+                   (event-pair ctx :cat :failed "read failed" {:args ["PLAN.md" 615 623]})
+                   (event-pair ctx :cat :succeeded "another file" {:args ["README.md" 1 5]})))
+
+            projection
+            (-> events
+                activity/replay
+                activity/presentation)
+
+            keys
+            (mapv :read-key (:rows projection))]
+
+        (expect (contract/valid-projection? projection))
+        (expect (every? #(and (string? %) (re-matches #"[0-9a-f]{64}" %)) keys))
+        (expect (= (first keys) (second keys)))
+        (expect (not= (first keys) (last keys)))
+        (expect (= keys (mapv :read-key (take-nth 2 events))))
+        (expect (= keys (mapv :read-key (take-nth 2 (rest events)))))
+        (expect (= 3 (count (:rows projection))))
+        (expect (= 3 (reduce + (vals (:counts projection)))))
+        (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:rows projection))))
+        (doseq [key [nil "" "guess" (apply str (repeat 64 "A")) 42]]
+          (expect (not (contract/valid-projection?
+                         (assoc-in projection [:rows 0 :read-key] key))))))))
+
 (defdescribe canonical-presentation-test
              (it "keeps required lines for an empty structured diff"
                  (let [evidence (#'activity/presentation-evidence

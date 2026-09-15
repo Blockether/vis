@@ -1,0 +1,65 @@
+{
+  "state": "succeeded",
+  "counts": {
+    "running": 0,
+    "succeeded": 2,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "rows": [
+    {
+      "id": "read-1",
+      "sequence": 1,
+      "operation": "cat",
+      "presenter": "observation",
+      "signal": "observation",
+      "state": "succeeded",
+      "summary": "~/vis/PLAN.md",
+      "argument_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "read_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "duration_ms": 2,
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Read",
+        "summary": "~/vis/PLAN.md · lines 583–584",
+        "content": [
+          {
+            "type": "code",
+            "language": "markdown",
+            "text": "583 │ Verify the affected tests.\n584 │ Keep unrelated work unchanged."
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-2",
+      "sequence": 2,
+      "operation": "cat",
+      "presenter": "observation",
+      "signal": "observation",
+      "state": "succeeded",
+      "summary": "~/vis/PLAN.md",
+      "argument_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "read_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "duration_ms": 1,
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Read",
+        "summary": "~/vis/PLAN.md · lines 615–616",
+        "content": [
+          {
+            "type": "code",
+            "language": "markdown",
+            "text": "615 │ Plan state: verification in progress.\n616 │ Review the final diff."
+          }
+        ]
+      }
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
+}

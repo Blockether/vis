@@ -76,6 +76,10 @@
           "type": "string",
           "pattern": "\\S"
         },
+        "reads": {
+          "type": "string",
+          "pattern": "\\S"
+        },
         "arguments": {
           "type": "string",
           "pattern": "\\S"
@@ -98,6 +102,7 @@
         "delivery",
         "lifecycle",
         "arguments",
+        "reads",
         "counts",
         "bounds",
         "declaration"
@@ -337,6 +342,12 @@
           "maxLength": 64,
           "pattern": "^[0-9a-f]{64}$"
         },
+        "read_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "group_token": {
           "type": "string",
           "pattern": "\\S"
@@ -430,6 +441,12 @@
           "maxLength": 64,
           "pattern": "^[0-9a-f]{64}$"
         },
+        "read_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "group_token": {
           "type": "string",
           "pattern": "\\S"
@@ -518,6 +535,12 @@
           }
         },
         "argument_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "read_key": {
           "type": "string",
           "minLength": 64,
           "maxLength": 64,

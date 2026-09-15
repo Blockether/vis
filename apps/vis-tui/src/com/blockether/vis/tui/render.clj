@@ -5899,6 +5899,68 @@
        :resources []
        :evidence []})))
 
+(defn- merge-read-rows
+  "Coalesce known same-target Read presentations without changing retained invocations."
+  [rows]
+  (let [eligible-key
+        (fn [{:keys [operation state read-key presentation children error-summary evidence]}]
+          (when (and (= "cat" operation)
+                     (= "succeeded" state)
+                     (string? read-key)
+                     (not (str/blank? read-key))
+                     (= "Read" (:headline presentation))
+                     (every? #(= "code" (:type %)) (:content presentation))
+                     (empty? (:sections presentation))
+                     (empty? children)
+                     (nil? error-summary)
+                     (not-any? #(contains? #{"error" "diff"} (:kind %)) evidence))
+            read-key))
+
+        ordered
+        (sort-by :sequence rows)
+
+        grouped
+        (group-by eligible-key ordered)
+
+        merge-rows
+        (fn [members]
+          (let [first-row
+                (first members)
+
+                ranges
+                (mapv #(re-matches #"(?s)(.*) · lines (\d+–\d+)"
+                                   (get-in % [:presentation :summary]))
+                      members)
+
+                summary
+                (if (every? some? ranges)
+                  (str (second (first ranges))
+                       " · lines "
+                       (str/join ", " (distinct (map #(nth % 2) ranges))))
+                  (str/join "; " (distinct (map #(get-in % [:presentation :summary]) members))))]
+
+            (cond-> (-> first-row
+                        (dissoc :argument-key :duration-ms)
+                        (assoc :resources (vec (distinct (mapcat :resources members)))
+                               :evidence (vec (mapcat :evidence members)))
+                        (assoc-in [:presentation :summary] summary)
+                        (assoc-in [:presentation :content]
+                                  (vec (mapcat #(get-in % [:presentation :content]) members))))
+              (every? #(some? (:duration-ms %)) members)
+              (assoc :duration-ms (reduce + 0 (map :duration-ms members)))
+
+              (some :is-truncated members)
+              (assoc :is-truncated true))))]
+
+    (into []
+          (keep (fn [row]
+                  (if-let [key (eligible-key row)]
+                    (let [members (get grouped key)]
+                      (when (= (:id row) (:id (first members)))
+                        (if (= 1 (count members)) row (merge-rows members))))
+                    row)))
+          ordered)))
+
 (defn- activity-operation-rows
   "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
@@ -5914,7 +5976,7 @@
                         (-> (activity-group-row (str id "#arguments") title rows rows)
                             (assoc :activity-repeat-count (count rows))
                             (assoc-in [:presentation :headline] title)))))
-                  (activity-contract/argument-groups rows))))
+                  (activity-contract/argument-groups (merge-read-rows rows)))))
         (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries

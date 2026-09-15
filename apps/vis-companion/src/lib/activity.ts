@@ -288,6 +288,7 @@ export interface ActivityRow {
   summary: string;
   summary_format?: ActivityTextFormat;
   argument_key?: string;
+  read_key?: string;
   group_token?: string;
   duration_ms?: number;
   result_summary?: string;
@@ -565,6 +566,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
       ],
       [
         'argument_key',
+        'read_key',
         'group_token',
         'duration_ms',
         'result_summary',
@@ -604,6 +606,12 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     /^[0-9a-f]{64}$/.test(raw.argument_key)
       ? raw.argument_key
       : undefined;
+  const readKey =
+    typeof raw.read_key === 'string' &&
+    raw.read_key.length === 64 &&
+    /^[0-9a-f]{64}$/.test(raw.read_key)
+      ? raw.read_key
+      : undefined;
   const duration = raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
   const resultSummary = typeof raw.result_summary === 'string' ? raw.result_summary : undefined;
   const errorSummary = typeof raw.error_summary === 'string' ? raw.error_summary : undefined;
@@ -639,6 +647,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     evidence.length !== evidenceRaw!.length ||
     (raw.group_token !== undefined && groupToken === undefined) ||
     (raw.argument_key !== undefined && argumentKey === undefined) ||
+    (raw.read_key !== undefined && readKey === undefined) ||
     duration === null ||
     (raw.result_summary !== undefined && resultSummary === undefined) ||
     (raw.error_summary !== undefined && errorSummary === undefined) ||
@@ -663,6 +672,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     evidence,
     ...(groupToken !== undefined ? { group_token: groupToken } : {}),
     ...(argumentKey !== undefined ? { argument_key: argumentKey } : {}),
+    ...(readKey !== undefined ? { read_key: readKey } : {}),
     ...(duration !== undefined ? { duration_ms: duration } : {}),
     ...(resultSummary !== undefined ? { result_summary: resultSummary } : {}),
     ...(errorSummary !== undefined ? { error_summary: errorSummary } : {}),

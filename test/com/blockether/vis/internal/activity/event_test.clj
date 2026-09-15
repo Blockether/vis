@@ -471,6 +471,74 @@
                     [{"__vis_callable__" "callback-1"}] [(Object.)]]]
         (expect (nil? (:argument-key (argument-start (event/context) args)))))))
 
+(defdescribe
+  read-identity-test
+  (it "identifies cat targets independently of ranges without weakening argument equality"
+      (let [ctx
+            (event/context)
+
+            start
+            (fn [context operation args]
+              (event/start-event context
+                                 (event/invocation context nil)
+                                 {:operation operation :presenter :observation :args args}))
+
+            a
+            (start ctx :cat ["src/example.clj" 1 10])
+
+            b
+            (start ctx :cat ["src/example.clj" 20 30])]
+
+        (expect (some? (:read-key a)))
+        (expect (= (:read-key a) (:read-key b)))
+        (expect (not= (:argument-key a) (:argument-key b)))
+        (expect (not= (:read-key a) (:read-key (start ctx :cat ["src/other.clj" 1 10]))))
+        (expect (not= (:read-key a)
+                      (:read-key (start (event/context) :cat ["src/example.clj" 1 10]))))
+        (expect (nil? (:read-key (start ctx :grep ["src/example.clj" 1 10]))))
+        (doseq [target [nil "" "  " "bad\u0000path" 42 :path {:path "src/example.clj"} (Object.)
+                        (apply str (repeat (inc event/max-detail-bytes) "x"))]]
+          (expect (nil? (:read-key (start ctx :cat [target 1 10])))))
+        (expect (nil? (:read-key (start ctx :cat []))))))
+  (it
+    "distinguishes complete targets when display paths are redacted or truncated"
+    (let [ctx
+          (event/context)
+
+          start
+          (fn [path]
+            (event/start-event
+              ctx
+              (event/invocation ctx nil)
+              {:operation :cat :presenter :observation :args [path 1 5] :label path}))
+
+          prefix
+          (apply str (repeat (inc event/max-summary-bytes) "x"))
+
+          a
+          (start (str prefix "a"))
+
+          b
+          (start (str prefix "b"))
+
+          c
+          (start "password=fixture-first")
+
+          d
+          (start "password=fixture-second")]
+
+      (expect (= (:label a) (:label b)))
+      (expect (= (:label c) (:label d)))
+      (expect (= 4 (count (set (map :read-key [a b c d])))))
+      (expect (every? :read-key [a b c d]))
+      (doseq [public [c d]]
+        (expect (not (string/includes? (wire/json-str public) "fixture-first")))
+        (expect (not (string/includes? (wire/json-str public) "fixture-second"))))))
+  (it "rejects malformed target keys"
+      (let [valid (argument-start (event/context) [])]
+        (doseq [key [nil "" "guess" (apply str (repeat 64 "A")) 42]]
+          (expect (= "malformed read key" (event/event-error (assoc valid :read-key key))))))))
+
 (defdescribe argument-key-validation-test
              (it "rejects malformed equality keys rather than trusting display text"
                  (let [valid (argument-start (event/context) [])]

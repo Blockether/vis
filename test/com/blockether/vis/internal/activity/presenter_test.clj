@@ -73,7 +73,7 @@
                          (-> row
                              (assoc :id (str "result-" i)
                                     :duration-ms 0)
-                             (dissoc :argument-key)))
+                             (dissoc :argument-key :read-key)))
                        (range)
                        %))
         wire/->wire)))

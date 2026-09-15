@@ -320,6 +320,16 @@
           (when-not (identical? unsupported value)
             (util/sha256-hex (str salt "\u0000" (pr-str value)))))))))
 
+(defn- read-key
+  "Identify a complete cat path within this block, independently of the requested range."
+  [ctx operation args]
+  (let [path (first args)]
+    (when (and (= :cat operation)
+               (string? path)
+               (not (str/blank? path))
+               (not (str/includes? path "\u0000")))
+      (argument-key ctx [path]))))
+
 (defn context
   "Create one concurrency-safe counter context for a single block's tool calls.
 
@@ -361,6 +371,10 @@
                (not (and (string? (:argument-key event))
                          (re-matches #"[0-9a-f]{64}" (:argument-key event)))))
           "malformed argument key"
+          (and (contains? event :read-key)
+               (not (and (string? (:read-key event))
+                         (re-matches #"[0-9a-f]{64}" (:read-key event)))))
+          "malformed read key"
           (and (contains? event :show-start) (not (boolean? (:show-start event))))
           "start visibility must be boolean"
           (not (contains? #{:start :content :terminal} (:phase event))) "unknown lifecycle phase"
@@ -662,7 +676,10 @@
         (when (seq args) (bounded-summary args max-summary-bytes))
 
         identity
-        (argument-key ctx args)]
+        (argument-key ctx args)
+
+        target-identity
+        (read-key ctx operation args)]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :start)
@@ -676,6 +693,9 @@
 
         identity
         (assoc :argument-key identity)
+
+        target-identity
+        (assoc :read-key target-identity)
 
         extension
         (assoc :extension extension)
@@ -787,7 +807,10 @@
         (when (= outcome :succeeded) (result-diff-evidence details))
 
         identity
-        (argument-key ctx (:args details))]
+        (argument-key ctx (:args details))
+
+        target-identity
+        (read-key ctx operation (:args details))]
 
     (checked
       (fit-event
@@ -805,6 +828,9 @@
                         :duration-ms duration})
           identity
           (assoc :argument-key identity)
+
+          target-identity
+          (assoc :read-key target-identity)
 
           presentation
           (assoc :presentation (:value presentation))

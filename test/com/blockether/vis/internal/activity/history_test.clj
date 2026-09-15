@@ -41,6 +41,55 @@
     (:invocation-id inv)))
 
 (defdescribe
+  read-identity-history-test
+  (it
+    "retains per-invocation read keys and excerpts across durable page retrieval"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {})
+
+          aid
+          (str (random-uuid))
+
+          ctx
+          (event/context)]
+
+      (doseq [[start end] [[583 591] [615 623]]]
+        (let [inv (event/invocation ctx nil)
+              details {:operation :cat :presenter :observation :args ["PLAN.md" start end]}
+              content {"headline" "Read"
+                       "summary" (str "PLAN.md · lines " start "–" end)
+                       "content" [{"type" "code" "text" (str start " │ excerpt")}]}]
+
+          (db/db-activity-apply! store sid aid (event/start-event ctx inv details))
+          (db/db-activity-apply! store sid aid (event/content-event ctx inv details content))
+          (db/db-activity-apply! store
+                                 sid
+                                 aid
+                                 (event/terminal-event ctx
+                                                       inv
+                                                       (assoc details
+                                                         :outcome :succeeded
+                                                         :started-at-ms
+                                                         (System/currentTimeMillis))))))
+      (let [page
+            (db/db-activity-page store sid aid {})
+
+            keys
+            (mapv :read-key (:rows page))]
+
+        (expect (contract/valid-projection? page))
+        (expect (= 2 (get-in page [:history :total])))
+        (expect (= 2 (get-in page [:counts :succeeded])))
+        (expect (every? some? keys))
+        (expect (apply = keys))
+        (expect (= ["583 │ excerpt" "615 │ excerpt"]
+                   (mapv #(get-in % [:presentation "content" 0 "text"]) (:rows page))))
+        (expect (= page (db/db-activity-page store sid aid {})))))))
+
+(defdescribe
   oversized-presentation-history-test
   (it
     "returns one oversized invocation intact and continues with the next record"
