@@ -350,6 +350,14 @@
               "DIFF-review.json · No changes"]
              [:draft_diff {:filename "DIFF-review.json" :empty false :checkpoint "internal"}
               "DIFF-review.json · Diff attached"]
+             [:draft_diff {:filename "DIFF-group.json" :empty false :repository_count 2}
+              "DIFF-group.json · 2 repositories · Diff attached"]
+             [:draft_sync {:status "synced" :repositories [{:status "synced"} {:status "synced"}]}
+              "Synchronized · 2 repositories"]
+             [:draft_sync {:status "conflicts" :repositories [{:conflicts ["a.txt" "b.txt"]}]}
+              "Resolve conflicts · 1 repository · 2 conflict paths"]
+             [:draft_sync {:status "aborted" :repositories [{:status "aborted"}]}
+              "Synchronization aborted · 1 repository"]
              [:draft_discard {:label "review" :root "~/vis" :approved_ahead 1}
               "review · Returned to ~/vis · 1 approved commit kept"]
              [:repl_status {:result "status" :status "down" :cwd "~/vis" :resources []}
@@ -373,15 +381,16 @@
         (expect (contract/valid-presentation? view))
         (expect (= summary (get view "summary")))
         (expect (not (re-find #"\"type\" \"table\"" (pr-str view))))
-        (when-not (= operation :update_goal) (expect (empty? (get view "content")))))))
+        (when-not (contains? #{:update_goal :draft_sync} operation)
+          (expect (empty? (get view "content")))))))
   (it "names absent results instead of showing empty summaries or tables"
       (doseq [[operation summary]
               [[:draft_status "No draft status"] [:draft_create "No draft result"]
                [:draft_approve "No draft result"] [:draft_discard "No draft result"]
-               [:draft_diff "No draft result"] [:repl_status "No REPL status"]
-               [:repl_start "No REPL status"] [:repl_stop "No REPL status"]
-               [:repl_connect "No REPL status"] [:run_tests "No test result"]
-               [:list_sessions "No sessions found"]]
+               [:draft_diff "No draft result"] [:draft_sync "No draft result"]
+               [:repl_status "No REPL status"] [:repl_start "No REPL status"]
+               [:repl_stop "No REPL status"] [:repl_connect "No REPL status"]
+               [:run_tests "No test result"] [:list_sessions "No sessions found"]]
 
               result
               [nil {} []]]

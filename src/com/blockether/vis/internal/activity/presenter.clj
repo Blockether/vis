@@ -294,6 +294,7 @@
    "draft_status" ["Check draft status" "Checked draft status" false]
    "draft_diff" ["Capture draft diff" "Captured draft diff" true]
    "draft_create" ["Create draft" "Created draft" true]
+   "draft_sync" ["Synchronize draft" "Draft synchronization updated" true]
    "draft_approve" ["Approve draft" "Approved draft" true]
    "draft_discard" ["Discard draft" "Discarded draft" true]
    "main_agent_instructions" ["Read agent instructions" "Read agent instructions" false]
@@ -470,9 +471,37 @@
                 target) (when (seq files) (counted-label (count files) "file"))])
         "No draft result")
 
+      "draft_sync"
+      (if-let [status (field value "status")]
+        (let [repositories (field value "repositories")
+              conflicts (reduce + 0 (map #(count (field % "conflicts")) repositories))]
+
+          (summary-line [(case (scalar status)
+                           "synced"
+                           "Synchronized"
+
+                           "conflicts"
+                           "Resolve conflicts"
+
+                           "aborted"
+                           "Synchronization aborted"
+
+                           "partial"
+                           "Partially synchronized"
+
+                           (scalar status))
+                         (when (seq repositories)
+                           (str (count repositories)
+                                (if (= 1 (count repositories)) " repository" " repositories")))
+                         (when (pos? (long conflicts)) (counted-label conflicts "conflict path"))]))
+        "No draft result")
+
       "draft_diff"
       (if-let [filename (field value "filename")]
-        (summary-line [filename (if (true? (field value "empty")) "No changes" "Diff attached")])
+        (summary-line [filename
+                       (when-let [n (field value "repository_count")]
+                         (str n (if (= 1 n) " repository" " repositories")))
+                       (if (true? (field value "empty")) "No changes" "Diff attached")])
         "No draft result")
 
       "draft_discard"

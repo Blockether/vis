@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.main-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
@@ -557,6 +558,54 @@
                       (expect (= "balanced" (toggles/value-of "reasoning_level")))
                       (finally (toggles/reset-to-default! "main_test_flag")
                                (toggles/reset-to-default! "reasoning_level")))))
+
+(defdescribe
+  cli-merged-toggle-config-test
+  (it "hydrates merged configuration before running and restores CLI overrides without saving"
+      ;; #241: one-shot native runs ignored an explicit worktree backend in YAML.
+      (manifest/initialize!)
+      (let [previous
+            @#'toggles/state
+
+            saved-state
+            @previous]
+
+        (try
+          (doseq [[configured override expected]
+                  [[nil nil "off"] ["off" nil "off"] ["worktree" nil "worktree"]
+                   ["off" "worktree" "worktree"] ["worktree" "off" "off"]]]
+            (let [seen (atom [])
+                  writes (atom [])
+                  merged (if configured {"toggles" {"draft_backend" configured}} {})]
+
+              (toggles/reset-to-default! "draft_backend")
+              (with-redefs-fn {#'config/init-cli! (fn []
+                                                    nil)
+                               #'config/load-config-raw (fn []
+                                                          merged)
+                               #'config/save-config! (fn [& _]
+                                                       (swap! writes conj :config))
+                               #'config/save-toggles! (fn [& _]
+                                                        (swap! writes conj :toggles))
+                               #'main/stdout! (fn [& _]
+                                                nil)
+                               #'clojure.core/shutdown-agents (fn []
+                                                                nil)
+                               #'main/run! (fn [& _]
+                                             (swap! seen conj (toggles/value-of "draft_backend"))
+                                             {:content []})}
+                #(#'main/cli-run!
+                   {}
+                   (cond-> ["--raw"]
+                     override
+                     (into ["--toggles" (str "draft_backend=" override)])
+
+                     true
+                     (conj "fixture"))))
+              (expect (empty? @writes))
+              (expect (= [expected] @seen))
+              (expect (= (or configured "off") (toggles/value-of "draft_backend")))))
+          (finally (reset! previous saved-state))))))
 
 (defdescribe
   root-run-shortcut-test

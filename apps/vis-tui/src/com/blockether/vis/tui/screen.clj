@@ -4974,8 +4974,8 @@
    reads ONLY that fact (no client-side git walk, no fallback). Refetch it on a
    slow cadence so the footer's changed-file count tracks reality instead of
    freezing at the last turn-end `:set-workspace` snapshot.
-   Dispatches only when the `:git` fact actually changes, so an idle session costs
-   one cheap gateway read per tick and never churns the render loop."
+   Dispatches only when the workspace fact changes, including draft identity and
+   review counts, so an idle session never churns the render loop."
   ^Thread []
   (let [t (Thread. ^Runnable
                    (fn []
@@ -4991,10 +4991,10 @@
                                                     :data {:error (or (ex-message t) (str t))}
                                                     :msg "Workspace refresh failed"})
                                          nil))
-                               ;; Include session ID in the dedup key so equal git summaries on two
-                               ;; tabs cannot suppress a required update.
+                               ;; Include the session and whole workspace fact: draft identity,
+                               ;; review counts and transitions can change with identical Git status.
                                next-key (if ws
-                                          (let [k [sid (get ws "git")]]
+                                          (let [k [sid ws]]
                                             (when (not= k last-key)
                                               (state/dispatch [:set-workspace ws]))
                                             k)

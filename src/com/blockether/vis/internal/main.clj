@@ -1612,6 +1612,9 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
+  ;; Dispatch has registered extension toggles. Hydrate merged settings before
+  ;; constructing the one-shot environment; explicit --toggles still wins below.
+  (toggles/hydrate-from-config! (config/load-config-raw))
   (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
                 db toggles]
          :as opts}

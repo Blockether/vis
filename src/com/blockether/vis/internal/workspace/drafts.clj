@@ -8,7 +8,8 @@
    It fast-forwards locally, restores saved local work, then pushes to origin
    when configured. Conflicts must be resolved in the draft before approval.
    Every new commit crosses the `:git/commit` boundary."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
@@ -81,10 +82,36 @@
                       {:type :draft/not-active :workspace-id workspace-id :state (:state ws)})))
     ws))
 
+(defn- select-roots
+  [ws requested]
+  (let [owned (workspace/draft-roots ws)]
+    (if (nil? requested)
+      owned
+      (do (when-not (and (sequential? requested) (seq requested))
+            (throw (ex-info "Choose a nonempty list of participating repository roots."
+                            {:type :draft/invalid-roots})))
+          (let [selected
+                (mapv (fn [path]
+                        (let [root (workspace/normalize-root path)]
+                          (or (some #(when (or (= root (:root %)) (= root (:repo-root %))) %) owned)
+                              (throw (ex-info "This repository does not belong to the draft."
+                                              {:type :draft/root-unavailable :root root})))))
+                      requested)]
+            (when-not (= (count selected) (count (distinct (map :repo-root selected))))
+              (throw (ex-info "Choose each participating repository only once."
+                              {:type :draft/invalid-roots})))
+            selected)))))
+
 (defn diff
-  "Read the active draft's exact patch from its fork or a recorded checkpoint."
-  [env {:keys [workspace-id since]}]
-  (workspace/review-diff (require-draft (:db-info env) workspace-id) since))
+  "Read one owned repository's exact patch from its immutable fork or checkpoint."
+  [env {:keys [workspace-id since root]}]
+  (let [ws
+        (require-draft (:db-info env) workspace-id)
+
+        selected
+        (if root (first (select-roots ws [root])) ws)]
+
+    (workspace/review-diff selected since)))
 
 (defn- hook-ctx
   "Hook payload for `ws` — plain data, safe to stringify for Python."
@@ -116,6 +143,14 @@
                                   not-empty)
                           (str "Refused: " (name op)))
                       {:type :draft/blocked :op op :ctx ctx :error (:error res)})))))
+
+(defn- through-group-hooks
+  "Nest root-specific guards before the one group mutation."
+  [op env contexts f]
+  ((reduce (fn [next ctx]
+             #(through-hooks op env ctx next))
+           f
+           (reverse contexts))))
 
 ;; Lifecycle
 
@@ -178,19 +213,107 @@
     root))
 
 (defn create!
-  "Create a draft through the `:draft/create` boundary. An explicit source root
-   must be one of the session's writable roots and retain its access restrictions."
+  "Validate every selected catalog repository before creating one owned draft group."
   [env opts]
-  (let [opts (cond-> opts
-               (some? (:root opts))
-               (assoc :root (selected-root env (:from opts) (:root opts))))]
-    (through-hooks :draft/create
-                   env
-                   {:label (:label opts)
-                    :clean (boolean (:clean? opts))
-                    :repo-root
-                    (str (or (:root opts) (:repo-root (:from opts)) (workspace/trunk-root)))}
-                   #(workspace/create! (:db-info env) opts))))
+  (when (contains? opts :root)
+    (throw (ex-info "Use :roots with a list of catalog repositories, not the singular :root option."
+                    {:type :draft/invalid-roots})))
+  (let
+    [requested
+     (:roots opts)
+
+     _
+     (when (and (some? requested) (not (and (sequential? requested) (seq requested))))
+       (throw (ex-info "Choose a nonempty list of repository roots." {:type :draft/invalid-roots})))
+
+     roots
+     (when requested (mapv #(selected-root env (:from opts) %) requested))
+
+     _
+     (doseq [root roots]
+       (when-not (workspace/git-managed? root)
+         (throw (ex-info "Selected roots must be Git repository roots."
+                         {:type :draft/not-git-managed :root root}))))
+
+     _
+     (doseq [[i root]
+             (map-indexed vector roots)
+
+             other
+             (drop (inc (long i)) roots)]
+
+       (let [a
+             (.toPath (io/file root))
+
+             b
+             (.toPath (io/file other))]
+
+         (when (or (.startsWith a b) (.startsWith b a))
+           (throw (ex-info "Selected repositories must be distinct and non-overlapping."
+                           {:type :draft/overlapping-roots :roots [root other]})))))
+
+     primary
+     (first roots)
+
+     source
+     (or primary (:repo-root (:from opts)) (workspace/trunk-root))
+
+     plan
+     (concat (map #(hash-map :trunk % :policy :copy-and-apply) (rest roots))
+             (or (:filesystem-roots opts) (workspace/draft-isolation-plan)))
+
+     plan
+     (reduce (fn [acc entry]
+               (let [root (workspace/normalize-root (:trunk entry))]
+                 (if (or (= root (workspace/normalize-root source)) (some #(= root (:trunk %)) acc))
+                   acc
+                   (conj acc (assoc entry :trunk root)))))
+             []
+             plan)
+
+     approving
+     (cons source
+           (map :trunk (filter #(= :copy-and-apply (workspace/draft-policy-id (:policy %))) plan)))
+
+     _
+     (when (and (contains? env :workspace/draft-protected-roots)
+                (not= :off (workspace/draft-backend-setting)))
+       (doseq [root (cons source (map :trunk plan))]
+         (let [path (.toPath (io/file (workspace/normalize-root root)))]
+           (when-not (some #(.startsWith path (.toPath (io/file (workspace/normalize-root %))))
+                           (:workspace/draft-protected-roots env))
+             (throw
+               (ex-info
+                 "This repository was not protected when the Python context started. Start a new turn to rebuild the context before creating its draft; existing handles cannot be safely migrated."
+                 {:type :draft/policy-expanded :root root}))))))
+
+     identities
+     (mapv #(workspace/normalize-root
+              (git! (io/file %) ["rev-parse" "--path-format=absolute" "--git-common-dir"]))
+           (filter workspace/git-managed? approving))
+
+     _
+     (when-not (= (count identities) (count (distinct identities)))
+       (throw (ex-info "Draft roots include multiple worktrees of the same repository."
+                       {:type :draft/duplicate-repository :roots (vec approving)})))
+
+     opts
+     (cond-> (assoc (dissoc opts :roots) :filesystem-roots (vec plan))
+       primary
+       (assoc :root primary)
+
+       (:workspace/drafts-home env)
+       (assoc :drafts-home (:workspace/drafts-home env)))]
+
+    (through-group-hooks :draft/create
+                         env
+                         (mapv (fn [root]
+                                 {:label (:label opts)
+                                  :clean (boolean (:clean? opts))
+                                  :repo-root (str root)
+                                  :roots (vec (cons source (map :trunk plan)))})
+                               (cons source (map :trunk plan)))
+                         #(workspace/create! (:db-info env) opts))))
 
 (defn discard!
   "Discard `workspace-id` through the `:draft/discard` boundary. With
@@ -313,12 +436,14 @@
 (defn- require-synced!
   [^File root target sha]
   (when-not (ancestor? root sha "HEAD")
-    (throw (ex-info "Synchronize the target into the draft and resolve conflicts before approval."
-                    {:type :draft/sync-required
-                     :target-branch target
-                     :target-commit sha
-                     :hint
-                     (str "In the draft, merge or rebase onto " sha ", then retry approval.")}))))
+    (throw
+      (ex-info
+        "Synchronize the target into the draft and resolve conflicts before approval."
+        {:type :draft/sync-required
+         :target-branch target
+         :target-commit sha
+         :hint
+         "Call draft_sync(), resolve any reported conflicts in the draft, then retry draft_approve()."}))))
 
 (defn- fetch-origin!
   [^File trunk ^File root target]
@@ -377,44 +502,49 @@
                          (git-lines checkout ["stash" "list" "--format=%H %gd"]))]
     (git! checkout ["stash" "drop" entry])))
 
+(defn- preflight-land!
+  [^File trunk target target-sha sha]
+  (when-not (= target-sha (git! trunk ["rev-parse" (str "refs/heads/" target)]))
+    (throw (ex-info "Target moved during approval; retry." {:type :draft/target-moved})))
+  (when-let [checkout (target-checkout trunk target)]
+    (require-target-branch! checkout target)
+    (require-idle! checkout)
+    (let [changed (remove str/blank?
+                    (str/split (git! checkout
+                                     ["diff" "--name-only" "--no-renames" "-z" target-sha sha])
+                               #"\u0000"))
+          local (remove str/blank?
+                  (mapcat #(str/split (git! checkout %) #"\u0000")
+                          [["diff" "--cached" "--name-only" "--no-renames" "-z"]
+                           ["diff" "--name-only" "--no-renames" "-z"]
+                           ["ls-files" "--others" "-z"]]))
+          overlaps (filterv (fn [path]
+                              (some #(or (= path %)
+                                         (str/starts-with? path (str % "/"))
+                                         (str/starts-with? % (str path "/")))
+                                    changed))
+                     local)]
+
+      (when (seq overlaps)
+        (throw
+          (ex-info
+            "Local work overlaps draft paths. Nothing was stashed or landed."
+            {:type :draft/git-failed
+             :paths overlaps
+             :repo-root (.getPath trunk)
+             :hint
+             "Preserve and commit the original work through your authorized Git workflow, then use draft_sync() and retry draft_approve(). Copied pending work is not transferred out of the original checkout."}))))))
+
 (defn- land!
   [^File trunk target target-sha sha]
+  (preflight-land! trunk target target-sha sha)
   (if-let [checkout (target-checkout trunk target)]
-    (do
-      (require-target-branch! checkout target)
-      (require-idle! checkout)
-      (when-not (= target-sha (git! checkout ["rev-parse" "HEAD"]))
-        (throw (ex-info "Target moved during approval; retry." {:type :draft/target-moved})))
-      ;; Conservative preflight: never stash local paths touched by the landing.
-      ;; This also covers copied dirty drafts and avoids post-landing stash conflicts.
-      (let [changed (set (str/split (git! checkout
-                                          ["diff" "--name-only" "--no-renames" "-z" target-sha sha])
-                                    #"\u0000"))
-            local (concat
-                    (str/split (git! checkout ["diff" "--cached" "--name-only" "--no-renames" "-z"])
-                               #"\u0000")
-                    (str/split (git! checkout ["diff" "--name-only" "--no-renames" "-z"]) #"\u0000")
-                    (str/split (git! checkout ["ls-files" "--others" "-z"]) #"\u0000"))]
-
-        (when (some (fn [path]
-                      (and (not (str/blank? path))
-                           (some #(or (= path %)
-                                      (str/starts-with? path (str % "/"))
-                                      (str/starts-with? % (str path "/")))
-                                 (remove str/blank? changed))))
-                    local)
-          (throw
-            (ex-info
-              "Local work overlaps draft paths; move or resolve it before approval. Nothing was stashed or landed."
-              {:type :draft/git-failed :hint "Approval does not merge local working changes."}))))
-      (let [dirty? (not (str/blank? (git! checkout
-                                          ["status" "--porcelain" "--untracked-files=all"])))
-            marker (str "vis-approve-" (random-uuid))
-            stash
-            (when dirty?
-              (git! checkout ["stash" "push" "--include-untracked" "-m" marker])
-              (or
-                (some (fn [line]
+    (let [dirty? (not (str/blank? (git! checkout ["status" "--porcelain" "--untracked-files=all"])))
+          marker (str "vis-approve-" (random-uuid))
+          stash
+          (when dirty?
+            (git! checkout ["stash" "push" "--include-untracked" "-m" marker])
+            (or (some (fn [line]
                         (when (str/ends-with? line marker) (first (str/split line #" " 2))))
                       (git-lines checkout ["stash" "list" "--format=%H %gs"]))
                 (throw
@@ -422,103 +552,351 @@
                     "Approval stash could not be identified; inspect the checkout before retrying."
                     {:type :draft/recovery-required}))))]
 
-        (try (require-target-branch! checkout target)
-             (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha])
-             (finally (when stash (restore-stash! checkout target stash))))))
+      (try (require-target-branch! checkout target)
+           (when-not (= target-sha (git! checkout ["rev-parse" "HEAD"]))
+             (throw (ex-info "Target moved during approval; retry." {:type :draft/target-moved})))
+           (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha])
+           (finally (when stash (restore-stash! checkout target stash)))))
     (git! trunk ["update-ref" (str "refs/heads/" target) sha target-sha])))
 
+(defn- target-state!
+  [ws]
+  (let [root
+        (io/file (:root ws))
+
+        trunk
+        (io/file (:repo-root ws))]
+
+    (when-not (and (workspace/git-managed? trunk) (workspace/git-managed? root))
+      (throw (ex-info "Approval and synchronization need Git-managed repositories."
+                      {:type :draft/not-git-managed :repo-root (:repo-root ws)})))
+    (let [target
+          (target-branch trunk)
+
+          target-sha
+          (if (worktree? ws)
+            (git! trunk ["rev-parse" (str "refs/heads/" target)])
+            (do (git! root
+                      ["fetch" "--quiet" "--no-tags" (.getPath trunk) (str "refs/heads/" target)])
+                (git! root ["rev-parse" "FETCH_HEAD"])))]
+
+      {:root root
+       :trunk trunk
+       :target target
+       :target-sha target-sha
+       :origin-sha (fetch-origin! trunk root target)})))
+
+(defn- sync-marker
+  ^File [^File root]
+  (io/file (git! root ["rev-parse" "--path-format=absolute" "--git-path" "vis-draft-sync.edn"])))
+
+(defn- conflict-paths
+  [^File root]
+  (vec (remove str/blank?
+         (str/split (git! root ["diff" "--name-only" "--diff-filter=U" "-z"]) #"\u0000"))))
+
+(defn- sync-error
+  [^Exception e]
+  (merge {:message (ex-message e)} (select-keys (ex-data e) [:type :hint :paths :operation])))
+
+(defn- owned-sync!
+  [ws]
+  (let [root
+        (io/file (:root ws))
+
+        marker
+        (sync-marker root)]
+
+    (when-not (.isFile marker)
+      (throw (ex-info "No synchronization started by draft_sync is active in this repository."
+                      {:type :draft/sync-not-active :repo-root (:repo-root ws)})))
+    (let [state
+          (edn/read-string (slurp marker :encoding "UTF-8"))
+
+          head
+          (git! root ["rev-parse" "HEAD"])
+
+          merge-file
+          (io/file (git! root ["rev-parse" "--path-format=absolute" "--git-path" "MERGE_HEAD"]))]
+
+      (when-not (and (= (:id ws) (:workspace-id state))
+                     (= head (:head state))
+                     (or (not (.exists merge-file))
+                         (= (:target state) (str/trim (slurp merge-file :encoding "UTF-8")))))
+        (throw
+          (ex-info
+            "The checkout no longer matches this draft's synchronization; it was left untouched."
+            {:type :draft/sync-ownership-changed})))
+      (doseq [operation ["CHERRY_PICK_HEAD" "REVERT_HEAD" "rebase-merge" "rebase-apply"]]
+        (when (.exists (io/file
+                         (git! root ["rev-parse" "--path-format=absolute" "--git-path" operation])))
+          (throw (ex-info "Finish the unrelated Git operation first."
+                          {:type :draft/in-progress :operation operation}))))
+      (assoc state :merging? (.exists merge-file)))))
+
+(defn- sync-merges!
+  [env ws targets message]
+  (let [root
+        (io/file (:root ws))
+
+        marker
+        (sync-marker root)]
+
+    (loop [remaining (seq targets)]
+      (if-let [sha (first remaining)]
+        (if (ancestor? root sha "HEAD")
+          (recur (next remaining))
+          (let [state {:workspace-id (:id ws)
+                       :head (git! root ["rev-parse" "HEAD"])
+                       :target sha
+                       :remaining (vec (next remaining))
+                       :message message}
+                _ (spit marker (pr-str state) :encoding "UTF-8")
+                args ["merge" "--no-commit" "--no-ff" "--no-autostash" "--no-overwrite-ignore" sha]
+                {:keys [exit] :as result} (git/run-git root args git-timeout)
+                conflicts (conflict-paths root)]
+
+            (cond
+              (seq conflicts)
+              (do
+                (spit marker (pr-str (assoc state :conflicts conflicts)) :encoding "UTF-8")
+                {:status :conflicts
+                 :conflicts conflicts
+                 :hint
+                 "Resolve these files in the draft, then call draft_sync(action=\"continue\"); draft_sync(action=\"abort\") keeps the pre-sync checkpoint."})
+              (not= 0 exit) (throw (git-error root args result))
+              :else (do (commit! root
+                                 (commit-message (:label ws)
+                                                 (or message
+                                                     "chore(drafts): synchronize target history")
+                                                 (:session-id env)))
+                        (java.nio.file.Files/deleteIfExists (.toPath marker))
+                        (recur (next remaining))))))
+        {:status :synced :conflicts [] :commit (git! root ["rev-parse" "HEAD"])}))))
+
+(defn- sync-one!
+  [env ws action message]
+  (let [root
+        (io/file (:root ws))
+
+        marker
+        (sync-marker root)]
+
+    (case action
+      :start
+      (do
+        (require-idle! root)
+        (when (.exists marker)
+          (throw (ex-info
+                   "A previous draft synchronization needs continue or abort."
+                   {:type :draft/sync-in-progress
+                    :hint "Use draft_sync(action=\"continue\") or draft_sync(action=\"abort\")."})))
+        (ensure-draft-branch! root (io/file (:repo-root ws)) (:label ws))
+        (let [{:keys [target-sha origin-sha]} (target-state! ws)]
+          (when (seq (stage-all! root))
+            (commit! root
+                     (commit-message (:label ws)
+                                     (or message "chore(drafts): checkpoint before synchronization")
+                                     (:session-id env))))
+          (sync-merges! env ws (distinct (remove nil? [target-sha origin-sha])) message)))
+
+      :continue
+      (let [{:keys [merging? conflicts remaining] :as state} (owned-sync! ws)]
+        (when-not merging?
+          (throw (ex-info
+                   "The merge did not start. Abort its draft marker, then retry synchronization."
+                   {:type :draft/sync-not-merging})))
+        (let [unresolved (filterv (fn [path]
+                                    (let [file (io/file root path)]
+                                      (and (.startsWith (.toPath (.getCanonicalFile file))
+                                                        (.toPath (.getCanonicalFile root)))
+                                           (.isFile file)
+                                           (not (java.nio.file.Files/isSymbolicLink (.toPath file)))
+                                           (re-find #"(?m)^(<<<<<<< |=======$|>>>>>>> )"
+                                                    (slurp file :encoding "UTF-8")))))
+                           (distinct (concat conflicts (conflict-paths root))))]
+          (when (seq unresolved)
+            (throw (ex-info "Resolve conflict markers before continuing synchronization."
+                            {:type :draft/unresolved-conflicts :paths unresolved}))))
+        (git! root ["add" "-A" "--" "."])
+        (git! root ["rm" "-r" "-q" "--cached" "--ignore-unmatch" "--" ".rift" ".trash"])
+        (when (seq (conflict-paths root))
+          (throw (ex-info "Unresolved index entries remain." {:type :draft/unresolved-conflicts})))
+        (commit! root
+                 (commit-message
+                   (:label ws)
+                   (or message (:message state) "chore(drafts): resolve synchronization")
+                   (:session-id env)))
+        (java.nio.file.Files/deleteIfExists (.toPath marker))
+        (sync-merges! env ws remaining message))
+
+      :abort
+      (let [{:keys [merging?]} (owned-sync! ws)]
+        (when merging? (git! root ["merge" "--abort"]))
+        (java.nio.file.Files/deleteIfExists (.toPath marker))
+        {:status :aborted :conflicts [] :commit (git! root ["rev-parse" "HEAD"])}))))
+
+(defn sync!
+  "Checkpoint and merge target history in owned drafts only; continue/abort owns its Git operation."
+  [env {:keys [workspace-id action roots message] :or {action :start}}]
+  (when-not (contains? #{:start :continue :abort} action)
+    (throw (ex-info "Use start, continue or abort for draft synchronization."
+                    {:type :draft/invalid-action})))
+  (let [ws
+        (require-draft (:db-info env) workspace-id)
+
+        selected
+        (let [selected (select-roots ws roots)]
+          (when (and roots (some #(= :copy-only (:policy %)) selected))
+            (throw (ex-info "Copied dependency roots are review-only, not synchronization targets."
+                            {:type :draft/root-not-approvable})))
+          (filterv #(not= :copy-only (:policy %)) selected))
+
+        selected
+        (let [active (when (and (nil? roots) (not= :start action))
+                       (filterv #(.exists (sync-marker (io/file (:root %)))) selected))]
+          (if (seq active) active selected))]
+
+    (through-group-hooks
+      :draft/sync
+      env
+      (mapv #(hook-ctx % {:action action :roots (mapv :repo-root selected)}) selected)
+      (fn []
+        (let [results (mapv (fn [repo]
+                              (merge (select-keys repo [:root :repo-root])
+                                     (try (sync-one! env repo action message)
+                                          (catch Exception e
+                                            {:status :failed :error (sync-error e)}))))
+                            selected)]
+          {:status (cond (some #(= :failed (:status %)) results) :partial
+                         (some #(= :conflicts (:status %)) results) :conflicts
+                         (= :abort action) :aborted
+                         :else :synced)
+           :repositories results
+           :workspace ws})))))
+
+(defn- prepare-approval!
+  [ws]
+  (let [root
+        (io/file (:root ws))
+
+        trunk
+        (io/file (:repo-root ws))]
+
+    (require-idle! root)
+    (require-recovered! trunk)
+    (when-let [checkout (target-checkout trunk (target-branch trunk))]
+      (require-idle! checkout))
+    (let [state
+          (target-state! ws)
+
+          branch
+          (ensure-draft-branch! root trunk (:label ws))
+
+          staged
+          (stage-all! root)
+
+          files
+          (vec (distinct
+                 (concat (git-lines root ["diff" "--name-only" (str (:target-sha state) "...HEAD")])
+                         staged)))]
+
+      (assoc state
+        :ws ws
+        :branch branch
+        :staged staged
+        :files files))))
+
+(defn- approval-result
+  [{:keys [ws branch target sha files]} status]
+  {:root (:root ws)
+   :repo-root (:repo-root ws)
+   :branch branch
+   :target-branch target
+   :commit sha
+   :files files
+   :status status})
+
+(defn- through-approval-hooks
+  [env plans message f]
+  (through-group-hooks :draft/approve
+                       env
+                       (mapv (fn [plan]
+                               (hook-ctx (:ws plan)
+                                         {:branch (:branch plan)
+                                          :target-branch (:target plan)
+                                          :files (:files plan)
+                                          :message message
+                                          :repositories (mapv #(approval-result % :prepared)
+                                                              plans)}))
+                             plans)
+                       f))
+
 (defn approve!
-  "Commit the draft, require synchronized local/origin history, fast-forward the
-   target, restore local changes with their index, then push without force when
-   origin exists. Overlapping local paths are refused before stashing. Failed
-   restore retains its stash and prevents push; failed push reports local landing.
-   The draft stays active. Retry also publishes an already-landed commit.
-   opts: :workspace-id and optional :message. Returns :approved or
-   :nothing-to-approve with :published indicating whether origin was pushed."
+  "Preflight every approving repository before landing any; late failures retain truthful per-root results."
   [env {:keys [workspace-id message]}]
   (let [ws
         (require-draft (:db-info env) workspace-id)
 
-        root
-        (io/file (:root ws))
+        repos
+        (remove #(= :copy-only (:policy %)) (workspace/draft-roots ws))
 
-        trunk
-        (io/file (:repo-root ws))
+        plans
+        (mapv prepare-approval! repos)]
 
-        _
-        (when-not (workspace/git-managed? trunk)
-          (throw (ex-info "Approval needs a Git-managed project."
-                          {:type :draft/not-git-managed :workspace-id workspace-id})))
+    (through-approval-hooks
+      env
+      plans
+      message
+      (fn []
+        (let [prepared
+              (mapv (fn [{:keys [root trunk staged ws target target-sha origin-sha] :as plan}]
+                      (when (seq staged)
+                        (commit! root (commit-message (:label ws) message (:session-id env))))
+                      (require-synced! root target target-sha)
+                      (when origin-sha (require-synced! root target origin-sha))
+                      (let [sha (git! root ["rev-parse" "HEAD"])]
+                        (when-not (worktree? ws)
+                          (git! trunk ["fetch" "--quiet" "--no-tags" (.getPath ^File root) sha]))
+                        (assoc plan :sha sha)))
+                    plans)]
+          ;; All clones may acquire commits, but no original target moves before ALL pass.
+          (doseq [{:keys [trunk target target-sha sha]} prepared]
+            (preflight-land! trunk target target-sha sha))
+          (loop [remaining (seq prepared)
+                 results []]
 
-        target
-        (target-branch trunk)
+            (if-let [{:keys [trunk target target-sha sha origin-sha] :as plan} (first remaining)]
+              (let [result (try (when-not (= target-sha sha) (land! trunk target target-sha sha))
+                                (assoc (approval-result
+                                         plan
+                                         (if (= target-sha sha) :nothing-to-approve :approved))
+                                  :published (publish! trunk target sha origin-sha))
+                                (catch Exception e
+                                  (throw (ex-info
+                                           (ex-message e)
+                                           (assoc (or (ex-data e) {:type :draft/git-failed})
+                                             :repositories
+                                             (into results
+                                                   (cons (merge (approval-result plan :failed)
+                                                                (select-keys (ex-data e) [:status])
+                                                                {:error (sync-error e)})
+                                                         (map #(approval-result % :not-attempted)
+                                                              (next remaining)))))
+                                           e))))]
+                (recur (next remaining) (conj results result)))
+              (let [result (assoc (first results)
+                             :status (if (some #(= :approved (:status %)) results)
+                                       :approved
+                                       :nothing-to-approve)
+                             :published (every? :published results)
+                             :repositories results
+                             :workspace ws)]
+                (when (= :approved (:status result))
+                  (workspace/fire-hook! :on-approve ws (dissoc result :workspace)))
+                result))))))))
 
-        branch
-        (ensure-draft-branch! root trunk (:label ws))
-
-        target-sha
-        (if (worktree? ws)
-          (git! trunk ["rev-parse" (str "refs/heads/" target)])
-          (do (git! root
-                    ["fetch" "--quiet" "--no-tags" (.getPath trunk) (str "refs/heads/" target)])
-              (git! root ["rev-parse" "FETCH_HEAD"])))
-
-        _
-        (do (require-recovered! trunk)
-            (when-let [checkout (target-checkout trunk target)]
-              (require-idle! checkout)))
-
-        origin-sha
-        (fetch-origin! trunk root target)
-
-        staged
-        (stage-all! root)
-
-        files
-        (vec (distinct (concat (git-lines root ["diff" "--name-only" (str target-sha "...HEAD")])
-                               staged)))]
-
-    (if (and (empty? staged) (= (git! root ["rev-parse" "HEAD"]) target-sha))
-      (do (when origin-sha (require-synced! root target origin-sha))
-          (through-hooks
-            :draft/approve
-            env
-            (hook-ctx ws {:branch branch :target-branch target :files [] :message message})
-            #(hash-map :status :nothing-to-approve
-                       :branch branch
-                       :target-branch target
-                       :published (publish! trunk target target-sha origin-sha)
-                       :files []
-                       :workspace ws)))
-      (through-hooks
-        :draft/approve
-        env
-        (hook-ctx ws {:branch branch :target-branch target :files files :message message})
-        (fn []
-          (when-let [checkout (target-checkout trunk target)]
-            (require-target-branch! checkout target))
-          (when (seq staged) (commit! root (commit-message (:label ws) message (:session-id env))))
-          (require-synced! root target target-sha)
-          (when origin-sha (require-synced! root target origin-sha))
-          (let [sha (git! root ["rev-parse" "HEAD"])]
-            ;; Import objects only: a refused draft may have been rebased before retry.
-            ;; Do not maintain a second local branch that would require a forced update.
-            (when-not (worktree? ws)
-              (git! trunk ["fetch" "--quiet" "--no-tags" (.getPath root) sha]))
-            (land! trunk target target-sha sha)
-            (let [result {:status :approved
-                          :published (publish! trunk target sha origin-sha)
-                          :branch branch
-                          :target-branch target
-                          :commit sha
-                          :files files
-                          :workspace ws}]
-              (workspace/fire-hook! :on-approve ws (dissoc result :workspace))
-              result)))))))
-
-(defn status
-  "Landing status: draft :branch, :target-branch, commits the target lacks
-   (:ahead) and pending paths (:pending). Git facts are nil outside a repository."
+(defn- repository-status
   [ws]
   (let [root
         (io/file (:root ws))
@@ -533,32 +911,68 @@
         (when git? (draft-branch (current-branch root)))
 
         target
-        (when git? (try (target-branch trunk) (catch clojure.lang.ExceptionInfo _ nil)))]
+        (when git? (try (target-branch trunk) (catch clojure.lang.ExceptionInfo _ nil)))
 
-    {:workspace-id (:id ws)
-     :label (:label ws)
-     :root (:root ws)
-     :repo-root (:repo-root ws)
-     :state (:state ws)
-     :backend (some-> (:workspace-backend ws)
-                      workspace/backend-id
-                      name)
-     :mechanism (some-> (:workspace-mechanism ws)
-                        workspace/mechanism-id
-                        name)
-     :branch branch
-     :target-branch target
-     :ahead (when (and branch target)
-              (let [{target-exit :exit target-out :out}
-                    (git/run-git trunk ["rev-parse" (str "refs/heads/" target)] git-timeout)]
-                (when (= 0 target-exit)
-                  (let [{:keys [exit out]} (git/run-git root
-                                                        ["rev-list" "--count"
-                                                         (str (str/trim (str target-out)) "..HEAD")]
-                                                        git-timeout)]
-                    (when (= 0 exit) (parse-long (str/trim (str out))))))))
-     :pending
-     (when git?
-       (let [{:keys [exit out]}
-             (git/run-git root ["status" "--porcelain" "--untracked-files=all"] git-timeout)]
-         (when (= 0 exit) (count (remove str/blank? (str/split-lines (str out)))))))}))
+        summary
+        (try {:draft-changes (workspace/review-summary ws)}
+             (catch Exception e {:draft-error (ex-message e)}))]
+
+    (merge {:workspace-id (:id ws)
+            :label (:label ws)
+            :root (:root ws)
+            :repo-root (:repo-root ws)
+            :state (:state ws)
+            :policy (:policy ws)
+            :primary? (:primary? ws)
+            :approval? (not= :copy-only (:policy ws))
+            :backend (some-> (:workspace-backend ws)
+                             workspace/backend-id
+                             name)
+            :mechanism (some-> (:workspace-mechanism ws)
+                               workspace/mechanism-id
+                               name)
+            :branch branch
+            :target-branch target
+            :ahead (when (and branch target)
+                     (let [{:keys [exit out]}
+                           (git/run-git trunk ["rev-parse" (str "refs/heads/" target)] git-timeout)]
+                       (when (= 0 exit)
+                         (let [{:keys [exit out]} (git/run-git root
+                                                               ["rev-list" "--count"
+                                                                (str (str/trim (str out)) "..HEAD")]
+                                                               git-timeout)]
+                           (when (= 0 exit) (parse-long (str/trim (str out))))))))
+            :pending
+            (when git?
+              (let [{:keys [exit out]}
+                    (git/run-git root ["status" "--porcelain" "--untracked-files=all"] git-timeout)]
+                (when (= 0 exit) (count (remove str/blank? (str/split-lines (str out)))))))}
+           summary)))
+
+(defn status
+  "Per-repository landing facts and aggregate task-diff counts; unavailable values remain nil."
+  [ws]
+  (let [repositories
+        (mapv repository-status (workspace/draft-roots ws))
+
+        summary
+        (when (every? :draft-changes repositories)
+          (apply merge-with
+            +
+            {:modified 0 :created 0 :deleted 0}
+            (map :draft-changes repositories)))
+
+        approving
+        (filterv :approval? repositories)
+
+        total
+        (fn [key]
+          (when (every? #(number? (key %)) approving) (reduce + (map key approving))))]
+
+    (cond-> (assoc (first repositories)
+              :repositories repositories
+              :pending (total :pending)
+              :ahead (total :ahead)
+              :draft-changes summary)
+      (some :draft-error repositories)
+      (assoc :draft-error "Draft change summary unavailable for one or more repositories."))))

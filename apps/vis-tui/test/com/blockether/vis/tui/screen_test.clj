@@ -3535,3 +3535,59 @@ therapy line 2"
 
                      (prompt-activity-search! :screen {:session-id "sid" :history-id "history-1"})
                      (expect (empty? @events))))))
+
+(defdescribe
+  workspace-refresh-draft-test
+  (it "refreshes draft identity and review counts without a Git summary change"
+      ;; #241: polling must not deduplicate distinct drafts by Git status alone.
+      (let [db
+            (atom {:session {:id "sid"}})
+
+            git
+            {"is_workspace" true "modified" 0}
+
+            first-draft
+            {"root" "/draft"
+             "id" "draft-a"
+             "label" "first"
+             "fork_ms" 1
+             "git" git
+             "draft_changes" {"modified" 1 "created" 0 "deleted" 0}}
+
+            changed
+            (assoc first-draft "draft_changes" {"modified" 2 "created" 1 "deleted" 0})
+
+            renamed
+            (assoc changed "label" "renamed")
+
+            trunk
+            {"root" "/trunk" "id" "trunk" "git" git}
+
+            snapshots
+            [first-draft first-draft changed renamed trunk]
+
+            remaining
+            (atom snapshots)
+
+            events
+            (atom [])
+
+            done
+            (promise)]
+
+        (with-redefs-fn {#'state/app-db db
+                         #'state/dispatch #(swap! events conj %)
+                         #'screen/workspace-refresh-ms 1
+                         #'vis/gateway-session-workspace
+                         (fn [_]
+                           (if-let [ws (first @remaining)]
+                             (do (swap! remaining rest) ws)
+                             (do (swap! db assoc :shutdown? true) (deliver done true) nil)))}
+          (fn []
+            (let [^Thread thread (#'screen/start-workspace-refresh-thread!)]
+              (try (expect (= true (deref done 3000 :timed-out)))
+                   (expect (= (mapv #(vector :set-workspace %) [first-draft changed renamed trunk])
+                              @events))
+                   (finally (swap! db assoc :shutdown? true)
+                            (.interrupt thread)
+                            (.join thread 3000)))))))))

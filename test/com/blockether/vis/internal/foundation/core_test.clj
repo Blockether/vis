@@ -74,6 +74,7 @@
                 "this session's draft for the same task"
                 "Never edit the shared checkout or another session's draft" "project_root_path"
                 "next block" "Keep edits, formatting and verification in the draft" "draft_diff()"
+                "roots=[project_root_path, sibling_path]" "draft_sync()"
                 "draft_approve()" "commits and may push"
                 "user or applicable project instructions authorize commit and push"
                 "Review-first, local-only and no-commit/push requests leave the draft unapproved"

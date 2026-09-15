@@ -1124,33 +1124,33 @@
   ^String []
   (str "vis_sandbox_" (swap! session-counter inc)))
 
-(defn- confine!
-  "Put the process's filesystem policy where `jail-enabled?` says it belongs.
+(defn refresh-confinement!
+  "Install live read/write grants before a block. A failed policy update stops execution.
+   The worker kernel remains the deny-precedence boundary; this audit backstop
+   narrows its reserved session store to the currently active draft copies."
+  [session roots-fn jail-enabled? & [policy-fn]]
+  (if (and jail-enabled? roots-fn)
+    (let [policy
+          (when policy-fn (policy-fn))
 
-   The jail is ONE switch and it means what it says: with `jail.enabled: true`
-   the guest is confined to this session's roots, and with the jail off nothing
-   is confined — because with the jail off a block already reaches the whole
-   machine through `shell`, and a Python-only boundary beside an open shell is
-   theatre, not a boundary. `jailed_shell` is the other direction: a session
-   without a jail can still ask for a confined child.
+          roots
+          (vec (distinct (map str (roots-fn))))
 
-   Lifting is EXPLICIT (two empty lists) rather than skipped, because the policy
-   is the INTERPRETER's: a session that simply declined to set it would inherit
-   whatever the last one left behind. That mattered when every session shared one
-   interpreter; a session with a worker of its own now has the policy to itself,
-   which is what the worker is for."
-  [session roots-fn jail-enabled?]
-  (try (if (and jail-enabled? roots-fn)
-         (let [roots (vec (distinct (map str (roots-fn))))]
-           (py-confine! session
-                        roots
-                        roots
-                        (str "Refused: the sandbox filesystem is confined to this "
-                             "session's roots."))
-           (tel/log! {:level :debug :id ::confined :roots (count roots)}))
-         (do (py-confine! session [] [] "")
-             (tel/log! {:level :debug :id ::unconfined :jail-enabled? (boolean jail-enabled?)})))
-       (catch Throwable t (tel/log! {:level :warn :id ::confine-failed :error t}) nil)))
+          write
+          (if policy (vec (:read-write policy)) roots)
+
+          read
+          (if policy (vec (distinct (concat write (:read-only policy)))) roots)]
+
+      (when (empty? read)
+        (throw (ex-info "No readable sandbox roots; refusing an empty confinement policy."
+                        {:type ::empty-confinement})))
+      (py-confine!
+        session
+        read
+        write
+        "Refused: this path is not writable in the current sandbox. When drafts are enabled, use draft_create with roots=[...] before editing, then use the next block's Path bindings."))
+    (py-confine! session [] [] "")))
 
 (defn- install-network!
   "Set the runtime's fail-closed socket capability. A jailed worker's kernel policy
@@ -1247,7 +1247,10 @@
         (pyext/configure! session policy-fn)
         (swap! session-workers assoc session session))
       (ensure-interpreter!))
-    (confine! session roots-fn (:jail-enabled? network-opts))
+    (refresh-confinement! session
+                          roots-fn
+                          (:jail-enabled? network-opts)
+                          (:filesystem-policy-fn network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)
     ;; Mirror stdout across the process boundary as it is written. A cancelled

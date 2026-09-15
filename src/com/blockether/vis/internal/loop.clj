@@ -2,6 +2,7 @@
   (:refer-clojure)
   (:require
     [charred.api :as json]
+    [clojure.java.io :as io]
     [clojure.set :as set]
     [clojure.string :as str]
     [com.blockether.anomaly.core :as anomaly]
@@ -1397,6 +1398,18 @@
       (not (:timeout? execution-result))
       (assoc :timeout? false))))
 
+(defonce
+  ^{:doc
+    "Monotonic `/reload` epoch. Every `/reload` bumps it (via a reload hook).
+   Stale idle sandboxes close immediately; busy ones close after their turn.
+   The next turn rebuilds the immutable security-policy snapshot from the
+   freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
+   frozen network-domain / filesystem-root policy: the snapshot drives the
+   Python session, egress proxy, and process jail at env-creation time, so it
+   can only change by rebuilding the env — never by an in-place reseat."}
+  policy-reload-epoch
+  (atom 0))
+
 (defn- execute-code
   "Run a single :code block through the Python sandbox.
 
@@ -1409,6 +1422,24 @@
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [environment code & {:keys [timeout-ms tool-event-fn]}]
+  (let [opts (get-in environment [:sandbox-caps :network])]
+    (when (process-jail/draft-policy-expanded? environment)
+      (swap! policy-reload-epoch inc)
+      (throw
+        (ex-info
+          "A newly discovered repository needs a stricter worker policy. Start the next turn to rebuild the Python context before selecting or editing it; existing handles cannot be safely migrated."
+          {:type :draft/policy-expanded})))
+    (when (and (contains? opts :draft-required?)
+               (not= (:draft-required? opts) (not= :off (workspace/draft-backend-setting))))
+      (throw
+        (ex-info
+          "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."
+          {:type :draft/policy-changed})))
+    (when (and (:draft-required? opts) (not (:jail-enabled? opts)))
+      (throw
+        (ex-info
+          "Draft write protection requires the jail. Enable jail.enabled or turn Draft backend off, then start a new turn."
+          {:type :draft/jail-required}))))
   ;; Running a block is exactly what a sandbox is FOR, so this is the ask that
   ;; builds one on a session whose first turn executes code.
   (let [python-context
@@ -1428,6 +1459,12 @@
       ;; `<context>` block and reflects intra-iter changes across blocks.
       ;; The snapshot is immutable/read-only — see ctx-loop/session-snapshot for
       ;; the guarantee. Re-binding also erases any model-created shadow binding.
+      (let [opts (get-in environment [:sandbox-caps :network])]
+        (when-let [policy-fn (:filesystem-policy-fn opts)]
+          (env/refresh-confinement! python-context
+                                    #(get (policy-fn) :read-write)
+                                    (:jail-enabled? opts)
+                                    policy-fn)))
       (when-let [snap (ctx-loop/session-snapshot environment)]
         ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
         (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
@@ -11664,7 +11701,20 @@
                                    live-roots (when ws [(:root ws)])]
 
                                (security-policy/access-view security-config live-roots)))
+            draft-required? (not= :off (workspace/draft-backend-setting))
+            draft-home (when draft-required?
+                         (let [directory (io/file (workspace/session-drafts-home session-id))]
+                           (.mkdirs directory)
+                           (.getCanonicalPath directory)))
+            draft-env {:workspace-atom workspace-atom
+                       :security-policy security-config
+                       :security/filesystem-roots configured-rw-roots}
+            draft-protected-roots (when draft-required? (process-jail/draft-source-roots draft-env))
+            draft-env (assoc draft-env :workspace/draft-protected-roots draft-protected-roots)
             jail-config (:process-jail security-config)
+            filesystem-policy-fn
+            #(process-jail/runtime-policy
+               (process-jail/draft-policy (assoc jail-config :roots-fn sandbox-roots-fn) draft-env))
             jail-enabled? (not (:disabled? jail-config))
             net-cfg (:network security-config)
             ;; Host sockets stay available to the interpreter; the jail is the ONE
@@ -11701,25 +11751,33 @@
                       repl-proxy-port (when proxy?
                                         (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
 
-                  (merge jail-config
-                         {:roots-fn sandbox-roots-fn
-                          :net-enabled? net-on?
-                          ;; Resolved per spawn (never baked into the session snapshot), so a
-                          ;; `.env` edit or a refreshed keychain item reaches the next child.
-                          :env-values (config/child-environment-values)
-                          :proxy-port proxy-port
-                          :worker-proxy-port worker-proxy-port
-                          :proxy-token (when proxy? sandbox-token)
-                          :repl-proxy-port repl-proxy-port
-                          :repl-ca-file ca-file
-                          :java-trust-store (:java-trust-store java-trust)
-                          :java-trust-store-password (:java-trust-store-password java-trust)
-                          :ca-file ca-file}))))
+                  (process-jail/draft-policy
+                    (merge jail-config
+                           {:roots-fn sandbox-roots-fn
+                            :net-enabled? net-on?
+                            ;; Resolved per spawn (never baked into the session snapshot), so a
+                            ;; `.env` edit or a refreshed keychain item reaches the next child.
+                            :env-values (config/child-environment-values)
+                            :proxy-port proxy-port
+                            :worker-proxy-port worker-proxy-port
+                            :proxy-token (when proxy? sandbox-token)
+                            :repl-proxy-port repl-proxy-port
+                            :repl-ca-file ca-file
+                            :java-trust-store (:java-trust-store java-trust)
+                            :java-trust-store-password (:java-trust-store-password java-trust)
+                            :ca-file ca-file})
+                    draft-env))))
             network-opts {;; The worker launch reads this policy before its first
                           ;; interpreter request; the same snapshot configures its
                           ;; runtime audit-hook backstop immediately afterwards.
                           :worker? true
-                          :worker-policy-fn jail-policy-fn
+                          :worker-policy-fn (when jail-policy-fn
+                                              #(cond-> (jail-policy-fn) draft-home
+                                                 (update :allow-read-write
+                                                         (fnil conj [])
+                                                         draft-home)))
+                          :filesystem-policy-fn filesystem-policy-fn
+                          :draft-required? draft-required?
                           :enabled? net-on?
                           :jail-enabled? jail-enabled?
                           :allowed-domains (:allowed-domains net-cfg)
@@ -11789,6 +11847,8 @@
                          ;; Live workspace pointer for sandbox confinement. run-turn!
                          ;; refreshes it so `sandbox-roots-fn` tracks the active root.
                          :workspace-atom workspace-atom
+                         :workspace/drafts-home draft-home
+                         :workspace/draft-protected-roots draft-protected-roots
                          ;; routing digest → rendered into ctx as `routing`
                          ;; (current model + provider only).
                          :routing routing-digest
@@ -11920,18 +11980,6 @@
    so string-id callers keep working alongside the UUID key."}
   cache
   (atom {}))
-
-(defonce
-  ^{:doc
-    "Monotonic `/reload` epoch. Every `/reload` bumps it (via a reload hook).
-   Stale idle sandboxes close immediately; busy ones close after their turn.
-   The next turn rebuilds the immutable security-policy snapshot from the
-   freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
-   frozen network-domain / filesystem-root policy: the snapshot drives the
-   Python session, egress proxy, and process jail at env-creation time, so it
-   can only change by rebuilding the env — never by an in-place reseat."}
-  policy-reload-epoch
-  (atom 0))
 
 (defn- policy-stale?
   [entry]
@@ -12442,7 +12490,9 @@
 ;; `notify!` swallows listener throws, and `defonce` keeps the registration
 ;; idempotent across `(require ... :reload)`.
 (defonce ^:private _toggle-extension-sync-listener
-  (toggles/add-listener! (fn [_event]
+  (toggles/add-listener! (fn [event]
+                           (when (= workspace/draft-backend-toggle-id (:id event))
+                             (mark-policy-reload!))
                            (sync-cached-extension-symbols!))))
 
 (defn refresh-cached-routers!

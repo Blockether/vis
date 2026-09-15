@@ -6,6 +6,7 @@
    (instant on CoW filesystems) and clean the clone up in `finally`, so
    the live repo and ~/.rifts are never touched."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.workspace.core :as ws]
             [com.blockether.vis.internal.util :as util]
@@ -687,6 +688,60 @@
            (finally (delete-tree! trunk) (delete-tree! clone))))))
 
 (defdescribe
+  live-workspace-filesystem-roots-test
+  (it "uses the live workspace and clears stale extra clones after leaving a draft"
+      ;; #242/#243: an existing worker must follow the complete current draft group.
+      (let [base
+            (temp-dir "vis-live-draft-roots")
+
+            paths
+            (mapv (fn [name]
+                    (.getCanonicalPath (doto (io/file base name) .mkdirs)))
+                  ["trunk" "draft" "extra" "old-copy" "new-copy" "shared" "secret"])
+
+            [trunk draft extra old-copy new-copy shared secret]
+            paths
+
+            live
+            (atom {:repo-root trunk
+                   :root draft
+                   :filesystem-roots [{:trunk extra :clone new-copy :policy :copy-and-apply}]})
+
+            env
+            {:workspace {:repo-root trunk :root trunk}
+             :workspace-atom live
+             :workspace/filesystem-roots [{:trunk extra :clone old-copy :policy :copy-and-apply}]
+             :security/filesystem-roots [extra shared secret]
+             :security/no-search-roots [extra]
+             :security-policy {:jail-enabled true
+                               :draft-policies {extra :copy-and-apply secret :not-allowed}}}]
+
+        (try (let [entries
+                   (ws/env-filesystem-roots env)
+
+                   by-trunk
+                   (into {} (map (juxt :trunk identity)) entries)]
+
+               (expect (= draft (:clone (first entries))))
+               (expect (= new-copy (:clone (by-trunk extra))))
+               (expect (true? (:no-search? (by-trunk extra))))
+               (expect (not (:denied? (by-trunk extra))))
+               (expect (true? (:denied? (by-trunk secret))))
+               (expect (= shared (:clone (by-trunk shared)))))
+             (reset! live {:repo-root trunk :root trunk})
+             (let [entries
+                   (ws/env-filesystem-roots env)
+
+                   by-trunk
+                   (into {} (map (juxt :trunk identity)) entries)]
+
+               (expect (not-any? :primary? entries))
+               (expect (= extra (:clone (by-trunk extra))))
+               (expect (not-any? #{old-copy new-copy draft} (map :clone entries)))
+               (expect (not (:denied? (by-trunk secret)))))
+             (finally (delete-tree! base))))))
+
+(defdescribe
   draft-isolation-test
   (it
     "per-root draft policy: isolates copy roots, withholds not-allowed, and fails CLOSED when no clone was minted"
@@ -901,3 +956,242 @@
                            (finally (try (ws/abandon! store {:workspace-id (:id draft)})
                                          (catch Throwable _ nil)))))))))
              (finally (delete-tree! base))))))
+
+(defdescribe
+  multi-repository-creation-test
+  (it
+    "seeds and reviews every repository without changing either source"
+    ;; #242/#243: an extra repository needs the same immutable seeded baseline.
+    (doseq [backend
+            [:worktree :rift]
+
+            clean?
+            [false true]]
+
+      (let [base
+            (temp-dir "vis-draft-group")
+
+            primary
+            (doto (io/file base "primary") .mkdirs)
+
+            secondary
+            (doto (io/file base "secondary") .mkdirs)
+
+            home
+            (str base "-drafts")]
+
+        (try
+          (doseq [repo [primary secondary]]
+            (init-repo! repo)
+            (spit (io/file repo "a.txt") "x\npending\n")
+            (spit (io/file repo "inherited.txt") "inherited\n"))
+          (when (some #(and (= backend (:backend %)) (:available? %))
+                      (ws/workspace-capability-matrix (.getPath primary)))
+            (binding [ws/*draft-backend*
+                      backend
+
+                      ws/*drafts-home*
+                      home]
+
+              (with-store
+                (fn [store]
+                  (let [source-status
+                        (mapv #(git-output! % "status" "--porcelain") [primary secondary])
+
+                        draft
+                        (ws/create! store
+                                    {:from (seed-workspace! store (.getPath primary))
+                                     :label "group"
+                                     :clean? clean?
+                                     :drafts-home (ws/session-drafts-home "group-session")
+                                     :filesystem-roots [{:trunk (.getPath secondary)
+                                                         :policy :copy-and-apply}]})
+
+                        members
+                        (ws/draft-roots draft)]
+
+                    (try (expect (= 1 (count (ws/extra-root-entries draft))))
+                         (expect (= [true false] (mapv :primary? members)))
+                         (expect (= members (ws/draft-roots (ws/get store (:id draft)))))
+                         (expect (not= (ws/session-drafts-home "group-session")
+                                       (ws/session-drafts-home "other-session")))
+                         (doseq [member members]
+                           (let [clone (:root member)]
+                             (expect (= (if clean? "x\n" "x\npending\n")
+                                        (slurp (io/file clone "a.txt"))))
+                             (expect (= (not clean?) (.exists (io/file clone "inherited.txt"))))
+                             (expect (.startsWith (.toPath (io/file clone))
+                                                  (.toPath (io/file (ws/session-drafts-home
+                                                                      "group-session")))))
+                             (expect (= "" (:patch (ws/review-diff member nil))))
+                             (expect (= {:modified 0 :created 0 :deleted 0}
+                                        (ws/review-summary member)))
+                             (let [index-before
+                                   (git-output! (io/file clone) "diff" "--cached" "--binary")]
+                               (spit (io/file clone "a.txt") "task change\n")
+                               (expect (str/includes? (:patch (ws/review-diff member nil))
+                                                      "+task change"))
+                               (expect (= {:modified 1 :created 0 :deleted 0}
+                                          (ws/review-summary member)))
+                               (spit (io/file clone "created.txt") "new task file\n")
+                               (.delete (io/file clone "a.txt"))
+                               (expect (= {:modified 0 :created 1 :deleted 1}
+                                          (ws/review-summary member)))
+                               (expect
+                                 (= index-before
+                                    (git-output! (io/file clone) "diff" "--cached" "--binary"))))))
+                         (expect (= source-status
+                                    (mapv #(git-output! % "status" "--porcelain")
+                                          [primary secondary])))
+                         (finally (some-> (:discard-future
+                                            (ws/abandon! store {:workspace-id (:id draft)}))
+                                          deref))))))))
+          (finally (delete-tree! home) (delete-tree! base))))))
+  (it
+    "refuses an unavailable participant instead of pinning a partial draft"
+    (let [base
+          (temp-dir "vis-draft-group-failure")
+
+          primary
+          (doto (io/file base "primary") .mkdirs)
+
+          extra
+          (doto (io/file base "not-git") .mkdirs)
+
+          home
+          (str base "-drafts")]
+
+      (try (init-repo! primary)
+           (binding [ws/*draft-backend*
+                     :worktree
+
+                     ws/*drafts-home*
+                     home]
+
+             (with-store
+               (fn [store]
+                 (let [before
+                       (git-output! primary "worktree" "list" "--porcelain")
+
+                       result
+                       (try (ws/create! store
+                                        {:from (seed-workspace! store (.getPath primary))
+                                         :label "must-not-partially-exist"
+                                         :clean? true
+                                         :filesystem-roots [{:trunk (.getPath extra)
+                                                             :policy :copy-and-apply}]})
+                            (catch clojure.lang.ExceptionInfo e e))]
+
+                   (try (expect (instance? clojure.lang.ExceptionInfo result))
+                        (expect (= before (git-output! primary "worktree" "list" "--porcelain")))
+                        (finally (when (map? result)
+                                   (some-> (:discard-future
+                                             (ws/abandon! store {:workspace-id (:id result)}))
+                                           deref))))))))
+           (finally (delete-tree! home) (delete-tree! base))))))
+
+(defdescribe
+  multi-repository-cleanup-test
+  (it
+    "releases every clone when the second participant fails after allocation"
+    (let [base
+          (temp-dir "vis-draft-group-cleanup")
+
+          first-repo
+          (doto (io/file base "first") .mkdirs)
+
+          second-repo
+          (doto (io/file base "second") .mkdirs)
+
+          home
+          (str base "-drafts")
+
+          initialize
+          @#'ws/initialize-review!
+
+          calls
+          (atom 0)]
+
+      (try (doseq [repo [first-repo second-repo]]
+             (init-repo! repo))
+           (binding [ws/*draft-backend*
+                     :worktree
+
+                     ws/*drafts-home*
+                     home]
+
+             (with-store
+               (fn [store]
+                 (let [before (mapv #(git-output! % "worktree" "list" "--porcelain")
+                                    [first-repo second-repo])]
+                   (with-redefs-fn {#'ws/initialize-review! (fn [root]
+                                                              (if (= 2 (swap! calls inc))
+                                                                (throw (ex-info
+                                                                         "Second baseline failed"
+                                                                         {:type :test/seed-failed}))
+                                                                (initialize root)))}
+                     #(expect (= :test/seed-failed
+                                 (try (ws/create! store
+                                                  {:from (seed-workspace! store
+                                                                          (.getPath first-repo))
+                                                   :label "cleanup"
+                                                   :clean? true
+                                                   :filesystem-roots [{:trunk (.getPath second-repo)
+                                                                       :policy :copy-and-apply}]})
+                                      nil
+                                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                   (expect (= 2 @calls))
+                   (expect (= before
+                              (mapv #(git-output! % "worktree" "list" "--porcelain")
+                                    [first-repo second-repo])))
+                   (expect (not (.exists (io/file home "first" "cleanup"))))
+                   (expect (not (.exists (io/file home "second" "cleanup"))))))))
+           (finally (delete-tree! home) (delete-tree! base))))))
+
+(defdescribe
+  clean-draft-copy-only-root-test
+  (it
+    "copies a non-Git dependency cache without treating it as an approval repository"
+    (let [base
+          (temp-dir "vis-draft-copy-only")
+
+          primary
+          (doto (io/file base "primary") .mkdirs)
+
+          cache
+          (doto (io/file base "cache") .mkdirs)
+
+          home
+          (str base "-drafts")]
+
+      (try (init-repo! primary)
+           (spit (io/file cache "dependency.txt") "cached bytes\n")
+           (when (ws/isolated-workspaces-supported? (.getPath cache))
+             (binding [ws/*draft-backend*
+                       :auto
+
+                       ws/*drafts-home*
+                       home]
+
+               (with-store
+                 (fn [store]
+                   (let [draft
+                         (ws/create! store
+                                     {:from (seed-workspace! store (.getPath primary))
+                                      :label "cache"
+                                      :clean? true
+                                      :filesystem-roots [{:trunk (.getPath cache)
+                                                          :policy :copy-only}]})
+
+                         member
+                         (second (ws/draft-roots draft))]
+
+                     (try (expect (= :copy-only (:policy member)))
+                          (expect (= "cached bytes\n"
+                                     (slurp (io/file (:root member) "dependency.txt"))))
+                          (expect (= "" (:patch (ws/review-diff member nil))))
+                          (expect (= "cached bytes\n" (slurp (io/file cache "dependency.txt"))))
+                          (finally (some-> (:discard-future
+                                             (ws/abandon! store {:workspace-id (:id draft)}))
+                                           deref))))))))
+           (finally (delete-tree! home) (delete-tree! base))))))

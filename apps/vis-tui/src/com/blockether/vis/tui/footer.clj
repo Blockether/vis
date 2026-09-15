@@ -211,6 +211,31 @@
     :else
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
+(defn- draft-footer-spans
+  [{:strs [id label draft_changes draft_error]}]
+  (let [identity
+        (or (not-empty label)
+            (some-> id
+                    str
+                    (subs 0 (min 8 (count (str id)))))
+            "?")
+
+        counts
+        (map #(get draft_changes %) ["modified" "created" "deleted"])
+
+        summary
+        (if (and (not draft_error) (every? number? counts))
+          (let [[modified created deleted] counts]
+            (str " ~" modified " +" created " -" deleted))
+          " (changes unavailable)")]
+
+    [{:text (str " DRAFT#" identity summary)
+      :fg t/footer-fg-strong
+      :bold? true
+      :region :right
+      :priority 2
+      :tint :git}]))
+
 (def ^:private session-cost-keys
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
    "cache_write_cost" "output_cost" "total_cost"])
@@ -540,7 +565,7 @@
         (get ws "git")
 
         git-spans
-        (if isolated-workspace? [] (git-footer-spans git-status))]
+        (if isolated-workspace? (draft-footer-spans ws) (git-footer-spans git-status))]
 
     (cond-> (vec git-spans)
       ;; Response controls read reasoning → verbosity → fast, matching Companion.
