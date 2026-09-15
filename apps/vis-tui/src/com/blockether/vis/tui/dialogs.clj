@@ -320,25 +320,25 @@
       (do (Thread/sleep 16) (recur)))))
 
 (defn read-modal-input!
-  "Read one canonical modal event through Lanterna's stateful input coalescer.
+  "Wait for one canonical modal event through Lanterna's stateful input coalescer.
+   Canceled wheel bursts are ignored, not returned as end-of-input.
    Resize wakes remain `KeyType/Unknown`; MOVE/DRAG refreshes close-button hover."
   [^TerminalScreen screen]
-  (let [^InputCoalescer coalescer
-        (.get ^ThreadLocal modal-input-coalescer)
+  (let [^InputCoalescer coalescer (.get ^ThreadLocal modal-input-coalescer)]
+    (loop []
 
-        key
-        (.next coalescer
-               (reify
-                 java.util.function.Supplier
-                   (get [_] (normalize-modal-key (await-modal-key! screen))))
-               (reify
-                 java.util.function.Supplier
-                   (get [_]
-                     (some-> (.pollInput screen)
-                             normalize-modal-key))))]
-
-    (update-modal-close-hover! key)
-    {:key (if (modal-close-click? key) (KeyStroke. KeyType/Escape) key)}))
+      (if-let [key (.next coalescer
+                          (reify
+                            java.util.function.Supplier
+                              (get [_] (normalize-modal-key (await-modal-key! screen))))
+                          (reify
+                            java.util.function.Supplier
+                              (get [_]
+                                (some-> (.pollInput screen)
+                                        normalize-modal-key))))]
+        (do (update-modal-close-hover! key)
+            {:key (if (modal-close-click? key) (KeyStroke. KeyType/Escape) key)})
+        (recur)))))
 
 (defn modal-input-pending?
   "True when another modal input is already queued. Lanterna retains the peeked event

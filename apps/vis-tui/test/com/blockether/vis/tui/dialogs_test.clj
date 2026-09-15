@@ -63,6 +63,30 @@
                                    (.getKeyType ^KeyStroke (:key (read-modal-input! screen)))))
                         (finally (.stopScreen screen))))))
 
+(defdescribe modal-canceled-wheel-input-test
+             (it "waits for a real key when opposite wheel events cancel without lookahead"
+                 (doseq [actions [[MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN]
+                                  [MouseActionType/SCROLL_DOWN MouseActionType/SCROLL_UP]]]
+                   (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                         (term/virtual-screen)
+                         await-key @#'dlg/await-modal-key!
+                         reads (atom 0)]
+
+                     (try (doseq [action actions]
+                            (.addInput terminal (MouseAction. action 0 (TerminalPosition. 10 10))))
+                          (with-redefs-fn {#'dlg/await-modal-key!
+                                           (fn [s]
+                                             ;; Enqueue the next key only AFTER the canceled batch was drained.
+                                             ;; Queuing it up front would hide the nil-event regression.
+                                             (when (= 2 (swap! reads inc))
+                                               (.addInput terminal (KeyStroke. KeyType/Enter)))
+                                             (await-key s))}
+                            #(expect (= KeyType/Enter
+                                        (some-> (dlg/read-modal-key! screen)
+                                                .getKeyType))))
+                          (expect (= 2 @reads))
+                          (finally (.stopScreen screen)))))))
+
 (defdescribe
   modal-close-hit-test
   (it "publishes the close target through Lanterna's hit map"
@@ -2423,6 +2447,52 @@
           (let [top (str/triml (:text (nth (term/painted-rows terminal) 1)))]
             (expect (str/starts-with? top "line-166")))
           (finally (.stopScreen screen))))))
+
+;; Regression (user report): scrolling upward from Providers closed Settings when
+;; opposing wheel events canceled and the modal reader returned nil between inputs.
+(defdescribe
+  settings-canceled-wheel-test
+  (it
+    "keeps Settings open and handles upward scrolling until Escape is pressed"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+          (term/virtual-screen)
+
+          rows
+          (vec (concat [{:type :section :label "Terminal UI"}]
+                       (for [i (range 24)]
+                         {:type :toggle :key (keyword (str "option-" i)) :label (str "Option " i)})
+                       [{:type :toggle :key :show-thinking :label "Show thinking"}
+                        {:type :section :label "Providers"}
+                        {:type :provider :label "OpenAI" :auth :off :provider {:id :openai}}]))
+
+          await-key
+          @#'dlg/await-modal-key!
+
+          reads
+          (atom 0)]
+
+      (try
+        (.addInput terminal (MouseAction. MouseActionType/SCROLL_UP 0 (TerminalPosition. 10 10)))
+        (.addInput terminal (wheel-down))
+        (expect
+          (= {:show-thinking true}
+             (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                              #'dlg/settings-rows (constantly rows)
+                              #'dlg/await-modal-key!
+                              (fn [s]
+                                (when (= 2 (swap! reads inc))
+                                  ;; The next gesture arrives after the zero-delta batch, then
+                                  ;; Enter toggles the setting immediately above Providers.
+                                  (.addInput terminal
+                                             (MouseAction. MouseActionType/SCROLL_UP
+                                                           0
+                                                           (TerminalPosition. 10 10)))
+                                  (.addInput terminal (KeyStroke. KeyType/Enter))
+                                  (.addInput terminal (KeyStroke. KeyType/Escape)))
+                                (await-key s))}
+               #(dlg/settings-dialog! screen {:show-thinking false} {:focus-section "Providers"}))))
+        (expect (= 3 @reads))
+        (finally (.stopScreen screen))))))
 
 ;; Regression (user report): pressing a scrollbar scrolled nothing. Settings painted
 ;; one whose press/drag moved `scroll` alone - and the very next paint recomputes
