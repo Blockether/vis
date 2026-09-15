@@ -33,7 +33,7 @@ export function PasteEditor({
       }}
     >
       <section
-        className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+        className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-float sm:starting:translate-y-2"
         role="dialog"
         aria-modal="true"
         aria-labelledby="paste-editor-title"

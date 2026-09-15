@@ -199,7 +199,7 @@ export const Button = forwardRef<
     <button
       ref={ref}
       disabled={disabled}
-      className={`border text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none ${frame} ${styles} ${className}`}
+      className={`border text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 motion-reduce:transition-none ${frame} ${styles} ${className}`}
       {...tapPress}
       {...props}
     />
@@ -1940,7 +1940,7 @@ export const Select = forwardRef<
           collisionPadding={12}
           aria-label={props['aria-label']}
           aria-labelledby={props['aria-labelledby'] ?? (props['aria-label'] ? undefined : triggerId)}
-          className="z-[60] flex max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-none border border-edge-strong bg-panel font-mono text-ui text-white shadow-[4px_4px_0_var(--line2)]"
+          className="z-[60] flex max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel font-mono text-ui text-white shadow-float"
           onKeyDown={(event) => {
             // Do not let the surrounding dialog interpret a picker key as its own.
             event.stopPropagation();
@@ -2383,7 +2383,7 @@ export function DialogFrame({
     <section
       className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel ${
         isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'
-      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

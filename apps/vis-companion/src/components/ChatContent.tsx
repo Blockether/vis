@@ -1338,7 +1338,7 @@ const CardGrid = memo(function CardGrid({
   // joined, some are not" - one run of work, one frame.
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}${live ? ` ${transcriptRiseClass}` : ''}`}
+      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge'}${live ? ` ${transcriptRiseClass}` : ''}`}
       aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
     >
       {cards.map((card, cardIndex) => (

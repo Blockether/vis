@@ -37,7 +37,7 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
   return (
     <>
       {paused && (
-        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-none border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)] px-2.5 py-1.5 font-mono text-meta text-warn">
+        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-none border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-meta text-warn">
           <span className="size-1.5 shrink-0 bg-warn-strong" aria-hidden="true" />
           <span className="font-bold text-warn">Queue paused</span>
           <span className="min-w-0 flex-1 truncate">
@@ -61,9 +61,9 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
         </div>
       )}
 
-      {/* The queue shares the composer's square frame and shadow above the dock. */}
+      {/* The queue shares the composer's flat square frame above the dock. */}
       {queued.length > 0 && (
-        <div className="mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]">
+        <div className="mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel">
           <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
             <span aria-hidden="true">┌</span>
             Queued · {queued.length}

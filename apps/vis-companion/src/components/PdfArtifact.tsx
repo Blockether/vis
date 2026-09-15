@@ -175,7 +175,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
             <img
               src={rendered.src}
               aria-label={`Page ${page} of ${name}`}
-              className="block max-h-full max-w-full object-contain shadow-lg"
+              className="block max-h-full max-w-full object-contain"
             />
           ) : (
             <p className="text-meta text-footer-muted">{status || 'Rendering PDF…'}</p>

@@ -647,7 +647,7 @@ export function MachineTab({
         isDown
           ? 'text-dialog-hint hover:text-white'
           : isOn
-            ? 'bg-panel font-bold text-white shadow-sm'
+            ? 'bg-panel font-bold text-white'
             : hasUnread
               ? 'font-bold text-white'
               : 'text-dialog-hint hover:text-white'

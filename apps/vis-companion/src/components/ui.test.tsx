@@ -3630,8 +3630,8 @@ describe('SettingsChoiceGroup', () => {
   });
 });
 
-// Source checks reject radius utilities; Storybook verifies every rendered corner.
-describe('Corners', () => {
+// Source checks reject radius utilities and stray shadows; Storybook verifies every rendered corner.
+describe('Corners and shadows', () => {
   const everything = import.meta.glob(
     ['../**/*.tsx', '!../**/*.test.tsx', '!../**/*.stories.tsx'],
     { query: '?raw', import: 'default', eager: true },
@@ -3647,21 +3647,38 @@ describe('Corners', () => {
     }
   });
 
-  it('keeps the composer, queue and floating suggestions square without changing their shadows', () => {
-    expect(sessionScreenSource).toContain('rounded-none border border-dialog-edge bg-input');
-    expect(sessionDockSource).toContain(
-      'mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]',
+  it('keeps the composer, queue and floating suggestions square and lets only the floating ones cast', () => {
+    expect(sessionScreenSource).toContain(
+      'rounded-none border border-dialog-edge bg-input transition-colors',
     );
     expect(sessionDockSource).toContain(
-      'rounded-none border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]',
+      'mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel">',
     );
-    expect(composerSuggestionsSource).toContain('rounded-none border border-dialog-edge bg-panel');
-    expect(composerSuggestionsSource).toContain('shadow-[6px_6px_0_var(--dialog-shadow)]');
+    expect(sessionDockSource).toContain('rounded-none border border-warn-strong bg-warn-surface px-2.5');
+    expect(queuedTurnsTraySource).not.toMatch(/shadow-/);
+    expect(composerSuggestionsSource).toContain(
+      'rounded-none border border-dialog-edge bg-panel shadow-float',
+    );
     expect(composerAttachmentPickerSource).toContain(
-      'rounded-none border border-dialog-edge bg-panel',
+      'rounded-none border border-dialog-edge bg-panel shadow-float',
     );
-    expect(composerAttachmentPickerSource).toContain('shadow-[6px_6px_0_var(--dialog-shadow)]');
     expect(sessionScreenSource.match(/<ComposerSuggestions/g)).toHaveLength(2);
+  });
+
+  // The visual system allows one shadow: the floating-layer offset `shadow-float` that
+  // index.css defines from the TUI's dialog-shadow token, in one size. The QR viewfinder
+  // spreads a box-shadow as a camera scrim, which is a mask rather than elevation.
+  it('casts only the one floating-layer offset', () => {
+    for (const [path, source] of Object.entries(everything)) {
+      if (path.endsWith('/QrScanner.tsx')) continue;
+      const shadows = [
+        ...source.matchAll(/(?<![\w-])(?:[\w-]+:)*shadow(?:-[\w-]+|-\[[^\]]+\])(?![\w-])/g),
+      ];
+      expect(
+        shadows.map(([shadow]) => shadow).filter((shadow) => !shadow.endsWith('shadow-float')),
+        path,
+      ).toEqual([]);
+    }
   });
 });
 

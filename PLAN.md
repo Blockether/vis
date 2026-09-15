@@ -565,3 +565,88 @@ gather, worker diagnostics, Windows runtime and Companion work.
 4. Complete: the prompt drops the fingerprint and Improve lines and states how saved
    definitions follow redefinition and `del`; `doc("defs")` and the guide carry the
    same contract. Prompt and host suites pass; the Vis commit is pushed.
+
+# Flat transcript
+
+Keep the Vis look, remove everything that is not paper, ink and space.
+
+## Context
+
+The target is one monospace face,
+square corners, three paper steps from the shared palette, two ink levels, a
+six-step spacing scale, a 60–80 character prose measure, no shadow in flow and one
+solid offset in the theme's `dialog-shadow` ink on floating layers only. Measured in Storybook (blockether-light,
+1280×800, `components-iteration-trace--*` and `transcript-activity-live-views--settled`):
+eight spacing values in use (4, 6, 8, 10, 12, 16, 20, 24px), sibling gaps of
+8/10/16/20px, up to four text sizes, two surface tones beyond the page, one in-flow
+shadow on the merged-results grid and a 720px text block (about 92 characters at
+13px). Offset shadows came in five sizes (2, 3, 4, 6, 8px) across thirteen source
+files, two of them grey (`--line2`) on the select and desktop menus, plus a soft
+`shadow-sm` on the navigator tab and `shadow-lg` on the PDF page. Rejected: a
+sans-serif body, pills, soft shadows, gradients and a smaller thinking size; borrow
+space and restraint from ChatGPT/Codex, not chrome.
+
+## 1. One floating-layer shadow, none in flow
+
+- Rationale: five sizes and an in-flow shadow contradict the flat rule and cost more
+  than they signal; the `dialog-shadow` offset (amber in Blockether light, near-black
+  in dark themes, the TUI's dialog shadow) stays the signature of menus and sheets.
+- Data: every `shadow-[` site in `apps/vis-companion/src`, the story audit counts
+  before and after, both densities and the dark themes.
+- Acceptance criteria: the results grid, queued-turns tray, composer, PDF page and
+  navigator tab cast no shadow; menus, popovers, sheets, dialogs, the select menu,
+  the voice status and the jump button use `shadow-float`; `index.css` owns the
+  token once as `--shadow-float: 4px 4px 0 var(--dialog-shadow)`; `ui.test.tsx`
+  rejects every other shadow utility; the audit reports zero in-flow shadows.
+- Unknowns: an 8px offset on sheets may have carried legibility in dark themes;
+  measure before and after.
+
+## 2. Spacing scale and prose measure
+
+- Rationale: off-scale gaps read as noise, and a 92-character line is hard to read.
+- Data: the rhythm audit per story at 1280×800 and iPhone 14, the `message-spacing`,
+  `prose-spacing` and `exchange` stories, `ChatContent.layout.test.tsx`.
+- Acceptance criteria: transcript layout gaps use only 4/8/12/16/24px, 16px between
+  iterations and 24px between turns; desktop prose measures at most 80 characters
+  while code, tables and diffs scroll; the audit shows the reduced value set; layout
+  tests and stories are updated.
+- Unknowns: the column width that serves both prose and 80-column code; whether touch
+  keeps the full scale or one step less between turns.
+
+## 3. Collapse finished iterations
+
+- Rationale: the largest single noise reduction; every finished iteration currently
+  shows three bands with previews.
+- Data: iteration rendering in `ChatContent.tsx` (`REASONING_PREVIEW_LINES`,
+  `Disclosure`, `BandLabel`, `BandTally`), `ActivityPanel` receipts, TUI folded lines
+  in `apps/vis-tui/src/com/blockether/vis/tui/render.clj`.
+- Acceptance criteria: a finished iteration renders one summary row with steps,
+  duration and failures and opens on demand; the live iteration stays open; failures
+  and cancellations remain visible while collapsed; the TUI applies the same rule;
+  collapsed, expanded, failed and cancelled states are tested and have stories.
+- Unknowns: whether an opened iteration stays open across reloads; how the collapsed
+  receipt interacts with copy actions and search.
+
+## 4. Ink and surface audit
+
+- Rationale: the palette has two ink levels, yet components add `opacity-*` tints
+  and verbatim blocks combine a surface with a strong `--code-border` line.
+- Data: `opacity-*` (42 sites), `border-code-edge` (9 sites in `ChatContent.tsx`),
+  per-story audit counts across the twelve bundled themes.
+- Acceptance criteria: text uses the two ink tokens or a state ink, never opacity;
+  verbatim blocks are surface-only and tables keep inset grid lines; the audit shows
+  at most one border per group; contrast holds at 4.5:1 in every theme.
+- Unknowns: gateway themes that map `--dim` and `--dialog-hint` to different values.
+
+## Plan state
+
+1. Complete: `--shadow-float` in `index.css`; eight floating layers use it, five
+   in-flow shadows removed. `ui.test.tsx` rejects any other shadow utility.
+   Production Storybook checks confirm 4px offsets in light and dark themes and
+   no queue shadow, with touch and desktop behavior preserved. The 253 shared
+   control tests and 370 Storybook tests pass; lint and the application build pass.
+   All 370 stories across 12 themes pass contrast and icon-frame checks, with
+   3,384 desktop hover checks passing.
+2. Not started; measure both densities before changing widths.
+3. Not started; the largest behaviour change, confirm before implementing.
+4. Not started; follows 1–3 so counts measure the settled layout.

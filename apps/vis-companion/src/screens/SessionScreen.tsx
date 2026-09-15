@@ -4461,7 +4461,7 @@ export function SessionScreen({
               onError={setError}
             />
 
-            <div className="relative rounded-none border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+            <div className="relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent">
               <ComposerPayloadShelf
                 pastes={activePastes}
                 attachments={attachments}
@@ -4473,7 +4473,7 @@ export function SessionScreen({
                 voicePhase !== 'idle' ||
                 voiceModel?.status === 'downloading' ||
                 (voiceRequested && voiceModel?.status !== 'ready')) && (
-                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
                   {voicePhase === 'recording' ? (
                     <>
                       <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}
