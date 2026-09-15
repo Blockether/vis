@@ -141,6 +141,7 @@ export function ExpandableImage({
         <img
           src={src}
           alt={alt}
+          aria-hidden={children ? true : undefined}
           loading={loading}
           decoding={decoding}
           onError={onError}

@@ -143,6 +143,45 @@
 
         (expect (= 2 (:image-number (first (:attachments merged)))))
         (expect (= "literal [IMAGE #1]\n\nqueued [IMAGE #2]" (input/input->text (:input merged))))))
+  (it "restarts numbering only after the last image is removed, even with audio still staged"
+      (doseq [removal [:shelf :backspace :typing]]
+        (let [audio {:id "memo" :media-type "audio/wav"}]
+          (reset! state/app-db {:input (input/paste-text (input/empty-input) "Compare ")
+                                :attachments [audio]
+                                :image-counter 0
+                                :render-version 0})
+          (state/dispatch [:apply-attachment-intake
+                           {:attachments [audio {:id "first" :media-type "image/png"}
+                                          {:id "second" :media-type "image/png"}]}])
+          (state/dispatch [:remove-attachment "first"])
+          (expect (= "Compare  [IMAGE #2]" (input/input->text (:input @state/app-db))))
+          (expect (= 2 (:image-counter @state/app-db)))
+          (case removal
+            :shelf
+            (state/dispatch [:remove-attachment "second"])
+
+            :backspace
+            (state/dispatch [:update-input
+                             (input/delete-placeholder-backward (:input @state/app-db))])
+
+            :typing
+            (state/dispatch [:update-input (input/paste-text (input/empty-input) "Compare  ")]))
+          (expect (= [audio] (:attachments @state/app-db)))
+          (expect (= 0 (:image-counter @state/app-db)))
+          (state/dispatch [:apply-attachment-intake
+                           {:attachments [audio {:id "third" :media-type "image/png"}]}])
+          (expect (= "Compare  [IMAGE #1]" (input/input->text (:input @state/app-db))))
+          (expect (= [nil 1] (mapv :image-number (:attachments @state/app-db)))))))
+  (it "still reserves authored literals after the last owned image is removed"
+      (reset! state/app-db {:input (input/paste-text (input/empty-input) "[IMAGE #2] [IMAGE #7]")
+                            :attachments [{:id "old" :image-number 2 :media-type "image/png"}]
+                            :image-counter 2
+                            :render-version 0})
+      (state/dispatch [:remove-attachment "old"])
+      (expect (= 0 (:image-counter @state/app-db)))
+      (state/dispatch [:apply-attachment-intake
+                       {:attachments [{:id "new" :media-type "image/png"}]}])
+      (expect (= " [IMAGE #7][IMAGE #8]" (input/input->text (:input @state/app-db)))))
   (it "paints both wrapped token fragments as chips without painting surrounding prose"
       (let [capture
             (cap/capture!
@@ -216,10 +255,10 @@
            (state/dispatch
              [:apply-attachment-intake
               (attachments/admit-files capabilities (:attachments @state/app-db) [file])])
-           (expect (= "Compare [IMAGE #2]" (input/input->text (:input @state/app-db))))
+           (expect (= "Compare [IMAGE #1]" (input/input->text (:input @state/app-db))))
            (expect (= [{:filename (.getName file)
                         :media-type "image/png"
                         :base64 encoded
-                        :reference "[IMAGE #2]"}]
+                        :reference "[IMAGE #1]"}]
                       (attachments/inline-payloads (:attachments @state/app-db))))
            (finally (reset! state/app-db previous) (.delete file))))))

@@ -30,7 +30,34 @@ export const MixedPayload: Story = {
   name: 'Paste, image and recording',
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: 'Edit pasted block 4' }));
-    await expect(args.commands.editPaste).toHaveBeenCalledWith(4);
+    for (const attachment of args.attachments) {
+      const remove = canvas.getByRole('button', { name: `Remove ${attachment.filename}` });
+      const card = remove.parentElement!;
+      const box = remove.getBoundingClientRect();
+      const bounds = card.getBoundingClientRect();
+      // The close control is the final cell, not a cell followed by reserved padding.
+      await expect(bounds.right - box.right).toBeCloseTo(1, 0);
+      await expect(box.left).toBeGreaterThanOrEqual(
+        card.firstElementChild!.getBoundingClientRect().right,
+      );
+      await expect(box.width).toBeGreaterThanOrEqual(28);
+      await expect(bounds.width).toBeLessThanOrEqual(160);
+      await userEvent.click(remove);
+      await expect(args.commands.removeAttachment).toHaveBeenCalledWith(attachment.id);
+    }
+    for (const paste of args.pastes) {
+      await userEvent.click(canvas.getByRole('button', { name: `Edit pasted block ${paste.id}` }));
+      await expect(args.commands.editPaste).toHaveBeenCalledWith(paste.id);
+    }
   },
+};
+
+export const UnnumberedImage: Story = {
+  args: {
+    pastes: [],
+    attachments: STORY_PENDING_ATTACHMENTS.filter((attachment) =>
+      attachment.media_type.startsWith('image/'),
+    ),
+  },
+  play: MixedPayload.play,
 };

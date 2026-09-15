@@ -47,7 +47,10 @@ describe('composer payload shelf', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove release-map.png' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove release-note.m4a' }));
 
-    expect(screen.getByRole('img', { name: 'release-map.png' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Open release-map.png full screen' }),
+    ).toBeInTheDocument();
+    expect(screen.getByAltText('release-map.png')).toHaveAttribute('aria-hidden', 'true');
     expect(commands.editPaste).toHaveBeenCalledWith(4);
     expect(commands.removePaste).toHaveBeenCalledWith(4);
     expect(commands.removeAttachment).toHaveBeenNthCalledWith(1, 'diagram');

@@ -2736,6 +2736,9 @@
                                                    (max 0 (dec (count attachments))))
                             :attachment-focus? (boolean (and (:attachment-focus? db)
                                                              (seq attachments))))
+                    (not-any? :image-number attachments)
+                    (assoc :image-counter 0)
+
                     (not (str/starts-with? (str/triml text) "/"))
                     (assoc :slash-command-hidden? false)))))
 
@@ -2820,6 +2823,9 @@
                             :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
                             :attachment-focus? (boolean (and (:attachment-focus? db)
                                                              (seq attachments))))
+                    (not-any? :image-number attachments)
+                    (assoc :image-counter 0)
+
                     (:image-number attachment)
                     (update :input
                             input/remove-input-token
