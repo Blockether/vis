@@ -5970,6 +5970,57 @@
       (expect (nil? (:vis.channel-tui/fetch (settled-activity))))))
 
 (defdescribe
+  activity-terminal-history-test
+  (it "does not let an earlier search response restore a running presentation after END"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (doseq [outcome
+              ["succeeded" "failed" "cancelled"]
+
+              revision
+              [4 nil]]
+
+        (let [running-row
+              {:id "r1"
+               :sequence 1
+               :operation "run_tests"
+               :state "running"
+               :presentation {:headline "Running tests" :summary "In progress"}}
+
+              terminal-row
+              (assoc running-row
+                :state outcome
+                :presentation {:headline "Tests finished" :summary outcome})
+
+              terminal
+              (-> (paged-activity 0 nil [terminal-row])
+                  (assoc :state outcome)
+                  (assoc-in [:history :revision] 5))]
+
+          (reset! state/app-db (activity-paging-db))
+          (state/dispatch [:activity-page "cid" "a1" 0 revision "tests"])
+          ;; A newer live END snapshot replaces the pending search in both copies.
+          (swap! state/app-db assoc-in [:messages 0 :traces 0 :forms 0 :activity] terminal)
+          (swap! state/app-db assoc-in [:progress :iterations 0 :forms 0 :activity] terminal)
+          (state/dispatch [:activity-page-loaded "cid" "a1"
+                           (assoc (paged-activity 0 nil [running-row]) :state "running")
+                           {:after 0 :query "tests" :revision revision}])
+          (doseq [activity [(settled-activity) (live-activity)]]
+            (expect (= terminal activity))
+            (let [entries (#'render/activity-detail-entries
+                           {:node-id "terminal"
+                            :activity-rows (:rows activity)
+                            :activity-expanded? (fn [_ _]
+                                                  true)}
+                           80
+                           "cid")
+                  text (str/join "\n" (map :line entries))]
+
+              (expect (str/includes? text "Tests finished"))
+              (expect (not (str/includes? text "In progress")))
+              (expect (not (str/includes? text "Running tests")))))))))
+
+(defdescribe
   activity-automatic-history-test
   (it "loads each retained history once without a disclosure or page press"
       (let [asked (atom [])]

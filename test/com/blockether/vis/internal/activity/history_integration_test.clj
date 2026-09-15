@@ -137,6 +137,86 @@
                         (expect (= 160 (get-in page [:counts :succeeded])))
                         (expect (zero? (get-in page [:omitted :rows]))))))))
 
+(defn activity-progress-probe
+  "Observed operation that publishes progress before returning its final result."
+  [_]
+  (extension/publish-activity! {"headline" "Running checks"
+                                "summary" "In progress"
+                                "content" [{"type" "progress" "label" "Checking"}]})
+  (extension/success {:result {:passed 2}}))
+
+(defdescribe
+  terminal-presentation-history-test
+  (it
+    "carries the wrapper's final presentation through live snapshots and durable history"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {})
+
+          final
+          {"headline" "Checks finished"
+           "summary" "2 checks passed"
+           "content" [{"type" "text" "text" "Final check evidence"}]}
+
+          sym
+          (extension/symbol #'activity-progress-probe
+                            {:tag :observation
+                             :presenter :tests
+                             :activity {:headline "Run checks"
+                                        :render (fn [_ _]
+                                                  final)}})
+
+          ext
+          {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+          snapshots
+          (atom [])
+
+          events
+          (atom [])
+
+          terminal-seen
+          (promise)]
+
+      (tpc/with-own
+        [pc {}]
+        (with-redefs [env/run-python-block
+                      (fn [_ _ _]
+                        (let [sink extension/*tool-event-sink*]
+                          (binding [extension/*tool-event-sink* (fn [edge]
+                                                                  (swap! events conj edge)
+                                                                  (sink edge))]
+                            (extension/invoke-symbol-wrapper ext sym [{}] {})))
+                        {:stdout (if (deref terminal-seen 5000 false) "done" "Timed out")})]
+          (let [result (#'lp/run-python-code
+                        pc
+                        "pass"
+                        :env
+                        {:db-info store
+                         :session-id sid
+                         :activity/on-snapshot (fn [snapshot]
+                                                 (swap! snapshots conj snapshot)
+                                                 (when (= "succeeded"
+                                                          (get-in snapshot [:rows 0 :state]))
+                                                   (deliver terminal-seen true)))})
+                page (:activity result)
+                rows (all-rows store sid (get-in page [:history :id]))]
+
+            (expect (nil? (:error result)))
+            (expect (= "done" (:stdout result)))
+            (expect (= [:start :content :terminal] (mapv :phase @events)))
+            (expect (= "In progress" (get-in (second @events) [:presentation "summary"])))
+            (expect (= final (:presentation (last @events))))
+            (expect (= 1 (count rows)))
+            (expect (= "succeeded" (:state (first rows))))
+            (expect (= final (:presentation (first rows))))
+            (expect (= final (get-in page [:rows 0 :presentation])))
+            (expect (= final (get-in (last @snapshots) [:rows 0 :presentation])))
+            (expect (zero? (get-in page [:counts :running])))
+            (expect (every? contract/valid-projection? (conj @snapshots page)))))))))
+
 (defdescribe
   activity-disk-reopen-test
   (it

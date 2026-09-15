@@ -669,6 +669,42 @@
       (event/accept! collector end)
       (expect
         (try (event/accept! collector update) false (catch clojure.lang.ExceptionInfo _ true)))))
+  (it
+    "lets a terminal presentation replace live content for the same invocation"
+    (doseq [outcome [:succeeded :failed :cancelled]]
+      (let [ctx (event/context)
+            invocation (event/invocation ctx nil)
+            details {:operation :check :presenter :tests}
+            progress {"headline" "Running checks"
+                      "summary" "In progress"
+                      "content" [{"type" "progress" "label" "Checking" "value" 1 "total" 2}]}
+            final {"headline" "Checks finished"
+                   "summary" (name outcome)
+                   "content" [{"type" "text" "text" "Final check evidence"}]}
+            independent (event/start-event ctx (event/invocation ctx nil) details)
+            running (activity/replay [(event/start-event ctx invocation details)
+                                      (event/content-event ctx invocation details progress)
+                                      independent])
+            terminal (assoc (event/terminal-event ctx
+                                                  invocation
+                                                  (assoc details
+                                                    :started-at-ms 0
+                                                    :outcome outcome
+                                                    :result "Final result"
+                                                    :error (ex-info "Final error" {})))
+                       :presentation final)
+            settled (activity/presentation (activity/reduce-event running (event/checked terminal)))
+            row (first (:rows settled))]
+
+        (expect (= progress (get-in running [:rows 0 :presentation])))
+        (expect (= (:invocation-id invocation) (:id row)))
+        (expect (= final (:presentation row)))
+        (expect (= (name outcome) (:state row)))
+        (expect (= 2 (count (:rows settled))))
+        (expect (= "running" (get-in settled [:rows 1 :state])))
+        (expect (= 1 (get-in settled [:counts :running])))
+        (expect (= 1 (get-in settled [:counts outcome])))
+        (expect (contract/valid-projection? settled)))))
   (it "rejects unknown content and invalid progress without fabricating success"
       (doseq [blocks [[{"type" "html" "text" "<script>"}]
                       [{"type" "progress" "label" "Checking" "value" 3 "total" 2}]]]

@@ -127,6 +127,15 @@ function applyFormActivity(
   // form; an orphan snapshot is ignored instead of becoming a blank card.
   if (formIndex < 0) return turn;
 
+  const previousHistory = forms[formIndex].activity?.history;
+  if (
+    previousHistory &&
+    activity.history?.id === previousHistory.id &&
+    activity.history.revision < previousHistory.revision
+  ) {
+    return turn;
+  }
+
   forms[formIndex] = { ...forms[formIndex], activity };
   const iterations = [...turn.iterations];
   iterations[iterationIndex] = { ...iterations[iterationIndex], forms };

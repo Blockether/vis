@@ -1648,35 +1648,39 @@
                (or (nil? revision) (= (long revision) (long (or (:revision history) -1)))))]
 
       (cond (not= (str session-id) (str (get-in db [:session :id]))) db
-            requested? (update-activity-history
-                         (cond-> db
-                           (not automatic?)
-                           park-scroll-for-toggle)
-                         id
-                         (fn [activity]
-                           (let [current?
-                                 (current-activity-request? activity id cursor revision automatic?)
+            requested?
+            (update-activity-history
+              (cond-> db
+                (not automatic?)
+                park-scroll-for-toggle)
+              id
+              (fn [activity]
+                (let [current?
+                      ;; A search can finish after a newer live END snapshot.
+                      ;; Its older window must never restore running rows.
+                      (and (>= (long (or (:revision history) -1))
+                               (long (get-in activity [:history :revision] -1)))
+                           (current-activity-request? activity id cursor revision automatic?))
 
-                                 others
-                                 (dissoc (:vis.channel-tui/fetch activity) id)
+                      others
+                      (dissoc (:vis.channel-tui/fetch activity) id)
 
-                                 fetch
-                                 (cond-> others
-                                   (seq query)
-                                   (assoc id {:query query}))
+                      fetch
+                      (cond-> others
+                        (seq query)
+                        (assoc id {:query query}))
 
-                                 loaded
-                                 (cond-> projection
-                                   (and automatic? (pos? cursor))
-                                   (assoc :rows
-                                     (merge-activity-rows (:rows activity) (:rows projection))
-                                     :history
-                                     (assoc history :after 0))
+                      loaded
+                      (cond-> projection
+                        (and automatic? (pos? cursor))
+                        (assoc :rows
+                          (merge-activity-rows (:rows activity) (:rows projection)) :history
+                          (assoc history :after 0))
 
-                                   (seq fetch)
-                                   (assoc :vis.channel-tui/fetch fetch))]
+                        (seq fetch)
+                        (assoc :vis.channel-tui/fetch fetch))]
 
-                             (if current? loaded activity))))
+                  (if current? loaded activity))))
             :else (update-activity-history
                     db
                     id

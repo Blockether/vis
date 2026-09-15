@@ -8749,3 +8749,156 @@ print(paths)"
                    (doseq [path paths]
                      (expect (str/includes? text path)))
                    (expect (not (str/includes? text "show 2 more files"))))))
+
+(defdescribe
+  activity-terminal-wire-render-test
+  (it
+    "replaces running presentation through live wire, form completion and restored rendering"
+    (doseq [outcome
+            ["succeeded" "failed" "cancelled"]
+
+            width
+            [40 100]]
+
+      (let [base
+            (-> (io/resource "vis-contract/fixtures/activity.json")
+                slurp
+                json/read-str)
+
+            running
+            (-> (first (get base "rows"))
+                (assoc "operation" "run_tests"
+                       "presenter" "tests"
+                       "signal" "verification"
+                       "state" "running"
+                       "summary" "In progress"
+                       "evidence" []
+                       "presentation" {"headline" "Running tests"
+                                       "summary" "In progress"
+                                       "content" [{"type" "text" "text" "Starting work"}]})
+                (dissoc "duration_ms"))
+
+            other
+            (assoc running
+              "id" "other"
+              "sequence" 2
+              "operation" "shell"
+              "presenter" "shell"
+              "signal" "generic"
+              "presentation" {"headline" "Other task running" "summary" "" "content" []})
+
+            terminal
+            (assoc running
+              "state" outcome
+              "duration_ms" 32
+              "summary" "Done"
+              "presentation" {"headline" (str "Tests " outcome)
+                              "summary" "Done"
+                              "content" [{"type" "text" "text" "Final receipt"}]})
+
+            snapshot
+            (fn [row]
+              (assoc base
+                "rows" [row other]
+                "counts" (merge {"running" 0 "succeeded" 0 "failed" 0 "cancelled" 0}
+                                (frequencies [(get row "state") "running"]))))
+
+            tracker
+            (progress/make-progress-tracker)
+
+            send!
+            (fn [event]
+              ((:on-chunk tracker)
+                (#'chat/gateway-event->chunk (merge {"iteration" 1 "form_index" 0} event))))
+
+            entries
+            (fn [entry]
+              (format-iteration-entry-entries entry
+                                              width
+                                              1
+                                              {:session-id "end-render"
+                                               :session-turn-id "turn"
+                                               :detail-expansions
+                                               {:vis.channel-tui/expand-all-details? true}}))]
+
+        (expect (some? (activity-contract/from-wire (snapshot running))))
+        (expect (some? (activity-contract/from-wire (snapshot terminal))))
+        (send! {"type" "block.started" "code" "run_tests()"})
+        (send! {"type" "block.activity" "activity" (snapshot running)})
+        (let [text (str/join "\n" (map :line (entries (first ((:get-timeline tracker))))))]
+          (expect (str/includes? text "Running tests"))
+          (expect (str/includes? text "In progress")))
+        (send! {"type" "block.activity" "activity" (snapshot terminal)})
+        (let [live (first ((:get-timeline tracker)))]
+          (send! {"type" "block.output" "code" "run_tests()" "stdout" "done"})
+          (doseq [entry [live (first ((:get-timeline tracker)))
+                         (#'chat/it->iteration-entry
+                          {}
+                          {"id" "restored"
+                           "position" 1
+                           "forms" [{"code" "run_tests()"
+                                     "stdout" "done"
+                                     "activity" (snapshot terminal)}]})]]
+            (let [rendered (entries entry)
+                  text (str/join "\n" (map :line rendered))
+                  rows (filter #(= :activity-row (get-in % [:meta :kind])) rendered)]
+
+              (expect (str/includes? text (str "Tests " outcome)))
+              (expect (str/includes? text "Done"))
+              (expect (str/includes? text "Final receipt"))
+              (expect (str/includes? text "Other task running"))
+              (doseq [stale ["Running tests" "In progress" "Starting work"]]
+                (expect (not (str/includes? text stale))))
+              (expect
+                (= 1 (count (filter #(= :running (get-in % [:meta :status-tone])) rows)))))))))))
+
+(defdescribe
+  activity-retained-progress-render-test
+  (it
+    "settles retained progress from row state without inventing completed counts"
+    (doseq [width [40 100]]
+      (let [base (-> (io/resource "vis-contract/fixtures/activity.json")
+                     slurp
+                     json/read-str)
+            row (-> (first (get base "rows"))
+                    (assoc "operation" "run_tests"
+                           "presenter" "tests"
+                           "signal" "verification"
+                           "summary" "Verification"
+                           "evidence" []
+                           "presentation"
+                           {"headline" "Check results"
+                            "summary" "Verification"
+                            "content" [{"type" "progress" "label" "Indeterminate"}
+                                       {"type" "progress" "label" "Partial" "value" 2 "total" 5}]}))
+            render-state
+            (fn [outcome]
+              (let [snapshot (assoc base
+                               "rows" [(assoc row "state" outcome)]
+                               "state" outcome
+                               "counts" (assoc {"running" 0 "succeeded" 0 "failed" 0 "cancelled" 0}
+                                          outcome 1))]
+                (expect (some? (activity-contract/from-wire snapshot)))
+                (format-iteration-entry-entries
+                  (#'chat/it->iteration-entry
+                   {}
+                   {"id" "retained-progress"
+                    "position" 1
+                    "forms" [{"code" "run_tests()" "stdout" "done" "activity" snapshot}]})
+                  width
+                  1
+                  {:session-id "end-render"
+                   :session-turn-id "turn"
+                   :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
+            running-text (str/join "\n" (map :line (render-state "running")))]
+
+        (expect (str/includes? running-text "In progress"))
+        (doseq [outcome ["succeeded" "failed" "cancelled"]]
+          (let [entries (render-state outcome)
+                text (str/join "\n" (map :line entries))]
+
+            (expect (str/includes? text "Stopped"))
+            (expect (str/includes? text "2 / 5"))
+            (expect (not (str/includes? text "5 / 5")))
+            (expect (not (str/includes? text "In progress")))
+            (expect (not-any? #(= :running (get-in % [:meta :status-tone])) entries))))))))
