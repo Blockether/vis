@@ -2137,109 +2137,41 @@
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
 
 (defn inline-entries
-  "Bounded sibling LIVE section using the pane's ordinary node plan.
-   Each row carries the pane geometry so painting and wheel handling agree."
-  [pane width]
-  (let [rows
-        (if (minimized? pane) [] (plan pane (max 8 (- (long width) 4))))
-
-        visible
-        (min 12 (count rows))
-
-        start
-        (offset pane rows visible)
-
-        geom
-        (if (minimized? pane)
-          (assoc (select-keys pane [:offset :anchor :total :visible :widths])
-            :view-id (view-id pane))
-          {:view-id (view-id pane)
-           :offset start
-           :anchor (anchor-at rows start)
-           :total (count rows)
-           :visible visible
-           :widths (:widths (meta rows))})
-
-        entries
-        (concat [{:kind :inline-title :text (str "LIVE " (flat-text (get-in pane [:view :title])))}]
-                (subvec (vec rows) start (+ start visible))
-                (when-let [stop (stop-prompt pane)]
-                  [{:kind :inline-stop :text (str (:label stop) (:note stop) "▏") :stop stop}])
-                [{:kind :inline-hint :text ""}])]
-
-    (mapv (fn [entry]
-            {:line (or (:text entry) "")
-             :meta {:kind :activity-live-entry
-                    :run-header? (= :inline-title (:kind entry))
-                    :view-id (view-id pane)
-                    :live-pane pane
-                    :live-entry entry
-                    :live-geometry geom}})
-          entries)))
+  "A compact LIVE receipt. Pane details belong only to the transient viewer."
+  [pane _width]
+  (let [title (str "LIVE " (flat-text (get-in pane [:view :title])))]
+    [{:line title
+      :meta {:kind :activity-live-entry
+             :run-header? true
+             :view-id (view-id pane)
+             :live-pane pane
+             :live-entry {:kind :inline-title :text title}}}]))
 
 (defn paint-inline-entry!
-  "Paint a sibling LIVE row; viewport-top translates hits to terminal rows."
-  [g left row width viewport-top {:keys [live-pane live-entry live-geometry]}]
-  (binding [t/dialog-bg
-            t/code-block-bg
+  "Paint a compact LIVE receipt; only its button opens the transient viewer."
+  [g left row width viewport-top {:keys [live-pane live-entry]}]
+  (binding [t/dialog-bg t/code-block-bg]
+    (let [status (p/ellipsize (if (settled? live-pane) " Recorded " " LIVE ")
+                              (max 0 (dec (long width))))
+          status-w (p/display-width status)
+          ;; Match COPY's two-cell inset; the inline body already reserves one cell.
+          status-col (+ (long left) (max 0 (- (long width) status-w 1)))
+          title-w (max 0 (- (long width) status-w 2))]
 
-            *hit-row-offset*
-            (long viewport-top)]
-
-    (.register interactions/hit-map
-               {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
-                :kind :live-inline
-                :view-id (view-id live-pane)
-                :geometry live-geometry})
-    (case (:kind live-entry)
-      :inline-title
-      (let [status
-            (p/ellipsize (if (settled? live-pane) " Recorded " " LIVE ") (max 0 (dec (long width))))
-
-            status-w
-            (p/display-width status)
-
-            ;; Match COPY's two-cell inset; the inline body already reserves one cell.
-            status-col
-            (+ (long left) (max 0 (- (long width) status-w 1)))
-
-            title-w
-            (max 0 (- (long width) status-w 2))]
-
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/styled g [p/BOLD] (p/put-str! g left row (p/ellipsize (:text live-entry) title-w)))
-        (.register interactions/hit-map
-                   {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
-                    :kind :live-reopen
-                    :view-id (view-id live-pane)
-                    :enabled? true})
-        (components/button! g
-                            status-col
-                            row
-                            status
-                            :live-reopen
-                            {:extra {:view-id (view-id live-pane)
-                                     :bounds {:row (+ (long row) (long viewport-top))
-                                              :col status-col
-                                              :width status-w}}}))
-
-      :inline-stop
-      (paint-segments! g
-                       left
-                       row
-                       width
-                       [{:text (get-in live-entry [:stop :label]) :fg t/dialog-hint}
-                        {:text (get-in live-entry [:stop :note]) :fg t/dialog-fg :styles [p/BOLD]}
-                        {:text "▏" :fg t/dialog-hint-key}])
-
-      :inline-hint
-      (dialogs/draw-hint-bar! g left row width [["F3" "controls"] ["RUN" "open view"]])
-
-      ;; The standalone painter reserves two rail cells; this shared surface has no inner rail.
-      (paint-entry! g (- (long left) 2) row width (view-id live-pane) live-entry))))
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g left row (p/ellipsize (:text live-entry) title-w)))
+      (components/button! g
+                          status-col
+                          row
+                          status
+                          :live-reopen
+                          {:extra {:view-id (view-id live-pane)
+                                   :bounds {:row (+ (long row) (long viewport-top))
+                                            :col status-col
+                                            :width status-w}}}))))
 
 (defn transcript-run
-  "A live receipt with the existing planner/painter attached for transcript projection.
+  "A compact receipt with its painter attached for transcript projection.
    Keeping these functions here avoids a render → dialogs → render dependency."
   [pane]
   (assoc (run-row pane)

@@ -107,7 +107,7 @@
 (defn- card-regions [] (filterv :live-card? (.current interactions/hit-map)))
 
 (deftest live-card-status-and-width-test
-  ;; #228: the live card uses the full message column, not the inset trace width.
+  ;; #228: the recorded receipt stays one bounded row, even with wide Unicode titles.
   (doseq [width
           [6 12 24 40 80]
 
@@ -122,18 +122,18 @@
                              {:reason reason :title "界界界 Jenkins · build pool 👩‍💻" :live? live?})
 
           rows
-          (keep-indexed #(when (:live-card-row %2) (nth (:prewrapped-lines message) %1))
+          (keep-indexed #(when (:live-button? %2) (nth (:prewrapped-lines message) %1))
                         (:line-meta message))
 
           text
           (str/join "\n" rows)]
 
-      (is (= 7 (count rows)))
+      (is (= 1 (count rows)))
       (is (not (str/includes? text (str \u0000))))
-      (is (every? #(= width (p/display-width (subs % 1))) rows))
+      (is (every? #(<= (p/display-width (subs % 1)) width) rows))
       (is (not (str/includes? text "Click or")))
-      (is (not-any? #(= :hint (:live-card-row %)) (:line-meta message)))
-      (when (>= width 24) (is (str/includes? text (str/capitalize (name reason)))))
+      (is (some #(str/includes? (or (:headline-prefix %) "") (str/capitalize (name reason)))
+                (:line-meta message)))
       (is (not-any? #(= :live-reopen (:kind %)) (:line-meta message)))))
   (let [message
         (live-card-message 80 {:recorded-only? true})
@@ -141,7 +141,7 @@
         text
         (str/join "\n" (:prewrapped-lines message))]
 
-    (is (str/includes? text "Recorded"))
+    (is (some #(= " Recorded " (:right-suffix %)) (:line-meta message)))
     (is (not (str/includes? text "Completed")))
     (is (not (str/includes? text (keymap/label-for :toggle-detail-labels))))))
 
@@ -151,10 +151,10 @@
         {:filename "jenkins.live.ndjson" :iteration-id "i" :index 0}
 
         entries
-        (#'render/live-artifact-card-entries artifact "s" 80 {:reason :completed} true)]
+        (#'render/live-artifact-receipt-entries artifact "s" 80 {:reason :completed} true)]
 
-    (is (= 2 (count entries)))
-    (is (= ["LIVE jenkins" "Completed"] (mapv #(subs (:line %) 1) entries)))
+    (is (= 1 (count entries)))
+    (is (= ["LIVE jenkins · Completed"] (mapv #(subs (:line %) 1) entries)))
     (is (every? #(= artifact (get-in % [:meta :artifact])) entries))
     (is (every? #(get-in % [:meta :activity-live?]) entries))))
 
@@ -181,57 +181,49 @@
           (keep-indexed #(when (:activity-live? %2) [(nth (:prewrapped-lines message) %1) %2])
                         (:line-meta message))
 
-          [[title title-meta] [status]]
+          [[title title-meta]]
           entries]
 
-      (is (= 2 (count entries)))
+      (is (= 1 (count entries)))
       (is (str/starts-with? (subs title 1) "LIVE "))
       (is (:run-header? title-meta))
-      (is (str/includes? status (if recorded-only? "Recorded" (str/capitalize (name reason)))))
+      (is (= " Recorded " (:right-suffix title-meta)))
+      (when-not recorded-only?
+        (is (str/includes? (:headline-prefix title-meta) (str/capitalize (name reason)))))
       (is (every? #(= "live-review" (get-in (second %) [:artifact :view-id])) entries))
       (is (every? #(= "live-review" (:session-id (second %))) entries)))))
 
 (deftest live-card-pointer-and-clipping-test
   (binding [interactions/hit-map (interactions/create-hit-map)]
     (doseq [cols [24 40 80]
-            start-row [1 -10 14]]
+            start-row [-30 -10 1 14]]
 
       (let [capture (cap/capture! {:cols cols
                                    :rows 24
                                    :paint! (fn [{:keys [screen]}]
                                              (paint-live-card-review! screen
                                                                       {:start-row start-row}))})
-            regions (card-regions)]
+            regions (card-regions)
+            grid (last (:frames capture))
+            visible-labels (filter #(str/includes? (apply str (map :ch %)) " Recorded ") grid)]
 
         (is (nil? (:error capture)))
-        (is (seq regions))
-        (is (every? #(= render/MESSAGE_MARGIN_LEFT (get-in % [:bounds :col])) regions))
-        (is (every? #(= (- cols render/MESSAGE_SIDE_PAD) (get-in % [:bounds :width])) regions))
-        (is (= 1
+        (is (= (count visible-labels) (count regions)))
+        (when (= start-row 1) (is (= 1 (count regions))))
+        (is (= (count regions)
                (count (filter (comp :live-card? second)
                               (interactions/assign-labels (.current interactions/hit-map))))))
-        (when (= start-row 1)
-          (let [grid (last (:frames capture))
-                top (:bounds (first regions))
-                bottom (:bounds (last regions))
-                left (long (:col top))
-                right (+ left (long (:width top)) -1)]
-
-            (is (= "┌" (get-in grid [(:row top) left :ch])))
-            (is (= "┐" (get-in grid [(:row top) right :ch])))
-            (is (= "└" (get-in grid [(:row bottom) left :ch])))
-            (is (= "┘" (get-in grid [(:row bottom) right :ch])))
-            (is (every? #(= "─" (get-in grid [(:row bottom) % :ch])) (range (inc left) right)))))
         (doseq [{:keys [bounds] :as region} regions
-                :let [{:keys [row col width]} bounds]
-                x (range col (+ col width))]
+                :let [{:keys [row col width]} bounds]]
 
+          (is (= 10 width))
           (is (<= 0 row 23))
-          (is (< x cols))
-          (is (= region (.lookup interactions/hit-map (int x) (int row)))))
-        (let [{:keys [row col width]} (:bounds (first regions))]
-          (is (nil? (.lookup interactions/hit-map (int (dec col)) (int row))))
-          (is (nil? (.lookup interactions/hit-map (int (+ col width)) (int row)))))))))
+          (is (= " Recorded " (apply str (map :ch (subvec (nth grid row) col (+ col width))))))
+          (doseq [x (range col (+ col width))]
+            (is (< x cols))
+            (is (= region (.lookup interactions/hit-map (int x) (int row)))))
+          (doseq [x (concat (range col) (range (+ col width) cols))]
+            (is (not= :artifact (:kind (.lookup interactions/hit-map (int x) (int row)))))))))))
 
 (deftest live-card-keyboard-test
   (binding [interactions/hit-map (interactions/create-hit-map)]
@@ -268,7 +260,7 @@
         (range rows)))
 
 (deftest live-card-html-and-terminal-parity-test
-  ;; #205: borders, padding, Unicode and keyboard selection must share the real cell layout.
+  ;; #205: compact buttons, Unicode and jump navigation share the real cell layout.
   (binding [interactions/hit-map (interactions/create-hit-map)]
     (doseq [cols [40 80]
             labels? [false true]]
@@ -286,13 +278,13 @@
           (paint-live-card-review! hs options)
           (paint-live-card-review! ts options)
           (is (= (cell-grid html cols 24) (cell-grid terminal cols 24)))
-          (is (str/includes? (.renderHtml html) "Live view"))
+          (is (str/includes? (.renderHtml html) "LIVE"))
           (let [{:keys [row col]} (:bounds (first (card-regions)))
                 cell (.getCharacter terminal (TerminalPosition. (int col) (int row)))]
 
             (if labels?
               (do (is (= theme/warning-fg (.getBackgroundColor cell))) (is (.isBold cell)))
-              (is (= "┌" (.getCharacterString cell))))))))))
+              (is (= theme/button-bg (.getBackgroundColor cell))))))))))
 
 (deftest live-card-hover-test
   (binding [interactions/hit-map (interactions/create-hit-map)]
@@ -300,13 +292,13 @@
                 screen (doto (TerminalScreen. terminal) (.startScreen))]
 
       (paint-live-card-review! screen {})
-      (.setHovered interactions/hit-map (nth (card-regions) 4))
+      (.setHovered interactions/hit-map (first (card-regions)))
       (paint-live-card-review! screen {})
       (doseq [{:keys [bounds]} (card-regions)
               :let [{:keys [row col width]} bounds]
               x (range col (+ col width))]
 
-        (is (= theme/link-chrome-hover-bg
+        (is (= theme/header-active-tab-accent
                (.getBackgroundColor (.getCharacter terminal
                                                    (TerminalPosition. (int x) (int row))))))))
     (.setHovered interactions/hit-map nil)))

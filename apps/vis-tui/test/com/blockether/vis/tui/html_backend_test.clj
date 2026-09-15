@@ -1273,7 +1273,19 @@
           (is (< header-y live-y))
           (is (= live-x (.indexOf ^String (nth lines header-y) "ACTIVITY")))
           (is (str/blank? (nth lines (dec live-y))))
-          (is (= (if recorded? :artifact :live-reopen) (:kind hit)))
+          (let [kind
+                (if recorded? :artifact :live-reopen)
+
+                button
+                (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
+
+                {:keys [row col width]}
+                (:bounds button)]
+
+            (is (not= kind (:kind hit)))
+            (is (= live-y row))
+            (is (= " Recorded " (subs (nth lines row) col (+ col width))))
+            (is (= button (.lookup interactions/hit-map col row))))
           (doseq [y (range header-y (inc live-y))]
             (is (= theme/code-block-bg
                    (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
@@ -1281,7 +1293,7 @@
           (is (not-any? #(str/includes? % "┌─ Live view") lines)))))))
 
 (defn paint-disclosure-review!
-  "Paint the same nested live nodes inline in Activity or in the standalone band."
+  "Paint a compact receipt or the full nested nodes in the transient band."
   [^TerminalScreen screen pane inline?]
   (.doResizeIfNecessary screen)
   (.clear screen)
@@ -1306,7 +1318,7 @@
     (.commitFrame interactions/hit-map)
     (.refresh screen)))
 
-;; #219: HTML, terminal buffers and inline/restored views share the nesting geometry.
+;; #219: only transient views expose nested nodes; both backends share their geometry.
 (deftest live-disclosure-html-native-parity-test
   (try
     (doseq [theme-id
@@ -1346,11 +1358,16 @@
                 col-of (fn [text]
                          (some #(str/index-of % text) lines))]
 
-            (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed workers")))
-            (is (= (+ 2 (long (col-of "▾ Observed workers")))
-                   (col-of "Search Observed workers")
-                   (col-of "monitor revision=42")))
-            (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))
+            (if inline?
+              (do (is (nil? (col-of "Pool state")))
+                  (is (nil? (col-of "Observed workers")))
+                  (is (nil? (col-of "Other checks")))
+                  (is (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
+              (do (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed workers")))
+                  (is (= (+ 2 (long (col-of "▾ Observed workers")))
+                         (col-of "Search Observed workers")
+                         (col-of "monitor revision=42")))
+                  (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest live-link-grid-html-native-parity-test
@@ -1394,12 +1411,49 @@
                             (cell-grid terminal cols 32))
                 text (str/join "\n" lines)]
 
-            (is (every? #(str/includes? text (str "Build " % " · SUCCESS")) (range 1 7)))
-            (is (some #(str/includes? % "┌") lines))
-            (is (some #(str/includes? % "└") lines))
-            (when (>= (long cols) 80)
-              (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2")) lines)))))))
+            (if inline?
+              (do (is (not (str/includes? text "SUCCESS")))
+                  (is (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
+              (do (is (every? #(str/includes? text (str "Build " % " · SUCCESS")) (range 1 7)))
+                  (is (some #(str/includes? % "┌") lines))
+                  (is (some #(str/includes? % "└") lines))
+                  (when (>= (long cols) 80)
+                    (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2"))
+                              lines)))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+
+(deftest compact-live-dividers-stay-in-the-transient
+  (try (doseq [theme-id
+               (map keyword (shared-theme/available-theme-ids))
+
+               cols
+               [40 80 120]
+
+               recorded?
+               [false true]]
+
+         (theme/apply-theme! theme-id)
+         (with-open [html
+                     (activity-review-terminal cols 32)
+
+                     terminal
+                     (DefaultVirtualTerminal. (TerminalSize. cols 32))
+
+                     hs
+                     (doto (TerminalScreen. html) (.startScreen))
+
+                     ts
+                     (doto (TerminalScreen. terminal) (.startScreen))]
+
+           (let [pane (live-fixture/divider-review-pane recorded?)]
+             (paint-disclosure-review! hs pane true)
+             (paint-disclosure-review! ts pane true)
+             (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+             (is (= 1 (count (live-view/inline-entries pane cols))))
+             (is (= [:live-reopen] (mapv :kind (.current interactions/hit-map))))
+             (is (every? #(not= "─" (.getCharacterString ^com.googlecode.lanterna.TextCharacter %))
+                         (mapcat identity (cell-grid terminal cols 32)))))))
+       (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest live-divider-html-native-parity-test
   (try
@@ -1410,9 +1464,6 @@
             [40 80 120]
 
             recorded?
-            [false true]
-
-            inline?
             [false true]]
 
       (theme/apply-theme! theme-id)
@@ -1429,9 +1480,9 @@
                   (doto (TerminalScreen. terminal) (.startScreen))]
 
         (let [pane (live-fixture/divider-review-pane recorded?)]
-          (paint-disclosure-review! hs pane inline?)
+          (paint-disclosure-review! hs pane false)
           (let [html-hits (.current interactions/hit-map)]
-            (paint-disclosure-review! ts pane inline?)
+            (paint-disclosure-review! ts pane false)
             (is (= html-hits (.current interactions/hit-map)))
             (is (not-any? #(#{"results-break" "review-break"} (:node-id %)) html-hits)))
           (let [grid (cell-grid terminal cols 32)

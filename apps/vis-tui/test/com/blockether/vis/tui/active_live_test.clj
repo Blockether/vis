@@ -99,8 +99,9 @@
       (is (zero? (get-in payload [:line-meta activity-index :operation-col])))
       (is (< activity-index (dec run-index)))
       (is (str/blank? (subs (nth lines (dec run-index)) 1)))
-      (is (str/includes? (str/join "\n" lines) "Running the focused tests"))
-      (is (str/includes? (nth lines (inc run-index)) "Checking the build")))))
+      (is (not-any? #(str/includes? % "Running the focused tests") lines))
+      (is (not-any? #(str/includes? % "Checking the build before continuing") lines))
+      (is (= [:inline-title] (keep #(get-in % [:live-entry :kind]) (:line-meta payload)))))))
 
 (defn paint-review!
   "Paint the real transcript inside a clipped terminal viewport for #222 review."
@@ -159,6 +160,7 @@
 
             pane
             [(review-pane) (lv/minimized (review-pane))
+             (lv/settled (review-pane) {:reason :completed} 2000)
              (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
 
       (theme/apply-theme! theme-id)
@@ -198,6 +200,8 @@
                 (is (= :live-reopen (:kind target)))
                 (is (= (lv/view-id pane) (:view-id target)))
                 (is (= (:bounds hit) (:bounds target)))))
+            (doseq [x (concat (range col) (range right cols))]
+              (is (not= :live-reopen (:kind (.lookup interactions/hit-map (int x) (int row))))))
             (.setHovered interactions/hit-map hit)
             (paint!)
             (let [hovered (grid terminal cols 44)]
@@ -213,7 +217,7 @@
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest inline-live-view-has-an-extra-bottom-padding-row
-  ;; The hint is painted content, not a duplicate blank to merge with the bottom pad.
+  ;; A compact receipt retains exactly one blank padding row below its title.
   (doseq [cols
           [40 80 120]
 
@@ -233,21 +237,21 @@
               index-of (fn [kind]
                          (first (keep-indexed #(when (= kind (get-in %2 [:live-entry :kind])) %1)
                                               (:line-meta payload))))
-              hint-index (index-of :inline-hint)
-              padding (nth lines (inc hint-index))
+              title-index (index-of :inline-title)
+              padding (nth lines (inc title-index))
               header (first (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
               {:keys [row col width]} (:bounds header)
-              padding-row (+ row (- hint-index (index-of :inline-title)) 1)]
+              padding-row (inc row)]
 
-          (is (= (subs (nth lines hint-index) 0 1) padding))
-          (is (not= padding (nth lines (+ hint-index 2))))
+          (is (= (subs (nth lines title-index) 0 1) padding))
+          (is (not= padding (nth lines (+ title-index 2))))
           (doseq [^TextCharacter cell
                   (subvec (nth (grid terminal cols 44) padding-row) col (+ col width))]
             (is (= " " (.getCharacterString cell)))
             (is (= theme/code-block-bg (.getBackgroundColor cell)))))))))
 
 (deftest running-grid-and-clipped-clicks
-  ;; #222: actual node pixels and hit rows share the Activity inset and viewport origin.
+  ;; #222: compact receipts share the Activity inset and clipped viewport origin.
   (doseq [cols
           [40 80 120]
 
@@ -272,8 +276,8 @@
           (paint-review! vs pane scroll)
           (is (= (grid ht cols 44) (grid vt cols 44)))
           (let [regions (.current interactions/hit-map)
-                disclosure (first (filter #(= :live-expand (:kind %)) regions))
-                {:keys [row col]} (:bounds disclosure)
+                button (first (filter #(= :live-reopen (:kind %)) regions))
+                {:keys [row col]} (:bounds button)
                 lines (mapv #(apply str
                                (map (fn [cell]
                                       (.getCharacterString ^com.googlecode.lanterna.TextCharacter
@@ -281,9 +285,10 @@
                                     %))
                             (grid vt cols 44))]
 
-            (is (some? disclosure))
-            (is (= (:view-id disclosure) (lv/view-id pane)))
-            (is (= "▾ Output · 1 lines" (str/trim (nth lines row))))
+            (is (some? button))
+            (is (= (:view-id button) (lv/view-id pane)))
+            (is (not-any? #(str/includes? % "Running the focused tests") lines))
+            (is (not-any? #(str/includes? % "Output") lines))
             (let [header-row (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
                   run-row (first (keep-indexed #(when (str/includes? %2 "LIVE Build") %1) lines))
                   background-cols
@@ -303,22 +308,19 @@
                         (apply max (background-cols header-row))]
                        [(apply min (background-cols run-row))
                         (apply max (background-cols run-row))]))
-                (is (str/blank? (nth lines (dec run-row))))
-                (is (= [(apply min (background-cols header-row))
-                        (apply max (background-cols header-row))]
-                       [(apply min (background-cols row)) (apply max (background-cols row))]))))
-            (is (= :live-expand (:kind (.lookup interactions/hit-map (int col) (int row)))))
-            (is (= theme/code-block-bg
-                   (.getBackgroundColor (.getCharacter vt
-                                                       (TerminalPosition. (int col) (int row))))))
+                (is (str/blank? (nth lines (dec run-row))))))
+            (is (= :live-reopen (:kind (.lookup interactions/hit-map (int col) (int row)))))
             (is (every? #(<= 3 (long (get-in % [:bounds :row])) 40)
-                        (filter #(contains? #{:live-inline :live-expand :live-minimize} (:kind %))
-                                regions)))
-            (is (= pane
-                   (#'screen/live-band-pane
-                    {:live-views [pane]
-                     :layout {:cols cols :rows 44 :inline-live-ids #{(lv/view-id pane)}}}
-                    row)))))))))
+                        (filter #(= :live-reopen (:kind %)) regions))))
+          (is (not-any? #(contains? #{:live-inline :live-expand :live-select :live-minimize
+                                      :live-log-search}
+                                    (:kind %))
+                        (.current interactions/hit-map)))
+          (doseq [row (range 44)]
+            (is (nil? (#'screen/live-band-pane
+                       {:live-views [pane]
+                        :layout {:cols cols :rows 44 :inline-live-ids #{(lv/view-id pane)}}}
+                       row)))))))))
 
 (deftest live-cache-disclosure-and-stop
   ;; #222: each pane transition replaces the existing picture without a duplicate LIVE row.
@@ -340,14 +342,14 @@
         armed
         (lv/armed changed)]
 
-    (is (str/includes? (str/join "\n" (:lines before)) "Running the focused tests"))
-    (is (str/includes? (str/join "\n" (:lines after)) "Focused tests passed"))
+    (is (= (:lines before) (:lines after) (:lines compact) (:lines (review-payload armed 90))))
     (is (not-any? #(= :live-reopen (:kind %)) (:line-meta after)))
-    (is (< (count (:lines compact)) (count (:lines after))))
     (is (= 1 (count (filter #(str/includes? % "Build verification") (:lines compact)))))
     (is (str/includes? (str/join "\n" (:lines compact)) "LIVE Build verification"))
-    (is (some #(= :inline-stop (get-in % [:live-entry :kind]))
-              (:line-meta (review-payload armed 90))))
+    (is (= [:inline-title]
+           (mapv #(get-in % [:live-entry :kind])
+                 (filter #(= :activity-live-entry (:kind %))
+                         (:line-meta (review-payload armed 90))))))
     (is (= :stop (:action (lv/typed armed {:kind :enter}))))))
 
 (deftest completed-live-receipts-keep-identity
@@ -465,8 +467,8 @@
     (is (str/includes? (str/join "\n" (:lines settled)) "ACTIVITY"))
     (is (some #(= :live-reopen (:kind %)) (:line-meta settled)))))
 
-(deftest full-frame-owns-inline-geometry-and-fallback
-  ;; #222: the production frame, not only the node painter, removes the duplicate band.
+(deftest live-details-stay-hidden-until-explicitly-opened
+  ;; Owner matching, Activity folding and virtualization must never open a transient.
   (doseq [matched?
           [true false]
 
@@ -534,16 +536,14 @@
                                  @events)]
 
               (is (= matched? (contains? (:inline-live-ids layout) id)))
-              (is (= (if matched? [] [id]) (last @bands)))
-              (when-not (and matched? offscreen?)
-                (is (pos? (:visible measured)))
-                (is (pos? (:total measured))))
-              (is (= (and matched? (not offscreen?))
-                     (boolean (some #(= :live-inline (:kind %))
-                                    (.current interactions/hit-map))))))))))))
+              (is (empty? (last @bands)))
+              (is (nil? measured))
+              (is (not-any? #(contains? #{:live-inline :live-expand :live-select :live-log-search}
+                                        (:kind %))
+                            (.current interactions/hit-map))))))))))
 
 (deftest selectable-rows-use-the-existing-keyboard-and-action-route
-  ;; #222: inline pointer and F3 controls name the same authoritative row action.
+  ;; #222: transient pointer and F3 controls name the same authoritative row action.
   (with-open [terminal
               (DefaultVirtualTerminal. (TerminalSize. 100 44))
 
@@ -562,7 +562,9 @@
           (promise)]
 
       (binding [interactions/hit-map (interactions/create-hit-map)]
-        (paint-review! ts pane)
+        (.beginFrame interactions/hit-map)
+        (lv/paint! (.newTextGraphics ts) 100 44 [pane] 1 3)
+        (.commitFrame interactions/hit-map)
         (let [hit (first (filter #(= :live-select (:kind %)) (.current interactions/hit-map)))
               keyboard (first (filter #(= :live-select (:kind %)) (lv/controls [pane])))]
 
@@ -574,38 +576,33 @@
             (is (= [nil (lv/view-id pane) {:action :select :node-id "jobs" :item-ids ["focused"]}]
                    (deref called 2000 ::timeout)))))))))
 
-(deftest inline-scroll-and-minimize-preserve-the-reading-position
-  ;; #222: wheel geometry is bounded, follows patches, and survives minimizing the picture.
-  (let [pane
-        (assoc-in (review-pane) [:view :nodes 1 :lines] (mapv #(str "Build line " %) (range 50)))
+(deftest transient-scroll-and-minimize-preserve-the-reading-position
+  ;; #222: only the transient measures node geometry, preserving its viewport when minimized.
+  (with-open [terminal
+              (DefaultVirtualTerminal. (TerminalSize. 80 44))
 
-        measure
-        #(get-in (first (lv/inline-entries % 80)) [:meta :live-geometry])
+              ts
+              (doto (TerminalScreen. terminal) (.startScreen))]
 
-        painted
-        (lv/painted pane (measure pane))
+    (binding [interactions/hit-map (interactions/create-hit-map)]
+      (let [pane (assoc-in (review-pane)
+                   [:view :nodes 1 :lines]
+                   (mapv #(str "Build line " %) (range 50)))
+            measure #(lv/paint! (.newTextGraphics ts) 80 44 [%] 1 3)
+            painted (lv/painted pane (measure pane))
+            scrolled (lv/scrolled painted -4)
+            geometry (measure scrolled)
+            scrolled (lv/painted scrolled geometry)
+            minimized (lv/minimized scrolled)
+            restored (lv/restored (lv/painted minimized (measure minimized)))]
 
-        scrolled
-        (lv/scrolled painted -4)
-
-        geometry
-        (measure scrolled)
-
-        scrolled
-        (lv/painted scrolled geometry)
-
-        minimized
-        (lv/minimized scrolled)
-
-        restored
-        (lv/restored (lv/painted minimized (measure minimized)))]
-
-    (is (= 12 (:visible geometry)))
-    (is (pos? (:offset geometry)))
-    (is (not (:is-following scrolled)))
-    (is (= (:offset scrolled) (:offset restored)))
-    (is (= (:anchor scrolled) (:anchor restored)))
-    (is (= (:visible scrolled) (:visible restored)))))
+        (is (pos? (:visible geometry)))
+        (is (< (:visible geometry) (:total geometry)))
+        (is (pos? (:offset geometry)))
+        (is (not (:is-following scrolled)))
+        (is (= (:offset scrolled) (:offset restored)))
+        (is (= (:anchor scrolled) (:anchor restored)))
+        (is (= (:visible scrolled) (:visible restored)))))))
 
 (deftest live-panes-do-not-take-the-static-scroll-fast-path
   ;; #222: the static scroll path does not project the running progress bubble.
@@ -790,11 +787,33 @@
               (lv/settled {:reason :completed} 2000))
 
             db
-            (atom (viewer-review-db pane))]
+            (atom (cond-> (dissoc (viewer-review-db pane) :live-viewer-id)
+                    settled?
+                    (assoc-in [:messages 0 :runs] [(lv/run-row pane)])))
+
+            text
+            #(apply str
+               (mapcat (fn [row]
+                         (map (fn [^TextCharacter cell]
+                                (.getCharacterString cell))
+                              row))
+                       (grid terminal cols 44)))
+
+            details?
+            #(str/includes? (text) "Running the focused tests")]
 
         (binding [interactions/hit-map (interactions/create-hit-map)]
           (with-redefs [state/app-db db]
             (paint-viewer-review! ts cols @db)
+            (is (not (details?)) (str "Closed receipt at " cols " columns; settled=" settled?))
+            (is (not-any? #(= :live-viewer-close (:kind %)) (.current interactions/hit-map)))
+            (let [button (first (filter #(= :live-reopen (:kind %))
+                                        (.current interactions/hit-map)))]
+              (is (some? button))
+              (is (#'screen/activate-live-region! @db button)))
+            (is (= (lv/view-id pane) (:live-viewer-id @db)))
+            (paint-viewer-review! ts cols @db)
+            (is (details?))
             (let [close (first (filter #(= :live-viewer-close (:kind %))
                                        (.current interactions/hit-map)))
                   before (:messages @db)]
@@ -804,8 +823,45 @@
               (is (#'screen/activate-live-region! @db close))
               (is (= before (:messages @db)))
               (paint-viewer-review! ts cols @db)
+              (is (not (details?)))
               (is (not-any? #(= :live-viewer-close (:kind %))
                             (.current interactions/hit-map))))))))))
+
+(deftest hidden-live-panes-do-not-own-keyboard-controls
+  (let [pane
+        (review-pane)
+
+        newer
+        (assoc-in pane [:view :id] "newer-view")
+
+        db
+        (atom (assoc (viewer-review-db pane) :live-views [(lv/armed pane) newer]))
+
+        controls
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  db
+
+                  dialogs/list-dialog!
+                  (fn [_screen _title items _options]
+                    (swap! controls conj items)
+                    nil)]
+
+      (swap! db dissoc :live-viewer-id)
+      (#'screen/live-controls! nil @db)
+      (is (empty? @controls))
+      (is (nil? (#'screen/arm-front-live-view! @db)))
+      (#'screen/live-stop-key! @db (KeyStroke. \x false false))
+      (is (= "" (lv/stopping (first (:live-views @db)))))
+      (is (nil? (:live-viewer-id @db)))
+      (swap! db assoc :live-viewer-id (lv/view-id pane))
+      (#'screen/live-controls! nil @db)
+      (is (= 1 (count @controls)))
+      (is (every? #(= (lv/view-id pane) (:view-id %)) (first @controls)))
+      (#'screen/live-stop-key! @db (KeyStroke. \x false false))
+      (is (= "x" (lv/stopping (first (:live-views @db)))))
+      (is (nil? (lv/stopping (second (:live-views @db))))))))
 
 (deftest transient-log-search-does-not-open-a-dialog
   ;; #235 follow-up: Search belongs to the existing LIVE transient.

@@ -719,15 +719,6 @@
   ^long [message ^long text-top ^long top]
   (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
-(defn- inline-live-geometries
-  "Live panes actually projected into this transcript frame, keyed by exact view id."
-  [layout]
-  (into {}
-        (keep (fn [meta]
-                (when (= :activity-live-entry (:kind meta))
-                  [(:view-id meta) (:live-geometry meta)])))
-        (mapcat #(get-in % [:projected :line-meta]) (:visible layout))))
-
 (defn- viewer-panes
   "Project the selected transient view without modifying its transcript state."
   [db]
@@ -741,43 +732,20 @@
                 {:anchor (:anchor search) :log-search search}))])))
 
 (defn- live-band-pane
-  "The live view the pointer at terminal row `my` is over — the one the band is
-   painting right now — or nil when the pointer is on the transcript.
-
-   Measured from the layout the render thread published for the LIVE frame, the
-   same anchor the band was drawn with, so the rows the wheel claims are the rows
-   the human sees. A form takes the band back, and with it the wheel."
+  "The explicitly opened transient under terminal row `my`, or nil over the transcript.
+   A human-input form takes the band and its wheel input back."
   [db my]
   (when-not (:human-input db)
-    (let [inline
-          (some (fn [region]
-                  (when (and (= :live-inline (:kind region))
-                             (= (long my) (long (get-in region [:bounds :row]))))
-                    (:view-id region)))
-                (.current interactions/hit-map))
+    (when-let [panes (viewer-panes db)]
+      (let [ly (:layout db)
+            {:keys [content-top prompt-h]} (state/band-anchor db)
+            span (lv/band-rows (long (or (:cols ly) 0))
+                               (long (or (:rows ly) 0))
+                               panes
+                               content-top
+                               prompt-h)]
 
-          panes
-          (:live-views db)
-
-          fallback
-          (or (viewer-panes db)
-              (remove #(contains? (get-in db [:layout :inline-live-ids] #{}) (lv/view-id %)) panes))
-
-          ly
-          (:layout db)
-
-          {:keys [content-top prompt-h]}
-          (state/band-anchor db)
-
-          span
-          (lv/band-rows (long (or (:cols ly) 0))
-                        (long (or (:rows ly) 0))
-                        fallback
-                        content-top
-                        prompt-h)]
-
-      (or (when (and span (<= (long (first span)) (long my) (long (second span)))) (last fallback))
-          (first (filter #(= inline (lv/view-id %)) panes))))))
+        (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
 (defn- live-view-wheel-event
   "The pane-local event for `wheel-delta` EFFECTIVE wheel rows over the live band
@@ -930,7 +898,7 @@
    still carries the picture that was on screen when they did — what they saw is
    exactly what the model reads."
   [db note]
-  (when-let [pane (lv/interruptible (:live-views db))]
+  (when-let [pane (lv/interruptible (viewer-panes db))]
     (let [view-id (lv/view-id pane)
           session-id (get-in pane [:view :session-id])]
 
@@ -948,7 +916,7 @@
    and [[live-stop-key!]] sends the interrupt when the human presses Enter, so
    their words leave WITH the stop instead of after it."
   [db]
-  (when-let [pane (lv/interruptible (:live-views db))]
+  (when-let [pane (lv/interruptible (viewer-panes db))]
     (state/dispatch [:live-view-arm (lv/view-id pane)])
     true))
 
@@ -960,7 +928,7 @@
    chat editor. Enter interrupts the view WITH the note, Escape leaves it
    running, and anything else just grows the line."
   [db ^KeyStroke key]
-  (when-let [pane (lv/interruptible (:live-views db))]
+  (when-let [pane (lv/interruptible (viewer-panes db))]
     (let [{next-pane :pane :keys [action note]} (lv/typed pane (hi/key->event key))]
       (state/dispatch [:live-view-note (lv/view-id pane) next-pane])
       (when (= :stop action) (interrupt-front-live-view! db note)))))
@@ -2291,6 +2259,17 @@
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
 
+(defn- live-controls!
+  "F3 controls belong to the explicitly opened viewer, never a hidden receipt."
+  [screen db]
+  (when-let [items (seq (lv/controls (viewer-panes db)))]
+    (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
+                                                           "Live view controls"
+                                                           items
+                                                           {:enter-label "activate"
+                                                            :height :content}))]
+      (activate-live-region! @state/app-db choice))))
+
 (defn- attachment-capabilities!
   []
   (or (:attachment-capabilities @state/app-db)
@@ -3425,32 +3404,18 @@
         (if-let [pos (hi/paint! g cols rows human-form messages-top composer-h)]
           (frame/set-cursor! screen pos)
           (frame/set-cursor! screen nil)))
-      ;; A live view paints in the SAME band and YIELDS it to a form: an
-      ;; unanswered question has stopped the run, so it outranks a report about
-      ;; one still going. What the frame measured goes back to state, which is
-      ;; what makes the next wheel tick and the next column width agree with what
-      ;; is on screen. Before `commit-frame!`, so the pane's own click regions —
-      ;; its links and its `+ N more` lines — belong to this frame.
+      ;; Only an explicitly opened viewer paints the transient. Live events and
+      ;; transcript ownership never open it, and a human-input form takes priority.
       (when-not (:human-input db)
-        (let [inline
-              (inline-live-geometries layout)
-
-              owned
-              (render/owned-live-view-ids (:iterations progress) (:live-runs progress-extra))]
-
-          (doseq [[view-id geom] inline]
-            (state/dispatch [:live-view-painted view-id geom]))
-          (when-let [geom (lv/paint! g
-                                     cols
-                                     rows
-                                     (or (viewer-panes db)
-                                         (remove #(contains? owned (lv/view-id %))
-                                           (:live-views db)))
-                                     messages-top
-                                     composer-h
-                                     (System/currentTimeMillis))]
-            (state/dispatch [:live-view-painted (:view-id geom) geom])
-            (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom))))))
+        (when-let [geom (lv/paint! g
+                                   cols
+                                   rows
+                                   (viewer-panes db)
+                                   messages-top
+                                   composer-h
+                                   (System/currentTimeMillis))]
+          (state/dispatch [:live-view-painted (:view-id geom) geom])
+          (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
       (binding [frame/*column-offset* 0]
         (projects/paint! (frame/surface-graphics screen screen-cols rows)
                          (if (project-sidebar-locked? db screen-cols)
@@ -6700,7 +6665,7 @@
                    ;; comment that travels with the interrupt, so no stroke of it
                    ;; may reach the chat editor. A form outranks it — the form owns
                    ;; the band, so the form owns the keyboard.
-                   (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
+                   (and (some? key) (lv/stopping (lv/interruptible (viewer-panes db))))
                    (do (live-stop-key! db key) (recur))
                    (and (:live-viewer-id db)
                         (instance? KeyStroke key)
@@ -6712,15 +6677,7 @@
                         (= KeyType/F3 (.getKeyType ^KeyStroke key))
                         (not (overlay-locked? db))
                         (not @paste-buffer))
-                   (do (when-let [items (seq (lv/controls (or (viewer-panes db) (:live-views db))))]
-                         (when-let [choice (with-dialog-lock #(dlg/list-dialog!
-                                                                screen
-                                                                "Live view controls"
-                                                                items
-                                                                {:enter-label "activate"
-                                                                 :height :content}))]
-                           (activate-live-region! @state/app-db choice)))
-                       (recur))
+                   (do (live-controls! screen db) (recur))
                    (nil? key)
                    (do
                      (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)

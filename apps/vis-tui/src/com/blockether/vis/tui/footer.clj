@@ -966,51 +966,30 @@
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
 
-(defn- live-view-hint
-  "What an open live view says on the echo row: what it is, where it got to, and —
-   because Escape hits the VIEW before the turn — that the abort key stops it.
-   `lv/footer-text` is the pane's own one-line summary and `lv/interruptible` is
-   the same judge the abort branch asks, so this row and the band can never tell
-   different stories.
-
-   While that stop is ARMED the row says the two keys that end the typing instead:
-   Escape and Enter both send it, and Backspace on an empty line is the way back."
-  [panes]
-  (let [front
-        (lv/interruptible panes)
-
-        n
-        ;; A view that has SETTLED is not open: its line is on the band to be
-        ;; reopened, and Escape has nothing left to stop on it.
-        (count (remove lv/settled? panes))]
-
-    (str/join " · "
-              (remove str/blank?
-                [(when front
-                   (if (lv/stopping front)
-                     "Esc or Enter interrupt · Backspace keeps watching"
-                     (str (keymap/abort-hint) " stop"))) (lv/footer-text front)
-                 (when (> n 1) (str n " views open"))]))))
-
 (defn- echo-segments
   "Content for the Emacs echo-area row directly above the input box.
 
    NORMALLY EMPTY — the row lights up only when there is something to say:
      - startup session building → typing is live; Enter waits for readiness
      - live turn / cancelling   → the `C-g / Esc cancel` abort hint
-     - an open live view        → what it is doing and that Esc stops IT first
+     - an open live viewer      → its close/stop controls, never hidden pane details
      - a transient `:echo` msg  → a one-shot message (the caller clears it)
 
    No idle keybinding nags, and no which-key strip: C-x opens the HYDRA band
    itself (`keymap/prefix-spec` → `dialogs/prefix-band!`), which lists the next
    keys where they belong — over the transcript, not in a one-row strip."
-  [{:keys [loading? cancelling? echo live-views tabs active-tab-id]}]
-  (let [building? (some #(and (= active-tab-id (:id %)) (:build-id %)) tabs)]
+  [{:keys [loading? cancelling? echo live-views live-viewer-id tabs active-tab-id]}]
+  (let [building?
+        (some #(and (= active-tab-id (:id %)) (:build-id %)) tabs)
+
+        viewer
+        (some #(when (= live-viewer-id (lv/view-id %)) %) live-views)]
+
     (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-          ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
-          ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
-          ;; branch), so the row advertising that key has to name what it will hit.
-          (some? (lv/interruptible live-views)) [(hint-segment (live-view-hint live-views) 1)]
+          viewer [(hint-segment (if (lv/stopping viewer)
+                                  "Esc or Enter interrupt · Backspace keeps watching"
+                                  "Esc close live view · F3 controls")
+                                1)]
           building? [(hint-segment "Starting session… type now; Enter sends when ready" 1)]
           loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
           (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]

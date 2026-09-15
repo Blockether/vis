@@ -8805,42 +8805,38 @@ print(paths)"
 
 (defdescribe
   live-artifact-receipt-test
-  (it
-    "keeps the recorded view named and clickable with code collapsed after reload"
-    (let [entries
-          (format-iteration-entry-entries
-            {:iteration-id "iteration-live"
-             :attachments [{:source "tool"
-                            :kind "doc"
-                            :filename "Release.live.ndjson"
-                            :media-type "application/vnd.vis.live+ndjson"
-                            :size 2048}]
-             :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
-            80
-            1
-            {:session-id "session-live" :session-turn-id "turn-live"})
+  (it "keeps the recorded view named and clickable with code collapsed after reload"
+      (let [entries
+            (format-iteration-entry-entries
+              {:iteration-id "iteration-live"
+               :attachments [{:source "tool"
+                              :kind "doc"
+                              :filename "Release.live.ndjson"
+                              :media-type "application/vnd.vis.live+ndjson"
+                              :size 2048}]
+               :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
+              80
+              1
+              {:session-id "session-live" :session-turn-id "turn-live"})
 
-          receipt
-          (first (filter #(= "iteration-live" (get-in % [:meta :artifact :iteration-id])) entries))]
+            receipt
+            (first (filter #(= "iteration-live" (get-in % [:meta :artifact :iteration-id]))
+                           entries))]
 
-      (expect (some? receipt))
-      ;; #205: a recorded view is a bounded card, not a one-line disclosure.
-      (let [card
-            (filter #(get-in % [:meta :live-card-row]) entries)
+        (expect (some? receipt))
+        ;; #205, #228: recordings stay reachable without expanding the transcript.
+        (let [receipts
+              (filter #(get-in % [:meta :live-button?]) entries)
 
-            text
-            (str/join "\n" (map :line card))]
+              text
+              (:line receipt)]
 
-        ;; #228: the open instruction no longer takes a row.
-        (expect (= 7 (count card)))
-        (expect (not (str/includes? text "Click or")))
-        (expect (str/includes? text "Live view"))
-        (expect (str/includes? text "Release"))
-        (expect (str/includes? text "Recorded"))
-        (expect (str/includes? text "┌"))
-        (expect (str/includes? text "┘"))
-        (expect (not (str/includes? text "ndjson"))))
-      (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
+          (expect (= 1 (count receipts)))
+          (expect (str/includes? text "LIVE Release"))
+          (expect (= " Recorded " (get-in receipt [:meta :right-suffix])))
+          (expect (not (str/includes? text "┌")))
+          (expect (not (str/includes? text "ndjson"))))
+        (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
 
 ;; #222: a form's live receipt must share its Activity surface, not float below it.
 (defdescribe
@@ -8908,7 +8904,7 @@ print(paths)"
         (expect (= ["b"] (mapv :view-id (get-in after [:iterations 0 :forms 1 :runs]))))
         (expect (= ["unmatched"] (mapv :view-id (:unplaced after))))))
   (it
-    "nests a durable owned recording after reload but preserves unmatched cards"
+    "nests an owned recording after reload and keeps unmatched receipts compact"
     (doseq [width [40 80]]
       (let [entries (format-iteration-entry-entries
                       {:iteration-id "recorded-iteration"
@@ -8940,14 +8936,13 @@ print(paths)"
             unmatched (filter #(= "other" (get-in % [:meta :artifact :view-id])) entries)]
 
         ;; #228: neither nested nor standalone recordings show the open instruction.
-        (expect (= 2 (count owned)))
+        (expect (= 1 (count owned)))
         (expect (not-any? #(str/includes? (:line %) "Click or") (concat owned unmatched)))
         (expect (every? #(and (get-in % [:meta :trace-inset?])
                               (str/starts-with? (:line %) p/MARKER_ACTIVITY))
                         owned))
-        (expect (not-any? #(get-in % [:meta :live-card-row]) owned))
-        (expect (= 7 (count unmatched)))
-        (expect (every? #(get-in % [:meta :live-card-row]) unmatched))))))
+        (expect (= 1 (count unmatched)))
+        (expect (every? #(get-in % [:meta :live-button?]) (concat owned unmatched)))))))
 
 (defdescribe
   activity-middle-content-spacing-test

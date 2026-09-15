@@ -1750,33 +1750,18 @@
                        :else false)))))
 
 (defn- register-toggle-region!
-  "Publish the click target for a row that IS a control.
-
-   Two kinds qualify and they are the same gesture: a disclosure HEADER row
-   carrying `:toggle-details`, and the row a FINISHED RUN leaves in the
-   transcript (`:live-reopen`), which opens that run's record read-only in the
-   band. If the marker family that paints one doesn't register the region, the
-   control is DEAD in both input paths at once: the mouse finds nothing under
-   the chevron, and the `C-x t` jump overlay (which labels the SAME registered
-   regions) never offers it a letter. Every painter branch that can host one
-   calls this."
+  "Publish disclosure header targets for both pointer and jump navigation.
+   Live receipts register only their button, never the whole row."
   [meta viewport-top y x iw]
-  (let [bounds
-        {:row (+ (long viewport-top) (long y)) :col x :width (long (or (:click-width meta) iw))}]
-    (case (:kind meta)
-      :toggle-details
-      (.register interactions/hit-map
-                 {:bounds bounds
-                  :kind :toggle-details
-                  :session-id (:session-id meta)
-                  :node-id (:node-id meta)
-                  :collapsed? (:collapsed? meta)})
-
-      :live-reopen
-      (.register interactions/hit-map
-                 {:bounds bounds :kind :live-reopen :view-id (:view-id meta) :enabled? true})
-
-      nil)))
+  (when (= :toggle-details (:kind meta))
+    (.register interactions/hit-map
+               {:bounds {:row (+ (long viewport-top) (long y))
+                         :col x
+                         :width (long (or (:click-width meta) iw))}
+                :kind :toggle-details
+                :session-id (:session-id meta)
+                :node-id (:node-id meta)
+                :collapsed? (:collapsed? meta)})))
 
 (def ^:private code-copy-label " COPY ")
 
@@ -1807,6 +1792,43 @@
                          :bounds {:row (+ (long viewport-top) (long y)) :col col :width copy-width}
                          :text (:copy-text meta)
                          :history (:copy-history meta)})))))
+
+(defn- draw-live-button!
+  [g meta x y iw right-inset viewport-top]
+  (let [label
+        (p/ellipsize (:right-suffix meta) (max 0 (- (long iw) (long right-inset))))
+
+        width
+        (p/display-width label)
+
+        col
+        (+ (long x) (max 0 (- (long iw) (long right-inset) width)))
+
+        target
+        (if-let [artifact (:artifact meta)]
+          {:kind :artifact :artifact artifact :session-id (:session-id meta) :live-card? true}
+          {:kind :live-reopen :view-id (:view-id meta)})
+
+        hovered
+        (.hovered interactions/hit-map)
+
+        hovered?
+        (and (= (:kind target) (:kind hovered))
+             (if (:artifact target)
+               (= (interactions/label-key target) (interactions/label-key hovered))
+               (= (:view-id target) (:view-id hovered))))]
+
+    (p/clear-styles! g)
+    (p/set-colors! g
+                   (if hovered? t/header-active-tab-fg t/button-fg)
+                   (if hovered? t/header-active-tab-accent t/button-bg))
+    (when hovered? (p/enable! g p/BOLD))
+    (p/put-str! g col y label)
+    (p/clear-styles! g)
+    (.register interactions/hit-map
+               (assoc target
+                 :enabled? true
+                 :bounds {:row (+ (long viewport-top) (long y)) :col col :width width}))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -2242,52 +2264,13 @@
                                 :kind :doc
                                 :url (:path doc)}))
                   ;; Resolve durable artifacts through the attachment policy.
-                  (when-let [artifact (:artifact meta)]
+                  (when-let [artifact (when-not (:live-button? meta) (:artifact meta))]
                     (.register interactions/hit-map
-                               {:bounds {:row (+ (long viewport-top) (long y))
-                                         :col x
-                                         :width (min iw (long (or (:live-card-width meta) iw)))}
+                               {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                 :kind :artifact
-                                :live-card? (boolean (or (:live-card-row meta)
-                                                         (:activity-live? meta)))
                                 :session-id (:session-id meta)
                                 :artifact artifact}))
                   (cond
-                    (:live-card-row meta)
-                    (let [width (min iw (long (:live-card-width meta)))
-                          hovered? (= (interactions/label-key {:kind :artifact
-                                                               :live-card? true
-                                                               :session-id (:session-id meta)
-                                                               :artifact (:artifact meta)})
-                                      (interactions/label-key (.hovered interactions/hit-map)))
-                          row-bg (if hovered? t/link-chrome-hover-bg t/terminal-bg)
-                          border-fg (if hovered? t/text-fg t/dialog-hint)
-                          row (:live-card-row meta)
-                          row-fg (cond hovered? t/text-fg
-                                       (#{:top :bottom} row) border-fg
-                                       (and (= :status row) (:live-card-error? meta))
-                                       t/code-error-fg
-                                       :else t/text-fg)]
-
-                      (p/set-colors! g row-fg row-bg)
-                      (p/fill-rect! g x y width 1)
-                      (p/styled g
-                                (cond-> []
-                                  (= :title row)
-                                  (conj p/BOLD)
-
-                                  (and hovered? (= :title row))
-                                  (conj p/UNDERLINE))
-                                ;; The card owns its cell width, not the narrower prose clip.
-                                (p/put-str! g
-                                            x
-                                            y
-                                            (p/truncate-cols (subs (nth raw-lines lines-idx) 1)
-                                                             width)))
-                      (when-not (#{:top :bottom} row)
-                        (p/set-colors! g border-fg row-bg)
-                        (p/put-str! g x y "│")
-                        (when (> width 1) (p/put-str! g (+ x width -1) y "│"))))
                     ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3289,6 +3272,8 @@
                                               t/footer-error-fg))
                       (paint-turn-stamp! g x y line line-bg)
                       (register-toggle-region! meta viewport-top y x iw)))
+                  (when (:live-button? meta)
+                    (draw-live-button! g meta x y iw right-inset viewport-top))
                   ;; Inline markdown links: register a `:url` click region per
                   ;; link span so a click hands the href to the OS opener (the
                   ;; MOVE/CLICK_DOWN mouse handler looks these up). `:col` is a
@@ -4941,67 +4926,35 @@
           str/trim
           not-empty))
 
-(defn- live-artifact-card-entries
-  "One recorded view, bounded in terminal cells. Run status is joined only by view ID;
-   an unloaded record says Recorded, never an inferred success. Every card row opens
-   the same durable artifact, including borders and padding."
+(defn- live-artifact-receipt-entries
+  "A compact recorded receipt. Only its button opens the durable view."
   [artifact session-id max-w run nested?]
-  (let [width
-        (max 1 (long max-w))
-
-        inner
-        (max 0 (- width 4))
-
-        title
+  (let [title
         (str/replace (or (:title run) (str/replace (:filename artifact) #"\.live\.ndjson$" ""))
                      #"\s+"
                      " ")
 
         reason
         (some-> (:reason run)
-                name)
+                name
+                str/capitalize)
 
-        status
-        (str/join " · "
-                  (remove str/blank?
-                    [(if reason (str/capitalize reason) "Recorded")
-                     (when (pos? (long (or (:lines run) 0)))
-                       (str (:lines run) (if (= 1 (:lines run)) " line" " lines")))
-                     (when (pos? (long (or (:elapsed-ms run) 0)))
-                       (vis/format-duration (:elapsed-ms run)))]))
+        prefix
+        (str "LIVE " title (when reason (str " · " reason)))
 
-        edge
-        (fn [left label right]
-          (str left
-               (p/ellipsize label (max 0 (- width 2)))
-               (repeat-str \─ (max 0 (- width 2 (p/display-width label))))
-               right))
+        receipt
+        {:line (str (if nested? activity-marker result-marker)
+                    (p/truncate-cols prefix (max 1 (long max-w))))
+         :meta {:artifact artifact
+                :session-id session-id
+                :activity-live? nested?
+                :run-header? nested?
+                :live-button? true
+                :headline-prefix prefix
+                :right-suffix " Recorded "
+                :right-inset 2}}]
 
-        body
-        (fn [text]
-          (str "│ " (p/pad-right (p/ellipsize text inner) inner) " │"))
-
-        rows
-        (if nested?
-          [[:title (str "LIVE " title)] [:status status]]
-          [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
-           [:pad (body "")] [:status (body status)] [:pad (body "")] [:bottom (edge "└" "" "┘")]])]
-
-    (into (if nested? [] [{:line ""}])
-          (concat (map (fn [[row line]]
-                         {:line (str (if nested? activity-marker result-marker)
-                                     (p/truncate-cols line width))
-                          :meta {:artifact artifact
-                                 :session-id session-id
-                                 :activity-live? nested?
-                                 :run-header? (and nested? (= row :title))
-                                 :live-card-row (when-not nested? row)
-                                 :live-card-width width
-                                 :live-card-error? (contains? #{"failed" "interrupted" "timeout"
-                                                                "cancelled"}
-                                                              reason)}})
-                       rows)
-                  (when-not nested? [{:line ""}])))))
+    (if nested? [receipt] [{:line ""} receipt {:line ""}])))
 
 (defn- artifact-disclosure-entries
   [artifacts session-id max-w runs nested?]
@@ -5009,12 +4962,12 @@
         (mapcat (fn [{:keys [filename media-type view-id] :as artifact}]
                   (let [meta {:artifact artifact :session-id session-id}]
                     (if (attach/live-artifact? artifact)
-                      (live-artifact-card-entries artifact
-                                                  session-id
-                                                  max-w
-                                                  (when view-id
-                                                    (some #(when (= view-id (:view-id %)) %) runs))
-                                                  nested?)
+                      (live-artifact-receipt-entries
+                        artifact
+                        session-id
+                        max-w
+                        (when view-id (some #(when (= view-id (:view-id %)) %) runs))
+                        nested?)
                       [{:line (str result-marker filename " · " media-type) :meta meta}
                        {:line (str result-marker "↗ click to open in the system viewer")
                         :meta meta}]))))
@@ -6702,36 +6655,39 @@
   ([runs max-w session-id leading-margin?]
    (if (empty? runs)
      []
-     (into (if leading-margin? [{:line "" :meta nil}] [])
-           (mapcat (fn [{:keys [view-id title reason lines elapsed-ms]}]
-                     (let [verdict
-                           (some-> reason
-                                   name)
+     (into
+       (if leading-margin? [{:line "" :meta nil}] [])
+       (mapcat
+         (fn [{:keys [view-id title reason lines elapsed-ms]}]
+           (let [verdict
+                 (some-> reason
+                         name)
 
-                           verdict
-                           (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
-                             (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
-                             verdict)
+                 verdict
+                 (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
+                   (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                   verdict)
 
-                           parts
-                           (remove str/blank?
-                             [title verdict
-                              (when (pos? (long (or lines 0)))
-                                (str lines (if (= 1 (long lines)) " line" " lines")))
-                              (when (pos? (long (or elapsed-ms 0)))
-                                (vis/format-duration elapsed-ms))])]
+                 parts
+                 (remove str/blank?
+                   [title verdict
+                    (when (pos? (long (or lines 0)))
+                      (str lines (if (= 1 (long lines)) " line" " lines")))
+                    (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])
 
-                       [{:line (ellipsize-cols (str (if leading-margin?
-                                                      (str " " (band-label "LIVE"))
-                                                      (band-label "LIVE"))
-                                                    " "
-                                                    (str/join " · " parts))
-                                               (max 1 (long max-w)))
-                         :meta {:kind :live-reopen
-                                :run-header? true
-                                :view-id (str view-id)
-                                :session-id (str session-id)}}]))
-                   runs)))))
+                 prefix
+                 (str (when leading-margin? " ") (band-label "LIVE") " " (str/join " · " parts))]
+
+             [{:line (ellipsize-cols prefix (max 1 (long max-w)))
+               :meta {:kind :live-reopen
+                      :run-header? true
+                      :live-button? true
+                      :headline-prefix prefix
+                      :right-suffix (if reason " Recorded " " LIVE ")
+                      :right-inset 2
+                      :view-id (str view-id)
+                      :session-id (str session-id)}}]))
+         runs)))))
 
 (defn- place-run-rows
   "Attach run rows only to their trusted Activity owner.

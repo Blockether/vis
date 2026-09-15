@@ -376,7 +376,7 @@
           "the next patch clears it — no timer, no repaint that erases itself"))))
 
 (deftest live-view-escape-precedence-test
-  (testing "Escape hits the NEWEST view that says it may be stopped"
+  (testing "the stop selector chooses the newest pane supplied by its caller"
     (let [a
           (pane :id "view-a")
 
@@ -388,13 +388,21 @@
   (testing "EVERY open view answers the key — a view asks nothing, so none may refuse to stop"
     (let [p (lv/opened (ci-view))]
       (is (= (lv/view-id p) (lv/view-id (lv/interruptible [p]))))))
-  (testing "the echo row advertises the SAME thing the key does, even mid-turn"
+  (testing "hidden panes never advertise details or steal the turn cancel hint"
     (let [row (first (#'footer/echo-segments {:loading? true :live-views [(pane)]}))]
-      (is (str/includes? (:text row) "stop"))
-      (is (str/includes? (:text row) "CI · fix(loop): move the session pick"))
-      (is
-        (not (str/includes? (:text row) "cancel"))
-        "while a view is open the abort key stops the VIEW, so the row must not promise a turn cancel")))
+      (is (str/includes? (:text row) "cancel"))
+      (is (not (str/includes? (:text row) "CI · fix(loop): move the session pick")))))
+  (testing "only the selected transient advertises its controls"
+    (let [p
+          (pane)
+
+          db
+          {:loading? true :live-views [p] :live-viewer-id (lv/view-id p)}]
+
+      (is (= "Esc close live view · F3 controls" (:text (first (#'footer/echo-segments db)))))
+      (is (str/includes? (:text (first (#'footer/echo-segments
+                                        (assoc db :live-views [(lv/armed p)]))))
+                         "Esc or Enter interrupt"))))
   (testing "with no view open the row goes back to the turn's own hint"
     (is (str/includes? (:text (first (#'footer/echo-segments {:loading? true :live-views []})))
                        "cancel"))))
