@@ -1466,8 +1466,9 @@
 (def ^:private INTROSPECTION_PROMPT
   (str
     "## Session introspection\n"
+    "- Read session history only when a concrete task question needs session diagnostics, evidence from a referenced conversation, or required context missing from the conversation. Do not call `read_session` merely because a session or turn starts, or after `/reload`.\n"
     "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
-    "- Call `await read_session()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
+    "- For current-session evidence, use `await read_session()`. Reuse the result unless newer evidence is needed. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
     "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`stdout`/`error`).\n"
     "- Other conversation: `await list_sessions(search=\"…\")` ranks like the TUI/app search; then `get_session(id)` for one row, `read_session(id)` for its content.\n"
     "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
