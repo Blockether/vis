@@ -516,8 +516,7 @@
                                #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :gateway-events :display :tui-attachments :rewind :python-runtimes
-                    :python-sources :python-archives]
+        (expect (= [:logs :gateway-events :display :tui-attachments :rewind :python-archives]
                    (mapv :id (:targets report))))))
   (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
       ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
@@ -605,93 +604,59 @@
                    (expect (>= @log-calls 2))
                    (finally (.interrupt thread) (.join thread 5000)))
               (expect (not (.isAlive thread))))))))
-  (it
-    "deletes the Python runtimes and sources of versions this binary no longer pins"
-    (let [python
-          (tmp-dir "vis-hk-python")
-
-          age!
-          (fn [^File d days]
-            (.setLastModified d (age-ms days)))
-
-          version-dir!
-          (fn [kind version days]
-            (let [f
-                  (touch!
-                    python
-                    (str kind File/separator version File/separator "lib" File/separator "x.py")
-                    1
-                    "x")
-
-                  d
-                  (.getParentFile (.getParentFile f))]
-
-              (age! d days)
-              d))
-
-          stale-runtime
-          (version-dir! "runtime" "0.1.5" 40)
-
-          fresh-runtime
-          (version-dir! "runtime" "0.3.9" 2)
-
-          pinned-runtime
-          (version-dir! "runtime" "0.4.1" 400)
-
-          stale-sources
-          (version-dir! "sources" "0.1.1" 40)
-
-          pinned-sources
-          (version-dir! "sources" "0.4.1" 400)
-
-          archive
-          (touch! python
-                  (str "archives" File/separator "vis-python-runtime-linux-x64-0.1.5.tar.gz")
-                  40
-                  "tar")
-
-          report
-          (with-homes {:python python} #(housekeeping/sweep-stale! {:runtime-version "0.4.1"}))]
-
-      (expect (= 3 (:file-count (target report :python-runtimes))))
-      (expect (= 1 (:deleted (target report :python-runtimes))))
-      (expect (= 1 (:deleted (target report :python-sources))))
-      (expect (= 1 (:deleted (target report :python-archives))))
-      (expect (not (.exists stale-runtime)))
-      (expect (not (.exists stale-sources)))
-      (expect (not (.exists archive)))
-      ;; the pinned version is kept however old its install is
-      (expect (.exists pinned-runtime))
-      (expect (.exists pinned-sources))
-      ;; a version installed this fortnight may still be a daemon's
-      (expect (.exists fresh-runtime))))
-  (it "keeps the runtime version the binary itself pins when none is named"
+  (it "retains installed runtimes and sources regardless of age while removing stale archives"
       (let [python
-            (tmp-dir "vis-hk-python-pinned")
+            (tmp-dir "vis-hk-python")
 
-            old!
-            (fn [version]
-              (let [d (.getParentFile (touch!
-                                        python
-                                        (str "runtime" File/separator version File/separator "x")
-                                        1
-                                        "x"))]
-                (.setLastModified d (age-ms 400))
-                d))
+            versions
+            [[runtime/version 400] ["0.0.0" 400] ["9.9.9" 400] ["0.0.1" 2] ["dev" 400]]
 
-            pinned
-            (old! runtime/version)
+            archive
+            (touch! python "archives/old-runtime.tar.gz" 40 "tar")]
 
-            other
-            (old! "0.0.0")]
+        ;; An install timestamp and this process's pin cannot prove that another
+        ;; process has finished using a version, even after the retention window.
+        (doseq [kind
+                ["runtime" "sources"]
 
+                [version days]
+                versions]
+
+          (touch! python (str kind "/" version "/lib/x.py") days "runtime")
+          (.setLastModified (io/file python kind version) (age-ms days)))
+        (let [report (with-homes {:python python} #(housekeeping/sweep-stale! nil))]
+          (expect (= 1 (:deleted report)))
+          (expect (= 1 (:deleted (target report :python-archives))))
+          (expect (not (.exists archive)))
+          (expect (not-any? #{:python-runtimes :python-sources} (map :id (:targets report)))))
+        (doseq [kind
+                ["runtime" "sources"]
+
+                [version]
+                versions]
+
+          (expect (.isFile (io/file python kind version "lib/x.py"))))))
+  (it "does not sweep through linked runtime or source stores"
+      (let [python
+            (tmp-dir "vis-hk-python-links")
+
+            outside
+            (tmp-dir "vis-hk-python-outside")]
+
+        (doseq [kind ["runtime" "sources"]]
+          (touch! outside (str kind "/0.0.0/lib/x.py") 400 "runtime")
+          (.setLastModified (io/file outside kind "0.0.0") (age-ms 400))
+          (Files/createSymbolicLink (.toPath (io/file python kind))
+                                    (.toPath (io/file outside kind))
+                                    (make-array FileAttribute 0)))
         (with-homes {:python python} #(housekeeping/sweep-stale! nil))
-        (expect (.exists pinned))
-        (expect (not (.exists other))))))
+        (doseq [kind ["runtime" "sources"]]
+          (expect (Files/isSymbolicLink (.toPath (io/file python kind))))
+          (expect (.isFile (io/file outside kind "0.0.0/lib/x.py")))))))
 
 (defdescribe
   runtime-retention-plan-test
-  (it "shows release churn that the age-only sweep retains, without deleting candidates"
+  (it "previews release churn without deleting runtime candidates"
       (let [python
             (tmp-dir "vis-hk-release-churn")
 
@@ -708,9 +673,9 @@
         (with-homes
           {:python python}
           (fn []
-            ;; Seventeen fresh releases fit inside the fourteen-day window.
+            ;; The advisory plan does not authorize startup deletion.
             (let [swept
-                  (housekeeping/sweep-stale! {:runtime-version "0.5.15"})
+                  (housekeeping/sweep-stale! nil)
 
                   plan
                   (housekeeping/runtime-retention-plan {:runtime-version "0.5.15"})]

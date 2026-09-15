@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.foundation.housekeeping
-  "Retention for the Vis-owned directories that grow without bound — the one
-   nobody may delete for you, and the eight that delete themselves.
+  "Retention for Vis-owned state: advisory inventory and bounded cleanup.
 
    ADVISORY (`scan` observes, `purge!` acts, `vis-agent doctor` renders): the
    drafts store (`~/.vis/drafts`). A draft clone is a full copy of a trunk and
@@ -12,17 +11,19 @@
    because an operator asking what is reclaimable today should see them.
 
    SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
-   the gateway journals, the display caches, the rewind stores and the embedded
-   Python runtimes of versions this binary no longer pins. Those are DERIVED — a
-   log of a process that exited, the wire replay of a turn the DB already owns,
-   a picture whose bytes are already DB-owned, the pre-image of an edit nobody
-   will rewind a fortnight later, an interpreter the next start refetches from
-   its release — so they carry a window instead of
-   a report. `sweep-targets` is the one list of them. Diagnostic logs also sweep
-   hourly while the process runs; the other targets remain startup-only here.
+   the gateway journals, the display caches, the rewind stores and old downloaded
+   Python archives. Those are DERIVED — a log of a process that exited, the wire
+   replay of a turn the DB already owns, a picture whose bytes are already DB-owned,
+   the pre-image of an edit nobody will rewind a fortnight later — so they carry
+   a window instead of a report. `sweep-targets` is the one list of them. Diagnostic
+   logs also sweep hourly while the process runs; the other targets remain startup-only.
    Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
+
+   Versioned Python runtime and source trees are never age-swept. An older install
+   may still serve another process; neither its age nor this binary's pin proves
+   it is unused. `runtime-retention-plan` previews candidates without deleting them.
 
    `purge!` routes draft rows, including discarded-root retries, through
    `workspace/abandon!` so backend bookkeeping owns primary and extra-root release.
@@ -325,41 +326,13 @@
             {:file-count (count stores) :deleted 0 :bytes 0 :dirs-removed 0}
             stores)))
 
-(defn- sweep-versions!
-  "Delete every immediate child directory of `root` that is not named `keep`
-   and whose own mtime — the moment its version was installed — predates
-   `cutoff`. The binary pins ONE runtime version; every other one under
-   `~/.vis/python/runtime` and `~/.vis/python/sources` was left by a build that
-   no longer runs here, and a build that still does refetches it at its next
-   session start. The window keeps a side-by-side upgrade from deleting the
-   interpreter under a daemon that is still on the previous version. Returns
-   `{:file-count :deleted :bytes :dirs-removed}`."
-  [^File root ^String canon ^String keep ^long cutoff]
-  (let [versions (->> (or (.listFiles root) (make-array File 0))
-                      (filter (fn [^File f]
-                                (and (.isDirectory f) (not (.startsWith (.getName f) ".")))))
-                      vec)]
-    (reduce (fn [acc ^File d]
-              (let [{:keys [bytes]} (tree-stats d)]
-                (if (and (not= keep (.getName d))
-                         (< (.lastModified d) cutoff)
-                         (under? canon (canonical d))
-                         (pos? (delete-tree! d)))
-                  (-> acc
-                      (update :deleted inc)
-                      (update :dirs-removed inc)
-                      (update :bytes + (long bytes)))
-                  acc)))
-            {:file-count (count versions) :deleted 0 :bytes 0 :dirs-removed 0}
-            versions)))
-
 (defn runtime-retention-plan
   "Preview keeping the newest installed release and this binary's pinned runtime.
 
    Returns `{:is-dry-run true :runtime-version :targets}`, with `:latest-version`,
    `:retained` and `:candidates` for each runtime/source store. Candidates are NOT
    safe-to-delete findings: their process liveness is unverified. No files are
-   changed, and this does not alter `sweep-stale!` or its age-based policy.
+   changed. Startup cleanup also leaves runtime and source trees untouched.
 
    Numeric three-part releases are ordered numerically, not by mtime or string.
    Unknown version names and symlinked directories are retained. `:runtime-version`
@@ -415,9 +388,7 @@
 
    `:mode` `:files` deletes stale FILES anywhere below the root and then the
    directories they emptied; `:stores` deletes a whole per-session subtree at a
-   time; `:versions` deletes a whole per-version subtree unless it is the one
-   this binary pins. `:budget-bytes` additionally caps what survives the age
-   pass."
+   time. `:budget-bytes` additionally caps what survives the age pass."
   [{:id :logs :mode :files :dir logs-dir :retention-days default-retention-days}
    {:id :gateway-events :mode :files :dir events-dir :retention-days default-retention-days}
    {:id :display
@@ -431,14 +402,6 @@
     :retention-days default-retention-days
     :budget-bytes default-cache-budget-bytes}
    {:id :rewind :mode :stores :dir rewind-dir :retention-days default-retention-days}
-   {:id :python-runtimes
-    :mode :versions
-    :dir #(python-dir "runtime")
-    :retention-days default-retention-days}
-   {:id :python-sources
-    :mode :versions
-    :dir #(python-dir "sources")
-    :retention-days default-retention-days}
    ;; Releases before 0.4 kept the downloaded platform archive beside the tree
    ;; it was unpacked into; today's fetch deletes its archive once unpacked.
    {:id :python-archives
@@ -456,11 +419,9 @@
    subtree is skipped rather than allowed to take startup down.
 
    Options, all for tests: `:days` (overrides every target's window),
-   `:budget-bytes` (overrides every byte budget), `:runtime-version` (the
-   version `:versions` targets keep; this binary's pinned one otherwise) and
-   `:now-ms`."
+   `:budget-bytes` (overrides every byte budget) and `:now-ms`."
   ([] (sweep-stale! nil))
-  ([{:keys [days now-ms runtime-version] budget-override :budget-bytes}]
+  ([{:keys [days now-ms] budget-override :budget-bytes}]
    (let [now
          (long (or now-ms (util/now-ms)))
 
@@ -485,13 +446,8 @@
                        (canonical d)
 
                        swept
-                       (case mode
-                         :stores
+                       (if (= :stores mode)
                          (sweep-stores! d canon cutoff)
-
-                         :versions
-                         (sweep-versions! d canon (or runtime-version runtime/version) cutoff)
-
                          (sweep-files! d canon cutoff))
 
                        trimmed

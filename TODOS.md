@@ -147,7 +147,7 @@ commit only this task, and push to `main`. Record results below as work complete
 ## Runtime retention: newest version plus live users
 
 - [x] Reproduce release churn: 17 fresh runtime versions in each fixture store all
-  survived the current fourteen-day sweep. Add the read-only
+  survived the former fourteen-day sweep. Add the read-only
   `foundation.housekeeping/runtime-retention-plan`: numeric version ordering,
   newest release plus the required pin retained, unknown names/symlinks retained,
   other versions explicitly marked `:liveness-unverified`. Fifteen candidates per
@@ -155,11 +155,15 @@ commit only this task, and push to `main`. Record results below as work complete
 - [x] Read-only live inventory found 29 runtime directories and 23 source directories,
   with newest installed version 0.5.16 and loaded-host pin 0.5.15. The plan listed
   27 runtime and 21 source candidates, not safe deletion approvals; no size claim.
-- [ ] Replace age-only retention with newest-version retention after trustworthy
-  cross-process liveness checks. Keep any older version still required by a running
-  process, then remove it after its last user exits. New lock files alone cannot
-  prove that legacy processes are not using a version. No runtime was deleted and
-  the current destructive sweep policy is unchanged.
+- [x] Remove unsafe age-only deletion of installed runtimes and sources. A regression
+  reproduced deletion of six old, newer and unrecognized version trees; another
+  reproduced deletion through linked stores. Both now retain the installed files.
+  Stale downloaded archives still age out. This safety fix does not reclaim the
+  accumulated runtime trees or prove any candidate unused.
+- [ ] Implement newest-version retention after trustworthy cross-process liveness
+  checks. Keep any older version still required by a running process, then remove
+  it after its last user exits. New lock files alone cannot prove that legacy
+  processes are not using a version. No user runtime was deleted.
 - [ ] Low priority: remove leftover socket directories only after proving their owner
   is gone. Python worker memory was not identified as a defect in these experiments.
 
@@ -190,3 +194,7 @@ commit only this task, and push to `main`. Record results below as work complete
   being prepared for `0.5.20`; that separate runtime change is not part of this work.
   The owner also confirmed there is no verified lifetime lease or quiescent window
   that could authorize deleting older runtime/source caches.
+- Runtime-retention safety checks pass all 31 housekeeping cases after formatting.
+  Clj-kondo reports no errors or warnings; the general analyzer reports 16 existing
+  reflection findings outside the changed lines. Removed the obsolete version-sweep
+  helper, target declarations and test option rather than leaving a disabled path.

@@ -1009,13 +1009,17 @@ optimize native builds, or restart the live gateway.
    host is native, so the historical JVM report remains unverified.
 4. FFF commit `eaa460a7c` is pushed with 309 passing affected cases against its runtime
    pin. Independent review confirmed the shared-host design and regression coverage.
-5. Draft safety fixes pass 98 cases: canonical backend retries, extra-root ownership
-   after primary removal, and confinement synchronization before release. Formatting,
-   lint and fresh compiler checks found no new warnings. Scoped delivery is in progress.
+5. Draft safety fixes are pushed in `d9a3b7335`, with 98 passing cases: canonical backend
+   retries, extra-root ownership after primary removal, and confinement synchronization
+   before release. Formatting, lint and fresh compiler checks found no new warnings.
 6. Automatic terminal-draft and newest-runtime deletion remain unimplemented: there is
    no authoritative root-user/spawn exclusion or cross-process runtime lease, and no
    quiescent window. Review and the runtime owner confirmed those gaps. Do not infer
-   disposal from cancellation, age or an empty worker snapshot. Runtime policy is still
-   age-based; no user data was deleted. Concurrent release work remains separate.
-7. No live gateway restart or native build is authorized. Those constraints also prevent
+   disposal from cancellation, age or an empty worker snapshot. No user data was deleted.
+7. Removed the unsafe runtime/source age sweep. Regressions first reproduced deletion
+   of old/newer/unknown installs and deletion through linked stores; all 31 housekeeping
+   cases now pass. Advisory inventory and archive cleanup remain. This is a safety
+   correction, not completion of the requested newest-only reclamation policy.
+8. No live gateway restart or native build is authorized. Those constraints also prevent
    representative deployment verification and testing a new native lifecycle boundary.
+   Concurrent release work remains separate.
