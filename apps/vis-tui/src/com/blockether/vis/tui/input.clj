@@ -614,11 +614,43 @@
 ;; what's actually still referenced).
 
 (def placeholder-regex
-  "Anchored shape `[Pasted #N: ...]` / `[Image #N: ...]`. The non-greedy
-   negated-bracket body keeps the regex idempotent against nested-bracket
-   text the user may have typed adjacent to the placeholder. Group 1 is
-   always the numeric id — the leading kind word is non-capturing."
+  "Paste payload tokens. Group 1 is the numeric id."
   #"\[(?:Pasted|Image) #(\d+): [^\]]*?\]")
+
+(def composer-token-regex
+  "Paste tokens and staged image references, for atomic editing and painting."
+  #"\[(?:Pasted|Image|IMAGE) #(\d+)(?:: [^\]]*?)?\]")
+
+(defn image-reference
+  "The stable visible reference for one staged image."
+  [number]
+  (str "[IMAGE #" number "]"))
+
+(defn image-reference-numbers
+  "Numbers already authored as image references, whether backed by an attachment or not."
+  [text]
+  (into #{} (keep #(parse-long (second %))) (re-seq #"\[IMAGE #(\d+)\]" (or text ""))))
+
+(defn remove-input-token
+  "Remove all exact occurrences of a token without moving the caret past surviving text."
+  [{:keys [lines crow ccol] :as state} token]
+  (if (and token (seq lines))
+    (let [line
+          (nth lines crow)
+
+          matcher
+          (re-matcher (re-pattern (java.util.regex.Pattern/quote token)) line)
+
+          removed
+          (loop [n 0]
+            (if (.find matcher)
+              (recur (+ n (max 0 (- (min (long ccol) (.end matcher)) (.start matcher)))))
+              n))]
+
+      (assoc state
+        :lines (mapv #(str/replace % token "") lines)
+        :ccol (- (long ccol) (long removed))))
+    state))
 
 (defn format-paste-placeholder
   "Produce the visible token text for `app-db :pastes` entry `entry`.
@@ -837,7 +869,7 @@
     (when (and (string? line) (pos? ccol))
       (let [before (subs line 0 ccol)]
         (when (str/ends-with? before "]")
-          (let [m (re-find placeholder-regex before)
+          (let [m (last (re-seq composer-token-regex before))
                 ;; Only fire when the match SITS AT THE END of
                 ;; `before`. A placeholder somewhere earlier on the
                 ;; line shouldn't get nuked just because the cursor
@@ -867,7 +899,7 @@
         (subs line ccol)
 
         m
-        (re-find placeholder-regex before)]
+        (last (re-seq composer-token-regex before))]
 
     (if-let [match-start (when m (str/last-index-of before (first m)))]
       (let [new-line (str (subs before 0 match-start) after)

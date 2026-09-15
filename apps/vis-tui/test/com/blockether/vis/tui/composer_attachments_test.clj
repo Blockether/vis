@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.state :as state]
+            [com.blockether.vis.tui.input :as input]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private one-pixel-png
@@ -190,3 +191,41 @@
         (expect (not (str/includes? source "attachments/max-")))
         (doseq [prefix ["\"image/" "\"video/" "\"audio/" "\"application/"]]
           (expect (not (str/includes? source prefix)))))))
+
+(defdescribe
+  image-reference-sync
+  (it "inserts accepted image references at the caret and removes them with their attachment"
+      (reset! state/app-db {:input {:lines ["before after"] :crow 0 :ccol 7}
+                            :attachments []
+                            :paste-counter 7
+                            :image-counter 0
+                            :render-version 0})
+      (state/dispatch [:apply-attachment-intake
+                       {:attachments [{:id "a" :media-type "image/png" :filename "diagram.png"}]
+                        :added [{:id "a" :media-type "image/png" :filename "diagram.png"}]}])
+      (expect (= "before [IMAGE #1]after" (input/input->text (:input @state/app-db))))
+      (expect (= 1 (:image-number (first (:attachments @state/app-db)))))
+      (state/dispatch [:remove-attachment "a"])
+      (expect (= "before after" (input/input->text (:input @state/app-db))))
+      (expect (= 7 (get-in @state/app-db [:input :ccol]))))
+  (it "keeps duplicate references backed until the last reference is removed"
+      (reset! state/app-db {:input {:lines ["[IMAGE #1] [IMAGE #1]"] :crow 0 :ccol 21}
+                            :attachments [{:id "a" :image-number 1 :media-type "image/png"}]
+                            :render-version 0})
+      (state/dispatch [:update-input {:lines ["[IMAGE #1]"] :crow 0 :ccol 10}])
+      (expect (= 1 (count (:attachments @state/app-db))))
+      (state/dispatch [:update-input (input/empty-input)])
+      (expect (empty? (:attachments @state/app-db))))
+  (it "does not renumber surviving images or create references for rejected or nonimage files"
+      (reset! state/app-db {:input {:lines ["[IMAGE #2]"] :crow 0 :ccol 10}
+                            :attachments [{:id "b" :image-number 2 :media-type "image/png"}]
+                            :paste-counter 7
+                            :image-counter 2
+                            :render-version 0})
+      (state/dispatch [:apply-attachment-intake
+                       {:attachments [{:id "b" :image-number 2 :media-type "image/png"}
+                                      {:id "c" :media-type "image/png"}
+                                      {:id "pdf" :media-type "application/pdf"}]
+                        :rejected ["too large"]}])
+      (expect (= [2 3 nil] (mapv :image-number (:attachments @state/app-db))))
+      (expect (= "[IMAGE #2][IMAGE #3]" (input/input->text (:input @state/app-db))))))

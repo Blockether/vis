@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.highlight :as hl]
@@ -650,6 +651,36 @@
       (cond (str/starts-with? t "!&") "!&"
             (str/starts-with? t "!") "!"))))
 
+(defn- input-token-segments
+  "Project complete composer tokens into the same wrapped rows as the editor."
+  [lines text-w]
+  (let [text-w (long text-w)]
+    (loop [remaining lines
+           offset 0
+           segments []]
+
+      (if-let [line (first remaining)]
+        (let [matcher (re-matcher input/composer-token-regex line)
+              found (loop [parts segments]
+                      (if (.find matcher)
+                        (recur (loop [start (.start matcher)
+                                      parts parts]
+
+                                 (if (< start (.end matcher))
+                                   (let [col (mod start text-w)
+                                         end (min (.end matcher) (+ start (- text-w col)))]
+
+                                     (recur (int end)
+                                            (conj parts
+                                                  {:row (+ offset (quot start text-w))
+                                                   :col col
+                                                   :text (subs line start end)})))
+                                   parts)))
+                        parts))]
+
+          (recur (next remaining) (+ offset (visual-rows-for-line line text-w)) found))
+        segments))))
+
 (defn draw-input-box!
   "Draw the full-width input area between horizontal rules. Returns
    [cursor-col cursor-row] in screen coords.
@@ -745,6 +776,18 @@
           (let [line (nth visual-lines vi)]
             (when (pos? (count line))
               (.putString g input-pad-x (+ text-top i) (subs line 0 (min (count line) text-w))))))))
+    ;; Staged payloads are chips, not ordinary prose. Split tokens retain their
+    ;; surface across soft wraps without changing editor geometry or cursor motion.
+    (p/set-colors! g t/dialog-fg t/input-field-bg)
+    (.enableModifiers g (into-array com.googlecode.lanterna.SGR [com.googlecode.lanterna.SGR/BOLD]))
+    (doseq [{:keys [row col text]}
+            (input-token-segments (:lines input) text-w)
+
+            :when (<= v-scroll (long row) (dec (+ v-scroll text-rows)))]
+
+      (p/put-str! g (+ input-pad-x (long col)) (+ text-top (- (long row) v-scroll)) text))
+    (.disableModifiers g
+                       (into-array com.googlecode.lanterna.SGR [com.googlecode.lanterna.SGR/BOLD]))
     ;; Marker: tint JUST the leading `!`/`!&` in the typed text (only when the
     ;; first row is actually on-screen, i.e. not scrolled off the top). Pairs
     ;; with the shell-accent frame drawn above.
