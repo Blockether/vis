@@ -945,7 +945,7 @@ export const ProjectPages: Story = {
     // Regression: the editable digit must not leave extra whitespace beside the left arrow.
     await pager.ownerDocument.fonts.ready;
     const fieldBox = current.getBoundingClientRect();
-    const totalBox = canvas.getByText('/ 104').getBoundingClientRect();
+    const totalBox = canvas.getByText('/104').getBoundingClientRect();
     const previousIcon = previous.querySelector('svg')!.getBoundingClientRect();
     const nextIcon = next.querySelector('svg')!.getBoundingClientRect();
     const font = getComputedStyle(current);
@@ -955,6 +955,10 @@ export const ProjectPages: Story = {
     expect(
       Math.abs(fieldBox.left - previousIcon.right - (nextIcon.left - totalBox.right)),
     ).toBeLessThan(1);
+    // Regression: keep arrows close to the ink on both phone and desktop.
+    expect(fieldBox.left - previousIcon.right).toBeLessThanOrEqual(24);
+    expect(nextIcon.left - totalBox.right).toBeLessThanOrEqual(24);
+    expect(totalBox.left - fieldBox.right).toBeLessThan(1);
 
     // The whole counter is a hit target; only its current number is editable.
     await userEvent.click(pageTarget);
@@ -995,8 +999,8 @@ export const ProjectPages: Story = {
       expect(target.width).toBeGreaterThanOrEqual(pointer ? 28 : 44);
       expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     }
-    expect(targets[1].left - targets[0].right).toBeGreaterThanOrEqual(8);
-    expect(targets[2].left - targets[1].right).toBeGreaterThanOrEqual(8);
+    expect(targets[1].left - targets[0].right).toBeGreaterThanOrEqual(0);
+    expect(targets[2].left - targets[1].right).toBeGreaterThanOrEqual(0);
     const document = pager.ownerDocument.documentElement;
     expect(document.scrollWidth).toBeLessThanOrEqual(document.clientWidth);
     expect(targets[0].left).toBeGreaterThanOrEqual(0);
@@ -1030,7 +1034,7 @@ export const ProjectPagesDisabled: Story = {
     await expect(current).toHaveValue('2');
     await userEvent.hover(current);
     await expect(win.getComputedStyle(current).color).toBe(win.getComputedStyle(next).color);
-    await expect(win.getComputedStyle(canvas.getByText('/ 104')).color).toBe(
+    await expect(win.getComputedStyle(canvas.getByText('/104')).color).toBe(
       win.getComputedStyle(next).color,
     );
     await userEvent.unhover(current);

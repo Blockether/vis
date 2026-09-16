@@ -15,7 +15,7 @@ describe('project pages', () => {
     expect(current).toHaveValue(String(page));
     // Keep hover ink off the focused field on the focused project band's background.
     expect(current).toHaveClass('mouse:group-hover:enabled:not-focus:text-accent-ink');
-    expect(screen.getByText('/ 104')).toBeInTheDocument();
+    expect(screen.getByText('/104')).toBeInTheDocument();
     expect(screen.getByText(`Page ${page} of 104`)).toHaveAttribute('aria-live', 'polite');
   });
 

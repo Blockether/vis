@@ -378,7 +378,7 @@ export function Pager({
     <nav
       aria-label={`Pages of ${label}`}
       aria-disabled={disabled || undefined}
-      className="flex shrink-0 items-center justify-end gap-3.5 whitespace-nowrap mouse:gap-2"
+      className="flex shrink-0 items-center justify-end gap-1.5 whitespace-nowrap mouse:gap-0"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
@@ -388,9 +388,9 @@ export function Pager({
         className={`group grid min-h-11 min-w-11 items-center font-mono text-ui tabular-nums mouse:min-h-7 mouse:min-w-7 ${disabled ? 'cursor-not-allowed text-muted' : 'cursor-text text-white'}`}
       >
         <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-          {pageCount} / {pageCount}
+          {pageCount}/{pageCount}
         </span>
-        <span className="col-start-1 row-start-1 flex min-w-0 items-center justify-center gap-1">
+        <span className="col-start-1 row-start-1 flex min-w-0 items-center justify-center">
           <span className="relative">
             <span aria-hidden="true" className="invisible">
               {(draft ?? String(page)).slice(0, String(pageCount).length) || '0'}
@@ -431,7 +431,7 @@ export function Pager({
               face="absolute inset-0 text-center focus:underline focus:underline-offset-2 disabled:cursor-not-allowed mouse:group-hover:enabled:not-focus:text-accent-ink"
             />
           </span>
-          <span aria-hidden="true">/ {pageCount}</span>
+          <span aria-hidden="true">/{pageCount}</span>
         </span>
       </label>
       {step(page + 1, false)}
