@@ -480,9 +480,12 @@ export const ProjectGroup = memo(function ProjectGroup({
             />
           </HeaderActions>
         </SectionHeader>
-        {/* The header closes the band; rows draw only separators between sessions. */}
+        {/* Rows own their internal dividers; the wrapper closes the final session. */}
         {isShowing && rows.length > 0 && (
-          <div ref={rowsRef}>
+          <div
+            ref={rowsRef}
+            className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
+          >
             {rows.map((session) => {
               const pending = pendingDeleteId === session.id;
               const deletion: SessionRowDeletion = pending

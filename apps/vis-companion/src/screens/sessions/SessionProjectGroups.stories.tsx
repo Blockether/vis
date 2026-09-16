@@ -117,7 +117,7 @@ export const AcceptNewerSession: Story = {
     // Regression: accepting arrivals must not resize the project header.
     const pendingBounds = header.getBoundingClientRect();
     const style = (element: Element) => getComputedStyle(element);
-    const rows = canvasElement.querySelector('[data-session-id]')!.parentElement!;
+    const rows = header.closest('section')!.lastElementChild!;
 
     // Arrivals sit beside the total, on its baseline, not beside the trailing actions.
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
@@ -152,6 +152,13 @@ export const AcceptNewerSession: Story = {
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
     await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
+    // The final session needs the same thin divider as the internal rows.
+    await expect(style(rows).borderBottomWidth).toBe('1px');
+    await expect(style(rows).borderBottomStyle).toBe('solid');
+    await expect(style(rows).borderBottomColor).toBe(style(rows.children[1]).borderTopColor);
+    await expect(rows.getBoundingClientRect().bottom).toBe(
+      rows.lastElementChild!.getBoundingClientRect().bottom + 1,
+    );
     await expect(within(header).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
     const pageCount = Math.ceil(args.group.tally.count / args.reading.pageSize);
     if (pageCount > 1) {
