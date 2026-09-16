@@ -461,7 +461,6 @@ export const ProjectGroup = memo(function ProjectGroup({
             name={project}
             qualifier={qualifier}
             qualifierTitle={root}
-            navigation={pager}
             disclosure={
               hasSessions
                 ? {
@@ -481,6 +480,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             />
           </HeaderActions>
         </SectionHeader>
+        {pager && <div className="flex justify-end px-2">{pager}</div>}
         {/* The header closes the band; rows draw only separators between sessions. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>

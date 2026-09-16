@@ -117,13 +117,14 @@ export const AcceptNewerSession: Story = {
     // Regression: accepting arrivals must not resize the project header.
     const pendingBounds = header.getBoundingClientRect();
     const style = (element: Element) => getComputedStyle(element);
-    const rows = header.nextElementSibling!;
+    const rows = canvasElement.querySelector('[data-session-id]')!.parentElement!;
 
     // Arrivals sit beside the total, on its baseline, not beside the trailing actions.
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
     const total = within(header).getByText(`${args.group.tally.count} sessions`);
     await expect(total.parentElement).toContainElement(updates);
     await expect(total.parentElement).toHaveTextContent(`${args.group.tally.count} sessions | 1 new`);
+    const captionGap = () => total.getBoundingClientRect().top - title.getBoundingClientRect().bottom;
     const totalBounds = total.getBoundingClientRect();
     const updateBounds = updates.getBoundingClientRect();
     await expect(updateBounds.left).toBeGreaterThan(totalBounds.right);
@@ -154,10 +155,26 @@ export const AcceptNewerSession: Story = {
     await expect(within(header).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
     const pageCount = Math.ceil(args.group.tally.count / args.reading.pageSize);
     if (pageCount > 1) {
-      const pager = within(header).getByRole('navigation', {
+      const pager = page.getByRole('navigation', {
         name: 'Pages of /CryptoSafe sessions',
       });
       await expect(pager).toBeVisible();
+      await expect(captionGap()).toBeLessThanOrEqual(2);
+      await expect(pendingBounds.height).toBe(
+        matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 48 : 52,
+      );
+      const pagerBounds = pager.getBoundingClientRect();
+      await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
+      await expect(pagerBounds.right).toBeLessThanOrEqual(pendingBounds.right);
+      for (const button of within(pager).getAllByRole('button')) {
+        const bounds = button.getBoundingClientRect();
+        await expect(
+          canvasElement.ownerDocument.elementFromPoint(
+            bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2,
+          )?.closest('button'),
+        ).toBe(button);
+      }
       await expect(within(pager).getByText(`Page 1 of ${pageCount}`)).toBeInTheDocument();
     }
     await expect(updates).toHaveTextContent(/^1 new$/);
