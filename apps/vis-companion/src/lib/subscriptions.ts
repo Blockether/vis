@@ -44,6 +44,7 @@ export class SessionSubscriptionHub {
   private readonly client: GatewayClient;
   private readonly watched = new Set<string>();
   private readonly cursors = new Map<string, number>();
+  private readonly deleted = new Set<string>();
   private readonly sessionListeners = new Map<string, Set<SessionListener>>();
   private readonly fleetListeners = new Set<FleetListener>();
   private readonly fleetStateListeners = new Set<FleetStateListener>();
@@ -83,7 +84,7 @@ export class SessionSubscriptionHub {
   watchSessions(sessionIds: Iterable<string>): void {
     let changed = false;
     for (const sid of sessionIds) {
-      if (!sid || this.watched.has(sid)) continue;
+      if (!sid || this.watched.has(sid) || this.deleted.has(sid)) continue;
       this.watched.add(sid);
       // -1 is the gateway's efficient live-only sentinel. subscription.ready
       // replaces it with the effective cursor before normal events arrive.
@@ -92,6 +93,10 @@ export class SessionSubscriptionHub {
     }
     if (changed) this.restart();
     else this.ensureStream();
+  }
+
+  get gatewayUrl(): string {
+    return this.client.base;
   }
 
   isWatching(sid: string): boolean {
@@ -118,6 +123,10 @@ export class SessionSubscriptionHub {
     listener: SessionListener,
     { replay = true }: { replay?: boolean } = {},
   ): () => void {
+    if (this.deleted.has(sid)) {
+      listener({ type: 'session.deleted', session_id: sid });
+      return () => {};
+    }
     let listeners = this.sessionListeners.get(sid);
     if (!listeners) {
       listeners = new Set();
@@ -279,7 +288,8 @@ export class SessionSubscriptionHub {
       return;
     const stop = this.client.streamFleetStatus(
       (event) => {
-        for (const listener of [...this.fleetListeners]) listener(event);
+        if (event.type === 'session.deleted') this.ingest(event);
+        else for (const listener of [...this.fleetListeners]) listener(event);
       },
       {
         onOpen: () => this.setFleetStreaming(true),
@@ -315,7 +325,20 @@ export class SessionSubscriptionHub {
 
   private ingest(event: SseEvent): void {
     const sid = event.session_id ?? event.sid;
-    if (!sid) return;
+    if (!sid || this.deleted.has(sid)) return;
+    if (event.type === 'session.deleted') {
+      this.deleted.add(sid);
+      this.client.forgetDeletedSession(sid);
+      const wasWatched = this.watched.delete(sid);
+      this.cursors.delete(sid);
+      this.buffers.delete(sid);
+      this.ended.delete(sid);
+      for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
+      this.sessionListeners.delete(sid);
+      for (const listener of [...this.fleetListeners]) listener(event);
+      if (wasWatched) this.restart({ graceful: true });
+      return;
+    }
     // `subscription.ready` is the server's verdict about THIS subscribe, not a
     // transcript frame: it names the turn the daemon is running for the session
     // right now, before any replay. It is therefore handed to the session's

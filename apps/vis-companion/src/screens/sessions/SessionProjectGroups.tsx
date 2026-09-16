@@ -312,7 +312,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   // the next poll. A search answer arrives held already, and a row this reader
   // started or is holding words for is admitted rather than parked behind the pill.
   const rows = useMemo(() => {
-    const shown = painting.map((session) => local.get(session.id) ?? session);
+    const api = getClient(conn);
+    const shown = painting
+      .filter((session) => !api.isSessionDeleted(session.id))
+      .map((session) => local.get(session.id) ?? session);
     if (searching) return shown;
     const held = holdOrder(
       epoch,
@@ -328,10 +331,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     // the page already holds is painted once, in its place.
     const onPage = new Set(held.map((session) => session.id));
     const parked = (paged?.awaiting ?? NO_ROWS)
-      .filter((session) => !onPage.has(session.id))
+      .filter((session) => !onPage.has(session.id) && !api.isSessionDeleted(session.id))
       .map((session) => local.get(session.id) ?? session);
     return parked.length === 0 ? held : [...parked, ...held];
-  }, [searching, painting, local, epoch, admitted, paged]);
+  }, [searching, painting, local, epoch, admitted, paged, getClient, conn, list]);
   useEffect(() => {
     // The project shrank under the pager (a deletion, a smaller step): the page that
     // no longer exists becomes the first one rather than the last one a reader never

@@ -93,6 +93,39 @@ describe('GatewayClient event-stream hard deadline', () => {
 
     stop();
   });
+
+  it('does not restore a cursor removed by a deletion handler', async () => {
+    vi.useFakeTimers();
+    const frames = [
+      { type: 'session.deleted', session_id: 's1', seq: 42 },
+      { type: 'subscription.ready', session_id: 's1', cursor: 43 },
+    ];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''),
+          ),
+        );
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const cursors = new Map([
+      ['s1', 41],
+      ['s2', 9],
+    ]);
+    const stop = client.streamSessionEvents(cursors, (event) => {
+      if (event.type === 'session.deleted') cursors.delete('s1');
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect([...cursors]).toEqual([['s2', 9]]);
+    } finally {
+      stop();
+    }
+  });
 });
 
 // Regression: a cold-start client used to re-download the complete session list.

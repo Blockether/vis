@@ -6123,6 +6123,8 @@
   ;; Notify attached clients while their sinks still exist. Reconnects learn the
   ;; same verdict from the missing persisted session, not a deleted replay ring.
   (append-event! sid "session.deleted" {} {:store? false})
+  ;; Lists watch the fleet, including sessions this client has never opened.
+  (publish-fleet! [{"schema" 1 "type" "session.deleted" "session_id" (str sid)}])
   (drop-session! sid)
   (bus/forget! sid)
   (teardown-session-async! sid))

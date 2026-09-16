@@ -30,6 +30,7 @@ function fleetHub() {
   let report: ((streaming: boolean) => void) | null = null;
   return {
     hub: {
+      gatewayUrl: '',
       subscribeFleet(listener: (event: SseEvent) => void) {
         deliver = listener;
         return () => {
@@ -76,11 +77,66 @@ describe('a session list carried by the fleet stream', () => {
     vi.useRealTimers();
   });
 
-  const oneRow = (fleet: ReturnType<typeof fleetHub>) =>
-    renderSessionsScreen({
+  const oneRow = (fleet: ReturnType<typeof fleetHub>) => {
+    const view = renderSessionsScreen({
       machines: [{ sessions: [listSession({ id: 's1', title: 'First' })] }],
       subscriptions: fleet.hub as never,
     });
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    return view;
+  };
+
+  it('removes a remotely deleted row immediately and keeps its neighbour', async () => {
+    const fleet = fleetHub();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: 's1', title: 'First' }),
+            listSession({ id: 's2', title: 'Second' }),
+          ],
+        },
+        { sessions: [listSession({ id: 's1', title: 'Other machine' })] },
+      ],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    await settle(200);
+    const read = listReads(view.requests);
+    await fleet.emit({ type: 'session.deleted', session_id: 's1' });
+    await fleet.emit({ type: 'session.deleted', session_id: 's1' });
+    expect(screen.queryByText('First')).toBeNull();
+    expect(screen.getByText('Second')).toBeTruthy();
+    expect(listReads(view.requests)).toBe(read);
+    expect(new GatewayClient(view.conns[1]!).isSessionDeleted('s1')).toBe(false);
+  });
+
+  it('does not let an older in-flight window resurrect a deleted row', async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(200);
+    view.holdList();
+    await settle(30_000);
+    await fleet.emit({ type: 'session.deleted', session_id: 's1' });
+    view.releaseList();
+    await settle();
+    expect(screen.queryByText('First')).toBeNull();
+    expect(new GatewayClient(view.conns[0]!).cachedSessions()).toEqual([]);
+  });
+
+  it('repairs a deletion missed while the fleet stream was disconnected', async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(200);
+    await fleet.streaming(false);
+    view.setRows(0, []);
+    await fleet.emit({ type: 'subscription.ready', scope: 'fleet' });
+    await settle(200);
+    expect(screen.queryByText('First')).toBeNull();
+  });
 
   it('paints a run the stream announced without reading the window again', async () => {
     const fleet = fleetHub();

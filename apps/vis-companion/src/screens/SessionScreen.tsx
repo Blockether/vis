@@ -2632,6 +2632,15 @@ export function SessionScreen({
 
     const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
     const unsubscribeEvents = subscriptions.subscribeSession(sid, (event) => {
+      if (event.type === 'session.deleted') {
+        // Do not persist the outgoing composer or flush queued frames after deletion.
+        draftMessageReadyRef.current = false;
+        runningTurnSidRef.current = '';
+        eventQueue.length = 0;
+        disposed = true;
+        onBack();
+        return;
+      }
       // The subscribe handshake is a control frame, not transcript. It must not
       // reach the reducer, and above all must not pass for traffic: the liveness
       // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
@@ -2682,6 +2691,7 @@ export function SessionScreen({
     loadTranscript,
     sid,
     subscriptions,
+    onBack,
     noteQueueDelta,
     restoreCancelledQueued,
   ]);

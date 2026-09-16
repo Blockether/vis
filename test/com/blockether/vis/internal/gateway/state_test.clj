@@ -4496,6 +4496,8 @@
                               (deliver stopped true))
                             #'lp/close! (fn [_sid]
                                           (deliver closed true))
+                            #'state/fleet-sinks (atom {::deletion #(swap! notified conj
+                                                                     [@deleted %])})
                             #'lp/db-info (constantly :db)
                             (requiring-resolve
                               'com.blockether.vis.internal.workspace.core/discard-session-clones!)
@@ -4517,9 +4519,11 @@
                  ;; the row is already gone everywhere a client can look
                  (expect (= [sid] @deleted))
                  (expect (not (contains? @registry sid)))
-                 (expect (= [[sid]] (mapv first @notified)))
-                 (expect (= ["session.deleted"] (mapv #(get (second %) "type") @notified)))
-                 (expect (= [sid] (mapv #(get (second %) "session_id") @notified)))
+                 ;; Both attached transcripts and lists see the successful deletion.
+                 (expect (= [[sid] [sid]] (mapv first @notified)))
+                 (expect (= ["session.deleted" "session.deleted"]
+                            (mapv #(get (second %) "type") @notified)))
+                 (expect (= [sid sid] (mapv #(get (second %) "session_id") @notified)))
                  (deliver release true)
                  (when (instance? java.util.concurrent.Future fut)
                    (.get ^java.util.concurrent.Future fut))
@@ -4541,7 +4545,8 @@
 
         (try
           (swap! registry assoc sid {:turns {} :subscribers {::deletion #(swap! notified conj %)}})
-          (with-redefs-fn {#'lp/db-info (constantly :db)
+          (with-redefs-fn {#'state/fleet-sinks (atom {::deletion #(swap! notified conj %)})
+                           #'lp/db-info (constantly :db)
                            (requiring-resolve
                              'com.blockether.vis.internal.workspace.core/discard-session-clones!)
                            (fn [& _])

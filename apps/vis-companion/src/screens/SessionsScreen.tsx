@@ -46,11 +46,9 @@ import { ManageProjectsSheet, type ManagedProject } from '../components/ManagePr
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
 import { clearMachineOutage, machineOutage, rememberMachineOutage } from '../lib/fleet-outage';
 import {
-  clearDraftMessage,
   dirtySessionIds,
   draftMessageHasUnsent,
   draftMessageKey,
-  flushDraftMessages,
   useDraftMessages,
 } from '../lib/draft-messages';
 import { shareSummary, type SharedPayload } from '../lib/share-intake';
@@ -847,6 +845,43 @@ export function SessionsScreen({
     // A connection identity change should preserve the existing frame until its data arrives.
   }, [dirtyOverlay, fleetKey, isVisible, load]);
 
+  // Apply a successful gateway deletion to exactly the machine that owned it. The
+  // gateway already answered which ids disappeared, so neither a session nor a project
+  // removal re-downloads the fleet merely to rediscover that answer.
+  const forgetSessions = useCallback(
+    (conn: GatewayConn, ids: string[], project?: ManagedProject) => {
+      const api = clientFor(conn);
+      for (const sid of ids) api.forgetDeletedSession(sid);
+
+      const gone = new Set(ids);
+      patchMachine(machineKey(conn), (machine) => {
+        const rows = machine.sessions;
+        const sessions = rows && gone.size > 0 ? rows.filter((row) => !gone.has(row.id)) : rows;
+        let overview = machine.overview;
+        if (project && overview) {
+          const projects = overview.projects.filter((entry) =>
+            project.projectId
+              ? entry.project_id !== project.projectId
+              : entry.root !== project.root,
+          );
+          if (projects.length !== overview.projects.length) {
+            overview = {
+              ...overview,
+              projects,
+              project_count: projects.length,
+              session_count: projects.reduce((total, entry) => total + entry.session_count, 0),
+              live_count: projects.reduce((total, entry) => total + entry.live_count, 0),
+              awaiting_count: projects.reduce((total, entry) => total + entry.awaiting_count, 0),
+            };
+          }
+        }
+        if (sessions === rows && overview === machine.overview) return machine;
+        return { ...machine, sessions, overview };
+      });
+    },
+    [patchMachine],
+  );
+
   // A fleet frame normally carries the whole answer for one row, so live and title
   // changes repaint without a window read. A SETTLED frame is the exception: metadata
   // can raise NEW before the finished transcript page exists in this device's cache. It
@@ -933,6 +968,16 @@ export function SessionsScreen({
         readWindow();
         return;
       }
+      if (event.type === 'session.deleted') {
+        const sid = event.session_id ?? event.sid;
+        if (!sid) return;
+        for (const machine of machinesRef.current) {
+          if (clientFor(machine.conn).base === subscriptions.gatewayUrl) {
+            forgetSessions(machine.conn, [sid]);
+          }
+        }
+        return;
+      }
       if (FLEET_ROW_EVENTS.has(event.type)) {
         if (!applyFleetFrame(event)) readWindow();
         return;
@@ -950,7 +995,7 @@ export function SessionsScreen({
       fleetStreamingRef.current = false;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [applyFleetFrame, isVisible, load, subscriptions]);
+  }, [applyFleetFrame, forgetSessions, isVisible, load, subscriptions]);
 
   useLayoutEffect(() => {
     const anchor = refreshAnchorRef.current;
@@ -1200,7 +1245,8 @@ export function SessionsScreen({
       // holding unsent words. A query NARROWS that list; it never re-decides it.
       const sessions = withSearchHits(machine.sessions ?? [], hits).filter(
         (session) =>
-          !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true,
+          !clientFor(machine.conn).isSessionDeleted(session.id) &&
+          (!needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true),
       );
       // Preserve gateway search order, then band complete local-only matches behind it.
       // Unqueried lists pass through in gateway order.
@@ -1363,44 +1409,6 @@ export function SessionsScreen({
       }
     },
     [load, onOpen],
-  );
-
-  // Apply a successful gateway deletion to exactly the machine that owned it. The
-  // gateway already answered which ids disappeared, so neither a session nor a project
-  // removal re-downloads the fleet merely to rediscover that answer.
-  const forgetSessions = useCallback(
-    (conn: GatewayConn, ids: string[], project?: ManagedProject) => {
-      const api = clientFor(conn);
-      for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
-      if (ids.length > 0) void flushDraftMessages();
-
-      const gone = new Set(ids);
-      patchMachine(machineKey(conn), (machine) => {
-        const rows = machine.sessions;
-        const sessions = rows && gone.size > 0 ? rows.filter((row) => !gone.has(row.id)) : rows;
-        let overview = machine.overview;
-        if (project && overview) {
-          const projects = overview.projects.filter((entry) =>
-            project.projectId
-              ? entry.project_id !== project.projectId
-              : entry.root !== project.root,
-          );
-          if (projects.length !== overview.projects.length) {
-            overview = {
-              ...overview,
-              projects,
-              project_count: projects.length,
-              session_count: projects.reduce((total, entry) => total + entry.session_count, 0),
-              live_count: projects.reduce((total, entry) => total + entry.live_count, 0),
-              awaiting_count: projects.reduce((total, entry) => total + entry.awaiting_count, 0),
-            };
-          }
-        }
-        if (sessions === rows && overview === machine.overview) return machine;
-        return { ...machine, sessions, overview };
-      });
-    },
-    [patchMachine],
   );
 
   // The unit is the group ON THIS MACHINE, never "this project everywhere": the same

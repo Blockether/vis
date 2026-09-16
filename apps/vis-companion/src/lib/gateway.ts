@@ -15,7 +15,13 @@ import {
   readCachedAttachment,
   writeCachedAttachment,
 } from './attachment-cache';
-import { dirtySessionIds, hydrateDraftMessages } from './draft-messages';
+import {
+  clearDraftMessage,
+  dirtySessionIds,
+  draftMessageKey,
+  flushDraftMessages,
+  hydrateDraftMessages,
+} from './draft-messages';
 import type {
   AuthFlow,
   AuthVerdict,
@@ -957,6 +963,9 @@ type AttachmentSource = { blob: Blob; url: string };
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
+  // Shared with the snapshot cache: a late read from another client instance must
+  // not resurrect a confirmed deletion. Session UUIDs are never reused.
+  private static readonly deletedSessions = new Set<string>();
   /** Last canonical queue hold read with this session's backlog. */
   private readonly queuePaused = new Map<string, QueuePausedInfo | null>();
   // (session, iteration, index) → the produced artifact's downloaded Blob and its
@@ -2644,17 +2653,20 @@ export class GatewayClient {
 
   /** Last session list seen for this gateway. */
   cachedSessions(): Session[] | null {
-    return readSnapshot<Session[]>(this.snapshotKey('sessions'));
+    const rows = readSnapshot<Session[]>(this.snapshotKey('sessions'));
+    return rows ? this.withoutDeletedSessions(rows) : null;
   }
 
   /** Last meta row seen for ONE session. */
   cachedSession(sid: string): Session | null {
-    return readSnapshot<Session>(this.snapshotKey('session', sid));
+    return this.isSessionDeleted(sid) ? null : readSnapshot<Session>(this.snapshotKey('session', sid));
   }
 
   /** Last transcript seen for ONE session. Reading it renews its LRU position. */
   cachedTranscript(sid: string): TranscriptTurn[] | null {
-    return readSnapshot<TranscriptTurn[]>(this.snapshotKey('transcript', sid));
+    return this.isSessionDeleted(sid)
+      ? null
+      : readSnapshot<TranscriptTurn[]>(this.snapshotKey('transcript', sid));
   }
 
   /**
@@ -2756,6 +2768,7 @@ export class GatewayClient {
   }
 
   rememberRunningTurn(sid: string, turn: unknown, seq: number): void {
+    if (this.isSessionDeleted(sid)) return;
     const key = this.snapshotKey('running-turn', sid);
     if (turn === null) snapshots.delete(key);
     else snapshots.set(key, { turn, seq });
@@ -3018,7 +3031,8 @@ export class GatewayClient {
     // wait for its newest page before returning it, so NEW never outruns its transcript.
     const visible = head.rows;
     this.prefetchActiveTranscripts(visible);
-    if (!(await this.prefetchSettledTranscripts(cached, visible))) return cached ?? [];
+    if (!(await this.prefetchSettledTranscripts(cached, visible)))
+      return this.withoutDeletedSessions(cached ?? []);
 
     // AN UNCHANGED WINDOW IS THE SAME ARRAY, NOT AN EQUAL ONE.
     //
@@ -3026,9 +3040,9 @@ export class GatewayClient {
     // the very objects the screen is already rendering. Handing them back is what lets
     // React bail out of the whole list: a poll that changed nothing re-renders no row.
     const headPin = known.get(HEAD_CURSOR);
-    if (headPin && head === headPin) return headPin.rows;
+    if (headPin && head === headPin) return this.withoutDeletedSessions(headPin.rows);
 
-    const rows = reconcileRows(cached, head.rows);
+    const rows = reconcileRows(cached, this.withoutDeletedSessions(head.rows));
     writeSnapshot(key, rows);
     // Pin the window onto the RECONCILED rows, so a later 304 restores the identities
     // the screen is rendering instead of the raw wire copies.
@@ -3107,6 +3121,7 @@ export class GatewayClient {
       pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
     );
     const remember = (window: { etag: string; page: ProjectPage }): ProjectPage => {
+      window = { ...window, page: this.withoutDeletedProjectSessions(window.page) };
       if (persistHead && !after && limit <= MAX_PROJECT_HEAD_ROWS)
         writeSnapshot(this.snapshotKey('project-head', root), { key, ...window });
       if (window.etag) pins.set(key, window);
@@ -3145,7 +3160,8 @@ export class GatewayClient {
     after: string,
     pins: ProjectWindows,
   ): ProjectPage | null {
-    return this.heldProjectWindow(root, limit, after, pins)?.page ?? null;
+    const held = this.heldProjectWindow(root, limit, after, pins)?.page;
+    return held ? this.withoutDeletedProjectSessions(held) : null;
   }
 
   private heldProjectWindow(
@@ -3317,16 +3333,45 @@ export class GatewayClient {
 
   async deleteSession(sid: string): Promise<unknown> {
     const result = await this.request('DELETE', `/v1/sessions/${encodeURIComponent(sid)}`);
+    this.forgetDeletedSession(sid);
+    return result;
+  }
+
+  /** Forget a confirmed local or remote deletion without issuing another DELETE. */
+  forgetDeletedSession(sid: string): void {
     this.forgetSession(sid);
-    // Drop just the deleted row from the list snapshot; the list keeps painting
-    // every other session instead of falling back to a skeleton.
+    GatewayClient.deletedSessions.add(this.snapshotKey('session', sid));
+    clearDraftMessage(draftMessageKey(this.base, sid));
+    void flushDraftMessages();
+    // Keep every other row warm rather than replacing the list with a skeleton.
     const rows = this.cachedSessions();
     if (rows)
       writeSnapshot(
         this.snapshotKey('sessions'),
         rows.filter((row) => row.id !== sid),
       );
-    return result;
+  }
+
+  isSessionDeleted(sid: string): boolean {
+    return GatewayClient.deletedSessions.has(this.snapshotKey('session', sid));
+  }
+
+  private withoutDeletedSessions(rows: Session[]): Session[] {
+    return rows.some((row) => this.isSessionDeleted(row.id))
+      ? rows.filter((row) => !this.isSessionDeleted(row.id))
+      : rows;
+  }
+
+  private withoutDeletedProjectSessions(page: ProjectPage): ProjectPage {
+    const rows = this.withoutDeletedSessions(page.rows);
+    const awaiting = this.withoutDeletedSessions(page.awaiting);
+    if (rows === page.rows && awaiting === page.awaiting) return page;
+    const deleted = new Set(
+      [...page.rows, ...page.awaiting]
+        .filter((row) => this.isSessionDeleted(row.id))
+        .map((row) => row.id),
+    );
+    return { ...page, rows, awaiting, total: Math.max(0, page.total - deleted.size) };
   }
 
   /** Add an empty workspace root to the gateway's project inventory, idempotently. */
@@ -3348,15 +3393,7 @@ export class GatewayClient {
       `/v1/projects/${encodeURIComponent(pid)}?is_recursive=true`,
     );
     const ids = res?.deleted_session_ids ?? [];
-    for (const sid of ids) this.forgetSession(sid);
-    const rows = this.cachedSessions();
-    if (rows) {
-      const gone = new Set(ids);
-      writeSnapshot(
-        this.snapshotKey('sessions'),
-        rows.filter((row) => !gone.has(row.id)),
-      );
-    }
+    for (const sid of ids) this.forgetDeletedSession(sid);
     return ids;
   }
 
@@ -4341,11 +4378,12 @@ export class GatewayClient {
                   onEvent(event);
                   if (
                     sid &&
+                    cursors.has(sid) &&
                     event.type === 'subscription.ready' &&
                     typeof event.cursor === 'number'
                   ) {
                     cursors.set(sid, event.cursor);
-                  } else if (sid && typeof event.seq === 'number') {
+                  } else if (sid && cursors.has(sid) && typeof event.seq === 'number') {
                     cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
                   }
                 } catch {

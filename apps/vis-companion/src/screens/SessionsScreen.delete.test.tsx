@@ -62,6 +62,8 @@ describe('deleting one session confirms inside its own row', () => {
         ),
       ).toBe(true),
     );
+    await waitFor(() => expect(screen.queryByText('First')).toBeNull());
+    expect(screen.getByText('Second')).toBeTruthy();
   });
 
   it('no keeps the session: the row comes back and nothing is sent', async () => {
