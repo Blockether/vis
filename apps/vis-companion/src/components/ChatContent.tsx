@@ -3554,15 +3554,20 @@ export const AssistantMessage = memo(function AssistantMessage({
         className={`mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
         <span>{agentName}</span>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-[1ch] gap-y-1">
           <TurnStamp position={turn.position} createdAt={turn.created_at ?? startedAt} />
           {onFork && (
-            <span className="flex items-center gap-x-3">
+            <span className="flex items-center gap-x-[1ch]">
               {((turn.position != null && Number.isInteger(turn.position) && turn.position > 0) ||
                 Number.isFinite(new Date(turn.created_at ?? startedAt ?? NaN).getTime())) && (
                 <span className="font-normal text-dialog-hint">{' / '}</span>
               )}
-              <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from this turn">
+              <MetaButton
+                className="pl-0"
+                onClick={onFork}
+                disabled={isForking}
+                aria-label="Fork from this turn"
+              >
                 <ForkIcon className="size-3" aria-hidden />
                 {isForking ? 'Forking...' : 'Fork from this turn'}
               </MetaButton>

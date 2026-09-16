@@ -450,19 +450,40 @@ export const TurnHeaderOrder: Story = {
     </div>
   ),
   play: async ({ canvasElement }) => {
+    await document.fonts.ready;
     const answer = canvasElement.querySelector('article')!;
     const header = answer.firstElementChild!;
     await expect(header).toHaveTextContent('16/09/2026, 13:23:45 / T42 / Fork from this turn');
-    const stamp = header.querySelector('time')!.parentElement!.getBoundingClientRect();
+    const time = header.querySelector('time')!;
+    const stamp = time.parentElement!.getBoundingClientRect();
     const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
     await expect(fork).toBeVisible();
     const action = fork.getBoundingClientRect();
     await expect(action.top >= stamp.bottom || action.left >= stamp.right).toBe(true);
     await expect(action.right).toBeLessThanOrEqual(header.getBoundingClientRect().right);
+    // Match the date / turn separator: one text-space on either side of the fork slash.
+    const space = document.createRange();
+    space.setStart(time.nextSibling!, 0);
+    space.setEnd(time.nextSibling!, 1);
+    const gap = space.getBoundingClientRect().width;
+    const slash = document.createRange();
+    slash.setStart(fork.previousElementSibling!.firstChild!, 1);
+    slash.setEnd(fork.previousElementSibling!.firstChild!, 2);
+    const separator = slash.getBoundingClientRect();
+    const icon = fork.querySelector('svg')!.getBoundingClientRect();
+    await expect(gap).toBeGreaterThan(0);
+    await expect(separator.left - stamp.right).toBeCloseTo(gap, 0);
+    await expect(icon.left - separator.right).toBeCloseTo(gap, 0);
+    await expect(action.top + action.height / 2).toBeCloseTo(stamp.top + stamp.height / 2, 0);
     forkFromAnswer.mockClear();
     await userEvent.click(fork);
     await expect(forkFromAnswer).toHaveBeenCalledOnce();
   },
+};
+
+export const TurnHeaderOrderPointer: Story = {
+  ...TurnHeaderOrder,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 async function expectForkAlignment(answer: HTMLElement) {
