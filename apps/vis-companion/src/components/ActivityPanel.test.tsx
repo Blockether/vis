@@ -517,12 +517,14 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByText('3 directories · 2 files')).toBeTruthy();
     expect(screen.queryByText('Listing details')).toBeNull();
   });
-  it('keeps batch headers and summaries visible, spaces sections, and replaces them without resetting disclosure', () => {
+  it('shows batch sections after opening their call and replaces them without resetting disclosure', () => {
     const activity = storyData.ACTIVITY_LISTING_BATCH;
     const { rerender } = render(<ActivityPanel activity={activity} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     // Regression #230: opening one result must not expand every long section.
-    expect(screen.queryByRole('button', { name: /Listed 2 directories/ })).toBeNull();
+    // #251: directory breakdowns stay behind their specific List call.
+    expect(document.querySelector('[data-activity-section]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Listed 2 directories/ }));
     const toggle = screen.getByRole('button', {
       name: activity.rows[0].presentation!.sections![0].headline,
     });

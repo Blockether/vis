@@ -8197,6 +8197,80 @@ h = 8"
             (expect (= shown? (str/includes? text "kept result"))))))))
 
 (defdescribe
+  activity-list-disclosure-test
+  (it
+    "keeps List groups concise until a group and specific call are opened (#251)"
+    (let [rows
+          (mapv (fn [id sequence]
+                  {:id id
+                   :sequence sequence
+                   :operation "ls"
+                   :state "succeeded"
+                   :presentation {:headline "Listed directory"
+                                  :summary (str id " · 2 files")
+                                  :content [{:type "table"
+                                             :columns ["Name" "Kind"]
+                                             :rows [[(str id "-file") "File"]]}]}})
+                ["one" "two"]
+                [1 2])
+
+          entries
+          (fn [opened]
+            (#'render/activity-detail-entries
+             {:node-id "lists"
+              :activity-rows rows
+              :activity-expanded? (fn [key default]
+                                    (if (contains? opened key) true default))}
+             100
+             "lists"))
+
+          text
+          (fn [opened]
+            (str/join "\n" (map :line (entries opened))))]
+
+      (expect (str/includes? (text #{"#band"}) "List ×2"))
+      (expect (not (str/includes? (text #{"#band"}) "Listed directory")))
+      (expect (str/includes? (text #{"#band" "one#group"}) "Listed directory"))
+      (expect (not (str/includes? (text #{"#band" "one#group"}) "one-file")))
+      (expect (str/includes? (text #{"#band" "one#group" "one"}) "one-file"))
+      (expect (not (str/includes? (text #{"#band" "one#group" "one"}) "two-file")))))
+  (it
+    "keeps multi-directory breakdowns behind their call disclosure (#251)"
+    (let [row
+          {:id "batch"
+           :sequence 1
+           :operation "ls"
+           :state "succeeded"
+           :presentation {:headline "Listed 2 directories"
+                          :summary "4 entries"
+                          :content []
+                          :sections [{:headline "directory-one"
+                                      :summary "2 files"
+                                      :content [{:type "text" :text "one-file"}]}]}}
+
+          entries
+          (fn [opened]
+            (#'render/activity-detail-entries
+             {:node-id "lists"
+              :activity-rows [row]
+              :activity-expanded? (fn [key default]
+                                    (if (contains? opened key) true default))}
+             100
+             "lists"))
+
+          collapsed
+          (entries #{"#band"})
+
+          expanded
+          (entries #{"#band" "batch"})]
+
+      (expect (not-any? #(str/includes? (:line %) "directory-one") collapsed))
+      (expect (some #(and (= "batch" (get-in % [:meta :item-id])) (get-in % [:meta :node-id]))
+                    collapsed))
+      (expect (some #(str/includes? (:line %) "directory-one") expanded))
+      (expect (not-any? #(str/includes? (:line %) "one-file") expanded)))))
+
+(defdescribe
   activity-row-spacing-test
   (it "keeps settled adjacent operations compact under one group"
       (let [rows

@@ -474,6 +474,9 @@ export const ListingBatch: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    // #251: expanding Activity does not expose the directory breakdown.
+    await expect(canvasElement.querySelector('[data-activity-section]')).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: /Listed 2 directories/ }));
     await expect(canvas.getByText('0 directories · 2 files')).toBeVisible();
     const step = canvas.getByRole('button', {
       name: ACTIVITY_LISTING_BATCH.rows[0].presentation!.sections![0].headline,

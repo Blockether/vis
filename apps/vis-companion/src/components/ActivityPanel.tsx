@@ -679,10 +679,10 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   const nested = depth > 0;
   const failed = row.state === 'failed';
   const running = row.state === 'running';
-  // Headline and summary remain visible. Only content follows this disclosure;
-  // running and failed steps start open until the reader makes a choice.
+  // List details always need an explicit choice; other running/failed steps start open.
+  const listing = row.operation === 'ls';
   const [toggled, setToggled] = useState<boolean | null>(null);
-  const open = toggled ?? (running || failed);
+  const open = toggled ?? (!listing && (running || failed));
   const presentation = row.presentation;
   const lead = presentation?.headline ?? activityStepLead(row);
   const content = presentation?.content;
@@ -721,6 +721,7 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   // changes wears none and answers no press.
   const openable =
     Boolean(content?.length) ||
+    (listing && sections.length > 0) ||
     showsOutcome ||
     showsFiles ||
     diffs.length > 0 ||
@@ -828,16 +829,17 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
       {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />
       )}
-      {sections.map((section, index) => (
-        <ActivitySectionView
-          key={index}
-          section={section}
-          running={running}
-          className={
-            index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]'
-          }
-        />
-      ))}
+      {(!listing || open) &&
+        sections.map((section, index) => (
+          <ActivitySectionView
+            key={index}
+            section={section}
+            running={running}
+            className={
+              index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]'
+            }
+          />
+        ))}
       {open && showsOutcome && (
         <p className="whitespace-pre-wrap break-words text-meta text-err-ink">{outcome}</p>
       )}
@@ -1010,9 +1012,9 @@ function mergePatchRows(rows: readonly ActivityRow[]): ActivityRow[] {
 
 function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
   const singleton = group.rows.length === 1;
-  // A visible singleton stays visible when it becomes a group. Keep the same
-  // list/row tree so its disclosure state and the transcript anchor survive.
-  const [open, setOpen] = useState(singleton);
+  // List groups stay concise when a singleton grows; other operations retain
+  // their visible row tree and disclosure state across the same transition.
+  const [open, setOpen] = useState(singleton && group.rows[0].operation !== 'ls');
   const expanded = singleton || open;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);

@@ -5695,6 +5695,7 @@
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
   (boolean (or (seq (activity-field presentation :content))
+               (and (= "ls" (:operation row)) (seq (activity-field presentation :sections)))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -5990,6 +5991,7 @@
        :operation label
        :summary ""
        :activity-group? true
+       :activity-list? (every? #(= "ls" (:operation %)) rows)
        :state (name (or (some #(when (get states %) %) [:failed :running :cancelled]) :succeeded))
        :presentation {:headline (str label " ×" (count rows)) :summary facts}
        :children children
@@ -6415,7 +6417,11 @@
 
                                                        open?
                                                        (and openable?
-                                                            (expanded? id (zero? (long depth))))
+                                                            (expanded?
+                                                              id
+                                                              (and (zero? (long depth))
+                                                                   (not= "ls" (:operation row))
+                                                                   (not (:activity-list? row)))))
 
                                                        suffix
                                                        (activity-row-tail row)
@@ -6536,7 +6542,8 @@
                                                               (= :failed state)))
                                                      (conj detail-row)
 
-                                                     (seq sections)
+                                                     (and (seq sections)
+                                                          (or open? (not= "ls" (:operation row))))
                                                      (into (activity-section-entries
                                                              sections
                                                              id
