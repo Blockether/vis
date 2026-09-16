@@ -8,12 +8,13 @@
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
-  (:import [com.googlecode.lanterna TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlTerminal]))
 
@@ -243,11 +244,34 @@
                        (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
                        (.commitFrame interactions/hit-map)
                        (.refresh ^TerminalScreen screen)
-                       (vec (.current interactions/hit-map)))})]
+                       {:hits (vec (.current interactions/hit-map))
+                        :button-bg [(.getRed theme/button-bg) (.getGreen theme/button-bg)
+                                    (.getBlue theme/button-bg)]})})
+
+          lines
+          (str/split-lines (capture/frame-text captured))
+
+          search
+          (first (filter #(and (= :live-log-search (:kind %)) (= "a" (:node-id %)))
+                         (get-in captured [:ret :hits])))
+
+          disclosure
+          (first (filter #(and (= :live-expand (:kind %)) (= "a" (:node-id %)))
+                         (get-in captured [:ret :hits])))
+
+          {:keys [row col width]}
+          (:bounds search)]
 
       (is (nil? (:error captured)))
-      (is (str/includes? (capture/frame-text captured) "Search Build A logs"))
-      (is (some #(and (= :live-log-search (:kind %)) (= "a" (:node-id %))) (:ret captured))))))
+      (is (some? search))
+      ;; #250: Search is a filled header action, not a full-width text row.
+      (is (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
+      (is (= 8 width) "only the padded Search button is clickable")
+      (is (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
+      (when search
+        (is (= " Search " (subs (nth lines row) col (+ col width))))
+        (is (= (get-in captured [:ret :button-bg])
+               (:bg (get-in (last (:frames captured)) [row col]))))))))
 
 (deftest inline-log-search-renders-results-empty-error-and-loading-test
   ;; #235 moved retained-log search into the viewer; exercise its real frame.
@@ -302,6 +326,54 @@
                                   (= cols (count row)))
                                 %))
                   (:frames captured))))))
+
+;; #250: the query must not touch the left gutter, even while horizontally scrolled.
+(deftest log-search-input-aligns-with-content-test
+  (doseq [cols
+          [24 40 80 120]
+
+          query
+          ["" "ERROR" (apply str (repeat 100 "x"))]]
+
+    (let [pane
+          (assoc (lv/opened (fixture))
+            :is-viewer true
+            :log-search (assoc (lv/log-search-opened "a")
+                          :input (input/paste-text (input/empty-input) query)))
+
+          captured
+          (capture/capture!
+            {:cols cols
+             :rows 24
+             :paint!
+             (fn [{:keys [screen]}]
+               (let [painted
+                     (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)]
+                 (.refresh ^TerminalScreen screen)
+                 painted))})
+
+          lines
+          (str/split-lines (capture/frame-text captured))
+
+          heading-col
+          (some #(str/index-of % "Search Build") lines)
+
+          ^TerminalPosition cursor
+          (get-in captured [:ret :cursor])]
+
+      (is (nil? (:error captured)))
+      (is (some? cursor))
+      (when cursor
+        (let [line
+              (nth lines (.getRow cursor))
+
+              prompt-col
+              (str/index-of line "› ")]
+
+          (is (= heading-col prompt-col) "the prompt uses the same left padding as the heading")
+          (is (= \space (get line (dec (long heading-col)))) "leave the gutter clear")
+          (is (<= (+ (long heading-col) 2) (.getColumn cursor) (- cols 4)))
+          (when (empty? query) (is (= (+ (long heading-col) 2) (.getColumn cursor)))))))))
 
 (deftest log-search-client-encodes-literal-query-test
   (let [called (atom nil)]

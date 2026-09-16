@@ -1437,7 +1437,7 @@
            (lv/expanded "tail"))
        (lv/opened view)))))
 
-;; #219: a log's search control and every detail row belong below its disclosure.
+;; #219 keeps details nested; #250 moves Search into the log's own header.
 (deftest live-disclosure-nesting-test
   (doseq [cols
           [40 80 120]
@@ -1465,10 +1465,10 @@
           (position "▾ Pool state")
 
           log
-          (position "▾ Observed workers")
+          (position "▾ Observed")
 
           search
-          (position "Search Observed workers")
+          (position " Search ")
 
           detail
           (position "monitor revision=42")
@@ -1492,15 +1492,20 @@
       (is (nil? (:error capture)))
       (is (every? some? [group log search detail whitespace sibling]))
       (is (= (+ 2 (long (:col group))) (:col log)) "child toggle gains one level")
-      (is (= (+ 2 (long (:col log))) (:col search) (:col detail))
-          "search and log rows gain another level")
+      (is (= (+ 2 (long (:col log))) (:col detail)) "log rows gain another level")
+      (is (= (:row log) (:row search)) "Search shares the log header")
+      (is (< (+ (long (:col log)) (long (get-in log-hit [:bounds :width]))) (long (:col search)))
+          "a gap separates the disclosure and Search targets")
       (is (= (+ 2 (long (:col detail))) (:col whitespace)) "the log's own whitespace is preserved")
       (is (= (:col group) (:col sibling)) "unrelated siblings return to the parent edge")
       (is (= (:col log) (get-in log-hit [:bounds :col])))
       (is (= (:col search) (get-in search-hit [:bounds :col])))
       (is (not= :live-log-search
                 (:kind (.lookup interactions/hit-map (dec (long (:col search))) (:row search))))
-          "the nesting gutter is not part of the child action")
+          "the header gap is not part of the Search button")
+      (doseq [col (range (:col search) (+ (long (:col search)) 8))]
+        (is (= search-hit (.lookup interactions/hit-map col (:row search)))))
+      (is (= log-hit (.lookup interactions/hit-map (:col log) (:row log))))
       (let [collapsed
             (lv/expanded pane "tail")
 
@@ -1509,7 +1514,7 @@
 
         (is (str/includes? text "▸ Observed workers"))
         (is (not (str/includes? text "monitor revision=42")))
-        (is (not (str/includes? text "Search Observed workers")))
+        (is (not (str/includes? text " Search ")))
         (is (= lines (str/split-lines (painted-text [(lv/expanded collapsed "tail")] cols 40)))))
       (is (not (str/includes? (painted-text [(lv/expanded pane "pool")] cols 40)
                               "Observed workers"))))))

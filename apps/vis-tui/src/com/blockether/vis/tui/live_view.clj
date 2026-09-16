@@ -828,27 +828,26 @@
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
 
 (defmethod node-rows :log
-  [{:keys [id label lines line-tones total-lines]} {:keys [is-expanded]}]
-  (into [{:kind :log-search :node-id id :item-id :search :text (str "Search " (or label "Output"))}]
-        (if (seq lines)
-          (let [{:keys [shown]}
-                (windowed lines is-expanded true)
+  [{:keys [id lines line-tones total-lines]} {:keys [is-expanded]}]
+  (if (seq lines)
+    (let [{:keys [shown]}
+          (windowed lines is-expanded true)
 
-                behind
-                (- (long (or total-lines (count lines))) (count shown))]
+          behind
+          (- (long (or total-lines (count lines))) (count shown))]
 
-            (into (if (pos? behind)
-                    [{:kind :note
-                      :node-id id
-                      :text (str "… " behind " earlier lines — the view's record keeps them all")}]
-                    [])
-                  (map-indexed (fn [index line]
-                                 {:kind :log
-                                  :node-id id
-                                  :text (str line)
-                                  :tone (get line-tones (+ (- (count lines) (count shown)) index))})
-                               shown)))
-          [{:kind :empty :node-id id :text (empty-text :log)}])))
+      (into (if (pos? behind)
+              [{:kind :note
+                :node-id id
+                :text (str "… " behind " earlier lines — the view's record keeps them all")}]
+              [])
+            (map-indexed (fn [index line]
+                           {:kind :log
+                            :node-id id
+                            :text (str line)
+                            :tone (get line-tones (+ (- (count lines) (count shown)) index))})
+                         shown)))
+    [{:kind :empty :node-id id :text (empty-text :log)}]))
 
 (defmethod node-rows :table
   [{:keys [id columns is-selectable selected-ids] :as node}
@@ -1100,10 +1099,12 @@
 
     (with-meta (cond-> []
                  (seq label)
-                 (conj {:kind (if disclosure? :disclosure :node)
-                        :node-id (:id node)
-                        :text label
-                        :is-fresh (contains? (:nodes fresh) (:id node))})
+                 (conj (cond-> {:kind (if disclosure? :disclosure :node)
+                                :node-id (:id node)
+                                :text label
+                                :is-fresh (contains? (:nodes fresh) (:id node))}
+                         (and is-open (= :log (:type node)))
+                         (assoc :search-label (str "Search " (or (:label node) "Output")))))
 
                  :always
                  (into (if (pos? indent) (map #(update % :indent (fnil + 0) indent) body) body)))
@@ -1154,26 +1155,35 @@
     (if (minimized? pane)
       [{:id :restore :label "Restore live view" :kind :live-restore :view-id (view-id pane)}]
       (into []
-            (keep (fn [entry]
-                    (when-let [kind (case (:kind entry)
-                                      (:disclosure :more)
-                                      :live-expand
+            (mapcat
+              (fn [entry]
+                (let [kind (case (:kind entry)
+                             (:disclosure :more)
+                             :live-expand
 
-                                      :log-search
-                                      :live-log-search
+                             :button
+                             (when-not (:is-disabled entry) :live-activate)
 
-                                      :button
-                                      (when-not (:is-disabled entry) :live-activate)
+                             :trow
+                             (when (:is-selectable entry) :live-select)
 
-                                      :trow
-                                      (when (:is-selectable entry) :live-select)
+                             nil)
+                      control (assoc (select-keys entry [:node-id :item-id])
+                                :id [(:node-id entry) (:item-id entry)]
+                                :label (:text entry)
+                                :kind kind
+                                :view-id (view-id pane))]
 
-                                      nil)]
-                      (assoc (select-keys entry [:node-id :item-id])
-                        :id [(:node-id entry) (:item-id entry)]
-                        :label (:text entry)
-                        :kind kind
-                        :view-id (view-id pane)))))
+                  (cond-> []
+                    kind
+                    (conj control)
+
+                    (:search-label entry)
+                    (conj (assoc control
+                            :id [(:node-id entry) :search]
+                            :item-id :search
+                            :label (:search-label entry)
+                            :kind :live-log-search))))))
             (tree-seq #(seq (:cells %)) :cells {:cells (plan pane 80)})))))
 
 (def log-search-page-size "Maximum matching lines read from the retained log in one request." 200)
@@ -1626,15 +1636,43 @@
                    (:text entry))
 
     :disclosure
-    (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
-        (.register interactions/hit-map
-                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
-                             :col (+ (long left) 2)
-                             :width (max 0 (- (long inner-w) 3))}
-                    :kind :live-expand
-                    :view-id view-id
-                    :node-id (:node-id entry)
-                    :enabled? true}))
+    (let [width
+          (max 0 (- (long inner-w) 3))
+
+          search?
+          (and (:search-label entry) (>= width 12))
+
+          title-w
+          (if search? (- width 9) width)
+
+          hit-row
+          (+ (long row) (long *hit-row-offset*))]
+
+      (paint-styled! g
+                     left
+                     row
+                     inner-w
+                     t/dialog-hint-key
+                     [p/BOLD]
+                     (p/ellipsize (:text entry) title-w))
+      (.register interactions/hit-map
+                 {:bounds {:row hit-row :col (+ (long left) 2) :width title-w}
+                  :kind :live-expand
+                  :view-id view-id
+                  :node-id (:node-id entry)
+                  :enabled? true})
+      (when search?
+        (let [col (+ (long left) 2 (- width 8))]
+          (components/button! g
+                              col
+                              row
+                              " Search "
+                              :live-log-search
+                              {:extra {:bounds {:row hit-row :col col :width 8}
+                                       :view-id view-id
+                                       :node-id (:node-id entry)
+                                       :item-id :search
+                                       :label (:search-label entry)}}))))
 
     :log-search-page
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
@@ -1647,7 +1685,7 @@
                     :direction (:direction entry)
                     :enabled? true}))
 
-    (:button :log-search)
+    :button
     (do (paint-styled! g
                        left
                        row
@@ -1660,7 +1698,7 @@
                      {:bounds {:row (+ (long row) (long *hit-row-offset*))
                                :col (+ (long left) 2)
                                :width (max 0 (- (long inner-w) 3))}
-                      :kind (if (= :log-search (:kind entry)) :live-log-search :live-activate)
+                      :kind :live-activate
                       :view-id view-id
                       :node-id (:node-id entry)
                       :enabled? true})))
@@ -2127,9 +2165,9 @@
                  true :cursor
                  (when (pos? search-h)
                    (dialogs/draw-text-input-field! g
-                                                   body-left
+                                                   (inc body-left)
                                                    (+ search-top (dec search-h))
-                                                   body-w
+                                                   (dec body-w)
                                                    (input/input->text (:input search))
                                                    (get-in search [:input :ccol])
                                                    "Literal text (empty shows all)")))))))))))

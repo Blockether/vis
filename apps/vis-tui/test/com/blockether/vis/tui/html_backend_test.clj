@@ -1367,10 +1367,11 @@
                   (is (nil? (col-of "Observed workers")))
                   (is (nil? (col-of "Other checks")))
                   (is (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
-              (do (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed workers")))
-                  (is (= (+ 2 (long (col-of "▾ Observed workers")))
-                         (col-of "Search Observed workers")
-                         (col-of "monitor revision=42")))
+              (do (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed")))
+                  (is (= (+ 2 (long (col-of "▾ Observed"))) (col-of "monitor revision=42")))
+                  ;; #250: both backends keep the Search button on the log header.
+                  (is (some #(and (str/includes? % "▾ Observed") (str/includes? % " Search "))
+                            lines))
                   (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
