@@ -43,7 +43,7 @@ describe('composer response controls', () => {
     }
     expect(
       screen.getByRole('button', { name: 'Change provider and model' }).parentElement,
-    ).toHaveClass('gap-1', 'pt-2');
+    ).toHaveClass('gap-1', 'pt-1', 'mouse:pt-2');
 
     fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
     fireEvent.click(

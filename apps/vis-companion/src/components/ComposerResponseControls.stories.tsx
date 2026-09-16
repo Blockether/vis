@@ -8,6 +8,14 @@ const meta = {
   title: 'Session/Composer response controls',
   component: ComposerResponseControls,
   parameters: { layout: 'centered' },
+  // Leave room above the standalone strip for its extended touch targets.
+  decorators: [
+    (Story) => (
+      <div className="pt-2">
+        <Story />
+      </div>
+    ),
+  ],
   args: {
     controls: {
       model: { ...STORY_RESPONSE_CONTROL_VALUES.model, choose: fn() },
@@ -40,6 +48,8 @@ export const AvailableOptions: Story = {
     await canvasElement.ownerDocument.fonts.ready;
     const buttons = canvas.getAllByRole('button');
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    // Regression: mobile response controls sat too far below the input.
+    await expect(getComputedStyle(buttons[0].parentElement!).paddingTop).toBe(pointer ? '8px' : '4px');
     for (const [index, button] of buttons.entries()) {
       const box = button.getBoundingClientRect();
       await expect(box.height).toBe(pointer ? 28 : 32);
