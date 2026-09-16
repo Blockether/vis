@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.6] - 2026-09-16
+
+Includes the draft, session history, SDK and Activity improvements prepared for v0.2.5, whose native verification blocked publication.
+
+### Fixed
+- Use the canonical gateway handshake in native TUI verification.
+- Isolate native release gateway checks from existing services and reject unhealthy startup.
+
 ## [v0.2.5] - 2026-09-16
 
 ### Added
@@ -6276,7 +6284,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.6...HEAD
+[v0.2.6]: https://github.com/Blockether/vis/compare/v0.2.5...v0.2.6
 [v0.2.5]: https://github.com/Blockether/vis/compare/v0.2.3...v0.2.5
 [v0.2.3]: https://github.com/Blockether/vis/releases/tag/v0.2.3
 [v0.1.58]: https://github.com/Blockether/vis/compare/v0.1.57...v0.1.58

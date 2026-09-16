@@ -1056,8 +1056,26 @@ new binary into the running gateway.
     header hydration was added. The shared lazy read passes 13 focused cases, including
     missing, running and failed reads, and all 611 gateway cases. Formatting passes;
     lint and reflection findings match the pre-edit baseline.
-17. Verified schema and Activity presentation changes are on main. No Vis release tag
-    exists; final source CI, complete artifact publication and tester delivery remain pending.
+17. Source CI `35062598255` passed all 18 jobs at `1347ed7c6`: 6098 core and
+    2224 TUI cases on each platform, plus installed SDK checks. Companion CI passed
+    3273 cases (three platform skips) and built the Android package.
+18. Immutable tag `v0.2.5` passed source, mobile and desktop gates in release run
+    `35065052347`, but all three native suites failed to compile an obsolete
+    `gateway/handshake-keys` fixture. The product remains a draft; Clojars and PyPI
+    publication did not run. No tag was moved and no gate was bypassed.
+19. The native TUI fixture now uses the canonical wire converter. All six affected
+    cases pass against a fresh pinned-GraalVM TUI build, with clean formatting and
+    lint. All 102 release-bundle checks pass, including unhealthy and wrong-process
+    gateway cases. Both smoke jobs require the launched PID and an explicit available
+    port to be healthy; the exact smoke body also passes against a staged local native
+    image without touching the live gateway. Clean candidate verification is still required.
+20. Store read-back confirms Companion `0.2.5 (6216)` uploaded to both stores,
+    available to internal TestFlight testers and assigned to every Android tester
+    track. External TestFlight and Play open/closed testing await store review;
+    production distribution is unchanged.
+21. Version `0.2.6` and its mirrors are prepared; all 11 version/release-note tests
+    pass. Complete clean-source and native CI must pass before a replacement tag,
+    public artifacts, library publication and final tester-delivery verification.
 
 # Shared FFF lifecycle and retention experiments
 

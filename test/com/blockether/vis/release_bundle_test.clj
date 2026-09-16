@@ -1491,6 +1491,68 @@
                (finally (delete-tree! dir))))))))
 
 (defdescribe
+  native-gateway-smoke-test
+  ;; Release 35065052347 passed this gate despite an occupied default gateway port.
+  (it
+    "requires a healthy job-owned gateway and cleans up only its own process"
+    (let
+      [scripts
+       (re-seq
+         #"(?s)- name: Smoke-test the gateway\n        shell: bash\n        run: \|\n(.*?)(?=\n      [^ ])"
+         (slurp ".github/workflows/native-release.yml"))]
+      (expect (= 2 (count scripts)))
+      (doseq [[_ body] scripts
+              mode ["occupied" "healthy" "crashed" "unhealthy" "wrong-pid" "status-error"]]
+
+        (let [dir (.toFile (Files/createTempDirectory "vis-gateway-smoke-"
+                                                      (make-array FileAttribute 0)))
+              binary (io/file dir "vis-agent")
+              calls (io/file dir "calls")
+              cleaned (io/file dir "cleaned")]
+
+          (try
+            (write-executable!
+              binary
+              (str
+                "#!/bin/bash\n" "printf '%s\\n' \"$*\" >> \"$FIXTURE/calls\"\n"
+                "case \"$1 $2\" in\n"
+                "  'providers status') echo 'Error: gateway port 127.0.0.1:7890 is occupied'; exit 0;;\n"
+                "  'gateway start')\n" "    echo $$ > \"$FIXTURE/pid\"\n"
+                "    shift 2; while (( $# )); do if [[ $1 == --port ]]; then echo \"$2\" > \"$FIXTURE/port\"; fi; shift; done\n"
+                "    case \"$MODE\" in occupied) echo 'gateway port is occupied'; exit 0;; crashed) echo 'startup failed'; exit 17;; esac\n"
+                "    trap 'touch \"$FIXTURE/cleaned\"; exit 0' TERM\n"
+                "    while :; do sleep 0.02; done;;\n"
+                "  'gateway status')\n"
+                "    test -z \"${VIS_GATEWAY_URL:-}${VIS_GATEWAY_TOKEN:-}\" || exit 18\n"
+                "    test -f \"$FIXTURE/pid\" || exit 0\n" "    pid=$(cat \"$FIXTURE/pid\")\n"
+                "    case \"$MODE\" in occupied|crashed|unhealthy) echo 'gateway stopped'; exit 0;; wrong-pid) pid=999999999;; esac\n"
+                "    echo \"gateway running pid=$pid url=http://127.0.0.1:$(cat \"$FIXTURE/port\") db=fixture\"\n"
+                "    test \"$MODE\" != status-error;;\n" "esac\n"))
+            (let [script (str "sleep() { command sleep 0.02; };\n"
+                              (-> body
+                                  (str/replace #"(?m)^          " "")
+                                  (str/replace "target/release-bundle/vis-agent"
+                                               (.getAbsolutePath binary))))
+                  {:keys [exit output]} (run-bash ["bash" "-c" script]
+                                                  {"RUNNER_TEMP" (.getAbsolutePath dir)
+                                                   "FIXTURE" (.getAbsolutePath dir)
+                                                   "MODE" mode
+                                                   "VIS_GATEWAY_URL" "http://127.0.0.1:1"
+                                                   "VIS_GATEWAY_TOKEN" "fixture-only"})
+                  invocations (slurp calls)]
+
+              (expect (= (= mode "healthy") (zero? (long exit))) (str mode ": " output))
+              (expect (re-find #"gateway start --host 127\.0\.0\.1 --port [1-9][0-9]* --db "
+                               invocations)
+                      invocations)
+              (expect (str/includes? invocations (str (.getAbsolutePath dir) "/vis-gateway-smoke."))
+                      invocations)
+              (expect (not (str/includes? invocations "gateway stop")) invocations)
+              (when (contains? #{"healthy" "unhealthy" "wrong-pid" "status-error"} mode)
+                (expect (.isFile cleaned) (str mode ": owned process must be stopped"))))
+            (finally (delete-tree! dir))))))))
+
+(defdescribe
   native-pipeline-order-test
   (it "builds and stages both binaries before native tests and release attachment"
       (let [workflow

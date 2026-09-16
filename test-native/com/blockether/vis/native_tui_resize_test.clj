@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [charred.api :as json]
             [com.blockether.vis.contract.gateway :as gateway]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
            (java.net InetSocketAddress)
@@ -26,10 +27,7 @@
                     body (case path
                            "/healthz"
                            {"status" "ok"
-                            "protocol" (into {}
-                                             (map (fn [[k v]]
-                                                    [(get gateway/handshake-keys k) v])
-                                                  (gateway/handshake {:version "resize-test"})))}
+                            "protocol" (wire/->wire (gateway/handshake {:version "resize-test"}))}
 
                            "/v1/clients"
                            {"client_id" "resize-test"}
