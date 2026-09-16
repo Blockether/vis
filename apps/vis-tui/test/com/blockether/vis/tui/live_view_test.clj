@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.human-input :as hi]
+            [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
@@ -19,8 +20,9 @@
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
-  (:import [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input KeyStroke KeyType]))
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 ;;; ── The views under test ────────────────────────────────────────────────────
 
@@ -709,7 +711,7 @@
                 (lv/band-rows cols 36 [p] 1 3)
 
                 title-row
-                (+ (long from) 2)
+                (inc (long from))
 
                 controls
                 (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))]]
@@ -717,8 +719,8 @@
     (is (nil? error))
     (is (str/includes? (nth lines from) "┌"))
     (is (not (str/includes? (nth lines from) "Release checks")))
-    (is (str/blank? (str/replace (nth lines (inc (long from))) "│" ""))
-        "one empty row separates the border from the title")
+    (is (= 4 (str/index-of (nth lines title-row) "LIVE"))
+        "the heading starts one row below the border, with the body's horizontal inset")
     (is (str/includes? (nth lines title-row) "Release checks"))
     (is (str/includes? (nth lines (inc title-row)) "Three jobs"))
     (is (str/blank? (str/replace (nth lines (+ title-row 2)) "│" ""))
@@ -776,13 +778,47 @@
       (is (= 1 (count controls)))
       (is (= "Close live view" (:label control)))
       (is (= 3 width))
-      (is (str/includes? text "×"))
+      (is (str/includes? text "✕"))
       (is (not (str/includes? text "Close")))
       (is (str/includes? text "LIVE"))
       (when (= cols 96) (is (str/includes? text (str/capitalize (name reason)))))
       (doseq [x (range col (+ col width))]
         (is (= control (.lookup interactions/hit-map (int x) (int row)))))
       (when viewer? (is (some #{["Esc" "close view"]} (lv/hint record [])))))))
+
+(deftest live-view-close-button-style-test
+  (binding [interactions/hit-map (interactions/create-hit-map)]
+    (doseq [settled? [false true]
+            :let [view (cond-> (assoc (pane) :is-viewer true)
+                         settled?
+                         (lv/settled {:reason :completed})
+
+                         settled?
+                         lv/reopened)]
+            hovered? [false true false]]
+
+      (let [_ (paint-frames [view])
+            control (first (filter #(= :live-viewer-close (:kind %))
+                                   (.current interactions/hit-map)))
+            {:keys [row col]} (:bounds control)
+            _ (.updateHovered interactions/hit-map
+                              (MouseAction. MouseActionType/MOVE
+                                            0
+                                            (TerminalPosition. (if hovered? (int col) 0)
+                                                               (int row))))
+            live (paint-frames [view])
+            expected {:ch "✕"
+                      :fg (get t/default-palette (if hovered? :header-active-tab-fg :button-fg))
+                      :bg (get t/default-palette (if hovered? :close-button-hover-fg :button-bg))}
+            frame (last (:frames live))
+            actual (get-in frame [row (inc (long col))])]
+
+        (is (nil? (:error live)))
+        (is (= expected (select-keys actual [:ch :fg :bg]))
+            "live and recorded views use a regular button with the dialog X and red hover")
+        (doseq [x (range col (+ (long col) 3))]
+          (is (= (select-keys expected [:fg :bg]) (select-keys (get-in frame [row x]) [:fg :bg]))
+              "the entire close target has a filled button face"))))))
 
 (deftest live-view-body-inset-and-bottom-gap-test
   ;; #235: the final visible content row must not touch the footer boundary.
@@ -813,7 +849,7 @@
     (is (nil? error))
     (is (some? last-row))
     (when last-row
-      (is (= 3 (str/index-of (nth lines last-row) "· Full console")))
+      (is (= 4 (str/index-of (nth lines last-row) "· Full console")))
       (is (= (- (long bottom) 4) last-row))
       (is (str/blank? (str/replace (nth lines (inc (long last-row))) "│" ""))))
     (is (pos? (long (:visible geometry))))))
@@ -1167,7 +1203,7 @@
 
       (is (str/includes? (nth lines from) "┌")
           "the first row it claims is the band's opening border")
-      (is (str/includes? (nth lines (+ (long from) 2)) "CI · fix(loop): move the session pick")
+      (is (str/includes? (nth lines (inc (long from))) "CI · fix(loop): move the session pick")
           "the padded heading remains inside the wheel's band")
       (is (str/includes? (nth lines to) "└") "the last is the rule that closes it")
       (is (every? str/blank? (take from lines))

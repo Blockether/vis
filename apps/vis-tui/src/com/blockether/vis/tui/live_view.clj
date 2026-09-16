@@ -1846,8 +1846,11 @@
   "Paint minimize/restore for a running view and a close icon for a read-only record."
   [g {:keys [left inner-w]} row pane]
   (when pane
-    (let [label
-          (cond (or (:is-viewer pane) (settled? pane)) " × "
+    (let [close?
+          (or (:is-viewer pane) (settled? pane))
+
+          label
+          (cond close? " ✕ "
                 (minimized? pane) " ▴ "
                 :else " ▾ ")
 
@@ -1855,21 +1858,25 @@
           (long (p/display-width label))
 
           col
-          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
+          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))
 
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/styled g [p/BOLD] (p/put-str! g col row label))
-      (.register interactions/hit-map
-                 {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
-                  :kind (cond (:is-viewer pane) :live-viewer-close
-                              (settled? pane) :live-reopen
-                              (minimized? pane) :live-restore
-                              :else :live-minimize)
-                  :label (cond (or (:is-viewer pane) (settled? pane)) "Close live view"
-                               (minimized? pane) "Restore live view"
-                               :else "Minimize live view")
-                  :view-id (view-id pane)
-                  :enabled? true}))))
+          target
+          {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
+           :kind (cond (:is-viewer pane) :live-viewer-close
+                       (settled? pane) :live-reopen
+                       (minimized? pane) :live-restore
+                       :else :live-minimize)
+           :label (cond close? "Close live view"
+                        (minimized? pane) "Restore live view"
+                        :else "Minimize live view")
+           :view-id (view-id pane)
+           :enabled? true}]
+
+      (if close?
+        (components/button! g col row label (:kind target) {:danger? true :extra target})
+        (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+            (p/styled g [p/BOLD] (p/put-str! g col row label))
+            (.register interactions/hit-map target))))))
 
 (defn- band-title
   "The Live View title, including the recorded outcome when the run has ended."
@@ -1898,9 +1905,9 @@
         panes
         (vec (remove dormant? panes))
 
-        ;; The body begins just inside the left rail; keep the right scrollbar lane clear.
+        ;; Inset the body one column on each side, keeping the scrollbar lane clear.
         text-w
-        (max 8 (- (long (:inner-w region)) 4))
+        (max 8 (- (long (:inner-w region)) 6))
 
         ;; The pane IN FRONT is the newest view still on the band.
         front
@@ -1990,8 +1997,8 @@
        (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
          (let [left (long left)
                inner-w (long inner-w)
-               body-left (dec left)
-               body-w inner-w
+               body-left left
+               body-w (- inner-w 2)
                {:keys [front others collapsed rows-plan stop is-minimized n]} (band-shape panes
                                                                                           region)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
@@ -2009,9 +2016,9 @@
                search (:log-search front)
                heading-h (if (and (not is-minimized)
                                   (>= (- visible (count collapsed) (if stop 2 0)) (if search 6 4)))
-                           (if (str/blank? (get-in front [:view :description])) 3 2)
+                           (if (str/blank? (get-in front [:view :description])) 2 1)
                            0)
-               title-row (if (pos? heading-h) (inc (long body-top)) (long sep-row))
+               title-row (if (pos? heading-h) (long body-top) (long sep-row))
                body-top (+ (long body-top) heading-h)
                visible (- visible heading-h)
                search-top body-top
@@ -2029,7 +2036,7 @@
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            (when (>= (long sep-row) (long top-limit))
              (let [title (p/ellipsize (band-title (or front (last panes)) now-ms)
-                                      (max 1 (- inner-w 6)))]
+                                      (max 1 (- body-w 6)))]
                (tr/draw-rule! g region sep-row (when (zero? heading-h) title))
                (when (pos? heading-h)
                  (paint-styled! g body-left title-row body-w t/dialog-fg [p/BOLD] title))
@@ -2128,8 +2135,8 @@
                                                    "Literal text (empty shows all)")))))))))))
 
 (defn paint!
-  "Paint the newest expanded Live View with one empty row above and below its title.
-   Minimized views and terminals too short for the padding keep a compact titled rule."
+  "Paint the newest expanded Live View with its heading directly below the top rule.
+   Minimized views and short terminals keep a compact titled rule."
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
