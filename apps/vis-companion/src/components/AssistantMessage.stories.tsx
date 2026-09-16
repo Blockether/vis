@@ -126,11 +126,19 @@ export const TurnHeaders: Story = {
     </div>
   ),
   play: async ({ canvasElement }) => {
+    const timestamp = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    }).format(1_789_545_327_000);
     const headers = canvasElement.querySelectorAll('article > div:first-child');
     expect(headers).toHaveLength(4);
     for (const header of headers) {
       const time = header.querySelector('time')!;
-      expect(header).toHaveTextContent(`T42 ${new Date(1_789_545_327_000).toLocaleString()}`);
+      expect(header).toHaveTextContent(`T42 ${timestamp}`);
       expect(time).toBeVisible();
       const bounds = header.getBoundingClientRect();
       const stamp = time.parentElement!.getBoundingClientRect();
