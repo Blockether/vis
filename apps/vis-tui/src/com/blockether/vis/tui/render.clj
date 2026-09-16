@@ -5618,8 +5618,7 @@
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
-  (boolean (or (:is-truncated row)
-               (seq (activity-field presentation :content))
+  (boolean (or (seq (activity-field presentation :content))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -5900,8 +5899,7 @@
 
                                                   :when (get states state)]
 
-                                              (str (get states state) " " (name state)))))
-                       (when (some :is-truncated rows) "partial details")]))]
+                                              (str (get states state) " " (name state)))))]))]
 
       {:id id
        :sequence (:sequence (first rows))
@@ -5976,6 +5974,70 @@
                     row)))
           ordered)))
 
+(defn- merge-patch-rows
+  "Show one file's successful patch hunks together without rewriting retained invocations."
+  [rows]
+  (let [target
+        (fn [{:keys [operation state presentation children error-summary evidence] :as row}]
+          (let [diffs
+                (activity-diffs row)
+
+                path
+                (:text (first diffs))]
+
+            (when (and (= "patch" operation)
+                       (= "succeeded" state)
+                       (= "Patched" (:headline presentation))
+                       (empty? (:content presentation))
+                       (empty? (:sections presentation))
+                       (empty? children)
+                       (nil? error-summary)
+                       (not-any? #(= "error" (activity-evidence-kind %)) evidence)
+                       (= 1 (count diffs))
+                       (string? path)
+                       (not (str/blank? path))
+                       (not (contains? #{"diff" "[REDACTED]"} path)))
+              path)))
+
+        merge-rows
+        (fn [left right]
+          (let [diffs
+                (concat (activity-diffs left) (activity-diffs right))
+
+                diff
+                (reduce (fn [a b]
+                          (->
+                            a
+                            (update :lines into (:lines b))
+                            (update :additions + (:additions b))
+                            (update :deletions + (:deletions b))
+                            (update :modifications + (:modifications b))
+                            (assoc :is-truncated (boolean (or (:is-truncated a) (:is-truncated b)))
+                                   :is-redacted (boolean (or (:is-redacted a) (:is-redacted b))))))
+                        diffs)]
+
+            (cond-> (-> left
+                        (dissoc :argument-key :duration-ms)
+                        (assoc :resources (vec (distinct (concat (:resources left)
+                                                                 (:resources right))))
+                               :evidence (conj (filterv #(not= "diff" (activity-evidence-kind %))
+                                                 (concat (:evidence left) (:evidence right)))
+                                               diff)
+                               :is-truncated (boolean (or (:is-truncated left)
+                                                          (:is-truncated right)))))
+              (and (some? (:duration-ms left)) (some? (:duration-ms right)))
+              (assoc :duration-ms (+ (:duration-ms left) (:duration-ms right))))))]
+
+    (:rows (reduce (fn [{:keys [by-target] :as result} row]
+                     (let [path (target row)]
+                       (if-some [index (get by-target path)]
+                         (update-in result [:rows index] merge-rows row)
+                         (cond-> (update result :rows conj row)
+                           path
+                           (assoc-in [:by-target path] (count (:rows result)))))))
+                   {:rows [] :by-target {}}
+                   (sort-by :sequence rows)))))
+
 (defn- activity-operation-rows
   "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
@@ -5991,7 +6053,7 @@
                         (-> (activity-group-row (str id "#arguments") title rows rows)
                             (assoc :activity-repeat-count (count rows))
                             (assoc-in [:presentation :headline] title)))))
-                  (activity-contract/argument-groups (merge-read-rows rows)))))
+                  (activity-contract/argument-groups (merge-read-rows (merge-patch-rows rows))))))
         (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
@@ -6049,7 +6111,7 @@
                     (let [kind (activity-evidence-kind line)]
                       (band-row (str (activity-diff-mark kind) " " (:text line))
                                 (activity-diff-tone kind))))
-                  (:lines diff))))
+                  (remove :is-redacted (:lines diff)))))
 
         file-entries
         (fn [row-id resources diffs ^long col]
@@ -6170,14 +6232,19 @@
                                                        ;; carries every child's resource, so painting them here and again under each
                                                        ;; child is the same twelve paths printed twice.
                                                        resources
-                                                       (filterv #(and (not= (str (:id %))
-                                                                            (str summary))
-                                                                      (not (contains?
-                                                                             #{"shell-handle"
-                                                                               "council-group"
-                                                                               "council-thread"
-                                                                               "council-entry"}
-                                                                             (name (:type %)))))
+                                                       (filterv
+                                                         #(and (not= (str (:id %)) (str summary))
+                                                               (not (and (= "patch"
+                                                                            (:operation row))
+                                                                         (= (:id %)
+                                                                            (activity-field
+                                                                              (:presentation row)
+                                                                              :summary))))
+                                                               (not (contains? #{"shell-handle"
+                                                                                 "council-group"
+                                                                                 "council-thread"
+                                                                                 "council-entry"}
+                                                                               (name (:type %)))))
                                                          (:resources row))
 
                                                        presentation
@@ -6387,16 +6454,6 @@
 
                                                      (and (or open? (= :failed state)) error)
                                                      (into (error-entries id error col))
-
-                                                     (and open? (:is-truncated row))
-                                                     (conj {:line (str activity-marker
-                                                                       (ellipsize-cols
-                                                                         (str (activity-lead col)
-                                                                              "Details truncated")
-                                                                         width))
-                                                            :meta (merge meta-base
-                                                                         {:kind :activity-evidence
-                                                                          :item-id id})})
 
                                                      (and (not open?) (:activity-repeat-count row))
                                                      (into (map (fn [message]

@@ -114,7 +114,7 @@ it('retains overlapping snapshots, empty results and truncation without inventin
   fireEvent.click(within(row as HTMLElement).getByRole('button'));
   expect(row.textContent).toContain('583 │ Verify the affected tests.');
   expect(row.textContent).toContain('583 │ Updated plan text.');
-  expect(row.textContent).toContain('Details truncated');
+  expect(row.textContent).not.toContain('Details truncated');
 });
 
 it('keeps empty reads and captions without line ranges in the merged disclosure', () => {

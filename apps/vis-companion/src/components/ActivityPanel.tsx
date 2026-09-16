@@ -201,17 +201,19 @@ function ActivityDiff({ diff }: { diff: ActivityDiffEvidence }) {
       aria-label="Unified diff"
     >
       <div className="w-max min-w-full">
-        {diff.lines.map((line, index) => (
-          <span
-            key={`${index}-${line.kind}-${line.text}`}
-            className={`flex w-max min-w-full whitespace-pre px-2 py-px ${diffLineInk(line.kind)}`}
-          >
-            <span className="w-3 shrink-0 select-none text-center" aria-hidden="true">
-              {diffLineMarker(line.kind)}
+        {diff.lines
+          .filter((line) => !line.is_redacted)
+          .map((line, index) => (
+            <span
+              key={`${index}-${line.kind}-${line.text}`}
+              className={`flex w-max min-w-full whitespace-pre px-2 py-px ${diffLineInk(line.kind)}`}
+            >
+              <span className="w-3 shrink-0 select-none text-center" aria-hidden="true">
+                {diffLineMarker(line.kind)}
+              </span>
+              <span className="pr-3">{line.text || ' '}</span>
             </span>
-            <span className="pr-3">{line.text || ' '}</span>
-          </span>
-        ))}
+          ))}
       </div>
     </div>
   );
@@ -700,6 +702,7 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   const touched = row.resources.filter(
     (resource) =>
       resource.id !== summary &&
+      !(row.operation === 'patch' && resource.id === presentation?.summary) &&
       !['shell-handle', 'council-group', 'council-thread', 'council-entry'].includes(resource.type),
   );
   const object = countsVisibleFiles(summary, Math.min(touched.length, ACTIVITY_FILES_SHOWN))
@@ -711,7 +714,6 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   // with no content, no outcome, no paths, no patch, no error and no grouped
   // changes wears none and answers no press.
   const openable =
-    Boolean(row.is_truncated) ||
     Boolean(content?.length) ||
     showsOutcome ||
     showsFiles ||
@@ -825,11 +827,6 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
       {open && showsOutcome && (
         <p className="whitespace-pre-wrap break-words text-meta text-err-ink">{outcome}</p>
       )}
-      {open && row.is_truncated && (
-        <p className="mt-1.5 min-w-0 pl-4.5 font-mono text-meta text-dialog-hint">
-          Details truncated
-        </p>
-      )}
       {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
           carries every child's resource, so painting them here and again under each
           child is the same twelve paths printed twice. */}
@@ -870,7 +867,6 @@ function groupFacts(rows: readonly ActivityRow[]): string {
       const count = rows.filter((row) => row.state === state).length;
       return count ? [`${count} ${state}`] : [];
     }),
-    rows.some((row) => row.is_truncated) ? 'partial details' : '',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -934,6 +930,70 @@ function mergeReadRows(rows: readonly ActivityRow[]): ActivityRow[] {
   });
 }
 
+/** Combine same-file patch previews, keeping the original invocations available for history. */
+function mergePatchRows(rows: readonly ActivityRow[]): ActivityRow[] {
+  const groups: ActivityRow[][] = [];
+  const byTarget = new Map<string, ActivityRow[]>();
+  for (const row of rows) {
+    const diffs = row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff');
+    const presentation = row.presentation;
+    const target = diffs.length === 1 ? diffs[0].text : '';
+    const eligible =
+      row.operation === 'patch' &&
+      row.state === 'succeeded' &&
+      target.trim() &&
+      !['diff', '[REDACTED]'].includes(target) &&
+      !row.children?.length &&
+      !row.error_summary &&
+      !row.evidence.some((item) => !['diff', 'arguments', 'result'].includes(item.kind)) &&
+      presentation?.headline === 'Patched' &&
+      !presentation.content.length &&
+      !presentation.sections?.length;
+    const existing = eligible ? byTarget.get(target) : undefined;
+    if (existing) existing.push(row);
+    else {
+      const members = [row];
+      groups.push(members);
+      if (eligible) byTarget.set(target, members);
+    }
+  }
+  return groups.map((patches) => {
+    const first = patches[0];
+    if (patches.length === 1) return first;
+    const diffs = patches.flatMap((row) =>
+      row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff'),
+    );
+    const mergedDiff: ActivityDiffEvidence = {
+      ...diffs[0],
+      lines: diffs.flatMap((diff) => diff.lines),
+      additions: diffs.reduce((sum, diff) => sum + diff.additions, 0),
+      deletions: diffs.reduce((sum, diff) => sum + diff.deletions, 0),
+      modifications: diffs.reduce((sum, diff) => sum + diff.modifications, 0),
+      is_truncated: diffs.some((diff) => diff.is_truncated),
+      is_redacted: diffs.some((diff) => diff.is_redacted),
+    };
+    return {
+      ...first,
+      argument_key: undefined,
+      duration_ms: patches.every((row) => row.duration_ms !== undefined)
+        ? patches.reduce((sum, row) => sum + row.duration_ms!, 0)
+        : undefined,
+      resources: [
+        ...new Map(
+          patches
+            .flatMap((row) => row.resources)
+            .map((resource) => [JSON.stringify([resource.type, resource.id]), resource]),
+        ).values(),
+      ],
+      evidence: [
+        ...patches.flatMap((row) => row.evidence.filter((item) => item.kind !== 'diff')),
+        mergedDiff,
+      ],
+      is_truncated: patches.some((row) => row.is_truncated),
+    };
+  });
+}
+
 function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
   const singleton = group.rows.length === 1;
   // A visible singleton stays visible when it becomes a group. Keep the same
@@ -984,7 +1044,7 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
         >
           {repeated
             ? group.rows.map((row) => <ActivityStep key={row.id} row={row} />)
-            : argumentGroups(mergeReadRows(group.rows)).map((argumentsGroup) => (
+            : argumentGroups(mergePatchRows(mergeReadRows(group.rows))).map((argumentsGroup) => (
                 <ActivityGroup
                   key={argumentsGroup.id}
                   group={{

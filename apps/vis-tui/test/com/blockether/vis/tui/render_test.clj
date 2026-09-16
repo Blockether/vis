@@ -797,6 +797,113 @@
                                       entries)))))))))
 
 (defdescribe
+  merged-patch-activity-test
+  (let [first-patch
+        {:id "patch-1"
+         :sequence 1
+         :operation "patch"
+         :state "succeeded"
+         :summary "patch"
+         :argument-key "first-edit"
+         :duration-ms 2
+         :resources [{:type "file" :id "src/example.clj"}]
+         :presentation {:headline "Patched" :summary "src/example.clj" :content []}
+         :evidence [{:kind "diff"
+                     :text "src/example.clj"
+                     :additions 1
+                     :deletions 1
+                     :modifications 0
+                     :is-truncated false
+                     :is-redacted false
+                     :lines [{:kind "hunk" :text "@@ -1 +1 @@"} {:kind "deletion" :text "before"}
+                             {:kind "addition" :text "first-change"}]}]}
+
+        second-patch
+        (-> first-patch
+            (assoc :id "patch-2"
+                   :sequence 2
+                   :argument-key "second-edit"
+                   :duration-ms 3
+                   :is-truncated true)
+            (assoc-in [:evidence 0 :is-redacted] true)
+            (assoc-in [:evidence 0 :lines]
+                      [{:kind "hunk" :text "@@ -5 +5 @@"}
+                       {:kind "context" :text "[REDACTED]" :is-redacted true}
+                       {:kind "deletion" :text "another-before"}
+                       {:kind "addition" :text "second-change"}]))
+
+        rows
+        [first-patch second-patch]
+
+        grouped
+        (fn [patches]
+          (#'render/activity-operation-rows patches))]
+
+    (it "coalesces one file's patches without changing retained calls or their order"
+        (let [group
+              (first (grouped (reverse rows)))
+
+              merged
+              (first (:children group))
+
+              diff
+              (first (filter #(= "diff" (:kind %)) (:evidence merged)))]
+
+          (expect (= "Patch ×2" (get-in group [:presentation :headline])))
+          (expect (= 1 (count (:children group))))
+          (expect (= "patch-1" (:id merged)))
+          (expect (nil? (:argument-key merged)))
+          (expect (= 5 (:duration-ms merged)))
+          (expect (= (:resources first-patch) (:resources merged)))
+          (expect (= 2 (:additions diff)))
+          (expect (= 2 (:deletions diff)))
+          (expect (= (vec (mapcat #(get-in % [:evidence 0 :lines]) rows)) (:lines diff)))
+          (expect (:is-redacted diff))
+          (expect (:is-truncated merged))
+          (expect (= ["first-edit" "second-edit"] (mapv :argument-key rows)))))
+    (it "does not invent a duration when a member has none"
+        (let [group (first (grouped [first-patch (dissoc second-patch :duration-ms)]))]
+          (expect (nil? (:duration-ms (first (:children group)))))))
+    (it "keeps other targets, unknown diffs and unusual results separate"
+        (doseq [other [(assoc second-patch
+                         :state "failed"
+                         :error-summary "Patch refused") (assoc second-patch :state "running")
+                       (assoc second-patch :state "cancelled")
+                       (assoc second-patch :children [first-patch])
+                       (assoc second-patch :evidence [])
+                       (update second-patch :evidence conj {:kind "error" :text "Keep this error"})
+                       (update second-patch :evidence conj (first (:evidence first-patch)))
+                       (assoc-in second-patch [:evidence 0 :text] "other/example.clj")
+                       (assoc-in second-patch [:evidence 0 :text] "")
+                       (assoc-in second-patch [:evidence 0 :text] "diff")
+                       (assoc-in second-patch [:presentation :headline] "Custom patch")
+                       (assoc-in second-patch
+                         [:presentation :content]
+                         [{:type "text" :text "Keep this note"}])
+                       (assoc-in second-patch
+                         [:presentation :sections]
+                         [{:headline "Details" :summary "" :content []}])]]
+          (expect (= 2 (count (:children (first (grouped [first-patch other]))))))))
+    (it
+      "paints one file disclosure and only available diff lines at narrow and wide widths"
+      (doseq [width [36 100]]
+        (let [entries (#'render/activity-detail-entries
+                       {:node-id "patches"
+                        :activity-rows rows
+                        :activity-expanded? (fn [key _]
+                                              (contains? #{"#band" "patch-1#group" "patch-1"} key))}
+                       width
+                       "fixture")
+              text (str/join "\n" (map :line entries))]
+
+          (expect (= 1 (count (filter #(= "Patched" (get-in % [:meta :operation-label])) entries))))
+          (expect (not-any? #(= :activity-file (get-in % [:meta :kind])) entries))
+          (expect (str/includes? text "first-change"))
+          (expect (str/includes? text "second-change"))
+          (doseq [noise ["[REDACTED]" "Details truncated" "partial details"]]
+            (expect (not (str/includes? text noise)))))))))
+
+(defdescribe
   repeated-activity-arguments-test
   (let [fixture
         (-> (io/resource "vis-contract/fixtures/activity-arguments.json")
@@ -7574,7 +7681,7 @@ h = 8"
 
           (expect (str/includes? (str (:label omission)) "6 steps omitted"))
           (expect (nil? (:node-id omission)))))
-    (it "discloses when a retained step has lost its details to the budget"
+    (it "shows available details without truncation notices"
         (let [partial
               (assoc activity
                 :rows [(assoc (first rows)
@@ -7590,9 +7697,9 @@ h = 8"
               closed
               (paint partial {["live-more" (:node-id row)] false})]
 
-          (expect (not (:collapsed? row)))
+          (expect (nil? (:node-id row)))
           (expect (not (str/includes? (str/join "\n" (:lines closed)) "Details truncated")))
-          (expect (str/includes? (str/join "\n" (:lines opened)) "Details truncated"))))))
+          (expect (not (str/includes? (str/join "\n" (:lines opened)) "Details truncated")))))))
 
 (defdescribe
   compact-execution-group-test

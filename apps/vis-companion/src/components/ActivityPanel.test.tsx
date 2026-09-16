@@ -1139,7 +1139,7 @@ describe('what the axis does while the work is still moving', () => {
     expect(document.querySelector('[data-activity-axis]')?.getAttribute('aria-live')).toBe('off');
   });
 
-  it('discloses when a retained step has lost detail to the Activity limit', () => {
+  it('shows retained summaries without truncation notices or empty disclosures', () => {
     const base = activityProjection();
     const row = {
       ...base.rows[0],
@@ -1152,8 +1152,8 @@ describe('what the axis does while the work is still moving', () => {
     };
     render(<ActivityPanel activity={{ ...base, rows: [row] }} />);
     expect(screen.queryByText('Details truncated')).toBeNull();
-    fireEvent.click(document.querySelector(`[data-activity-row="0:${row.id}"] button`)!);
-    expect(screen.getByText('Details truncated')).toBeTruthy();
+    expect(document.querySelector(`[data-activity-row="0:${row.id}"] button`)).toBeNull();
+    expect(screen.getByText('2 matches')).toBeTruthy();
   });
 
   it('labels discarded steps as unavailable, not as a show-more control', () => {
