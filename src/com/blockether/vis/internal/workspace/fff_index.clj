@@ -262,8 +262,19 @@
 (def ^:private pool-size
   "Idle retention budget for root × ignore-policy indexes. Borrowed entries stay
    addressable even above the budget: evicting them would let another worker build
-   a duplicate native index. Release trims the least-recently-used idle entries."
-  6)
+   a duplicate native index. Release trims the least-recently-used idle entries.
+
+   Sized to the working set a gateway really holds, because every capacity eviction
+   is repaid as a full rescan: the next search of that root blocks until its index
+   rebuilds, which for this repository is 681 ms at the median and 2855 ms at worst.
+   Every search SCOPE is its own key, not every repository, so that set is wider than
+   it looks: one measured three-hour gateway touched 70 distinct keys, 9 of them
+   inside a median idle-TTL window and 27 inside the busiest, and evicted 111 entries
+   for capacity against 26 for idleness — at six slots the budget, not the TTL, was
+   retiring live indexes. Retention is the cheap side of the trade: 23 concurrent
+   indexes (14 repositories plus 9 subdirectory scopes) cost 13 MB of RSS and about
+   four native watcher threads each, all returned on close."
+  24)
 
 (def ^:private idle-ttl-ms
   "Retire a pooled index untouched for this long. A watcher thread per live

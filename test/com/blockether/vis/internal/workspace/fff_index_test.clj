@@ -5,6 +5,12 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [taoensso.telemere :as tel]))
 
+(def ^:private test-pool-size
+  "Retention budget the eviction-policy tests pin. They assert what happens AT and
+   ABOVE the budget, so they must not move with the production one, which is sized
+   for a real gateway's working set, not for the native fixture scans a test pays."
+  6)
+
 (defn- with-pool
   [f]
   (let [pool
@@ -14,6 +20,7 @@
         (atom nil)]
 
     (with-redefs-fn {#'index/pool pool
+                     #'index/pool-size test-pool-size
                      #'index/idle-reaper reaper
                      #'index/idle-reap-interval-ms 10
                      #'index/lifecycle-counters (atom {})}
@@ -140,7 +147,7 @@
                                      identity))
                                  (is (index/with-index* a #(identical? first-handle %)))
                                  (is (= 8 @builds))))
-            (is (<= (count @pool) 6))))))))
+            (is (<= (count @pool) test-pool-size))))))))
 
 (defn- fake-index
   [& _]
@@ -287,6 +294,8 @@
          (finally (fs/delete-tree base)))))
 
 (deftest native-draft-switching-distinguishes-capacity-from-rescans-test
+  ;; Roots exactly at the pinned budget reuse every round; one root above it evicts
+  ;; and rebuilds each index instead.
   (doseq [[roots creates reuses evictions] [[6 6 12 0] [7 21 0 15]]]
     (let [stats (draft-switching-experiment roots 3)]
       (is (= creates (get-in stats [:counters :events :create])))
