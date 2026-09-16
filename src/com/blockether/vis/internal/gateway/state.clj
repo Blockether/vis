@@ -6118,7 +6118,10 @@
   ;; The log bytes are on disk, outside the DB tree, so the delete has to name
   ;; them: a shell log dies with the session that produced it and nothing else.
   (shell-log/delete-session-logs! sid)
-  (try (persistance/db-delete-session-tree! (lp/db-info) sid) (catch Throwable _ nil))
+  (persistance/db-delete-session-tree! (lp/db-info) sid)
+  ;; Notify attached clients while their sinks still exist. Reconnects learn the
+  ;; same verdict from the missing persisted session, not a deleted replay ring.
+  (append-event! sid "session.deleted" {} {:store? false})
   (drop-session! sid)
   (bus/forget! sid)
   (teardown-session-async! sid))

@@ -879,12 +879,9 @@
    multiplexed alike — so no client has to special-case which endpoint it is
    attached to. Like every other frame it rides `sse/sse-frame`, i.e. it is an
    ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
-  [^OutputStream out sid ^long cursor replay]
+  [^OutputStream out sid cursor replay session]
   (let [tid
         (state/current-turn-id sid)
-
-        session
-        (state/soul sid)
 
         latest-iteration
         (latest-replay-iteration replay tid)
@@ -906,8 +903,8 @@
 (defn- parse-multi-sids
   "Parse the `sids` query param of the multiplexed events endpoint: a comma
    list of `sid` or `sid:cursor` tokens (cursor defaults to 0). Returns
-   `[[sid cursor] …]` keeping only sids that resolve to a live soul, so a
-   stale/unknown sid can't wedge the whole fan-out.
+   `[[sid cursor] …]` for syntactically valid UUIDs. Keep missing sessions so
+   reconnecting clients receive a deletion verdict instead of silently hanging.
 
    Each sid is parsed to a `java.util.UUID` — the SAME key type `path-sid`
    hands every other route — because the gateway registry is UUID-keyed. A
@@ -933,7 +930,7 @@
                                sid (some-> (str/trim (str sid))
                                            parse-uuid)]
 
-                           (when (and sid (state/soul sid))
+                           (when sid
                              [sid
                               (or (some-> c
                                           str/trim
@@ -1006,13 +1003,26 @@
                                               {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out))
                (doseq [[sid requested-cursor] sid+cursors]
-                 (let [cursor (resolve-sse-cursor sid requested-cursor)]
-                   ;; Seed the guard before atomic registration.
-                   (swap! last-seqs assoc (str sid) cursor)
-                   (let [replay (state/subscribe! sid sub-id sink cursor)]
-                     (sse-ready! out sid cursor replay)
-                     (doseq [event replay]
-                       (write! event)))))
+                 (let [cursor (when (state/soul sid) (resolve-sse-cursor sid requested-cursor))
+                       replay (when (some? cursor)
+                                ;; Seed the guard before atomic registration.
+                                (swap! last-seqs assoc (str sid) cursor)
+                                (state/subscribe! sid sub-id sink cursor))
+                       ;; Deletion may win between the first read and registration.
+                       session (when (some? cursor) (state/soul sid))]
+
+                   (if session
+                     (do (sse-ready! out sid cursor replay session)
+                         (doseq [event replay]
+                           (write! event)))
+                     ;; There is no ring left to replay. Advance past either cursor
+                     ;; so a disconnected client cannot deduplicate the verdict away.
+                     (write! (gateway-contract/stamp-session-event
+                               {}
+                               (str sid)
+                               (inc (max 0 (long requested-cursor) (long (or cursor 0))))
+                               (util/now-ms)
+                               "session.deleted")))))
                (pump-sse! out queue dead? write!)
                (catch Throwable _ nil)
                (finally (unsubscribe-all!)

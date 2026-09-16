@@ -1881,6 +1881,9 @@
           "const": "session.agent_name_updated"
         },
         {
+          "const": "session.deleted"
+        },
+        {
           "const": "session.goal_updated"
         },
         {

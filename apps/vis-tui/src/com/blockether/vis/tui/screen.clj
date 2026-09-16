@@ -5120,6 +5120,9 @@
             (fn [chunk]
               (when-let [tab-id (state/tab-id-for-session @state/app-db session-id)]
                 (case (:phase chunk)
+                  :session-deleted
+                  (state/dispatch [:session-deleted session-id])
+
                   :queue-sync
                   (state/dispatch [:sync-queued-turn tab-id chunk])
 
@@ -6358,21 +6361,17 @@
                                   screen
                                   "Delete session"
                                   "Permanently delete this session? This cannot be undone."))
-                         (let [current? (= (str target-id) (current-session-id))]
-                           (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
-                           (if current?
-                             ;; Deleting the active session: drop into a fresh tab.
-                             (when-let [config (:config @state/app-db)]
-                               (let [old-tab-id (:active-tab-id @state/app-db)]
-                                 (open-session-tab! (chat/make-session config) true)
-                                 (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
-                             ;; Non-current: if it's open in a background tab, close
-                             ;; that now-dangling tab so it doesn't linger.
-                             (when-let [tab-id (state/tab-id-for-session @state/app-db target-id)]
-                               (state/dispatch [:close-tab tab-id])))
-                           (vis/notify! "Deleted session"
-                                        :level :success
-                                        :ttl-ms copy-success-ttl-ms))))
+                         (try (vis/gateway-close-session! target-id)
+                              ;; The stream may already have removed this tab. Use the
+                              ;; same idempotent path, never close its new neighbor.
+                              (state/dispatch [:session-deleted (str target-id)])
+                              (vis/notify! "Deleted session"
+                                           :level :success
+                                           :ttl-ms copy-success-ttl-ms)
+                              (catch Throwable t
+                                (vis/notify! (str "Could not delete session: " (ex-message t))
+                                             :level :warn
+                                             :ttl-ms copy-success-ttl-ms)))))
                      ;; Ctrl+B in the navigator → move a session into a
                      ;; persistent Project. Pick an existing one,
                      ;; make a new one, or remove it from its project.

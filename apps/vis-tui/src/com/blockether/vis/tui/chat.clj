@@ -1399,6 +1399,9 @@
       "session.agent_name_updated"
       {:phase :agent-name-sync :agent-name (event-get event :agent-name)}
 
+      "session.deleted"
+      {:phase :session-deleted :session-id (event-get event :session-id)}
+
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 

@@ -1995,6 +1995,80 @@
                  (into [[:release-session-listener closing-sid]
                         [:release-session-runtime closing-sid]]))})))))
 
+(reg-event-fx
+  :session-deleted
+  ;; A remote DELETE is not a tab close: never re-submit pending sends, release
+  ;; the deleted runtime, or write project membership back to the gateway.
+  (fn [before [_ session-id]]
+    (let [db
+          (-> before
+              ensure-tabs
+              sync-active-tab)
+
+          sid
+          (str session-id)
+
+          entries
+          (vec (:tabs db))
+
+          removed
+          (filterv #(= sid (tab-session-id db (:id %))) entries)
+
+          removed-ids
+          (set (map :id removed))]
+
+      (if (empty? removed)
+        {:db before}
+        (let [active-removed?
+              (contains? removed-ids (current-tab-id db))
+
+              remaining
+              (filterv #(not (contains? removed-ids (:id %))) entries)
+
+              neighbor
+              (when active-removed?
+                (first (filter #(= (:active-project-id db) (:project-id %)) remaining)))
+
+              fresh
+              (when (and active-removed? (nil? neighbor))
+                {:id (keyword (str "tab-" (next-tab-number entries)))
+                 :label untitled-session-label
+                 :project-id (:active-project-id db)})
+
+              next-id
+              (:id (or neighbor fresh))
+
+              tokens
+              (distinct (keep #(get-in db [:tab-locals % :cancel-token]) removed-ids))
+
+              db
+              (-> db
+                  (assoc :tabs (if fresh (insert-tab-grouped remaining fresh) remaining))
+                  (update :tab-locals #(apply dissoc % removed-ids))
+                  (update :project-active-tabs #(into {} (remove (comp removed-ids val)) %)))
+
+              db
+              (if active-removed?
+                (-> db
+                    (assoc :active-tab-id next-id)
+                    (assoc-in [:project-active-tabs (:active-project-id db)] next-id)
+                    (update :tabs
+                            (fn [tabs]
+                              (mapv (fn [tab]
+                                      (cond-> (dissoc tab :active?)
+                                        (= next-id (:id tab))
+                                        (-> (assoc :active? true)
+                                            (dissoc :unread?))))
+                                    tabs)))
+                    (restore-tab next-id))
+                db)]
+
+          {:db db
+           :fx (into [[:release-session-listener sid]]
+                     (map (fn [token]
+                            [:cancel-local-turn token]))
+                     tokens)})))))
+
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))

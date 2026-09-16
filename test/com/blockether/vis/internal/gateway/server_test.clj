@@ -1760,7 +1760,7 @@
             (is (= origin (get-in authed [:headers "Access-Control-Allow-Origin"])))))))))
 
 (deftest parse-multi-sids-parses-and-filters
-  (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
+  (testing "sid[:cursor] comma list — cursor defaults to 0, only malformed UUIDs are dropped"
     (let [sid-a
           (java.util.UUID/randomUUID)
 
@@ -1784,8 +1784,9 @@
                    (parse {:query-params {"sids" (str a ":10, " b " , zzz:3")}})))
             (is (nil? (parse {:query-params {}})))
             (is (nil? (parse {:query-params {"sids" ""}})))
-            (testing "a syntactically valid but UNKNOWN UUID is dropped"
-              (is (= [] (parse {:query-params {"sids" (str (java.util.UUID/randomUUID))}}))))
+            (testing "unknown UUIDs survive parsing so reconnect can report their deletion"
+              (let [missing (java.util.UUID/randomUUID)]
+                (is (= [[missing 91]] (parse {:query-params {"sids" (str missing ":91")}})))))
             (testing "Last-Event-ID overrides the cursor for the SINGLE-sid case (native reconnect)"
               (is (= [[sid-a 42]]
                      (parse {:query-params {"sids" (str a ":0")} :headers {"last-event-id" "42"}})))
@@ -1842,11 +1843,76 @@
       (is (= 400 (first (call "limit=abc"))))
       (is (= 400 (first (call "limit=10&offset=nope")))))))
 
+(deftest multi-sse-reports-sessions-deleted-while-disconnected
+  (let [missing
+        (java.util.UUID/randomUUID)
+
+        live
+        (java.util.UUID/randomUUID)
+
+        subscribed
+        (atom [])
+
+        out
+        (java.io.ByteArrayOutputStream.)]
+
+    (with-server-state! {}
+                        (fn []
+                          (with-redefs-fn {#'state/soul #(when (= live %) {"id" (str live)})
+                                           #'state/current-turn-id (constantly nil)
+                                           #'state/subscribe! (fn [sid _ _ _]
+                                                                (swap! subscribed conj sid)
+                                                                [])
+                                           #'state/unsubscribe! (fn [& _])
+                                           #'server/pump-sse! (fn [& _])
+                                           #'server/stop! (fn [])}
+                            #(ring-protocols/write-body-to-stream
+                               ((rv 'multi-sse-body) [[missing 900] [live 0]] false nil)
+                               {}
+                               out))))
+    (let [frames
+          (sse-jobs (.toString out "UTF-8"))
+
+          deleted
+          (first (filter #(= "session.deleted" (get % "type")) frames))]
+
+      (is (= [live] @subscribed))
+      (is (= (str missing) (get deleted "session_id")))
+      (is (> (long (get deleted "seq" 0)) 900))
+      (is (= ["session.deleted" "subscription.ready"] (mapv #(get % "type") frames))))))
+
+(deftest multi-sse-reports-deletion-during-subscription
+  (let [sid
+        (java.util.UUID/randomUUID)
+
+        present?
+        (atom true)
+
+        out
+        (java.io.ByteArrayOutputStream.)]
+
+    (with-server-state! {}
+                        (fn []
+                          (with-redefs-fn {#'state/soul #(when @present? {"id" (str %)})
+                                           #'state/subscribe! (fn [& _]
+                                                                (reset! present? false)
+                                                                [])
+                                           #'state/unsubscribe! (fn [& _])
+                                           #'server/pump-sse! (fn [& _])
+                                           #'server/stop! (fn [])}
+                            #(ring-protocols/write-body-to-stream
+                               ((rv 'multi-sse-body) [[sid 0]] false nil)
+                               {}
+                               out))))
+    (is (str/includes? (.toString out "UTF-8") "session.deleted"))
+    (is (not (str/includes? (.toString out "UTF-8") "subscription.ready")))))
+
 (deftest multi-sse-fans-many-sessions-down-one-stream
   (testing
     "every listed session's events ride ONE connection, tagged by :session_id, deduped per session"
     (with-redefs-fn {#'server/stop! (fn []
-                                      nil)}
+                                      nil)
+                     #'state/soul (constantly {"id" "exists"})}
       (fn []
         (with-server-state!
           {}
@@ -2040,7 +2106,8 @@
 (deftest subscription-ready-carries-the-daemons-current-turn
   (testing "the ready frame names the running turn, and says so for an idle session"
     (with-redefs-fn {#'server/stop! (fn []
-                                      nil)}
+                                      nil)
+                     #'state/soul (constantly {"id" "exists"})}
       (fn []
         (with-server-state!
           {}
@@ -2111,7 +2178,8 @@
 (deftest subscription-ready-leads-running-replay-with-its-latest-iteration
   (testing "the current position arrives before the journal frames it summarizes"
     (with-redefs-fn {#'server/stop! (fn []
-                                      nil)}
+                                      nil)
+                     #'state/soul (constantly {"id" "exists"})}
       (fn []
         (with-server-state!
           {}
@@ -4103,7 +4171,8 @@
 
 (deftest live-close-canonical-shape-reaches-every-socket-test
   (with-redefs-fn {#'server/stop! (fn []
-                                    nil)}
+                                    nil)
+                   #'state/soul (constantly {"id" "exists"})}
     (fn []
       (with-server-state!
         {}

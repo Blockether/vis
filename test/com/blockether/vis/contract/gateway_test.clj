@@ -37,7 +37,7 @@
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= {:json 135 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 34 (count contract/event-types)))
+    (expect (= 35 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
@@ -163,6 +163,8 @@
   (it "validates stamped events and refuses unknown event names"
       (let [event (contract/stamp-session-event {"text" "hello"} "s1" 7 9 "turn.started")]
         (expect (document/valid-json? "gateway" "session_event" event))
+        (expect
+          (document/valid-json? "gateway" "session_event" (assoc event "type" "session.deleted")))
         (expect (not (document/valid-json? "gateway" "session_event" (dissoc event "seq"))))
         (expect (not (document/valid-json? "gateway"
                                            "session_event"

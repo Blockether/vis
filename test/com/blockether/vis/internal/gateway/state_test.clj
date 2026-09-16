@@ -4471,6 +4471,9 @@
           deleted
           (atom [])
 
+          notified
+          (atom [])
+
           stopped
           (promise)
 
@@ -4480,7 +4483,11 @@
           release
           (promise)]
 
-      (try (swap! registry assoc sid {:turns {}})
+      (try (swap! registry assoc
+             sid
+             {:turns {}
+              :subscribers {::deletion (fn [event]
+                                         (swap! notified conj [@deleted event]))}})
            (with-redefs-fn {(requiring-resolve
                               'com.blockether.vis.internal.gateway.resources/stop-all!)
                             (fn [_sid]
@@ -4510,12 +4517,44 @@
                  ;; the row is already gone everywhere a client can look
                  (expect (= [sid] @deleted))
                  (expect (not (contains? @registry sid)))
+                 (expect (= [[sid]] (mapv first @notified)))
+                 (expect (= ["session.deleted"] (mapv #(get (second %) "type") @notified)))
+                 (expect (= [sid] (mapv #(get (second %) "session_id") @notified)))
                  (deliver release true)
                  (when (instance? java.util.concurrent.Future fut)
                    (.get ^java.util.concurrent.Future fut))
                  (expect (true? (deref stopped 5000 false)))
                  (expect (true? (deref closed 5000 false))))))
            (finally (deliver release true) (swap! registry dissoc sid))))))
+
+(defdescribe
+  failed-session-deletion-test
+  (it "keeps attached tabs when the database deletion fails"
+      (let [sid
+            (str "failed-delete-" (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            notified
+            (atom [])]
+
+        (try
+          (swap! registry assoc sid {:turns {} :subscribers {::deletion #(swap! notified conj %)}})
+          (with-redefs-fn {#'lp/db-info (constantly :db)
+                           (requiring-resolve
+                             'com.blockether.vis.internal.workspace.core/discard-session-clones!)
+                           (fn [& _])
+                           #'persistance/db-delete-session-tree!
+                           (fn [& _]
+                             (throw (ex-info "Database unavailable" {})))}
+            #(expect (= "Database unavailable"
+                        (try (state/close-session! sid)
+                             :unexpected-success
+                             (catch clojure.lang.ExceptionInfo t (ex-message t))))))
+          (expect (= [] @notified))
+          (expect (contains? @registry sid))
+          (finally (swap! registry dissoc sid))))))
 
 (defdescribe
   forced-terminal-persistence-test
