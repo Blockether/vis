@@ -27,6 +27,43 @@ function gateway(methods: Partial<GatewayClient> = {}): GatewayClient {
 }
 
 describe('queued turns tray', () => {
+  it('shows image references once, without a redundant filename badge', () => {
+    const preview = '[IMAGE #1] Inspect the screenshot';
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={[{ ...queued[0], request: preview, preview }]}
+        paused={null}
+        onError={() => {}}
+      />,
+    );
+
+    expect(screen.getByTitle('Tap to edit')).toHaveTextContent(preview);
+    expect(screen.queryByText('manifest.png')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Tap to edit'));
+    expect(screen.getByLabelText('Edit queued message 1')).toHaveValue(preview);
+  });
+
+  it('keeps attachment-only and empty messages identifiable', () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={[
+          { ...queued[0], request: '', preview: '' },
+          { turnId: 'empty', request: '', preview: '', attachments: [] },
+        ]}
+        paused={null}
+        onError={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('manifest.png')).toBeInTheDocument();
+    expect(screen.getByText('(empty)')).toBeInTheDocument();
+    expect(screen.getByText('manifest.png')).not.toHaveClass('border');
+  });
+
   it('edits through the gateway without rewriting its row optimistically', async () => {
     const client = gateway();
     render(
@@ -54,7 +91,7 @@ describe('queued turns tray', () => {
       ),
     );
     expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
-    expect(screen.getByText('manifest.png')).toBeTruthy();
+    expect(screen.queryByText('manifest.png')).not.toBeInTheDocument();
   });
 
   it('owns removal and paused-queue recovery, including failures', async () => {

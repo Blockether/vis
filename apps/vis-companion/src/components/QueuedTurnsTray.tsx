@@ -126,17 +126,10 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
                         className="flex flex-1 items-center gap-1"
                         title="Tap to edit"
                       >
-                        {item.attachments.map((attachment) => (
-                          <span
-                            key={attachment.filename}
-                            className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
-                            title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ''}`}
-                          >
-                            <span className="max-w-[7rem] truncate">{attachment.filename}</span>
-                          </span>
-                        ))}
                         <span className="min-w-0 flex-1 truncate">
-                          {item.preview || (item.attachments.length ? '' : '(empty)')}
+                          {item.preview ||
+                            item.attachments.map((attachment) => attachment.filename).join(', ') ||
+                            '(empty)'}
                         </span>
                       </TextButton>
                     )}
