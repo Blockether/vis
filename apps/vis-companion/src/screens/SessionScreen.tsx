@@ -2240,7 +2240,9 @@ export function SessionScreen({
   );
 
   useEffect(() => {
+    let disposed = false;
     async function settle(event: SseEvent) {
+      if (disposed) return;
       const type = event.type;
       // Capture the terminal turn ID before awaiting persistence; queue draining may start
       // another turn meanwhile, which must not be settled by this callback.
@@ -2318,7 +2320,9 @@ export function SessionScreen({
       // this copy is current and skips its own read.
       void client
         .session(sid)
-        .then(setSession)
+        .then((row) => {
+          if (!disposed) setSession(row);
+        })
         .catch(() => undefined);
       // How big a page this settle needs. A full page is 24 turns of hydrated
       // iterations — hundreds of kilobytes to megabytes on a phone link — and a
@@ -2340,17 +2344,20 @@ export function SessionScreen({
       } catch {
         next = null;
       }
+      if (disposed) return;
       const coveringRow = (turns: TranscriptTurn[] | null) => settledTurnRow(turns, finishedId);
       // Poll with short backoff until the terminal turn is persisted. Fetch errors do not
       // end the attempts; only a response containing this turn does.
       for (const wait of SETTLE_RETRY_MS) {
         if (next && coveringRow(next)) break;
         await new Promise((resolve) => window.setTimeout(resolve, wait));
+        if (disposed) return;
         try {
           next = await client.transcript(sid, undefined, settleLimit());
         } catch {
           /* keep the earlier snapshot */
         }
+        if (disposed) return;
       }
       if (next) {
         setTurns(next);
@@ -2656,6 +2663,7 @@ export function SessionScreen({
     });
 
     return () => {
+      disposed = true;
       if (flushRunningTurnEventsBeforeRotationRestoreRef.current === flushEvents) {
         flushRunningTurnEventsBeforeRotationRestoreRef.current = null;
       }

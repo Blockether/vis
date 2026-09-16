@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { renderSessionScreen, sessionFixture, subscriptionHub } from './session-screen-harness';
-import type { SseEvent } from '../lib/types';
+import type { SseEvent, TranscriptTurn } from '../lib/types';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -359,5 +359,114 @@ describe("the wait for a finished turn's persisted row", () => {
     expect(screen.queryByText('Loading latest changes')).toBeNull();
 
     expect(screen.getByText('THE FINAL ANSWER')).toBeInTheDocument();
+  });
+
+  // CI exposed the terminal poll continuing after its screen had been disposed.
+  it.each(['read', 'backoff', 'retry'] as const)(
+    'stops a terminal handover disposed during its %s',
+    async (phase) => {
+      vi.useFakeTimers();
+      const events = subscriptionHub();
+      const persisted = deferred<never[]>();
+      const retried = deferred<never[]>();
+      const transcript = vi.fn(() => Promise.resolve([] as never[]));
+      const view = renderSessionScreen({
+        client: { transcript },
+        subscriptions: { subscribeSession: events.subscribeSession },
+      });
+      try {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        transcript.mockClear();
+        transcript.mockImplementation(() => persisted.promise);
+        events.emit({
+          type: 'turn.completed',
+          turn_id: 'disposed-turn',
+          seq: 10,
+          status: 'completed',
+        } as unknown as SseEvent);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(transcript).toHaveBeenCalledTimes(1);
+        if (phase !== 'read') {
+          transcript.mockImplementation(() => retried.promise);
+          await act(async () => {
+            persisted.resolve([]);
+            if (phase === 'retry') await vi.advanceTimersByTimeAsync(70);
+          });
+        }
+        const reads = phase === 'retry' ? 2 : 1;
+        expect(transcript).toHaveBeenCalledTimes(reads);
+        view.unmount();
+        await act(async () => {
+          persisted.resolve([]);
+          retried.resolve([]);
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        expect(transcript).toHaveBeenCalledTimes(reads);
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('does not publish the old terminal transcript or metadata after navigation', async () => {
+    vi.useFakeTimers();
+    const events = subscriptionHub();
+    const persisted = deferred<TranscriptTurn[]>();
+    const metadata = deferred<ReturnType<typeof sessionFixture>>();
+    let settling = false;
+    const row = (sid: string) => sessionFixture({ id: sid, title: `Session ${sid}` });
+    const view = renderSessionScreen({
+      client: {
+        cachedSession: row,
+        session: (sid: string) =>
+          sid === 's1' && settling ? metadata.promise : Promise.resolve(row(sid)),
+        transcript: (sid: string) =>
+          sid === 's1' && settling ? persisted.promise : Promise.resolve([]),
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      settling = true;
+      events.emit({
+        type: 'turn.completed',
+        turn_id: 'old-turn',
+        seq: 10,
+        status: 'completed',
+      } as unknown as SseEvent);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      view.rerenderSession('s2');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await act(async () => {
+        metadata.resolve(row('OLD METADATA'));
+        persisted.resolve([
+          {
+            turn_id: 'old-turn',
+            status: 'completed',
+            request: 'OLD REQUEST',
+            content: [{ id: 'old-answer', type: 'prose', markdown: 'OLD ANSWER' }],
+          },
+        ]);
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(screen.getByText('Session s2')).toBeInTheDocument();
+      expect(screen.queryByText('Session OLD METADATA')).toBeNull();
+      expect(screen.queryByText('OLD REQUEST')).toBeNull();
+      expect(screen.queryByText('OLD ANSWER')).toBeNull();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 });

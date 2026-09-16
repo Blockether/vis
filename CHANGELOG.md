@@ -7,12 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.2.5] - 2026-09-15
+## [v0.2.5] - 2026-09-16
 
 ### Added
 - Create and review isolated drafts across selected repositories, with synchronization and recovery for partial approval failures. Drafts remain off by default (#241, #242, #243).
 - Manage owned subagents through Council and use searchable saved Python helpers across turns.
 - Refer to staged images consistently in the Companion and TUI composers.
+- Show turn numbers and timestamps consistently in the Companion and TUI.
 
 ### Fixed
 - Reduce JVM gateway memory retention and redundant work during session loading, tool execution and process cleanup.
@@ -22,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Recover sessions opened inside draft folders and refresh draft status after switching, approving or discarding drafts (#246, #247).
 - Fix first-use startup of sandboxed Python tools and share runtime installation across concurrent startup requests.
 - Make SDK cleanup and authentication tests wait for completed asynchronous work, and verify draft source protection on filesystems without copy-on-write support.
+- Stop terminal transcript polling after leaving a Companion session, preventing late results from replacing the newly opened session.
+- Put TUI Live View search beside the heading and preserve input padding (#250).
 
 ### Changed
 - Update the embedded Python runtime to 0.5.20 for Linux and macOS. Windows runtime artifacts and desktop packaging remain disabled.
