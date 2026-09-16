@@ -7878,6 +7878,78 @@ h = 8"
         [2 2 3]))
 
 (defdescribe
+  hidden-python-activity-padding-test
+  (it
+    "keeps one filled row above Activity when Python is hidden"
+    (doseq [cols
+            [40 80 120]
+
+            live?
+            [false true]
+
+            expanded?
+            [false true]
+
+            introduction
+            [:comment :thinking :none]]
+
+      (let [form
+            (cond-> (first (grouped-activity-forms #{}))
+              (= :comment introduction)
+              (assoc :comment "Waiting for fresh confirmation"))
+
+            iteration
+            (cond-> {:forms [form]}
+              (= :thinking introduction)
+              (assoc :thinking "Waiting for fresh confirmation"))
+
+            entries
+            (#'render/trace-render-entries
+             {:iterations [iteration]
+              :live? live?
+              :content-w (- cols 4)
+              :session-id "activity-padding"
+              :session-turn-id "turn"
+              :settings {:show-python-code false}
+              :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+
+            header-index
+            (first (keep-indexed #(when (= :activity-header (get-in %2 [:meta :kind])) %1) entries))
+
+            captured
+            (cap/capture! {:cols cols
+                           :rows 40
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-chat-bubble! g
+                                                               {:role :assistant
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               0
+                                                               (- cols 4)
+                                                               {:viewport-h 40}))})
+
+            grid
+            (first (:frames captured))
+
+            lines
+            (mapv #(apply str (map :ch %)) grid)
+
+            header-row
+            (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
+
+            header-col
+            (str/index-of (nth lines header-row) "ACTIVITY")]
+
+        (expect (nil? (:error captured)))
+        (expect (= p/MARKER_ACTIVITY (:line (get entries (dec header-index)))))
+        (expect (not= p/MARKER_ACTIVITY (:line (get entries (- header-index 2)))))
+        (expect (str/blank? (nth lines (dec header-row))))
+        (expect (= (get-in grid [header-row header-col :bg])
+                   (get-in grid [(dec header-row) header-col :bg])))))))
+
+(defdescribe
   python-visibility-test
   (it
     "hides Python source, stdout and diagnostics while preserving Activity live and restored"
@@ -7939,8 +8011,8 @@ h = 8"
         (when (= :failed outcome) (expect (str/includes? (text-of shown) "PRIVATE_DIAGNOSTIC")))
         (expect (not (re-find #"PRIVATE_SOURCE|PRIVATE_RESULT|PRIVATE_DIAGNOSTIC|CODE|RESULT|Failed"
                               (text-of hidden))))
-        (expect (seq (activity-entries hidden)))
-        (expect (= (activity-entries shown) (activity-entries hidden))))))
+        (expect (= p/MARKER_ACTIVITY (:line (first (activity-entries hidden)))))
+        (expect (= (activity-entries shown) (rest (activity-entries hidden)))))))
   (it "hides raw output and diagnostics even when the form has no source"
       (let [entry
             (iteration/canonicalize {:forms [{:stdout "ORPHAN_RESULT"

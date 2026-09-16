@@ -7709,7 +7709,10 @@
                                         inline-live-entries
                                         live-artifact-block))]
 
-                    (vec (concat entries
+                    ;; Without Code/Result, Activity owns the surface's top padding.
+                    (vec (concat (when (and (empty? code-block) (empty? execution-details))
+                                   [(line-entry activity-marker)])
+                                 entries
                                  (map #(update %
                                                :line
                                                (fn [line]
