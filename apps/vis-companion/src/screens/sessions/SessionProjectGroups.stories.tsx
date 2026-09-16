@@ -164,7 +164,14 @@ export const AcceptNewerSession: Story = {
         matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 48 : 52,
       );
       const pagerBounds = pager.getBoundingClientRect();
-      await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
+      if (pendingBounds.width >= 448) {
+        await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
+        await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
+        const create = header.querySelector('button:last-child')!;
+        await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
+      } else {
+        await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
+      }
       await expect(pagerBounds.right).toBeLessThanOrEqual(pendingBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();

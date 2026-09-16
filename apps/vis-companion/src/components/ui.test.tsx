@@ -746,19 +746,19 @@ describe('Pager', () => {
 // Counts and navigation belong to the same project, without competing for header space.
 describe('a project band carries its own count and its own pager', () => {
   const band =
-    /<SectionHeader>[\s\S]*?<\/SectionHeader>/.exec(sessionProjectGroupsSource)?.[0] ?? '';
+    /<SectionHeader[^>]*>[\s\S]*?<\/SectionHeader>/.exec(sessionProjectGroupsSource)?.[0] ?? '';
   const qualifier =
     /const qualifier = \([\s\S]*?\n  \);/.exec(sessionProjectGroupsSource)?.[0] ?? '';
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 
-  it('keeps project pages below the identity band and outside its action cluster', () => {
+  it('gives the header one responsive pager outside its action cluster', () => {
     expect(sessionsListSource).toMatch(/<Pager\s+page=\{shownPage\}/);
-    expect(band).not.toContain('{pager}');
+    expect(band).toContain('navigation={pager}');
     expect(cluster).not.toContain('{pager}');
     expect(cluster).toContain('<NewSessionButton');
     // One placement owns the paging state and callbacks in every layout.
     expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
-    expect(sessionProjectGroupsSource.match(/>\{pager\}<\/div>/g)).toHaveLength(1);
+    expect(sessionProjectGroupsSource.match(/navigation=\{pager\}/g)).toHaveLength(1);
     expect(band).not.toContain('hasPageRow');
   });
 

@@ -25,7 +25,7 @@ const HEADER_TYPE = 'text-title';
  * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
+  'min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
 
 /** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -78,13 +78,28 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
  * Every session is in a project, so the list has ONE kind of section.
  */
-export function SectionHeader({ children }: { children: ReactNode }) {
-  return (
+export function SectionHeader({
+  children,
+  navigation,
+}: {
+  children: ReactNode;
+  navigation?: ReactNode;
+}) {
+  const header = (
     <header
-      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-2 @md:[&>:last-child]:col-start-3' : 'flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
+  );
+  if (!navigation) return header;
+  return (
+    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto] @md:grid-cols-[minmax(0,1fr)_auto_auto]">
+      {header}
+      <div className="z-20 col-span-full col-start-1 row-start-2 flex items-center justify-end px-2 @md:col-span-1 @md:col-start-2 @md:row-start-1 @md:px-4">
+        {navigation}
+      </div>
+    </div>
   );
 }
 

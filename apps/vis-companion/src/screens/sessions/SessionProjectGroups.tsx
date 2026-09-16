@@ -456,7 +456,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-project-root={root}
         className="[&+&]:pt-2"
       >
-        <SectionHeader>
+        <SectionHeader navigation={pager}>
           <ProjectCrumb
             name={project}
             qualifier={qualifier}
@@ -480,7 +480,6 @@ export const ProjectGroup = memo(function ProjectGroup({
             />
           </HeaderActions>
         </SectionHeader>
-        {pager && <div className="flex justify-end px-2">{pager}</div>}
         {/* The header closes the band; rows draw only separators between sessions. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>
