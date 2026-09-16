@@ -138,6 +138,13 @@ export const Fleet: Story = {
     const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     const qualifier = header.querySelector('[title]')!;
+    // Regression: a responsive column span reset the start column and created an
+    // implicit track, shifting counts right and squeezing ordinary project names.
+    const projectName = within(header).getByText('uberworkspace', { exact: true });
+    await expect(qualifier.getBoundingClientRect().left).toBe(
+      projectName.getBoundingClientRect().left,
+    );
+    await expect(projectName.scrollWidth).toBe(projectName.clientWidth);
     if (
       qualifier.getBoundingClientRect().left < pager.getBoundingClientRect().right &&
       qualifier.getBoundingClientRect().right > pager.getBoundingClientRect().left
@@ -427,6 +434,50 @@ export const DeleteProject: Story = {
 /** The complete navigator takes the review frame, not a fixed phone-width wrapper. */
 export const ResponsiveFleet: Story = {
   play: Fleet.play,
+};
+
+/** Counts retain the project-name column on small phones and with larger text. */
+export const MobileProjectAlignment: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    await page.findByText('uberworkspace', {}, { timeout: 5000 });
+    const screen = page.getByRole('region', { name: 'Sessions' });
+    const doc = canvasElement.ownerDocument;
+    const previousFontSize = doc.documentElement.style.fontSize;
+    const previousWidth = screen.style.width;
+    try {
+      for (const scale of [1, 1.3]) {
+        doc.documentElement.style.fontSize = `${16 * scale}px`;
+        for (const width of [320, 375, 393]) {
+          screen.style.width = `${width}px`;
+          for (const name of ['infrastructure', 'uberworkspace', 'svar', 'reviewer']) {
+            const title = page.getByText(name, { exact: true });
+            const header = title.closest('header')!;
+            const qualifier = header.querySelector('[title]')!;
+            expect(qualifier.getBoundingClientRect().left).toBe(
+              title.getBoundingClientRect().left,
+            );
+            expect(header.getBoundingClientRect().width).toBe(width);
+            expect(qualifier.getBoundingClientRect().right).toBeLessThanOrEqual(
+              header.getBoundingClientRect().right,
+            );
+            const pager = header.querySelector('nav');
+            if (pager) {
+              expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
+                header.getBoundingClientRect().right,
+              );
+              expect(qualifier.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+                pager.getBoundingClientRect().bottom,
+              );
+            }
+          }
+        }
+      }
+    } finally {
+      doc.documentElement.style.fontSize = previousFontSize;
+      screen.style.width = previousWidth;
+    }
+  },
 };
 
 /** A share stays above the destination switch while the reader chooses another machine. */

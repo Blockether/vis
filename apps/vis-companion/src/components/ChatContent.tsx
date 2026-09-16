@@ -12,7 +12,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from 'react';
-import Prism from 'prismjs';
+import Prism from '../lib/prism-core';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';

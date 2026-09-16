@@ -316,7 +316,7 @@ export function ProjectCrumb({
       </span>
       {qualifier && (
         <span
-          className={`pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-meta ${navigation ? '@max-md:col-span-2' : ''}`}
+          className={`pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-meta ${navigation ? '@max-md:col-span-2 @max-md:col-start-2' : ''}`}
           title={qualifierTitle}
         >
           {qualifier}
