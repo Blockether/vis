@@ -1198,3 +1198,87 @@ readers. Existing unrelated checkout edits remain outside this work.
 5. Scoped implementation, documentation and verification are complete. Publish this
    change separately on main; preserve concurrent code and plan edits. No release,
    deployment or live-service restart belongs to this work.
+
+# Reliable, faster verification and delivery
+
+Phrase: Remove wasted work without removing useful release guarantees.
+
+Context: The September 16 release repeated source checks after a green candidate,
+queued several macOS jobs on one runner, and failed its pickup monitor on HTTP 502.
+Core tests took about 24 minutes on Linux; native tests took 14–22 minutes.
+Pake's workflow caches the repository Cargo target although packaging runs via npx.
+Existing unrelated working-tree changes remain outside this task. Skipping security,
+signing, native execution, or installed-SDK checks is not an acceptable optimization.
+
+## 1. Audit tests and isolate wasted work
+
+- Rationale: Delete obsolete or redundant assertions, not coverage of supported behavior.
+- Data: Core, native, TUI, SDK and companion suites; completed CI logs and fixtures.
+- Acceptance criteria: Each removal has a specific rationale; useful flaky tests are repaired; affected suites, formatting and lint pass.
+- Unknowns: Slowest fixtures and remaining obsolete contracts.
+
+## 2. Optimize release orchestration
+
+- Rationale: Avoid unnecessary serialization and repeated work while preserving publication gates.
+- Data: `.github/workflows/`, release validation scripts and workflow regression tests.
+- Acceptance criteria: Tested workflow changes retain source, native, SDK, signing and complete-artifact gates; transient API errors do not masquerade as missing runners.
+- Unknowns: Safe artifact reuse and shared-runner contention.
+
+## 3. Optimize Pake and deployment
+
+- Rationale: Cache the actual compiler output and avoid duplicate packaging work.
+- Data: `apps/vis-companion/scripts/desktop-package.mjs`, desktop/mobile workflows and deployment scripts.
+- Acceptance criteria: Packaging regressions pass; cache paths match actual build paths; deployment remains immutable and retry-safe; report measured gains separately from estimates.
+- Unknowns: Pake cache behavior and external store/notarization time.
+
+## Plan state
+
+Completed locally:
+
+1. Removed the retired-feature name-ban scan, redundant public-symbol existence
+   test, and assertions requiring commented-out Windows CI. Retained extension
+   behavior, security, signing, native and SDK coverage. Reproduced the denied-domain
+   test's DNS-outage failure and replaced public DNS with local-host resolution and
+   unconditional, reason-specific bypass assertions; the hosts-only JVM check passes.
+2. Native draft builds now overlap source verification; publication explicitly
+   requires verification, and store jobs retain their source gates. AOT compilation
+   runs independently. Installed-SDK CI reuses the dependency cache. Runner pickup
+   retries transient API failures within the existing deadline, with executable
+   regression coverage for success, retry, unavailable status and queued timeout.
+3. Pake 3.15.7 source confirms that Cargo compilation and artifact lookup honor
+   CARGO_TARGET_DIR. Packaging and CI now share an absolute persistent target keyed
+   by platform, compiler and Pake version. Kept separate Linux package invocations:
+   upstream still builds each format separately. Documented immutable releases,
+   existing-build retries and the distinction between upload and store review.
+
+Verification: 190 affected Clojure cases passed; 248 companion script tests passed
+with one existing freeze-dependent skip (publishing is not frozen). Clojure
+formatting/lint including reflection, companion lint (443 files), JavaScript
+formatting, all five changed workflows' actionlint, and documentation target/anchor
+checks passed. Final whitespace/diff review follows this update.
+
+No new release, tag, store upload or live deployment was initiated. Changes remain
+local and unrelated work is preserved. A warm-cache release timing has not been
+measured; shared macOS runner capacity and external review/notarization remain
+limits. The audit removes demonstrated waste rather than claiming every individual
+repository test was manually reviewed or weakening expensive integration gates.
+
+Second-pass cross-validation:
+
+- Partitioned dependency and native-runtime caches by architecture. Added dependency
+  pins to the native-runtime key, so pin changes can save a refreshed cache instead
+  of repeatedly restoring an immutable older entry. Removed the unused native
+  build-cache path so source and native jobs share the same dependency cache shape.
+- Run interpreter-independent SDK lint once, retaining wheel builds and installed
+  tests across all ten OS/interpreter combinations and both real-engine jobs.
+- Removed three always-true MCP fallback assertions and the silent stream-cleanup
+  skip. Python and POSIX prerequisites now fail explicitly rather than hiding lost
+  transport/process coverage. Removed duplicate runner assertions and broad word
+  bans in desktop workflow tests; supported runner/target checks remain.
+- Replaced an SDK checkout assertion tied to action-version spelling and whitespace
+  with parsed workflow checks; added parsed cache and lint/matrix regressions.
+- Verification: 112 Clojure cases passed, followed by 11 targeted cases after final
+  test refactoring; 37 desktop packaging cases passed. Clojure lint/reflection and
+  formatting, JavaScript formatting, companion lint (443 files), and actionlint for
+  the five affected workflows passed. Changes remain local; no deployment or
+  measured end-to-end warm-cache timing is claimed.

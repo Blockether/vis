@@ -2,7 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [defdescribe expect it]]
+            [yamlstar.core :as yaml])
   (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -1384,6 +1385,54 @@
         (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
 
 (defdescribe
+  native-pickup-behavior-test
+  (it
+    "retries transient job-list failures and never mistakes unavailable status for pickup"
+    ;; Release 35079085070 failed on HTTP 502 while its macOS job later ran.
+    (let [workflow
+          (slurp ".github/workflows/native-release.yml")
+
+          script
+          (-> workflow
+              (str/split #"      - name: Fail fast when no macOS builder takes the job" 2)
+              second
+              (str/split #"        run: \|\n" 2)
+              second
+              (str/replace #"(?m)^          " ""))
+
+          dir
+          (.toFile (Files/createTempDirectory "vis-pickup-" (make-array FileAttribute 0)))
+
+          calls
+          (io/file dir "calls")]
+
+      (try
+        (write-executable!
+          (io/file dir "gh")
+          (str
+            "#!/usr/bin/env bash\necho call >> \"$TEST_CALLS\"\n"
+            "if [[ $TEST_MODE == transient && $(wc -l < \"$TEST_CALLS\") -eq 1 ]]; then exit 1; fi\n"
+            "if [[ $TEST_MODE == unavailable ]]; then exit 1; fi\n"
+            "if [[ $TEST_MODE == queued ]]; then echo queued; else echo in_progress; fi\n"))
+        (write-executable! (io/file dir "sleep") "#!/usr/bin/env bash\nexit 0\n")
+        (doseq [[mode deadline expected] [["transient" "1" 0] ["unavailable" "0" 1] ["queued" "0" 1]
+                                          ["running" "0" 0]]]
+          (spit calls "")
+          (let [{:keys [exit output]}
+                (run-bash ["bash" "-c" script]
+                          {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))
+                           "GITHUB_REPOSITORY" "example/vis"
+                           "GITHUB_RUN_ID" "123"
+                           "MACOS_RUNNER" "fixture-mac"
+                           "TARGET_REF" "v1.2.3"
+                           "DEADLINE_MINUTES" deadline
+                           "TEST_CALLS" (.getAbsolutePath calls)
+                           "TEST_MODE" mode})]
+            (expect (= expected exit) (str mode ": " output))
+            (when (= mode "transient") (expect (= 2 (count (str/split-lines (slurp calls))))))))
+        (finally (delete-tree! dir))))))
+
+(defdescribe
   native-asset-upload-test
   (it
     "uploads native assets to a verified draft without rewriting release metadata"
@@ -2544,6 +2593,43 @@
         (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))
 
 (defdescribe
+  dependency-cache-test
+  (it "shares only compatible dependency caches and refreshes pinned native runtimes"
+      (doseq [workflow
+              ["ci.yml" "native-release.yml" "python-packages.yml"]
+
+              :let [jobs
+                    (get (yaml/load (slurp (str ".github/workflows/" workflow))) "jobs")]
+              [job-id job]
+              jobs
+
+              step
+              (get job "steps")
+
+              :when (str/starts-with? (get step "uses" "") "actions/cache@")
+              :let [cache
+                    (get step "with")
+
+                    paths
+                    (set (str/split-lines (str/trim (get cache "path"))))]
+              :when (contains? paths "~/.m2/repository")]
+
+        (expect (= #{"~/.m2/repository" "~/.gitlibs" "~/.clojure/.cpcache"} paths)
+                (str workflow " / " job-id))
+        (doseq [field ["key" "restore-keys"]]
+          (expect (str/includes? (get cache field) "${{ runner.arch }}")
+                  (str workflow " / " job-id " / " field))))
+      (let [steps
+            (get-in (yaml/load (slurp ".github/workflows/ci.yml")) ["jobs" "tests" "steps"])
+
+            cache
+            (some #(when (= "~/.vis/native" (get-in % ["with" "path"])) (get % "with")) steps)]
+
+        (expect (str/includes? (get cache "key") "'deps.edn'"))
+        (expect (str/includes? (get cache "key") "${{ runner.arch }}"))
+        (expect (str/includes? (get cache "restore-keys") "${{ runner.arch }}")))))
+
+(defdescribe
   ci-supersession-and-npm-cache-test
   ;; A per-SHA main queue delayed releases, and a persistent npm cache uploaded 8.5 GB.
   (it
@@ -2743,23 +2829,49 @@
         (expect (not (str/includes? publisher "continue-on-error:")))))
   (it
     "builds and tests the released commit and uses its VIS_VERSION for the distribution"
-    (let [packages (slurp ".github/workflows/python-packages.yml")]
-      (expect (str/includes? packages "      ref:\n"))
-      (expect
-        (=
-          2
-          (count
-            (re-seq
-              #"uses: actions/checkout@v7\n        with:\n          ref: \$\{\{ inputs.ref \|\| github.sha \}\}"
-              packages))))
+    (let [packages
+          (slurp ".github/workflows/python-packages.yml")
+
+          workflow
+          (yaml/load packages)
+
+          jobs
+          (get workflow "jobs")]
+
+      (expect (contains? (get-in workflow ["on" "workflow_call" "inputs"]) "ref"))
+      (doseq [job-id
+              ["distribution" "engine"]
+
+              :let [steps
+                    (get-in jobs [job-id "steps"])
+
+                    checkout
+                    (filter #(str/starts-with? (get % "uses" "") "actions/checkout@") steps)]]
+
+        (expect (= ["${{ inputs.ref || github.sha }}"] (mapv #(get-in % ["with" "ref"]) checkout))))
       (doseq
         [needle
          ["version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()"
           "assert metadata.version('vis-agent') == version"
           "os.environ['EXPECTED_VERSION'] == version"
-          "python -m build packages/vis-agent --outdir dist" "name: python-sdk-distributions"
-          "needs: distribution"]]
-        (expect (str/includes? packages needle) needle)))))
+          "python -m build packages/vis-agent --outdir dist"]]
+        (expect (str/includes? packages needle) needle))
+      (expect (= "distribution" (get-in jobs ["engine" "needs"])))
+      (let [steps
+            (get-in jobs ["distribution" "steps"])
+
+            lint
+            (filter #(str/includes? (get % "run" "") "python -m ruff check") steps)
+
+            installed
+            (filter #(str/includes? (get % "run" "") "VIS_TEST_INSTALLED=1") steps)]
+
+        (expect (= ["matrix.os == 'ubuntu-latest' && matrix.python == '3.11'"]
+                   (mapv #(get % "if") lint)))
+        ;; Only lint is deduplicated: every interpreter still builds and tests its wheel.
+        (expect (= [nil] (mapv #(get % "if") installed)))
+        (expect (= ["3.11" "3.12" "3.13" "3.14" "pypy3.11"]
+                   (get-in jobs ["distribution" "strategy" "matrix" "python"])))))))
 
 (defdescribe
   python-existing-publication-test
@@ -2865,10 +2977,11 @@
           mobile
           (slurp ".github/workflows/mobile-release.yml")]
 
-      (doseq [needle
-              ["uses: ./.github/workflows/ci.yml" "uses: ./.github/workflows/native-release.yml"
-               "needs: [prepare, native, mobile, desktop, recover]" "bin/verify-release-assets.py"
-               "--draft" "--draft=false --latest" "require_complete: true"]]
+      (doseq [needle ["uses: ./.github/workflows/ci.yml"
+                      "uses: ./.github/workflows/native-release.yml"
+                      "needs: [prepare, verify, native, mobile, desktop, recover]"
+                      "bin/verify-release-assets.py" "--draft" "--draft=false --latest"
+                      "require_complete: true"]]
         (expect (str/includes? release needle) needle))
       (expect (= 3 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
       (expect (not (str/includes? release "/releases/tags/")))
@@ -2906,7 +3019,7 @@
         (re-find
           #"(?m)^          npm run release:ios:store -- --audience \$\{\{ inputs.audience \|\| 'all' \}\}$"
           mobile))))
-  (it "checks main alignment before slow CI without allowing unverified artifact jobs"
+  (it "builds native drafts beside source checks but gates store delivery and publication"
       (let [jobs (into {}
                        (map (fn [[_ name body]]
                               [name body])
@@ -2918,8 +3031,16 @@
                                "test \"$(git rev-parse origin/main)\" = \"$(git rev-parse HEAD)\""))
         (expect (str/includes? (get jobs "prepare") "--verify-tag --draft"))
         (expect (str/includes? (get jobs "verify") "needs: prepare"))
-        (doseq [job ["native" "mobile" "desktop"]]
-          (expect (str/includes? (get jobs job) "needs: [prepare, verify]") job))))
+        (expect (str/includes? (get jobs "native") "needs: prepare"))
+        (doseq [job ["mobile" "desktop"]]
+          (expect (str/includes? (get jobs job) "needs: [prepare, verify]") job))
+        (expect (str/includes? (get jobs "publish") "needs.verify.result == 'success'"))
+        (let [ci-jobs (into {}
+                            (map (fn [[_ name body]]
+                                   [name body])
+                                 (re-seq #"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\z)"
+                                         (slurp ".github/workflows/ci.yml"))))]
+          (expect (not (str/includes? (get ci-jobs "aot") "needs:"))))))
   (it "delegates job-list read access to the native workflow's runner pickup check"
       (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
                                          (slurp ".github/workflows/release.yml")))]

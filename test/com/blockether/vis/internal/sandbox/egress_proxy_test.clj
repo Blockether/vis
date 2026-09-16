@@ -565,21 +565,23 @@
 
 (deftest denied-domain-blocks-ip
   (testing "a denied domain is blocked whether the child dials the NAME or its resolved IP"
+    ;; Use the local hosts entry, not public DNS: an outage must neither fail this
+    ;; test nor silently skip its raw-IP bypass assertion.
     (let [pol
-          (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["example.com"]})
+          (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["localhost"]})
 
           ip
-          (try (.getHostAddress (java.net.InetAddress/getByName "example.com"))
-               (catch Throwable _ nil))]
+          (.getHostAddress (java.net.InetAddress/getByName "localhost"))]
 
-      ;; name form: denied at host-level (already worked)
-      (is (:blocked (ep/safe-upstream-address "example.com" 443 pol)))
-      ;; IP form: host-ok? is name-level so decide alone still allows the raw IP …
+      (is (false? (:allow? (ep/decide pol nil "localhost" nil 443))))
+      (is (= "blocked denied-domain address for host: localhost"
+             (:blocked (ep/safe-upstream-address "localhost" 443 pol))))
+      ;; Name matching alone allows the IP, but the dial chokepoint must deny it.
       (is (:allow? (ep/decide pol nil ip nil 443)))
-      ;; … but the dial chokepoint blocks it — the IP resolves from the denied name
-      (when ip (is (:blocked (ep/safe-upstream-address ip 443 pol))))
-      ;; an unrelated public host still dials
-      (is (:addr (ep/safe-upstream-address "example.org" 443 pol))))))
+      (is (= (str "blocked denied-domain address for host: " ip)
+             (:blocked (ep/safe-upstream-address ip 443 pol))))
+      ;; A public IP needs no DNS and remains allowed.
+      (is (:addr (ep/safe-upstream-address "93.184.216.34" 443 pol))))))
 
 (deftest host-policy-specificity
   ;; The egress proxy owns the allow/deny verdict. A SPECIFIC (non-`*`) match wins

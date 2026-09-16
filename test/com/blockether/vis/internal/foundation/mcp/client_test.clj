@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.foundation.mcp.client-test
   "Exercises the MCP client's stdio transport + JSON-RPC handshake against a
-   tiny fake server (test/resources/fake_mcp_server.py). Skips gracefully when
-   python3 or the script isn't present so CI without python stays green."
+   tiny fake server (test/resources/mcp/fake_mcp_server.py). Python 3 and POSIX
+   process utilities are required; missing prerequisites must fail verification."
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -11,13 +11,14 @@
 
 (def ^:private server-path "test/resources/mcp/fake_mcp_server.py")
 
-(defn- on-path
-  "Absolute path of `exe` if it's an executable on PATH, else nil."
+(defn- require-executable
+  "Resolve a required test executable, failing explicitly when it is absent."
   [exe]
-  (some (fn [d]
-          (let [f (io/file d exe)]
-            (when (.canExecute f) (.getPath f))))
-        (str/split (or (System/getenv "PATH") "") #":")))
+  (or (some (fn [d]
+              (let [f (io/file d exe)]
+                (when (.canExecute f) (.getPath f))))
+            (str/split (or (System/getenv "PATH") "") #":"))
+      (throw (ex-info (str "MCP tests require " exe " on PATH") {:executable exe}))))
 
 (defn- all-dead-within?
   "Wait at most `timeout-ms` for every ProcessHandle in `handles` to stop."
@@ -35,77 +36,73 @@
 (defdescribe mcp-stdio-client-test
              (it "initialize + tools/list + tools/call roundtrip over stdio"
                  (let [py
-                       (on-path "python3")
+                       (require-executable "python3")
 
                        f
-                       (io/file server-path)]
+                       (io/file server-path)
 
-                   (if-not (and py (.exists f))
-                     (expect true) ; prereqs absent — skip, don't fail CI
-                     (let [conn (mcp/connect "fake"
-                                             {:transport :stdio :command py :args [(.getPath f)]})]
-                       (try
-                         ;; initialize handshake surfaced the server identity
-                         (expect (= "fake" (get (:server-info conn) "name")))
-                         (expect (true? (mcp/alive? conn)))
-                         ;; tools/list (cached after first call)
-                         (let [tools (mcp/list-tools conn)]
-                           (expect (= 1 (count tools)))
-                           (expect (= "echo" (get (first tools) "name")))
-                           (expect (identical? tools (mcp/list-tools conn))))
-                         ;; tools/call returns the content block
-                         (let [r (mcp/call-tool conn "echo" {"msg" "hi"})]
-                           (expect (false? (boolean (get r "isError"))))
-                           (expect (= "echo: hi" (get-in r ["content" 0 "text"]))))
-                         ;; unknown tool surfaces isError from the server
-                         (let [r (mcp/call-tool conn "nope" {})]
-                           (expect (true? (boolean (get r "isError")))))
-                         (finally (mcp/close conn) (expect (false? (mcp/alive? conn))))))))))
+                       conn
+                       (mcp/connect "fake" {:transport :stdio :command py :args [(.getPath f)]})]
 
-(defdescribe
-  mcp-stdio-kill-tree-test
-  (it "closing a server kills its whole process tree, not just the launcher"
-      (let [py
-            (on-path "python3")
+                   (try
+                     ;; initialize handshake surfaced the server identity
+                     (expect (= "fake" (get (:server-info conn) "name")))
+                     (expect (true? (mcp/alive? conn)))
+                     ;; tools/list (cached after first call)
+                     (let [tools (mcp/list-tools conn)]
+                       (expect (= 1 (count tools)))
+                       (expect (= "echo" (get (first tools) "name")))
+                       (expect (identical? tools (mcp/list-tools conn))))
+                     ;; tools/call returns the content block
+                     (let [r (mcp/call-tool conn "echo" {"msg" "hi"})]
+                       (expect (false? (boolean (get r "isError"))))
+                       (expect (= "echo: hi" (get-in r ["content" 0 "text"]))))
+                     ;; unknown tool surfaces isError from the server
+                     (let [r (mcp/call-tool conn "nope" {})]
+                       (expect (true? (boolean (get r "isError")))))
+                     (finally (mcp/close conn) (expect (false? (mcp/alive? conn))))))))
 
-            sh
-            (on-path "sh")
+(defdescribe mcp-stdio-kill-tree-test
+             (it "closing a server kills its whole process tree, not just the launcher"
+                 (let [py
+                       (require-executable "python3")
 
-            f
-            (io/file server-path)]
+                       sh
+                       (require-executable "sh")
 
-        (if-not (and py sh (.exists f))
-          (expect true) ; prereqs absent — skip, don't fail CI
-          (let [conn
-                ;; What every real MCP server looks like: a launcher (`npx`, `uvx`,
-                ;; `docker run`) with the actual work under it. `sleep` stands in for
-                ;; the worker that outlives a bare `Process.destroy` of the parent.
-                (mcp/connect "fake"
-                             {:transport :stdio
-                              :command sh
-                              :args ["-c" (str "sleep 300 & exec " py " " (.getPath f))]})
+                       f
+                       (io/file server-path)
 
-                kids
-                (let [^java.lang.ProcessHandle handle
-                      (.orElse (java.lang.ProcessHandle/of (long (:pid conn))) nil)]
-                  (with-open [descendants (.descendants handle)]
-                    (vec (iterator-seq (.iterator descendants)))))]
+                       conn
+                       ;; What every real MCP server looks like: a launcher (`npx`, `uvx`,
+                       ;; `docker run`) with the actual work under it. `sleep` stands in for
+                       ;; the worker that outlives a bare `Process.destroy` of the parent.
+                       (mcp/connect "fake"
+                                    {:transport :stdio
+                                     :command sh
+                                     :args ["-c" (str "sleep 300 & exec " py " " (.getPath f))]})
 
-            (expect (= "fake" (get (:server-info conn) "name")))
-            (expect (= 1 (count kids)))
-            (mcp/close conn)
-            ;; Give SIGTERM→SIGKILL its grace window before judging.
-            (expect (all-dead-within? kids 8000)))))))
+                       kids
+                       (let [^java.lang.ProcessHandle handle
+                             (.orElse (java.lang.ProcessHandle/of (long (:pid conn))) nil)]
+                         (with-open [descendants (.descendants handle)]
+                           (vec (iterator-seq (.iterator descendants)))))]
+
+                   (expect (= "fake" (get (:server-info conn) "name")))
+                   (expect (= 1 (count kids)))
+                   (mcp/close conn)
+                   ;; Give SIGTERM→SIGKILL its grace window before judging.
+                   (expect (all-dead-within? kids 8000)))))
 
 (defdescribe
   mcp-failed-stdio-handshake-cleanup-test
   (it
     "kills the stdio process when initialize fails before connect can return"
     (let [sh
-          (on-path "sh")
+          (require-executable "sh")
 
           sleep
-          (on-path "sleep")
+          (require-executable "sleep")
 
           pid-file
           (java.io.File/createTempFile "vis-mcp-failed-" ".pid")
@@ -116,41 +113,39 @@
       ;; The child, not this test, creates the marker. That proves it really
       ;; started before the intentionally unanswered initialize timed out.
       (.delete pid-file)
-      (if-not (and sh sleep)
-        (expect true) ; prereqs absent — skip, don't fail CI
-        (try (let [failure (try (mcp/connect "never-initializes"
-                                             {:transport :stdio
-                                              :command sh
-                                              :args ["-c" "echo $$ > \"$1\"; exec \"$2\" 300"
-                                                     "vis-mcp-test" (.getPath pid-file) sleep]
-                                              :timeout-ms 100})
-                                ::no-throw
-                                (catch clojure.lang.ExceptionInfo e e))]
-               (expect (instance? clojure.lang.ExceptionInfo failure))
-               (expect (= :mcp/timeout (:type (ex-data failure))))
-               (expect (.exists pid-file))
-               (when (.exists pid-file)
-                 (let [pid (parse-long (str/trim (slurp pid-file)))
-                       handle (some-> (java.lang.ProcessHandle/of (long pid))
-                                      (.orElse nil))]
+      (try (let [failure (try (mcp/connect "never-initializes"
+                                           {:transport :stdio
+                                            :command sh
+                                            :args ["-c" "echo $$ > \"$1\"; exec \"$2\" 300"
+                                                   "vis-mcp-test" (.getPath pid-file) sleep]
+                                            :timeout-ms 100})
+                              ::no-throw
+                              (catch clojure.lang.ExceptionInfo e e))]
+             (expect (instance? clojure.lang.ExceptionInfo failure))
+             (expect (= :mcp/timeout (:type (ex-data failure))))
+             (expect (.exists pid-file))
+             (when (.exists pid-file)
+               (let [pid (parse-long (str/trim (slurp pid-file)))
+                     handle (some-> (java.lang.ProcessHandle/of (long pid))
+                                    (.orElse nil))]
 
-                   (reset! pid* pid)
-                   ;; `connect` has already thrown. There is no conn for a caller
-                   ;; to close, so only its internal failure cleanup can pass this.
-                   (expect (or (nil? handle) (all-dead-within? [handle] 8000))))))
-             (finally (when-let [pid @pid*]
-                        (when-let [^java.lang.ProcessHandle handle
-                                   (some-> (java.lang.ProcessHandle/of (long pid))
-                                           (.orElse nil))]
-                          (when (.isAlive handle) (.destroyForcibly handle))))
-                      (.delete pid-file)))))))
+                 (reset! pid* pid)
+                 ;; `connect` has already thrown. There is no conn for a caller
+                 ;; to close, so only its internal failure cleanup can pass this.
+                 (expect (or (nil? handle) (all-dead-within? [handle] 8000))))))
+           (finally (when-let [pid @pid*]
+                      (when-let [^java.lang.ProcessHandle handle (some-> (java.lang.ProcessHandle/of
+                                                                           (long pid))
+                                                                         (.orElse nil))]
+                        (when (.isAlive handle) (.destroyForcibly handle))))
+                    (.delete pid-file))))))
 
 (defdescribe
   mcp-stdio-stream-cleanup-test
   (it "closes stdout after both a normal connection and a failed handshake"
       ;; JVM dogfooding: twenty connect/close cycles leaked twenty descriptors.
       ;; EOF is not close: runtime-owned pipe descriptors have no GC fallback.
-      (when-let [py (on-path "python3")]
+      (let [py (require-executable "python3")]
         (doseq [args [[server-path] ["-c" "import time; time.sleep(10)"]]]
           (let [spawn! process-jail/spawn!
                 started (atom nil)]

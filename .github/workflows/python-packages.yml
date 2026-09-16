@@ -35,7 +35,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install build and test tools
         run: python -m pip install build twine pytest ruff pyright==1.1.408
+      # Source lint is interpreter-independent; installed tests still run on every matrix leg.
       - name: Lint and format
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: |
           python -m ruff check packages
           python -m ruff format --check packages
@@ -87,6 +89,14 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'

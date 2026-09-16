@@ -145,7 +145,14 @@ export function packageDesktop({
   }
   const version = syncPackageVersion({ quiet: true });
   const outDir = dev ? join(appDir, 'build', 'desktop-dev') : OUT_DIR;
-  const env = { ...process.env };
+  const env = {
+    ...process.env,
+    // Pake otherwise compiles under a disposable npx installation. Both Cargo
+    // and Pake's artifact lookup honor this absolute directory.
+    CARGO_TARGET_DIR: resolve(
+      process.env.CARGO_TARGET_DIR || join(appDir, 'build', 'desktop-target'),
+    ),
+  };
   if (dev) {
     for (const name of [
       'APPLE_SIGNING_IDENTITY',

@@ -33,7 +33,7 @@ jobs:
     secrets: inherit
 
   prepare:
-    # Validate main before slow CI; artifact jobs still require all source checks.
+    # Validate immutable source before starting checks and draft-only native builds.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     env:
@@ -64,7 +64,8 @@ jobs:
         run: gh release upload "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent --clobber
 
   native:
-    needs: [prepare, verify]
+    # Native artifacts remain private drafts until source and product gates pass.
+    needs: prepare
     permissions:
       contents: write
       actions: read
@@ -133,10 +134,11 @@ jobs:
 
   publish:
     name: Verify complete assets, deploy libraries and publish stable
-    needs: [prepare, native, mobile, desktop, recover]
+    needs: [prepare, verify, native, mobile, desktop, recover]
     if: >-
       !cancelled() &&
       ((github.event_name == 'push' && needs.prepare.result == 'success' &&
+        needs.verify.result == 'success' &&
         needs.native.result == 'success' && needs.mobile.result == 'success' &&
         needs.desktop.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && needs.recover.result == 'success'))

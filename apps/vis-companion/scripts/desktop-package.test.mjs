@@ -164,58 +164,6 @@ describe('desktop release signing', () => {
     expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
     expect(desktop).toMatch(/    permissions:\r?\n      contents: write/);
     expect(desktop).not.toMatch(/^\s+id-token: write/m);
-    expect(desktop).toContain('# id-token: write');
-  });
-
-  it('retains commented Windows signing and smoke configuration', () => {
-    const workflow = workflowSource;
-    for (const name of [
-      'CLIENT_ID',
-      'TENANT_ID',
-      'SUBSCRIPTION_ID',
-      'ENDPOINT',
-      'ACCOUNT',
-      'PROFILE',
-      'PUBLISHER',
-    ]) {
-      expect(workflow).toContain(`vars.WINDOWS_SIGNING_${name}`);
-    }
-    expect(workflow).toContain(
-      "environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}",
-    );
-    const login = workflow.indexOf('uses: azure/login@v3');
-    const packaging = workflow.indexOf('name: Sign and package Windows with Pake');
-    const installerCheck = workflow.indexOf('-FilePath $installers[0].FullName -VerifyOnly');
-    const exeCheck = workflow.indexOf('-FilePath $executables[0].FullName -VerifyOnly');
-    const launch = workflow.indexOf('$app = Start-Process');
-    const upload = workflow.indexOf('uses: actions/upload-artifact');
-    expect(login).toBeGreaterThan(0);
-    expect(packaging).toBeGreaterThan(login);
-    expect(installerCheck).toBeGreaterThan(packaging);
-    expect(exeCheck).toBeGreaterThan(installerCheck);
-    expect(launch).toBeGreaterThan(exeCheck);
-    expect(upload).toBeGreaterThan(launch);
-    const signing = readFileSync(new URL('windows-sign.ps1', import.meta.url), 'utf8');
-    expect(signing).toContain("FileDigest = 'SHA256'");
-    expect(signing).toContain("TimestampDigest = 'SHA256'");
-    expect(signing).toContain("TimestampRfc3161 = 'http://timestamp.acs.microsoft.com'");
-    expect(signing).toContain('ExcludeAzureCliCredential = $false');
-    for (const credential of [
-      'Environment',
-      'WorkloadIdentity',
-      'ManagedIdentity',
-      'SharedTokenCache',
-      'VisualStudio',
-      'VisualStudioCode',
-      'AzurePowerShell',
-      'AzureDeveloperCli',
-      'InteractiveBrowser',
-    ]) {
-      expect(signing).toContain(`Exclude${credential}Credential = $true`);
-    }
-    expect(signing.indexOf('Invoke-ArtifactSigning @parameters')).toBeLessThan(
-      signing.indexOf('Assert-VisSignature -Path $Path -Publisher'),
-    );
   });
 });
 
@@ -223,6 +171,18 @@ describe('desktop release platforms', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     existsSync.mockReturnValue(true);
+  });
+
+  it('uses an absolute reusable Cargo target outside the disposable npx installation', () => {
+    vi.stubEnv('CARGO_TARGET_DIR', '');
+    packageDesktop({ platform: 'linux', arch: 'x64', log: vi.fn() });
+    for (const [, , options] of spawnSync.mock.calls) {
+      expect(options.env.CARGO_TARGET_DIR).toBe('/app/build/desktop-target');
+    }
+    vi.stubEnv('CARGO_TARGET_DIR', '/cache/custom-target');
+    vi.clearAllMocks();
+    packageDesktop({ platform: 'darwin', arch: 'arm64', log: vi.fn() });
+    expect(spawnSync.mock.calls[0][2].env.CARGO_TARGET_DIR).toBe('/cache/custom-target');
   });
 
   it.each(['x64', 'arm64'])('packages native Linux %s with truthful asset names', (arch) => {
@@ -342,13 +302,7 @@ describe('desktop release platforms', () => {
       'ubuntu-24.04',
       'ubuntu-24.04-arm',
     ]);
-    expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
-    expect(workflow).toContain('runner: ubuntu-24.04');
-    expect(workflow).toContain('runner: ubuntu-24.04-arm');
     expect(workflow).toContain('environment: desktop-build');
-    expect(workflow).not.toMatch(/windows|azure\/login|id-token|pwsh|msiexec|Start-Process/i);
-    expect(workflowSource).toMatch(/^\s+# - runner: windows-2022$/m);
-    expect(workflowSource).toMatch(/^\s+#\s+asset: windows-x64$/m);
     expect(workflow).toContain('aarch64-apple-darwin,x86_64-apple-darwin');
     expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
   });

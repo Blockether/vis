@@ -231,17 +231,27 @@ The Companion uses the repository's `VIS_VERSION`. Follow the root release
 instructions to update versions and publish the annotated `vX.Y.Z` tag.
 Tag and version must match; do not move a published tag.
 
-That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
-bundle as a desktop app with [Pake](https://github.com/tw93/pake): macOS Universal
-(Intel + Apple silicon, `.dmg`), Linux x64/ARM64 (`.deb`, `.AppImage`), and
-Windows x64 (`.msi`). All installers join the same GitHub Release. macOS uses the
-self-hosted runner; Linux and Windows use native GitHub-hosted runners.
+The release workflow runs source verification and native builds in parallel.
+Native artifacts remain in an unpublished draft; store delivery and stable
+publication still require their verification gates. You do not need to run a
+second full native dry run before every tag: the release runs those checks itself.
+
+The tag also runs `.github/workflows/desktop-companion.yml`, which packages the
+web bundle with [Pake](https://github.com/tw93/pake): macOS Universal
+(Intel + Apple silicon, `.dmg`) and Linux x64/ARM64 (`.deb`, `.AppImage`).
+Windows release packaging is currently disabled. macOS uses the self-hosted
+runner; Linux uses native GitHub-hosted runners. All supported installers must
+be present before the GitHub Release becomes public.
 
 `scripts/desktop-package.mjs` holds the flags and asset names. To build installers
 for your host, run `npm run build` followed by `npm run package:desktop`; output
 lands in `build/desktop/`. Builds need a Rust toolchain and the platform's native
 build dependencies: Xcode on macOS, WebKitGTK on Linux, or Visual Studio Build Tools
 with **Desktop development with C++** and WebView2 on Windows.
+Cargo compilation is reused from `build/desktop-target/`, independently of npx's
+package cache. Set `CARGO_TARGET_DIR` to use another cache location. CI keys this
+cache by OS, architecture, compiler and Pake version. A cold build still compiles
+dependencies; cache hits do not skip compilation, signing or notarization checks.
 A **Run workflow** from a branch keeps installers as workflow artifacts and
 publishes nothing.
 
@@ -258,8 +268,16 @@ npm run release:mobile
 The command tags the current `origin/main` with `companion-vX.Y.Z-build.N`.
 `.github/workflows/mobile-release.yml` distributes that build to TestFlight
 audiences and Android testing tracks, subject to the publishing controls
-above. A manual workflow run can retry one platform. CI uses the same store
-scripts as local releases and skips platforms with missing credentials.
+above. CI uses the same store scripts as local releases. Missing credentials may
+skip an optional app-only platform; they fail a complete product release.
+
+Before retrying, check whether the exact version/build already reached the store.
+Do not upload it again merely because review is pending. Android's
+`--reuse-existing --build N` promotes an uploaded build without rebuilding;
+TestFlight distribution can be retried with `release:testflight`. API acceptance
+is not review approval: check TestFlight's external build state and Play Console's
+Publishing overview before telling external testers an update is available.
+Apple/Google review and notarization queues are external waits, not build time.
 
 | Secret | Value |
 | --- | --- |

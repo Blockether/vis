@@ -183,9 +183,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-            ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       # Full agent; speech models download on first use.
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
       # with a real swapfile instead of letting the JVM die on GC overhead.
@@ -249,7 +248,7 @@ jobs:
           gateway_pid=$!
           trap 'kill "$gateway_pid" 2>/dev/null || true; wait "$gateway_pid" 2>/dev/null || true' EXIT
           status='gateway did not become healthy'
-          for attempt in {1..60}; do
+          for _ in {1..60}; do
             if ! kill -0 "$gateway_pid" 2>/dev/null; then break; fi
             if status="$(target/release-bundle/vis-agent gateway status --db "$smoke_dir/gateway.db" 2>&1)" &&
                printf '%s\n' "$status" | grep -Eq "^gateway running pid=$gateway_pid url=http://127\.0\.0\.1:$smoke_port "; then
@@ -399,9 +398,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-            ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Build native image
         env:
           # The same build path stamps release, beta and unpublished experiments.
@@ -437,7 +435,7 @@ jobs:
           gateway_pid=$!
           trap 'kill "$gateway_pid" 2>/dev/null || true; wait "$gateway_pid" 2>/dev/null || true' EXIT
           status='gateway did not become healthy'
-          for attempt in {1..60}; do
+          for _ in {1..60}; do
             if ! kill -0 "$gateway_pid" 2>/dev/null; then break; fi
             if status="$(target/release-bundle/vis-agent gateway status --db "$smoke_dir/gateway.db" 2>&1)" &&
                printf '%s\n' "$status" | grep -Eq "^gateway running pid=$gateway_pid url=http://127\.0\.0\.1:$smoke_port "; then
@@ -523,8 +521,11 @@ jobs:
           set -euo pipefail
           deadline=$(( SECONDS + DEADLINE_MINUTES * 60 ))
           while :; do
-            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
-                        --jq '[.jobs[] | select(.name | endswith("macos-arm64.tar.gz"))][0].status // "unlisted"')"
+            if ! status="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
+                        --jq '.jobs[] | select(.name | endswith("macos-arm64.tar.gz")) | .status')"; then
+              status=unavailable
+              echo '::warning::Cannot read macOS job status; retrying within the pickup deadline'
+            fi
             case "$status" in
               in_progress|completed)
                 echo "${MACOS_RUNNER} took the macOS build (${status})"
@@ -532,7 +533,11 @@ jobs:
                 ;;
             esac
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::No runner labelled ${MACOS_RUNNER} started the macOS build within ${DEADLINE_MINUTES} min, so ${TARGET_REF} is heading for a release with no macOS asset. Check that the Apple-silicon runner is registered, online and idle in this repository's runner list, then re-dispatch with tag=${TARGET_REF} only=macos; use runner=<Apple-silicon label> only for an intentional override."
+              if [ "$status" = unavailable ]; then
+                echo '::error::GitHub job status remained unavailable at the pickup deadline'
+              else
+                echo "::error::No runner labelled ${MACOS_RUNNER} started the macOS build within ${DEADLINE_MINUTES} min for ${TARGET_REF}. Check runner availability and queued jobs before retrying."
+              fi
               exit 1
             fi
             sleep 15

@@ -56,8 +56,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       # Several unit tests resolve the provider router. Seed the machine-owned
       # YAML state store with a minimal provider; transport-facing tests mock IO.
       - name: Seed a minimal AI provider config + harness fixtures
@@ -115,8 +115,8 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.vis/native
-          key: vis-native-${{ runner.os }}-${{ hashFiles('src/com/blockether/vis/internal/speech/sherpa.clj') }}
-          restore-keys: vis-native-${{ runner.os }}-
+          key: vis-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'src/com/blockether/vis/internal/speech/sherpa.clj') }}
+          restore-keys: vis-native-${{ runner.os }}-${{ runner.arch }}-
       - name: Prepare git dependencies and provision native runtimes
         run: |
           clojure -X:deps prep
@@ -174,8 +174,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
 
@@ -198,8 +198,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
   # AOT gate: compile EVERY namespace (core + every extension) exactly as the
@@ -210,7 +210,7 @@ jobs:
   aot:
     name: build / aot uberjar
     runs-on: ubuntu-latest
-    needs: [tests, classpath, lint]
+    # Independent compilation catches errors while the slower test suites run.
     steps:
       - uses: actions/checkout@v7
       # Install the pinned CE build toolchain directly.
@@ -224,8 +224,8 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:
           # The action above already installed the pinned CE. If build.clj still sees
