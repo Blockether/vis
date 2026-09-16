@@ -9,10 +9,11 @@ import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
-it('frames the embedded live view without changing its shared background', () => {
+it('separates the embedded live view with horizontal rules on its shared background', () => {
   const view = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
   const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
-  expect(panel).toHaveClass('border', 'border-dialog-hint');
+  expect(panel).toHaveClass('border-y', 'border-dialog-hint');
+  expect(panel).not.toHaveClass('border', 'px-3');
   expect(panel).not.toHaveClass('bg-panel');
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
 });
@@ -83,7 +84,7 @@ it.each([
       />,
     );
     expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
-    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
+    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border-y');
     mounted.rerender(
       <IterationTrace
         iterations={[{ forms: [{ source, activity }] }]}
@@ -99,7 +100,7 @@ it.each([
     const group = title.closest('[data-execution-group]');
     expect(group).toHaveClass('bg-code');
     expect(group).not.toHaveClass('border');
-    expect(title.closest('.border')).toBe(title.closest('section'));
+    expect(title.closest('.border-y')).toBe(title.closest('section'));
   },
 );
 
@@ -331,7 +332,7 @@ it('renders RUN beside Activity and opens it without folding the preview', () =>
   const activitySection = mounted.getByText('ACTIVITY').closest('[data-execution-activity]');
   expect(run?.parentElement).toBe(activitySection?.parentElement);
   expect(run?.closest('[data-execution-activity]')).toBeNull();
-  expect(run?.querySelector('header')).not.toHaveClass('px-3');
+  expect(run?.querySelector('header')).toHaveClass('px-(--live-view-inset)');
   expect(mounted.getByText('RUN')).toBeVisible();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -377,8 +378,8 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
   expect(first?.parentElement).not.toHaveClass('border');
-  expect(first?.closest('.border')).toBe(first);
-  expect(second?.closest('.border')).toBe(second);
+  expect(first?.closest('.border-y')).toBe(first);
+  expect(second?.closest('.border-y')).toBe(second);
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 

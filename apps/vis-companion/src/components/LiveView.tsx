@@ -700,7 +700,7 @@ function TableRows({
 
   const span = Math.max(1, node.columns.length);
   return (
-    <div className="-mx-3 overflow-x-auto">
+    <div className="-mx-(--live-view-inset) overflow-x-auto">
       <table className="w-full min-w-0 border-collapse font-mono text-ui">
         <thead className="hidden sm:table-header-group">
           <tr className="border-b border-dialog-edge">
@@ -708,7 +708,7 @@ function TableRows({
               <th
                 key={column.id}
                 scope="col"
-                className={`px-3 py-2 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
+                className={`px-(--live-view-inset) py-2 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -720,7 +720,7 @@ function TableRows({
         <tbody className="divide-y divide-dialog-edge">
           {rows.length === 0 && (
             <tr>
-              <td className="px-3 py-2" colSpan={span}>
+              <td className="px-(--live-view-inset) py-2" colSpan={span}>
                 <Empty>{EMPTY_LINE.table}</Empty>
               </td>
             </tr>
@@ -734,7 +734,7 @@ function TableRows({
               const [name, ...rest] = item.label.split(' · ');
               return (
                 <tr key={`group:${item.label}`}>
-                  <td className="px-3 py-1" colSpan={span}>
+                  <td className="px-(--live-view-inset) py-1" colSpan={span}>
                     <Disclosure
                       isOpen={isOpen}
                       tone="branch"
@@ -771,6 +771,7 @@ function TableRows({
                 <td className="p-0 align-middle">
                   {isSelectable ? (
                     <ListRow
+                      className="pl-(--live-view-inset) pr-(--live-view-inset)"
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
@@ -780,7 +781,7 @@ function TableRows({
                       </span>
                     </ListRow>
                   ) : (
-                    <span className="flex min-w-0 items-start gap-2 px-3 py-2">
+                    <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-2">
                       <ToneMark tone={row.tone} />
                       <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
                     </span>
@@ -789,13 +790,13 @@ function TableRows({
                 {detailAt.map((index) => (
                   <td
                     key={node.columns[index]?.id ?? index}
-                    className="hidden px-3 py-2 align-middle text-meta text-dialog-hint sm:table-cell"
+                    className="hidden px-(--live-view-inset) py-2 align-middle text-meta text-dialog-hint sm:table-cell"
                   >
                     <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
                   </td>
                 ))}
                 {valueAt >= 0 && (
-                  <td className="hidden py-2 pr-3 pl-2 text-right align-middle tabular-nums text-meta text-dialog-hint sm:table-cell">
+                  <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-middle tabular-nums text-meta text-dialog-hint sm:table-cell">
                     <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
                   </td>
                 )}
@@ -1088,11 +1089,9 @@ export function LiveViewPanel({
   return (
     <>
       <section
-        className={
-          embedded
-            ? '-mx-3 mt-3 min-w-0 overflow-hidden border border-dialog-hint px-3 pt-3'
-            : 'overflow-hidden border border-dialog-edge bg-panel'
-        }
+        className={`live-view-panel min-w-0 overflow-hidden border-y ${
+          embedded ? '-mx-3 mt-3 border-dialog-hint pt-3' : 'border-dialog-edge bg-panel'
+        }`}
         data-execution-run={embedded || undefined}
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
@@ -1100,8 +1099,8 @@ export function LiveViewPanel({
         <header
           className={
             embedded
-              ? 'flex min-w-0 items-center gap-2'
-              : `flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
+              ? 'flex min-w-0 items-center gap-2 px-(--live-view-inset)'
+              : `flex items-start gap-2 px-(--live-view-inset) ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
           }
         >
           {embedded ? (
@@ -1141,13 +1140,13 @@ export function LiveViewPanel({
           )}
         </header>
         {embedded && view.description && (
-          <p className="pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
+          <p className="px-(--live-view-inset) pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
             <InlineMarkdown>{view.description}</InlineMarkdown>
           </p>
         )}
         {!isSettled && isArmed && onInterrupt && (
           <form
-            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge py-2 ${embedded ? '' : 'bg-panel-2 px-3'}`}
+            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge px-(--live-view-inset) py-2 ${embedded ? '' : 'bg-panel-2'}`}
             onSubmit={(event) => {
               event.preventDefault();
               sendStop(onInterrupt);
@@ -1181,9 +1180,7 @@ export function LiveViewPanel({
           </form>
         )}
         {error && (
-          <p
-            className={`border-b border-dialog-edge py-2 font-mono text-chip text-err ${embedded ? '' : 'px-3'}`}
-          >
+          <p className="border-b border-dialog-edge px-(--live-view-inset) py-2 font-mono text-chip text-err">
             {error}
           </p>
         )}
@@ -1196,7 +1193,7 @@ export function LiveViewPanel({
             <li
               key={node.id}
               data-live-divider={node.type === 'divider' || undefined}
-              className={`min-w-0 ${embedded ? '' : 'px-3'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+              className={`min-w-0 ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
             >
               <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
             </li>
@@ -1207,7 +1204,7 @@ export function LiveViewPanel({
         opened &&
         createPortal(
           <OverlayScreen title={view.title} onClose={() => setOpened(false)}>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto py-3">
               <LiveViewPanel
                 view={view}
                 onInterrupt={onInterrupt}

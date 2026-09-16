@@ -4499,7 +4499,7 @@ export function SessionScreen({
             actually wants: one short phase message, not the entire log re-scanned. */}
             <div
               ref={scrollRef}
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+              className="@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
               onClickCapture={handleDisclosureClick}
               onScroll={handleScroll}
               onPointerDown={releasePin}
@@ -4510,7 +4510,7 @@ export function SessionScreen({
             >
               <div
                 ref={transcriptRef}
-                className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 mouse:max-w-6xl ${
+                className={`transcript-column mx-auto min-h-full w-full max-w-3xl pt-4 sm:pt-6 mouse:max-w-6xl ${
                   !turns.length && !runningTurn
                     ? 'flex flex-col pb-4 sm:pb-6'
                     : 'flex flex-col justify-end pb-10'

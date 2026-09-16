@@ -348,6 +348,37 @@
   }
 }
 
+/* Live view rules reach the transcript pane edges without widening ordinary prose.
+   Separate insets keep the bleed aligned when landscape safe areas are asymmetric. */
+.transcript-column {
+  --transcript-inset-left: max(0.875rem, env(safe-area-inset-left));
+  --transcript-inset-right: max(0.875rem, env(safe-area-inset-right));
+  padding-left: var(--transcript-inset-left);
+  padding-right: var(--transcript-inset-right);
+}
+
+@media (width >= 40rem) {
+  .transcript-column {
+    --transcript-inset-left: max(1.5rem, env(safe-area-inset-left));
+    --transcript-inset-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+
+.live-view-panel {
+  --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
+}
+
+@container transcript (min-width: 0px) {
+  .live-view-panel {
+    margin-left: calc(
+      (100% - 100cqw - var(--transcript-inset-left) + var(--transcript-inset-right)) / 2
+    );
+    margin-right: calc(
+      (100% - 100cqw + var(--transcript-inset-left) - var(--transcript-inset-right)) / 2
+    );
+  }
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;

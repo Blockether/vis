@@ -135,7 +135,7 @@ export function LiveArtifact({
 
   const body =
     record && shown ? (
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto py-3">
         <LiveViewPanel
           view={shown}
           isSettled

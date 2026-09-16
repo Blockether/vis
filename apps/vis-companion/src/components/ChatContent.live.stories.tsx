@@ -89,7 +89,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// Regression: the outer border enclosed ACTIVITY instead of only the live RUN.
+// ACTIVITY remains outside the full-width horizontal rules around the live RUN.
 async function expectLiveFrame(element: Element) {
   const frame = element.closest<HTMLElement>('[data-execution-run]')!;
   const group = element.closest<HTMLElement>('[data-execution-group]')!;
@@ -102,8 +102,8 @@ async function expectLiveFrame(element: Element) {
   );
   const style = getComputedStyle(frame);
   for (const side of ['top', 'right', 'bottom', 'left']) {
-    await expect(style.getPropertyValue(`border-${side}-width`)).toBe('1px');
-    await expect(style.getPropertyValue(`border-${side}-style`)).toBe('solid');
+    const width = side === 'top' || side === 'bottom' ? '1px' : '0px';
+    await expect(style.getPropertyValue(`border-${side}-width`)).toBe(width);
     await expect(getComputedStyle(group).getPropertyValue(`border-${side}-width`)).toBe('0px');
   }
   await expect(frame).toHaveClass('border-dialog-hint');
@@ -120,7 +120,7 @@ export const Running: Story = {
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;
-    await expect(title.closest('.border')).toBe(liveFrame);
+    await expect(title.closest('.border-y')).toBe(liveFrame);
     const controls = within(activitySurface);
     await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
     await expect(controls.getByText('RUN')).toBeInTheDocument();
