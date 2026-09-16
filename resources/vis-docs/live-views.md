@@ -285,7 +285,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 
 | Builder | Shows | Verbs on `view[id]` |
 | --- | --- | --- |
-| `vis.status(id, text, tone=…, detail=…)` | one line | `.set(text, tone=, detail=, label=)` |
+| `vis.status(id, text, tone=…, detail=…)` | status text with an optional detail line | `.set(text, tone=, detail=, label=)` |
 | `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
@@ -303,9 +303,14 @@ A view declares its nodes once, each with an id, and addresses them by id.
 `vis.output(...)` builds a `log` node; it is named `output` so it never shadows
 `vis.log`, the engine log line.
 
-A status keeps its `detail` until you replace it. Pass an empty one —
-`view["state"].set("Polling", detail="")` — to clear that second line, which
-leaves the status exactly as if you had declared it without a detail.
+To update a status without changing its detail, omit `detail`. To remove the
+detail line, pass `detail=""`:
+
+```python
+view["state"].set("Polling", detail="Waiting for jobs")
+view["state"].set("Running")             # Keeps the detail.
+view["state"].set("Complete", detail="")  # Clears the detail.
+```
 
 Keyed updates insert new ids or update existing ones without changing their
 position. Log lines have no ids and are appended. `window_lines` limits the
@@ -427,8 +432,8 @@ select rows; read the selection with `view.state()`.
 
 When a view has exactly one node of a type, its verb is available on the view
 itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
-`view.row(...)`. Add nodes with `view.add(node, after=id)` and remove them with
-`view.drop(id)`.
+`view.row(...)`. To change the layout while a view runs, see
+[Layout and text](#layout-and-text).
 
 ## Layout and text
 
@@ -443,15 +448,24 @@ column can shrink below that minimum to fit a very narrow panel. In the TUI,
 rows use equal-width columns when each child has at least 24 terminal text cells
 after spacing; otherwise the entire row stacks vertically. Columns always stack.
 
-Live groups retain their own collapse behavior and their children’s Live
-interactions; shared layout does not turn them into Ask fields or produce
-answer values. `view.add(node, after="hosts")` inserts into the group containing
-`hosts`. Removing a group removes its children.
+Declare at least one child in every `vis.row`, `vis.column` and
+`vis.disclosure`. These Python builders raise `ValueError` immediately when
+called without children. If you do not have any nodes yet, wait to add the
+group until its first child is available.
 
-A group needs at least one node. `vis.row(id)` or `vis.column(id)` with nothing
-in it raises immediately, because a row arranging nothing is a typo rather than
-an empty container. For a section that fills while the view runs, declare its
-first node and add the rest with `view.add(node, after=id)`.
+Use `view.add(node)` to append a top-level node. With `after=`, the new node
+becomes the named node’s next sibling in the same container:
+
+```python
+view.add(vis.column("builds", vis.status("linux", "Queued")))
+view.add(vis.status("macos", "Queued"), after="linux")  # Inside builds.
+view.add(vis.status("summary", "Watching"), after="builds")  # After the group.
+```
+
+To grow a group, name one of its children in `after=`, not the group itself.
+Remove a node with `view.drop(id)`; removing a group also removes its children.
+Groups preserve their children’s live interactions and do not produce form
+answer values.
 
 Use `vis.divider("section-break")` between sections, like an HTML `<hr>`. It fills
 its current container’s width in the terminal and Companion, including inside

@@ -104,6 +104,17 @@ Forms and live views need a calling session in Vis. Do not open them from regist
 or passive provider callbacks. Test cancellation and an unavailable UI as well as a
 successful response; see [forms](human-input.md) and [live views](live-views.md).
 
+## Live-view updates
+
+| Symptom | What to do |
+| --- | --- |
+| A status still shows its previous detail | Pass `detail=""` to `.set(...)` to clear it; omitting `detail` preserves it. |
+| A layout builder raises `ValueError` for missing children | Declare at least one child in a row, column or disclosure. Add the group when its first child is available. |
+| A new node appears beside a group instead of inside it | Use a child’s id in `view.add(node, after=...)`; `after` names a sibling, not a destination container. |
+
+See [status updates](live-views.md#nodes) and
+[dynamic layouts](live-views.md#layout-and-text) for examples.
+
 ## See also
 
 - [Installing and sharing extensions](extension-packages.md) — locations and dependency modes.
