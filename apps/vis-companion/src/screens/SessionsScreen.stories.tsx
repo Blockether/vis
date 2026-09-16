@@ -445,11 +445,24 @@ export const MobileProjectAlignment: Story = {
     const doc = canvasElement.ownerDocument;
     const previousFontSize = doc.documentElement.style.fontSize;
     const previousWidth = screen.style.width;
+    const scroller = screen.querySelector<HTMLElement>('.overflow-y-auto')!;
+    // A classic scrollbar reserves space on Linux; macOS normally overlays it.
+    // Exercise the same narrower content box on both platforms.
+    const scrollbarStyle = doc.createElement('style');
+    scrollbarStyle.textContent = `
+      [data-alignment-scrollbar] { scrollbar-width: auto !important; scrollbar-color: auto !important; }
+      [data-alignment-scrollbar]::-webkit-scrollbar { display: block !important; width: 10px; }
+    `;
+    scroller.dataset.alignmentScrollbar = '';
+    doc.head.append(scrollbarStyle);
     try {
       for (const scale of [1, 1.3]) {
         doc.documentElement.style.fontSize = `${16 * scale}px`;
         for (const width of [320, 375, 393]) {
           screen.style.width = `${width}px`;
+          expect(screen.getBoundingClientRect().width).toBe(width);
+          expect(scroller.getBoundingClientRect().width).toBe(width);
+          expect(scroller.clientWidth).toBe(width - 10);
           for (const name of ['infrastructure', 'uberworkspace', 'svar', 'reviewer']) {
             const title = page.getByText(name, { exact: true });
             const header = title.closest('header')!;
@@ -457,7 +470,8 @@ export const MobileProjectAlignment: Story = {
             expect(qualifier.getBoundingClientRect().left).toBe(
               title.getBoundingClientRect().left,
             );
-            expect(header.getBoundingClientRect().width).toBe(width);
+            expect(header.getBoundingClientRect().left).toBe(scroller.getBoundingClientRect().left);
+            expect(header.getBoundingClientRect().width).toBe(scroller.clientWidth);
             expect(qualifier.getBoundingClientRect().right).toBeLessThanOrEqual(
               header.getBoundingClientRect().right,
             );
@@ -476,6 +490,8 @@ export const MobileProjectAlignment: Story = {
     } finally {
       doc.documentElement.style.fontSize = previousFontSize;
       screen.style.width = previousWidth;
+      delete scroller.dataset.alignmentScrollbar;
+      scrollbarStyle.remove();
     }
   },
 };
