@@ -271,6 +271,9 @@
    loop-side phase doesn't crash older trackers."
   [entry chunk]
   (case (:phase chunk)
+    :attachment-transcription
+    (assoc entry :activity :attachment-transcription)
+
     :provider-call
     ;; `:activity/reason` says WHY the request exists (`:user-submit` /
     ;; `:tool-result`) so a self-driven continuation never reads like a fresh

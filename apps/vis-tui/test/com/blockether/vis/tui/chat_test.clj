@@ -624,6 +624,10 @@
                           "progress" "shell-run"
                           "cmd" "clojure -M:test"
                           "iteration" 1}))))
+    (it "a recording transcription event projects to the live transcription phase"
+        (expect
+          (= {:phase :attachment-transcription :iteration 1}
+             (g->c {"type" "turn.progress" "progress" "attachment-transcription" "iteration" 1}))))
     (it "a provider-call progress event projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
                    (g->c {"type" "turn.progress" "progress" "provider-call" "iteration" 1}))))

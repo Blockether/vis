@@ -3175,6 +3175,13 @@
                          (:lines
                            (render/progress->lines-data {:iterations iterations} 130 {} extra)))))]
 
+    (it "shows transcription and its wait limit until the provider call begins"
+        (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+          (on-chunk {:phase :attachment-transcription :iteration 1})
+          (expect (str/includes? (spinner (get-timeline))
+                                 "Vis is transcribing recordings (up to 5 min)"))
+          (on-chunk {:phase :provider-call :iteration 1})
+          (expect (not (str/includes? (spinner (get-timeline)) "transcribing")))))
     (it "names the human's own submit on the first provider call"
         (expect (str/includes? (spinner [{:activity :provider-call :activity/reason :user-submit}])
                                "Vis is calling the provider (user submit, iter 1)")))

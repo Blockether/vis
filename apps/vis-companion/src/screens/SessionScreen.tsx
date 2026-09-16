@@ -351,6 +351,8 @@ function runningTurnPhase(
       return `${agentName} is starting: ${compactLabel(progress.command ?? '', '…')}`;
     case 'slash':
       return `${agentName} is running: ${compactLabel(progress.command ?? '', 'command')}`;
+    case 'attachment-transcription':
+      return `${agentName} is transcribing recordings (up to 5 min)`;
     case 'provider-call':
       // Naming the model is what makes this line change during the longest
       // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".

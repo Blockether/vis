@@ -255,3 +255,28 @@
                           (expect (= "saved after cancellation" (:transcription (settled (memo)))))
                           (expect (= 1 (count @calls)))
                           (finally (deliver hold true) (future-cancel waiting)))))))
+
+(defdescribe
+  bounded-recording-wait-test
+  (it "shares one deadline across every recording in a bounded join"
+      (let [deadlines (atom [])]
+        (with-redefs [at/transcribe-attachment (fn [_ opts]
+                                                 (swap! deadlines conj (:deadline-ns opts))
+                                                 {:transcription "ready"})]
+          (at/transcribe-attachments [(memo "first") (memo "second")] {:timeout-ms 300000}))
+        (expect (= 2 (count @deadlines)))
+        (expect (every? number? @deadlines))
+        (expect (apply = @deadlines))))
+  (it "returns pending at the deadline without losing the worker's eventual words"
+      (let [hold (promise)]
+        (register-fake! "saved after the wait limit" hold)
+        (let [staged (at/request-attachments! [(memo)])
+              waiting (future (at/transcribe-attachments staged {:timeout-ms 25}))]
+
+          (try (let [rows (deref waiting 1000 ::still-waiting)]
+                 (expect (not= ::still-waiting rows))
+                 (expect (= at/PENDING (get-in rows [0 :transcription-status]))))
+               (deliver hold true)
+               (expect (= "saved after the wait limit" (:transcription (settled (memo)))))
+               (expect (= 1 (count @calls)))
+               (finally (deliver hold true) (deref waiting 1000 nil) (future-cancel waiting)))))))

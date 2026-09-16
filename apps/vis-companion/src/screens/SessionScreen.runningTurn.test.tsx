@@ -518,15 +518,31 @@ describe('the wait between a submit and the first token', () => {
         type: 'turn.progress',
         session_id: 's1',
         turn_id: 't-live',
-        progress: 'provider-call',
+        progress: 'attachment-transcription',
         iteration: 1,
-        reason: 'user-submit',
-        model: 'claude-opus-5',
         seq: 2,
       });
     });
 
+    expect(
+      (await screen.findAllByText(/Vis is transcribing recordings \(up to 5 min\)/)).length,
+    ).toBeGreaterThan(0);
+
+    act(() => {
+      emit({
+        type: 'turn.progress',
+        session_id: 's1',
+        turn_id: 't-live',
+        progress: 'provider-call',
+        iteration: 1,
+        reason: 'user-submit',
+        model: 'claude-opus-5',
+        seq: 3,
+      });
+    });
+
     expect((await screen.findAllByText(/Vis is calling claude-opus-5/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Vis is transcribing recordings/)).toBeNull();
   });
 });
 

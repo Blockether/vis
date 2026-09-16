@@ -337,9 +337,10 @@
         (or (:outcome (get @work* k)) (do (start! k attachment) (outcome attachment)))))))
 
 (defn transcribe-attachment
-  "Wait for this recording's outcome. A caller may stop waiting through `:cancelled?`;
-   the shared worker continues so the result can still be stored and displayed."
-  [attachment & [{:keys [cancelled?]}]]
+  "Wait for this recording's outcome. Cancellation stops only the waiter; an optional
+   monotonic `:deadline-ns` returns pending when the wait expires. The shared worker
+   continues so its eventual result can still be stored and displayed."
+  [attachment & [{:keys [cancelled? deadline-ns]}]]
   (let [gated (gate attachment)]
     (if (not= ::ok gated)
       ;; A refusal this side of the engine is exactly the silence turn 35 could not
@@ -350,15 +351,22 @@
             {:keys [outcome result]} (start! k attachment)]
 
         (or outcome
-            (if-not cancelled?
+            (if-not (or cancelled? deadline-ns)
               @result
               (loop []
 
-                (when (cancelled?)
+                (when (and cancelled? (cancelled?))
                   (throw (InterruptedException.
                            "Waiting for recording transcription was cancelled")))
-                (let [answer (deref result 250 ::waiting)]
-                  (if (= ::waiting answer) (recur) answer)))))))))
+                (let [wait-ms
+                      (if deadline-ns
+                        (min 250 (max 0 (quot (- (long deadline-ns) (System/nanoTime)) 1000000)))
+                        250)
+                      answer (deref result wait-ms ::waiting)]
+
+                  (cond (not= ::waiting answer) answer
+                        (zero? wait-ms) {:status PENDING}
+                        :else (recur))))))))))
 
 (defn- walk-recordings
   "`attachments` with `answer-for` applied to every RECORDING that has no words yet,
@@ -394,8 +402,13 @@
   (walk-recordings attachments request!))
 
 (defn transcribe-attachments
-  "Join every recording before its words are consumed, preserving attachment order.
-   Staging remains nonblocking; consumption never substitutes a pending placeholder
-   for a long recording or for recordings beyond a per-pass budget."
+  "Join recordings in attachment order. An optional `:timeout-ms` is one wait budget
+   for the whole collection, not a fresh budget per recording. Expired joins return
+   pending rows without stopping workers; callers consuming the words must handle
+   those rows. Without a limit, wait for every recording."
   [attachments & [opts]]
-  (walk-recordings attachments #(transcribe-attachment % opts)))
+  (let [wait-opts (cond-> opts
+                    (:timeout-ms opts)
+                    (assoc :deadline-ns
+                      (+ (System/nanoTime) (* 1000000 (long (:timeout-ms opts))))))]
+    (walk-recordings attachments #(transcribe-attachment % wait-opts))))

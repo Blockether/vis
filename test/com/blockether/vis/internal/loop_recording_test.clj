@@ -284,3 +284,37 @@
       (let [saved (persistence/db-list-turn-attachments db tid)]
         (expect (nil? (:transcription (first saved))))
         (expect (= "second words" (:transcription (second saved))))))))
+
+(defdescribe
+  recording-wait-limit-test
+  (it "stops the turn after a five-minute join instead of sending pending audio to the model"
+      (let [seen
+            (atom nil)
+
+            chunks
+            (atom [])
+
+            failure
+            (with-redefs [at/transcribe-attachments
+                          (fn [rows opts]
+                            (reset! seen opts)
+                            (mapv #(assoc % :transcription-status at/PENDING) rows))]
+              (try (#'lp/transcribe-turn-attachments
+                    [recording]
+                    {:hooks {:on-chunk #(swap! chunks conj %)}})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e)))]
+
+        (expect (= 300000 (:timeout-ms @seen)))
+        (expect (= [{:phase :attachment-transcription :iteration 1}] @chunks))
+        (expect (= :com.blockether.vis.internal.loop/recording-transcription-timeout
+                   (:type (ex-data failure))))
+        (expect (str/includes? (str (some-> failure
+                                            ex-message))
+                               "5 minutes")))))
+
+(defdescribe
+  recording-progress-event-test
+  (it "publishes the transcription phase to the live ticker without storing a model delta"
+      (expect (= ["turn.progress" false {:progress "attachment-transcription" :iteration 1}]
+                 (#'state/progress-chunk->event {:phase :attachment-transcription :iteration 1})))))

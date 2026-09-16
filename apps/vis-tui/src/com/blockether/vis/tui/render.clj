@@ -7959,6 +7959,8 @@
           (= :shell-run activity) (str agent-name " is running: " shell-label)
           (= :shell-bg activity) (str agent-name " is starting: " shell-label)
           (= :slash activity) (str agent-name " is running: " slash-label)
+          (= :attachment-transcription activity) (str agent-name
+                                                      " is transcribing recordings (up to 5 min)")
           (= :provider-call activity)
           (case activity-reason
             :tool-result

@@ -1675,7 +1675,7 @@
 (def ^:private turn-progress-phases
   "Coarse 'Vis is doing X' phases surfaced to the live ticker but never pinned
    into the durable trace."
-  #{:provider-call :response-parse :shell-run :shell-bg :tool-start})
+  #{:attachment-transcription :provider-call :response-parse :shell-run :shell-bg :tool-start})
 
 (defn- progress-chunk->event
   "Ephemeral `turn.progress` wire event `[type store? payload]`, or nil."

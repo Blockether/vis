@@ -1233,6 +1233,9 @@
             (event-get event :label)]
 
         (case (str progress)
+          "attachment-transcription"
+          {:phase :attachment-transcription :iteration iteration}
+
           "provider-call"
           (cond-> {:phase :provider-call :iteration iteration}
             (event-get event :reason)

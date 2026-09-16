@@ -8261,18 +8261,29 @@
            (update (f journal) :trace #(mapv (partial read-trace journal) %)))
          (finally (java.nio.file.Files/deleteIfExists path)))))
 
+(def ^:private RECORDING_WAIT_MS "Maximum foreground wait for all recordings in one turn." 300000)
+
 (defn- transcribe-turn-attachments
-  "Join recording work without charging local speech time to the provider watchdog."
+  "Bound recording joins without charging local speech time to the provider watchdog."
   [rows {:keys [hooks cancel-atom cancel-token]}]
   (when (some #(and (attachments/audio-media-type? (:media-type %)) (str/blank? (:transcription %)))
               rows)
     (when-let [on-chunk (:on-chunk hooks)]
       (on-chunk {:phase :attachment-transcription :iteration 1})))
-  (audio-transcribe/transcribe-attachments rows
-                                           {:cancelled? #(or (some-> cancel-atom
-                                                                     deref)
-                                                             (cancellation/cancelled?
-                                                               cancel-token))}))
+  (let [transcribed (audio-transcribe/transcribe-attachments
+                      rows
+                      {:timeout-ms RECORDING_WAIT_MS
+                       :cancelled? #(or (some-> cancel-atom
+                                                deref)
+                                        (cancellation/cancelled? cancel-token))})]
+    (when (some #(and (attachments/audio-media-type? (:media-type %))
+                      (= audio-transcribe/PENDING (:transcription-status %)))
+                transcribed)
+      (throw (ex-info (str "Recording transcription timed out after 5 minutes. "
+                           "It is still running in the background; the transcript will be saved "
+                           "when ready. Try again once it appears.")
+                      {:type ::recording-transcription-timeout :timeout-ms RECORDING_WAIT_MS})))
+    transcribed))
 
 (defn- iteration-loop*
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
