@@ -66,6 +66,11 @@ workspace:
     - id: blockether-com
       path: ~/blockether.com
       description: Sibling repo — source for the Blockether website.
+    - id: actions-runner
+      path: ~/actions-runner
+      description: GitHub Actions runner — read-only diagnostics and installed version.
+      access: read-only
+      search: false
     # (`~/.vis` — Vis' own session folder — is granted implicitly by the engine.)
     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
     # resolves already-cached artifacts, but kept OUT of the default search sweep.
@@ -108,7 +113,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, tree-sitter, tree-sitter-clojure, spel, svar, skjema, clj-imaging, vis-python-runtime, infrastructure, blockether-com, m2, clojure, clj-tslp, npm]
+#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, tree-sitter, tree-sitter-clojure, spel, svar, skjema, clj-imaging, vis-python-runtime, infrastructure, blockether-com, actions-runner, m2, clojure, clj-tslp, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
