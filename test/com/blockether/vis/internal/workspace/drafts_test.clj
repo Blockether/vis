@@ -339,6 +339,47 @@
                                               :from (seed-trunk! store base)})]
                    (f base env draft))))))
 
+(defdescribe live-working-changes-test
+             ;; #247: a footer uses current Git facts while review keeps the creation snapshot.
+             (it "clears file counts on commit and ahead on approval without clearing review"
+                 (with-clean-draft
+                   (fn [_base env draft]
+                     (let [root (:root draft)]
+                       (spit (io/file root "a.txt") "task edit\n")
+                       (spit (io/file root "created.txt") "task file\n")
+                       (io/delete-file (io/file root "new.txt"))
+                       (let [edited (drafts/status draft)
+                             changes {:modified 1 :created 1 :deleted 1}
+                             clean {:modified 0 :created 0 :deleted 0}]
+
+                         (expect (= changes (:working-changes edited)))
+                         (expect (= changes (get-in edited [:repositories 0 :working-changes])))
+                         (expect (= changes (:draft-changes edited)))
+                         (expect (= 3 (:pending edited)))
+                         (expect (= 0 (:ahead edited)))
+                         (git! root "add" "-A")
+                         (git! root "commit" "-q" "-m" "feat: change files")
+                         (let [committed (drafts/status draft)]
+                           (expect (= clean (:working-changes committed)))
+                           (expect (= 0 (:pending committed)))
+                           (expect (= 1 (:ahead committed)))
+                           (expect (= changes (:draft-changes committed))))
+                         (expect (= :approved
+                                    (:status (drafts/approve! env {:workspace-id (:id draft)}))))
+                         (let [approved (drafts/status draft)]
+                           (expect (= clean (:working-changes approved)))
+                           (expect (= 0 (:ahead approved)))
+                           (expect (= changes (:draft-changes approved)))))))))
+             (it "does not turn a failed Git status read into clean live counts"
+                 (with-clean-draft (fn [_base _env draft]
+                                     (doseq [reader [(constantly {:workspace? false})
+                                                     (fn [_]
+                                                       (throw (ex-info "Git unavailable" {})))]]
+                                       (with-redefs [workspace-git/working-tree-status reader]
+                                         (let [status (drafts/status draft)]
+                                           (expect (nil? (:working-changes status)))
+                                           (expect (map? (:draft-changes status))))))))))
+
 (defn- approval-error
   [env draft]
   (try (drafts/approve! env {:workspace-id (:id draft)})
@@ -1111,6 +1152,9 @@
 
               (expect (= 2 (count (:repositories status))))
               (expect (= {:created 1 :modified 1 :deleted 0} (:draft-changes status)))
+              (expect (= {:created 1 :modified 1 :deleted 0} (:working-changes status)))
+              (expect (= [{:created 1 :modified 0 :deleted 0} {:created 0 :modified 1 :deleted 0}]
+                         (mapv :working-changes (:repositories status))))
               (expect (str/includes? (:patch (drafts/diff env
                                                           {:workspace-id (:id draft) :root second}))
                                      "+second task"))

@@ -1244,7 +1244,7 @@
   [ws]
   (try (let [status (select-keys (drafts/status ws)
                                  [:backend :branch :ahead :pending :repositories :draft-changes
-                                  :draft-error])]
+                                  :working-changes :draft-error])]
          (cond-> status
            (nil? (:draft-changes status))
            (assoc :draft-error (or (:draft-error status) "Draft changes are unavailable."))))
@@ -1295,8 +1295,8 @@
 
 (defn session-workspace-info
   "Canonical wire workspace metadata for channel footers and directory pickers.
-   Draft identity is immediate; draft_changes and repositories refresh in the
-   background. Missing/failed summaries carry draft_error, never clean zeroes.
+   Draft identity is immediate; working_changes, draft_changes and repositories
+   refresh in the background. Missing/failed summaries never become clean zeroes.
    A trunk row rooted inside a draft is marked recovery_required, not owned.
    Resolves the latest session workspace; nil only when it cannot be resolved."
   [sid]

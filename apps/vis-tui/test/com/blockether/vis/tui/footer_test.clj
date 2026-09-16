@@ -532,8 +532,8 @@
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
                               (mapv :text)))))))))
-  (it "shows draft identity and the gateway's aggregate review counts"
-      ;; #241 and #247: render the gateway's draft identity and aggregate review counts.
+  (it "shows draft identity and the gateway's aggregate live counts"
+      ;; #241 and #247: use aggregate live changes, not primary-only Git or review counts.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
@@ -545,15 +545,17 @@
                                                 :workspace
                                                 (merge {"root" "/internal/isolated-copy"
                                                         "is_draft" true
-                                                        "draft_changes"
+                                                        "working_changes"
                                                         {"modified" 2 "created" 3 "deleted" 1}
+                                                        "ahead" 4
+                                                        "draft_changes" {"modified" 88}
                                                         "git" {"is_workspace" true "modified" 99}}
                                                        identity)}
                                                0)
                                (filter #(= :right (:region %)))
                                (remove fixture-seg?)
                                (mapv :text))]
-                (expect (= [(str " DRAFT (" expected ")") "CHANGES ~2 +3 -1"] texts))))))))
+                (expect (= [(str " DRAFT (" expected) "~2 +3 -1 ⇡4)"] texts))))))))
   (it "renders the gateway :git fact even when the top-level root was lost"
       ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
       ;; git fact still rides on the session's `:workspace` record — the footer
@@ -921,19 +923,28 @@
 
 (defdescribe
   draft-summary-test
-  ;; #247: the workspace abstraction and change state must be readable without Git glyphs.
-  (it "distinguishes changes, clean, unavailable, and recovery states"
-      (doseq [[fields expected]
-              [[{"draft_changes" {"modified" 2 "created" 3 "deleted" 1}} "CHANGES ~2 +3 -1"]
-               [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}} "CLEAN"]
-               [{} "CHANGES UNAVAILABLE"] [{"draft_changes" {"modified" 0}} "CHANGES UNAVAILABLE"]
-               [{"draft_changes" {"modified" 0 "created" 0 "deleted" 0}
-                 "draft_error" "Cannot read review snapshot"} "CHANGES UNAVAILABLE"]
-               [{"recovery_required" true "draft_changes" {"modified" 0 "created" 0 "deleted" 0}}
-                "RECOVERY REQUIRED"]]]
-        (expect (= [" DRAFT (multi)" expected]
+  ;; #247: use live Git-style counts, not the immutable task-review snapshot.
+  (it "shows only nonzero live counts and preserves unavailable and recovery states"
+      (doseq [[fields expected] [[{"working_changes" {"modified" 2 "created" 3 "deleted" 1}
+                                   "ahead" 4} [" DRAFT (multi" "~2 +3 -1 ⇡4)"]]
+                                 [{"working_changes" {"modified" 0 "created" 0 "deleted" 0}
+                                   "ahead" 0} [" DRAFT (multi)"]]
+                                 [{"working_changes" {"modified" 0 "created" 2 "deleted" 0}
+                                   "ahead" 0} [" DRAFT (multi" "+2)"]]
+                                 [{} [" DRAFT (multi" "CHANGES UNAVAILABLE)"]]
+                                 [{"working_changes" {"modified" 0} "ahead" 0}
+                                  [" DRAFT (multi" "CHANGES UNAVAILABLE)"]]
+                                 [{"working_changes" {"modified" 0 "created" 0 "deleted" 0}}
+                                  [" DRAFT (multi" "CHANGES UNAVAILABLE)"]]
+                                 [{"working_changes" {"modified" 0 "created" 0 "deleted" 0}
+                                   "ahead" 0
+                                   "draft_error" "Cannot read review snapshot"} [" DRAFT (multi)"]]
+                                 [{"recovery_required" true
+                                   "working_changes" {"modified" 0 "created" 0 "deleted" 0}
+                                   "ahead" 0} [" DRAFT (multi" "RECOVERY REQUIRED)"]]]]
+        (expect (= expected
                    (mapv :text (#'footer/draft-footer-spans (assoc fields "label" "multi")))))))
-  (it "keeps the draft name and review counts visible at ordinary terminal widths"
+  (it "keeps the draft name and live counts visible at ordinary terminal widths"
       (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
                                                                 :provider :openai-codex
                                                                 :reasoning-effort? true
@@ -944,7 +955,8 @@
                       :settings {:reasoning-level "deep" :verbosity "low"}
                       :workspace {"is_draft" true
                                   "label" "finish-dev-env-live-view"
-                                  "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
+                                  "working_changes" {"modified" 2 "created" 3 "deleted" 1}
+                                  "ahead" 4}}
                   capture (cap/capture! {:cols cols
                                          :rows 4
                                          :paint! (fn [{:keys [g]}]
@@ -952,24 +964,25 @@
 
               (expect (nil? (:error capture)))
               (expect (str/includes? (cap/frame-text capture)
-                                     "DRAFT (finish-dev-env-live-view) CHANGES ~2 +3 -1")))))))
+                                     "DRAFT (finish-dev-env-live-view ~2 +3 -1 ⇡4)")))))))
   (it "keeps the change state visible when a long draft name is shortened"
       (let [segments
             (#'footer/draft-footer-spans
              {"label" "finish-dev-env-live-view-with-a-long-name"
-              "draft_changes" {"modified" 2 "created" 3 "deleted" 1}})
+              "working_changes" {"modified" 2 "created" 3 "deleted" 1}
+              "ahead" 4})
 
             [fitted _]
             (#'footer/shrink-to-fit segments 40)]
 
         (expect (str/starts-with? (:text (first fitted)) " DRAFT ("))
-        (expect (= "CHANGES ~2 +3 -1" (:text (last fitted))))))
+        (expect (= "~2 +3 -1 ⇡4)" (:text (last fitted))))))
   (it "uses canonical draft identity rather than treating the fork timestamp as a UI flag"
       (with-redefs-fn {#'footer/session-model-info (constantly {:reasoning-effort? false})}
         (fn []
           (doseq [[workspace expected]
                   [[{"is_draft" true "label" "feature" "recovery_required" true}
-                    [" DRAFT (feature)" "RECOVERY REQUIRED"]]
+                    [" DRAFT (feature" "RECOVERY REQUIRED)"]]
                    [{"is_draft" false
                      "fork_ms" 1
                      "git" {"is_workspace" true "repo" "vis" "branch" "main" "is_upstream" true}}
@@ -981,54 +994,63 @@
 
 (defdescribe
   draft-landing-status-test
-  ;; #247: approval changes landing facts, not the immutable task-review baseline.
-  (it "changes after approval even though the immutable task review counts do not"
-      (let [draft {"label" "feature" "draft_changes" {"modified" 1 "created" 0 "deleted" 0}}]
+  ;; #247: approval clears live counts without erasing the task-review baseline.
+  (it "shows edits, then unmerged commits, then only the draft name after approval"
+      (let [draft {"label" "feature"
+                   "draft_changes" {"modified" 1 "created" 3 "deleted" 1}
+                   "git" {"modified" 99 "created" 0 "deleted" 0 "ahead" 99}}]
         (doseq [[facts expected]
-                [[{"pending" 1 "ahead" 0} "CHANGES ~1 +0 -0 · PENDING 1 · UNMERGED 0"]
-                 [{"pending" 0 "ahead" 1} "CHANGES ~1 +0 -0 · PENDING 0 · UNMERGED 1"]
-                 [{"pending" 0 "ahead" 0} "CHANGES ~1 +0 -0 · PENDING 0 · UNMERGED 0"]]]
-          (expect (= expected (:text (last (#'footer/draft-footer-spans (merge draft facts)))))))))
-  (it "does not call copied source work clean merely because task review is empty"
-      (expect (= "CHANGES ~0 +0 -0 · PENDING 2 · UNMERGED 0"
-                 (:text (last (#'footer/draft-footer-spans
-                               {"label" "copied"
-                                "pending" 2
-                                "ahead" 0
-                                "draft_changes" {"modified" 0 "created" 0 "deleted" 0}})))))))
+                [[{"working_changes" {"modified" 1 "created" 0 "deleted" 0} "pending" 1 "ahead" 0}
+                  [" DRAFT (feature" "~1)"]]
+                 [{"working_changes" {"modified" 0 "created" 0 "deleted" 0} "pending" 0 "ahead" 1}
+                  [" DRAFT (feature" "⇡1)"]]
+                 [{"working_changes" {"modified" 0 "created" 0 "deleted" 0} "pending" 0 "ahead" 0}
+                  [" DRAFT (feature)"]]]]
+          (expect (= expected (mapv :text (#'footer/draft-footer-spans (merge draft facts))))))))
+  (it "shows copied source edits even when the task review is empty"
+      (expect (= [" DRAFT (copied" "~1 +1)"]
+                 (mapv :text
+                       (#'footer/draft-footer-spans
+                        {"label" "copied"
+                         "working_changes" {"modified" 1 "created" 1 "deleted" 0}
+                         "pending" 2
+                         "ahead" 0
+                         "draft_changes" {"modified" 0 "created" 0 "deleted" 0}}))))))
 
 (defdescribe
   draft-landing-width-test
-  (it "keeps live pending and unmerged counts readable at ordinary terminal widths"
-      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
-                                                                :provider :openai-codex
-                                                                :reasoning-effort? true
-                                                                :verbosity-style :openai-text})}
-        (fn []
-          (doseq [cols
-                  [80 120]
+  (it
+    "shows Git-style live counts without old labels or zeros at ordinary widths"
+    (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
+                                                              :provider :openai-codex
+                                                              :reasoning-effort? true
+                                                              :verbosity-style :openai-text})}
+      (fn []
+        (doseq [cols
+                [80 120]
 
-                  [pending ahead]
-                  [[2 1] [0 0]]]
+                [modified ahead expected]
+                [[2 1 "DRAFT (finish-dev-env-live-view ~2 ⇡1)"]
+                 [0 0 "DRAFT (finish-dev-env-live-view)"]]]
 
-            (let [db
-                  {:messages []
-                   :settings {:reasoning-level "deep" :verbosity "low"}
-                   :workspace {"is_draft" true
-                               "label" "finish-dev-env-live-view"
-                               "pending" pending
-                               "ahead" ahead
-                               "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
+          (let [db
+                {:messages []
+                 :settings {:reasoning-level "deep" :verbosity "low"}
+                 :workspace {"is_draft" true
+                             "label" "finish-dev-env-live-view"
+                             "working_changes" {"modified" modified "created" 0 "deleted" 0}
+                             "ahead" ahead
+                             "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
 
-                  capture
-                  (cap/capture! {:cols cols
-                                 :rows 4
-                                 :paint! (fn [{:keys [g]}]
-                                           (footer/draw-footer! g db 1 cols 0))})
+                capture
+                (cap/capture! {:cols cols
+                               :rows 4
+                               :paint! (fn [{:keys [g]}]
+                                         (footer/draw-footer! g db 1 cols 0))})
 
-                  text
-                  (cap/frame-text capture)]
+                text
+                (cap/frame-text capture)]
 
-              (expect (nil? (:error capture)))
-              (expect (str/includes? text "DRAFT ("))
-              (expect (str/includes? text (str "PENDING " pending " · UNMERGED " ahead)))))))))
+            (expect (nil? (:error capture)))
+            (expect (str/includes? text expected))
+            (expect (not (re-find #"PENDING|UNMERGED|CHANGES|CLEAN|[~+⇡]0|-0" text)))))))))

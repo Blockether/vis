@@ -212,7 +212,7 @@
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
 (defn- draft-footer-spans
-  [{:strs [id label draft_changes draft_error recovery_required pending ahead]}]
+  [{:strs [id label working_changes recovery_required ahead]}]
   (let [identity
         (or (not-empty label)
             (some-> id
@@ -220,41 +220,30 @@
                     (subs 0 (min 8 (count (str id)))))
             "?")
 
-        counts
-        (map #(get draft_changes %) ["modified" "created" "deleted"])
+        ;; Use the same live file-count notation as Git. Draft ahead compares
+        ;; against the landing target, not the branch's upstream or review snapshot.
+        status
+        (cond recovery_required "RECOVERY REQUIRED"
+              (not-every? number?
+                          (cons ahead
+                                (map #(get working_changes %) ["modified" "created" "deleted"])))
+              "CHANGES UNAVAILABLE"
+              :else (git-status-bits (assoc working_changes "ahead" ahead)))]
 
-        ;; Review counts compare with the immutable creation snapshot, so they
-        ;; remain after approval. Pending paths and unmerged commits are live
-        ;; landing facts; show them separately rather than pretending approval
-        ;; erased the task's diff or closed the draft.
-        landing
-        (when-not recovery_required
-          (str (when (number? pending) (str " · PENDING " pending))
-               (when (number? ahead) (str " · UNMERGED " ahead))))
-
-        summary
-        (str (cond recovery_required "RECOVERY REQUIRED"
-                   (or draft_error (not-every? number? counts)) "CHANGES UNAVAILABLE"
-                   (and (every? zero? counts)
-                        (not-any? #(and (number? %) (pos? %)) [pending ahead]))
-                   "CLEAN"
-                   :else (let [[modified created deleted] counts]
-                           (str "CHANGES ~" modified " +" created " -" deleted)))
-             landing)]
-
-    [{:text (str " DRAFT (" identity ")")
-      :fg t/footer-fg-strong
-      :bold? true
-      :region :right
-      :priority 2
-      :tint :git}
-     {:text summary
-      :fg t/footer-fg-strong
-      :bold? true
-      :region :right
-      :priority 2
-      :join-left? true
-      :tint :git}]))
+    (cond-> [{:text (str " DRAFT (" identity (when-not status ")"))
+              :fg t/footer-fg-strong
+              :bold? true
+              :region :right
+              :priority 2
+              :tint :git}]
+      status
+      (conj {:text (str status ")")
+             :fg t/footer-fg-strong
+             :bold? true
+             :region :right
+             :priority 2
+             :join-left? true
+             :tint :git}))))
 
 (def ^:private session-cost-keys
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"

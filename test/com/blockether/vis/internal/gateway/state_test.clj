@@ -254,54 +254,68 @@
           now
           (atom (util/now-ms))]
 
-      (try (doseq [root [primary secondary]]
-             (run-git root ["init" "-q" "-b" "main"])
-             (run-git root ["config" "user.name" "Vis Test"])
-             (run-git root ["config" "user.email" "vis-test@example.invalid"])
-             (run-git root ["config" "commit.gpgsign" "false"])
-             (spit (io/file root "a.txt") "initial\n")
-             (run-git root ["add" "a.txt"])
-             (run-git root ["commit" "-q" "-m" "init"]))
-           (binding [workspace/*draft-backend* :worktree]
-             (reset! draft (workspace/create! store
-                                              {:root (.getPath primary)
-                                               :label "gateway-group"
-                                               :clean? true
-                                               :drafts-home (.getPath (io/file base "drafts"))
-                                               :filesystem-roots [{:trunk (.getPath secondary)
-                                                                   :policy :copy-and-apply}]})))
-           (let [roots
-                 (workspace/draft-roots @draft)
+      (try
+        (doseq [root [primary secondary]]
+          (run-git root ["init" "-q" "-b" "main"])
+          (run-git root ["config" "user.name" "Vis Test"])
+          (run-git root ["config" "user.email" "vis-test@example.invalid"])
+          (run-git root ["config" "commit.gpgsign" "false"])
+          (spit (io/file root "a.txt") "initial\n")
+          (run-git root ["add" "a.txt"])
+          (run-git root ["commit" "-q" "-m" "init"]))
+        (binding [workspace/*draft-backend* :worktree]
+          (reset! draft (workspace/create! store
+                                           {:root (.getPath primary)
+                                            :label "gateway-group"
+                                            :clean? true
+                                            :drafts-home (.getPath (io/file base "drafts"))
+                                            :filesystem-roots [{:trunk (.getPath secondary)
+                                                                :policy :copy-and-apply}]})))
+        (let [roots
+              (workspace/draft-roots @draft)
 
-                 second-root
-                 (:root (second roots))]
+              second-root
+              (io/file (:root (second roots)))]
 
-             (spit (io/file (:root @draft) "new.txt") "task\n")
-             (with-draft-workspace @draft
-                                   (fn []
-                                     (with-redefs [util/now-ms (fn ^long []
-                                                                 (long @now))]
-                                       (state/session-workspace-info "session")
-                                       (expect (await-for 10000 @#'state/draft-status-reader))
-                                       (let [before (state/session-workspace-info "session")]
-                                         (expect (= {"modified" 0 "created" 1 "deleted" 0}
-                                                    (get before "draft_changes")))
-                                         (expect (= 2 (count (get before "repositories"))))
-                                         (spit (io/file second-root "a.txt") "changed in second\n")
-                                         (swap! now + 2000)
-                                         (state/session-workspace-info "session")
-                                         (expect (await-for 10000 @#'state/draft-status-reader))
-                                         (let [after (state/session-workspace-info "session")]
-                                           (expect (= (get before "id") (get after "id")))
-                                           (expect (= {"modified" 1 "created" 1 "deleted" 0}
-                                                      (get after "draft_changes")))))))))
-           (finally (when @draft
-                      (when-let [discard (:discard-future
-                                           (workspace/abandon! store {:workspace-id (:id @draft)}))]
-                        (deref discard 10000 nil)))
-                    (sqlite/db-close! store)
-                    (doseq [file (reverse (file-seq base))]
-                      (io/delete-file file true)))))))
+          (spit (io/file (:root @draft) "new.txt") "task\n")
+          (with-draft-workspace
+            @draft
+            (fn []
+              (with-redefs [util/now-ms (fn ^long []
+                                          (long @now))]
+                (state/session-workspace-info "session")
+                (expect (await-for 10000 @#'state/draft-status-reader))
+                (let [before (state/session-workspace-info "session")]
+                  (expect (= {"modified" 0 "created" 1 "deleted" 0} (get before "draft_changes")))
+                  (expect (= {"modified" 0 "created" 1 "deleted" 0} (get before "working_changes")))
+                  (expect (= 2 (count (get before "repositories"))))
+                  (spit (io/file second-root "a.txt") "changed in second\n")
+                  (swap! now + 2000)
+                  (state/session-workspace-info "session")
+                  (expect (await-for 10000 @#'state/draft-status-reader))
+                  (let [after (state/session-workspace-info "session")]
+                    (expect (= (get before "id") (get after "id")))
+                    (expect (= {"modified" 1 "created" 1 "deleted" 0} (get after "draft_changes")))
+                    (expect (= {"modified" 1 "created" 1 "deleted" 0}
+                               (get after "working_changes")))
+                    ;; #247: committing resets live file counts, not review.
+                    (run-git second-root ["add" "a.txt"])
+                    (run-git second-root ["commit" "-q" "-m" "feat: second"])
+                    (swap! now + 2000)
+                    (state/session-workspace-info "session")
+                    (expect (await-for 10000 @#'state/draft-status-reader))
+                    (let [committed (state/session-workspace-info "session")]
+                      (expect (= (get after "draft_changes") (get committed "draft_changes")))
+                      (expect (= {"modified" 0 "created" 1 "deleted" 0}
+                                 (get committed "working_changes")))
+                      (expect (= 1 (get committed "ahead"))))))))))
+        (finally (when @draft
+                   (when-let [discard (:discard-future
+                                        (workspace/abandon! store {:workspace-id (:id @draft)}))]
+                     (deref discard 10000 nil)))
+                 (sqlite/db-close! store)
+                 (doseq [file (reverse (file-seq base))]
+                   (io/delete-file file true)))))))
 
 (defdescribe
   session-usage-cache-metrics-test

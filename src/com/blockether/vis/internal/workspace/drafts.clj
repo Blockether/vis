@@ -932,54 +932,62 @@
         target
         (when git? (try (target-branch trunk) (catch clojure.lang.ExceptionInfo _ nil)))
 
+        working-changes
+        (when git?
+          (try (let [status (git/working-tree-status root)]
+                 (when (:workspace? status) (select-keys status [:modified :created :deleted])))
+               (catch Exception _ nil)))
+
         summary
         (try {:draft-changes (workspace/review-summary ws)}
              (catch Exception e {:draft-error (ex-message e)}))]
 
-    (merge {:workspace-id (:id ws)
-            :label (:label ws)
-            :root (:root ws)
-            :repo-root (:repo-root ws)
-            :state (:state ws)
-            :policy (:policy ws)
-            :primary? (:primary? ws)
-            :approval? (not= :copy-only (:policy ws))
-            :backend (some-> (:workspace-backend ws)
-                             workspace/backend-id
-                             name)
-            :mechanism (some-> (:workspace-mechanism ws)
-                               workspace/mechanism-id
-                               name)
-            :branch branch
-            :target-branch target
-            :ahead (when (and branch target)
-                     (let [{:keys [exit out]}
-                           (git/run-git trunk ["rev-parse" (str "refs/heads/" target)] git-timeout)]
-                       (when (= 0 exit)
-                         (let [{:keys [exit out]} (git/run-git root
-                                                               ["rev-list" "--count"
-                                                                (str (str/trim (str out)) "..HEAD")]
-                                                               git-timeout)]
-                           (when (= 0 exit) (parse-long (str/trim (str out))))))))
-            :pending
-            (when git?
-              (let [{:keys [exit out]}
-                    (git/run-git root ["status" "--porcelain" "--untracked-files=all"] git-timeout)]
-                (when (= 0 exit) (count (remove str/blank? (str/split-lines (str out)))))))}
-           summary)))
+    (merge
+      {:workspace-id (:id ws)
+       :label (:label ws)
+       :root (:root ws)
+       :repo-root (:repo-root ws)
+       :state (:state ws)
+       :policy (:policy ws)
+       :primary? (:primary? ws)
+       :approval? (not= :copy-only (:policy ws))
+       :backend (some-> (:workspace-backend ws)
+                        workspace/backend-id
+                        name)
+       :mechanism (some-> (:workspace-mechanism ws)
+                          workspace/mechanism-id
+                          name)
+       :working-changes working-changes
+       :branch branch
+       :target-branch target
+       :ahead (when (and branch target)
+                (let [{:keys [exit out]}
+                      (git/run-git trunk ["rev-parse" (str "refs/heads/" target)] git-timeout)]
+                  (when (= 0 exit)
+                    (let [{:keys [exit out]} (git/run-git root
+                                                          ["rev-list" "--count"
+                                                           (str (str/trim (str out)) "..HEAD")]
+                                                          git-timeout)]
+                      (when (= 0 exit) (parse-long (str/trim (str out))))))))
+       :pending
+       (when git?
+         (let [{:keys [exit out]}
+               (git/run-git root ["status" "--porcelain" "--untracked-files=all"] git-timeout)]
+           (when (= 0 exit) (count (remove str/blank? (str/split-lines (str out)))))))}
+      summary)))
 
 (defn status
-  "Per-repository landing facts and aggregate task-diff counts; unavailable values remain nil."
+  "Per-repository landing facts, live working-tree counts and task-review counts.
+   counts. File counts span every draft repository; landing facts include only
+   approvable roots. Unavailable values remain nil."
   [ws]
   (let [repositories
         (mapv repository-status (workspace/draft-roots ws))
 
         summary
-        (when (every? :draft-changes repositories)
-          (apply merge-with
-            +
-            {:modified 0 :created 0 :deleted 0}
-            (map :draft-changes repositories)))
+        (fn [key]
+          (when (every? key repositories)
+            (apply merge-with + {:modified 0 :created 0 :deleted 0} (map key repositories))))
 
         approving
         (filterv :approval? repositories)
@@ -992,6 +1000,7 @@
               :repositories repositories
               :pending (total :pending)
               :ahead (total :ahead)
-              :draft-changes summary)
+              :working-changes (summary :working-changes)
+              :draft-changes (summary :draft-changes))
       (some :draft-error repositories)
       (assoc :draft-error "Draft change summary unavailable for one or more repositories."))))
