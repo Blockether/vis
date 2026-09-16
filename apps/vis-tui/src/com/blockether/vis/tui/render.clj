@@ -2287,6 +2287,8 @@
                                 :kind :artifact
                                 :session-id (:session-id meta)
                                 :artifact artifact}))
+                  ;; Recorded receipts keep the running Live View title's emphasis.
+                  (when (:live-button? meta) (p/enable! g p/BOLD))
                   (cond
                     ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)

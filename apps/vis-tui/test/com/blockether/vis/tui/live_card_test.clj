@@ -145,6 +145,35 @@
     (is (not (str/includes? text "Completed")))
     (is (not (str/includes? text (keymap/label-for :toggle-detail-labels))))))
 
+(deftest recorded-live-card-title-is-bold-test
+  ;; Settling or reloading a Live View must not drop its title's emphasis.
+  (binding [interactions/hit-map (interactions/create-hit-map)]
+    (doseq [cols [40 80]
+            owned? [false true]
+            live? [false true]
+            options [{:reason :completed} {:reason :failed} {:reason :interrupted}
+                     {:reason :timeout} {:reason :cancelled} {:recorded-only? true}]]
+
+      (let [capture (cap/capture! {:cols cols
+                                   :rows 24
+                                   :paint! (fn [{:keys [screen]}]
+                                             (paint-live-card-review! screen
+                                                                      (assoc options
+                                                                        :owned? owned?
+                                                                        :live? live?)))})
+            row (first (filter #(str/includes? (apply str (map :ch %)) "LIVE ")
+                               (last (:frames capture))))
+            text (apply str (map :ch row))
+            title-col (str/index-of text "LIVE ")
+            button-col (str/index-of text " Recorded ")]
+
+        (is (nil? (:error capture)))
+        (is (some? title-col))
+        (is (some? button-col))
+        (when (and title-col button-col)
+          (is (every? :bold (remove #(str/blank? (:ch %)) (subvec row title-col button-col))))
+          (is (not-any? :bold (subvec row button-col (+ button-col 10)))))))))
+
 (deftest live-card-nested-hint-test
   ;; #228: owned recordings keep their target and status without the open instruction.
   (let [artifact
