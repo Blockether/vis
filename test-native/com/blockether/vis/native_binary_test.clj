@@ -522,6 +522,71 @@
                  (finally (.stop ^HttpServer server 0)))))
         (finally (delete-tree! dir))))))
 
+;; Issue #256: the built image must carry both the serializer and the runtime decoder.
+(defdescribe
+  native-sequence-result-test
+  (it
+    "restores opted-in collections through an installed extension and python_execution"
+    (let [dir
+          (temp-dir "vis-native-sequence-")
+
+          calls
+          (atom 0)
+
+          original-stream
+          stream-body
+
+          original-whole
+          whole-body
+
+          code
+          (slurp (io/file "test/resources/sequence_check.py"))
+
+          respond
+          (fn [stream? reply]
+            (if (= 1 (swap! calls inc))
+              (python-call-body stream? "native-sequence" code)
+              ((if stream? original-stream original-whole) reply)))]
+
+      (try
+        (with-redefs [stream-body
+                      #(respond true %)
+
+                      whole-body
+                      #(respond false %)]
+
+          (let [{:keys [server port]} (start-stub-provider! "Sequence check complete.")]
+            (try (overlay! dir port)
+                 (spit (io/file dir ".vis/config.yml") "\njail:\n  enabled: true\n" :append true)
+                 (let [entry (io/file dir ".vis/extensions/sequence_fixture.py")]
+                   (io/make-parents entry)
+                   (spit entry (slurp (io/file "test/resources/sequence_extension.py"))))
+                 (let [database (io/file dir "sessions")
+                       {:keys [finished? exit output]}
+                       (run-binary dir
+                                   [(.getAbsolutePath (require-binary))
+                                    (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                    (.getAbsolutePath database) "--raw" "Check typed sequences"]
+                                   180)]
+
+                   (expect finished? output)
+                   (expect (= 0 exit) output)
+                   (expect (= 2 @calls) output)
+                   (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                     (try (let [sid (:id (first (ps/db-list-sessions store :all)))
+                                forms (mapcat :forms
+                                              (mapcat #(ps/db-list-session-turn-iterations store
+                                                                                           (:id %))
+                                                      (ps/db-list-session-turns store sid)))]
+
+                            (expect (= 1 (count forms)) (pr-str forms))
+                            (expect (every? #(nil? (:error %)) forms) (pr-str forms))
+                            (expect (= "Field-backed sequences verified\n" (:stdout (first forms)))
+                                    (pr-str forms)))
+                          (finally (ps/db-dispose-connection! store)))))
+                 (finally (.stop ^HttpServer server 0)))))
+        (finally (delete-tree! dir))))))
+
 (defn- goal-update-body
   [stream? status]
   (python-call-body stream?

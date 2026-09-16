@@ -53,7 +53,23 @@ def __vis_seal__(value):
     else:
         attrs = getattr(value, "__dict__", None)
     if isinstance(attrs, dict):
+        sequence = {}
+        if "__vis_sequence_field__" in vars(type(value)):
+            field = vars(type(value))["__vis_sequence_field__"]
+            if (
+                not isinstance(field, str)
+                or not field.isidentifier()
+                or field.startswith("_")
+                or field not in attrs
+            ):
+                raise ValueError("sequence field must name a public serialized field")
+            if type(attrs[field]) not in (list, tuple):
+                raise TypeError(
+                    f"sequence field {field!r} must contain a built-in list or tuple"
+                )
+            sequence["__vis_sequence_field__"] = field
         return {
+            **sequence,
             "__vis_object__": type(value).__name__,
             "__vis_attrs__": {
                 str(k): __vis_seal__(v)

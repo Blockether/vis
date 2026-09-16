@@ -28,6 +28,12 @@
         "description": {
           "type": "string"
         },
+        "sequence_field": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^_]",
+          "description": "Public dataclass field containing the received sequence items; grants local iteration, length, truth testing, integer indexing and slicing."
+        },
         "variadic": {
           "const": true,
           "description": "For tuple[T, ...], true with exactly one item type in arguments. Omitted for fixed-length tuples."
@@ -60,6 +66,13 @@
         "kind",
         "name"
       ],
+      "allOf": [{
+        "if": {"required": ["sequence_field"]},
+        "then": {
+          "properties": {"kind": {"const": "record"}},
+          "required": ["fields"]
+        }
+      }],
       "if": {"required": ["variadic"]},
       "then": {
         "properties": {

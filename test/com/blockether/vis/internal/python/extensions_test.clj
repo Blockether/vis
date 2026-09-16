@@ -811,6 +811,34 @@ vis.register_extension(vis.Extension(
                           (ep/run-python-block ctx "print('uberworkspace' in globals())")))
                (finally (ep/dispose-python-context! ctx))))))))
 
+;; Issue #256: load a real trusted extension, then read its values in a separate sandbox worker.
+(defdescribe
+  python-sequence-result-test
+  (it "restores only explicitly declared, field-backed sequence behavior"
+      (with-fresh-loaded
+        {"sequence_fixture.py" (slurp (io/file "test/resources/sequence_extension.py"))}
+        (fn [loaded _]
+          (expect (= {:loaded 1 :failed 0 :changed? true} loaded) (pr-str (pyx/load-failures)))
+          (let [ext
+                (registered "sequence-probe")
+
+                made
+                (ep/create-python-context {} nil {:worker? true} nil)
+
+                ctx
+                (:python-context made)
+
+                env
+                {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+            (try (lp/sync-active-extension-symbols! env [ext])
+                 (let [answer (ep/run-python-block ctx
+                                                   (slurp (io/file
+                                                            "test/resources/sequence_check.py")))]
+                   (expect (nil? (:error answer)) (pr-str answer))
+                   (expect (= "Field-backed sequences verified\n" (:stdout answer))))
+                 (finally (ep/dispose-python-context! ctx))))))))
+
 (def ^:private invalid-recursive-object-namespace-py
   "import blockether.vis.extension as vis
 

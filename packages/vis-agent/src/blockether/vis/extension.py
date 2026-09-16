@@ -839,6 +839,8 @@ def _contract_type(annotation, namespace, seen=()):
             scope = vars(module) if module else namespace
             doc = inspect.getdoc(annotation) or ""
             result = {"kind": "record", "name": name, "fields": []}
+            if "__vis_sequence_field__" in vars(annotation):
+                result["sequence_field"] = vars(annotation)["__vis_sequence_field__"]
             if doc and not doc.startswith(name + "("):
                 result["description"] = doc
             for item in fields(annotation):
@@ -1009,7 +1011,10 @@ def _contract_models_match(left, right):
         if kinds <= {"record", "reference"}:
             return left["name"] == right["name"] and (
                 "reference" in kinds
-                or _contract_models_match(left["fields"], right["fields"])
+                or (
+                    left.get("sequence_field") == right.get("sequence_field")
+                    and _contract_models_match(left["fields"], right["fields"])
+                )
             )
         return left.keys() == right.keys() and all(
             _contract_models_match(value, right[key]) for key, value in left.items()
@@ -1049,6 +1054,11 @@ def _contract_model_docs(contract):
             yield name + ":"
             if model.get("description"):
                 yield model["description"]
+            if model.get("sequence_field"):
+                yield (
+                    f"Sequence over {model['sequence_field']}: iteration, len(), truth testing, "
+                    "integer indexing and slicing; string keys read fields."
+                )
             for item in model["fields"]:
                 typ = item["type"]
                 note = typ.get("description", "")
@@ -1158,6 +1168,37 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None, *, qualified_name=None
         "varargs": varargs,
         **({"activity": _activity_spec(activity)} if activity is not None else {}),
     }
+
+
+_SequenceClass = TypeVar("_SequenceClass", bound=type)
+
+
+def sequence(*, field: str) -> Callable[[_SequenceClass], _SequenceClass]:
+    """Declare a dataclass's public list or tuple field as its sandbox sequence.
+
+    Apply this outside `@dataclass`. The returned class is unchanged except for
+    metadata: original methods are neither called nor transported. Each subclass
+    must opt in separately. Values are checked when returned by an extension;
+    the backing field must hold a built-in list or tuple, not a lazy iterable.
+
+    Sandbox records iterate over the received field and support length, truth
+    testing, integer indices and slices. String keys still read named fields.
+    Only the received items are exposed; iteration never fetches another page.
+    """
+    if not isinstance(field, str) or not field.isidentifier() or field.startswith("_"):
+        raise ValueError("sequence field must be a public dataclass field name")
+
+    def decorate(cls: _SequenceClass) -> _SequenceClass:
+        if not isinstance(cls, type) or not is_dataclass(cls):
+            raise TypeError(
+                "sequence requires a dataclass type; apply it outside @dataclass"
+            )
+        if field not in {item.name for item in fields(cls)}:
+            raise ValueError(f"sequence field {field!r} is not a dataclass field")
+        cls.__vis_sequence_field__ = field
+        return cls
+
+    return decorate
 
 
 _Method = TypeVar(
@@ -1436,6 +1477,7 @@ class TypeSpec:
     fields: tuple[FieldSpec, ...] = ()
     values: tuple[str | int | bool | None, ...] = ()
     variadic: bool = False
+    sequence_field: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1503,6 +1545,7 @@ def _catalog_type(contract):
         ),
         values=tuple(contract.get("values", ())),
         variadic=contract.get("variadic", False),
+        sequence_field=contract.get("sequence_field"),
     )
 
 

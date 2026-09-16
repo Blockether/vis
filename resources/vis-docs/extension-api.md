@@ -113,9 +113,11 @@ the catalog; visibility is not access control. Rebuild the snapshot after declar
 `ToolSpec` carries `version`, `name`, `tag`, `description`, `signature`, `parameters`
 and `returns`. Each `ParameterSpec` has `name`, `kind`, `type`, `required`, `has_default`
 and `default_is_none`. `TypeSpec` has `kind`, `name`, `description`, `arguments`, `fields`,
-`values` and `variadic`; result fields use `FieldSpec`. These are frozen, slotted records;
-all nested collections produced by the adapter are tuples. No default value or callable
-is retained in public result data. The portable `.contract` format remains unchanged.
+`values`, `variadic` and `sequence_field`; result fields use `FieldSpec`. These are frozen,
+slotted records; all nested collections produced by the adapter are tuples. No default
+value or callable is retained in public result data. `sequence_field` is `None` unless
+that record declares [field-backed sequence behavior](#field-backed-sequences). The
+portable `.contract` includes this key only for opted-in records.
 
 `spec(None)` lists roots. Other non-string names raise `TypeError`; unknown or hidden
 names raise `ValueError`. `help` requires a string. No lookup configures, authenticates,
@@ -135,10 +137,55 @@ shows field descriptions with `Annotated`. Private fields and original methods d
 not cross into the sandbox.
 
 Generated records support both `result.url` and `result["url"]`, including nested
-records. An unknown field raises `KeyError` listing the available fields;
-non-string indices raise `TypeError`. Field assignment remains unsupported.
-These records are not mappings: names such as `items`, `keys` and `get` remain
-available for your fields rather than becoming mapping methods.
+records. An unknown field raises `KeyError` listing the available fields.
+By default, records are not iterable, have no length, and reject non-string indices
+with `TypeError`. Field assignment remains unsupported. These records are not mappings:
+names such as `items`, `keys` and `get` remain available for your fields rather than
+becoming mapping methods.
+
+### Field-backed sequences
+
+If your result wraps a collection, use `@vis.sequence(field="results")` to let sandbox
+callers iterate it directly. Apply the decorator **outside** `@dataclass`:
+
+```python
+from dataclasses import dataclass
+
+import blockether.vis.extension as vis
+
+
+@dataclass(frozen=True, slots=True)
+class Page:
+    title: str
+
+
+@vis.sequence(field="results")
+@dataclass(frozen=True, slots=True)
+class PageList:
+    results: tuple[Page, ...]
+    total: int
+```
+
+When a tool returns `PageList`, sandbox callers can use `for page in result`,
+`len(result)`, `if result`, `result[0]`, `result[-1]` and `result[1:]`.
+`result.results` and `result["results"]` still expose the received list, and nested
+items retain their generated record types. Slices return lists. Field and item
+assignment on the wrapper remain unsupported; its backing list is ordinary local data.
+
+The field must be a public dataclass field holding a **built-in list or tuple** at
+return time. Strings, mappings, sets, generators and list/tuple subclasses are rejected;
+Vis does not consume lazy iterators. Length and truth testing describe the received
+items, not a `total` field. Iteration never fetches another page.
+
+This declaration adds metadata, not methods to your original Python class. Keep any
+methods you need when calling the class directly outside the sandbox. Original methods
+never cross the boundary: Vis builds the supported operations locally over the received
+field. Every type, including subclasses, must opt in explicitly. An existing `__iter__`
+method or a field named `results` does not opt in. You can adapt third-party values into
+a decorated dataclass without changing the third-party type.
+
+The backing field appears as `sequence_field` in the callable's `.contract` and typed
+catalog, and generated `doc()` text describes the supported sequence operations.
 
 ### Object namespaces
 
@@ -610,8 +657,9 @@ are not shared across workers.
 
 Tool results cross as data. Objects and dataclasses expose their public fields as
 frozen data records in the sandbox, including nested records. The original class,
-methods, native pointers and object identity stay in the trusted process. Expose
-operations as declared tools rather than methods on returned objects.
+methods, native pointers and object identity stay in the trusted process. Explicit
+[field-backed sequences](#field-backed-sequences) add only local collection operations.
+Expose other operations as declared tools rather than methods on returned objects.
 
 `subprocess`, `os.system` and `vis.shell({...})` run without the jail. Output
 not read by the extension is captured in its log. Child processes receive
