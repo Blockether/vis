@@ -218,8 +218,24 @@ nesting sections. Each section has its own disclosure: you can scan its headline
 and summary before opening the complete details. `vis.publish_activity(presentation)`
 replaces the current snapshot while a tool runs; empty content clears the body.
 
-Each headline and summary is one line of at most 512 UTF-8 bytes. Put the complete
-result in content blocks and non-nested sections: Vis does not cut their text,
+To make summary links clickable in the app and terminal, pass
+`summary_format="markdown"` to `ActivityPresentation` or `ActivitySection`:
+
+```python
+vis.ActivityPresentation(
+    "Find issues",
+    "Found [#252](https://github.com/Blockether/vis/issues/252)",
+    summary_format="markdown",
+)
+```
+
+Markdown summaries support inline formatting and HTTP(S) links, not images, raw
+HTML or block layouts. Links stay available with details collapsed or expanded.
+Omit `summary_format`, or use `"inline"`, to display the summary literally.
+
+Each headline and summary is one line of at most 512 UTF-8 bytes, including any
+Markdown source. Put the complete result in content blocks and non-nested
+sections: Vis does not cut their text,
 table rows or block counts to fit a presentation budget. Test declared start
 visibility, success, failure, cancellation, empty results, replacement, redaction
 and disclosure in both clients. The

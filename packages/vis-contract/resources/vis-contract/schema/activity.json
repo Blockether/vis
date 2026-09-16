@@ -864,6 +864,9 @@
           "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$",
           "x-vis-max-bytes": 512
         },
+        "summary_format": {
+          "$ref": "#/$defs/text_format"
+        },
         "content": {
           "$ref": "#/$defs/content"
         }
@@ -883,6 +886,9 @@
         },
         "summary": {
           "$ref": "#/$defs/section/properties/summary"
+        },
+        "summary_format": {
+          "$ref": "#/$defs/section/properties/summary_format"
         },
         "content": {
           "$ref": "#/$defs/content"

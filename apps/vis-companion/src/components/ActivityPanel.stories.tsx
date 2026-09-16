@@ -762,3 +762,82 @@ export const SameFileReadsNarrow: Story = {
     ),
   ],
 };
+
+// Regression #254: a summary link remains usable without opening its disclosure.
+export const LinkedSummariesNarrow: Story = {
+  args: {
+    activity: {
+      ...ACTIVITY_RESULTS,
+      rows: [
+        {
+          ...ACTIVITY_RESULTS.rows[0],
+          operation: 'vis.issue_find',
+          state: 'succeeded',
+          resources: [],
+          evidence: [],
+          children: undefined,
+          presentation: {
+            headline: 'Find issues',
+            summary: 'query: [#252](https://github.com/Blockether/vis/issues/252)',
+            summary_format: 'markdown',
+            content: [{ type: 'text', text: 'Full issue result' }],
+            sections: [
+              {
+                headline: 'Related issues',
+                summary: '[#252](https://github.com/Blockether/vis/issues/252)',
+                summary_format: 'markdown',
+                content: [{ type: 'text', text: 'Related issue detail' }],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  decorators: [
+    (Story) => (
+      <div className="w-80 max-w-full">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const root = canvas.getByRole('button', { name: /Find issues/ });
+    const section = canvas.getByRole('button', { name: 'Related issues' });
+    for (const expanded of [false, true]) {
+      if (expanded) {
+        await userEvent.click(root);
+        await userEvent.click(section);
+        await expect(canvas.getByText('Related issue detail')).toBeVisible();
+      }
+      const links = canvas.getAllByRole('link', { name: '#252' });
+      await expect(links).toHaveLength(2);
+      for (const link of links) {
+        await expect(link.closest('button')).toBeNull();
+        await expect(link).toBeVisible();
+        let activated = 0;
+        const activate = (event: Event) => {
+          event.preventDefault();
+          activated++;
+        };
+        link.addEventListener('click', activate);
+        try {
+          await userEvent.click(link);
+          link.focus();
+          await userEvent.keyboard('{Enter}');
+          await expect(activated).toBe(2);
+          await expect(root).toHaveAttribute('aria-expanded', String(expanded));
+          await expect(section).toHaveAttribute('aria-expanded', String(expanded));
+        } finally {
+          link.removeEventListener('click', activate);
+        }
+      }
+    }
+    const summary = canvasElement.querySelector<HTMLElement>('[data-activity-summary]')!;
+    const lineHeight = parseFloat(getComputedStyle(summary).lineHeight);
+    await expect(summary.offsetHeight).toBeLessThanOrEqual(lineHeight + 1);
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};

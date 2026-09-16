@@ -265,6 +265,7 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
 export interface ActivitySection {
   headline: string;
   summary: string;
+  summary_format?: ActivityTextFormat;
   content: ActivityContent[];
 }
 
@@ -274,7 +275,8 @@ export interface ActivityPresentation extends ActivitySection {
 
 function activityPresentationFromWire(value: unknown): ActivityPresentation | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['headline', 'summary', 'content'], ['sections'])) return null;
+  if (!raw || !hasExactKeys(raw, ['headline', 'summary', 'content'], ['sections', 'summary_format']))
+    return null;
   const sections = raw.sections === undefined ? [] : raw.sections;
   if (!Array.isArray(sections)) return null;
   const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -282,7 +284,11 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
     const section = record(candidate);
     if (
       !section ||
-      !hasExactKeys(section, ['headline', 'summary', 'content'], index === 0 ? ['sections'] : [])
+      !hasExactKeys(
+        section,
+        ['headline', 'summary', 'content'],
+        index === 0 ? ['sections', 'summary_format'] : ['summary_format'],
+      )
     )
       return null;
     for (const key of ['headline', 'summary']) {
@@ -294,6 +300,11 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       )
         return null;
     }
+    if (
+      section.summary_format !== undefined &&
+      !ACTIVITY_TEXT_FORMATS.includes(section.summary_format as ActivityTextFormat)
+    )
+      return null;
     if (!section.headline || !activityContentFromWire(section.content)) return null;
   }
   return value as ActivityPresentation;

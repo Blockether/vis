@@ -356,13 +356,22 @@ ActivityBlock: TypeAlias = (
 )
 
 
+_ActivitySummaryFormat: TypeAlias = Literal["inline", "markdown"]
+
+
 @dataclass(frozen=True, slots=True)
 class ActivitySection:
-    """A visible headline and one-line summary; only content waits behind disclosure."""
+    """A visible headline and one-line summary; only content waits behind disclosure.
+
+    summary_format="markdown" opts into inline Markdown with HTTP(S) links.
+    Unmarked or "inline" summaries are literal text. The 512-byte, one-line
+    limit includes Markdown source; images, HTML and block layout are not shown.
+    """
 
     headline: str
     summary: str
     content: tuple[ActivityBlock, ...] = ()
+    summary_format: _ActivitySummaryFormat | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         for name in ("headline", "summary"):
@@ -381,14 +390,21 @@ class ActivitySection:
         ):
             raise TypeError("Activity content must contain typed blocks")
         object.__setattr__(self, "content", tuple(self.content))
+        if self.summary_format is not None and self.summary_format not in get_args(
+            _ActivitySummaryFormat
+        ):
+            raise ValueError("Invalid Activity summary_format")
 
     def to_wire(self) -> dict[str, Any]:
         """Return fresh portable data, without engine-owned lifecycle fields."""
-        return {
+        value = {
             "headline": self.headline,
             "summary": self.summary,
             "content": [block.to_wire() for block in self.content],
         }
+        if self.summary_format is not None:
+            value["summary_format"] = self.summary_format
+        return value
 
 
 @dataclass(frozen=True, slots=True)

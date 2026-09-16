@@ -164,6 +164,42 @@ def test_activity_publish_is_typed_and_preserves_host_result(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "summary_format", [None, *_contracts.definition("activity", "text_format")["enum"]]
+)
+def test_presentation_summary_format_is_explicit_and_portable(summary_format):
+    # Regression #254: Markdown links need explicit format metadata, not guessing.
+    summary = "Issues: [#252](https://github.com/Blockether/vis/issues/252)"
+    section = vis.ActivitySection("Matches", summary, summary_format=summary_format)
+    view = vis.ActivityPresentation(
+        "Find issues", summary, (), (section,), summary_format=summary_format
+    )
+    wire = view.to_wire()
+    assert wire["summary"] == summary
+    assert wire["sections"][0]["summary"] == summary
+    assert _contracts.validate("activity", "presentation", wire) == wire
+    if summary_format is None:
+        assert "summary_format" not in wire
+        assert "summary_format" not in wire["sections"][0]
+    else:
+        assert wire["summary_format"] == summary_format
+        assert wire["sections"][0]["summary_format"] == summary_format
+
+
+@pytest.mark.parametrize("record", [vis.ActivitySection, vis.ActivityPresentation])
+@pytest.mark.parametrize("summary", ["two\nlines", "é" * 257])
+def test_markdown_summary_keeps_one_line_byte_limit(record, summary):
+    with pytest.raises(ValueError):
+        record("Issues", summary, summary_format="markdown")
+
+
+@pytest.mark.parametrize("record", [vis.ActivitySection, vis.ActivityPresentation])
+@pytest.mark.parametrize("summary_format", ["html", "", True, 7, []])
+def test_invalid_summary_format_is_refused(record, summary_format):
+    with pytest.raises(ValueError):
+        record("Issues", "", summary_format=summary_format)
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"headline": "two\nlines", "summary": ""},

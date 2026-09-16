@@ -408,6 +408,59 @@ vis.register_extension(vis.Extension(
             (expect (activity-contract/valid-projection? projection))))))))
 
 (defdescribe
+  sdk-summary-links-test
+  (it "preserves explicit summary formatting through callbacks, updates and replay"
+      ;; #254: root and section links must cross the SDK/engine boundary unchanged.
+      (let [summary
+            "Found [#252](https://github.com/Blockether/vis/issues/252)"
+
+            source
+            (-> counter-py
+                (str/replace "'Check counter', (vis.ActivityText(phase),)"
+                             (str (pr-str summary)
+                                  ", (vis.ActivityText(phase),), "
+                                  "sections=(vis.ActivitySection('Issues', " (pr-str summary)
+                                  ", summary_format='markdown'),), " "summary_format='markdown'"))
+                (str/replace "\"Ready\", (vis.ActivityMarkdown(\"**Counter** ready\"),)"
+                             (str (pr-str summary)
+                                  ", (vis.ActivityMarkdown('**Counter** ready'),), "
+                                  "summary_format='markdown'")))]
+
+        (with-loaded
+          {"counter.py" source}
+          (fn [_ _]
+            (expect (= [] (pyx/load-failures)))
+            (let [ext
+                  (registered "counter")
+
+                  entry
+                  (second (get-in ext [:ext/engine :ext.engine/symbols]))
+
+                  events
+                  (atom [])]
+
+              (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                (extension/invoke-symbol-wrapper ext entry [] {}))
+              (let [presentations
+                    (mapv :presentation (filter #(= :content (:phase %)) @events))
+
+                    projection
+                    (-> @events
+                        activity/replay
+                        activity/presentation)]
+
+                (expect (= 3 (count presentations)))
+                (expect (= ["markdown" "markdown" "markdown"]
+                           (mapv #(get % "summary_format") presentations)))
+                (expect (= [summary summary summary] (mapv #(get % "summary") presentations)))
+                (expect (= "markdown"
+                           (get-in projection
+                                   [:rows 0 :presentation "sections" 0 "summary_format"])))
+                (expect (= summary
+                           (get-in projection [:rows 0 :presentation "sections" 0 "summary"])))
+                (expect (activity-contract/valid-projection? projection)))))))))
+
+(defdescribe
   sdk-complete-activity-content-test
   (it "retains large SDK callback presentations across the Python host boundary"
       ;; #218: validation at either end used to suppress the entire callback result.

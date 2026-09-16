@@ -3313,7 +3313,36 @@
                                                      th-md-table-head-marker
                                                      th-md-table-row-marker]))]
 
-                      (doseq [{:keys [col width url]} links]
+                      (doseq [{:keys [col width url]} links
+                              :let [room (if-let [prefix (:summary-prefix meta)]
+                                           (let [limit (if (not-empty (:right-suffix meta))
+                                                         (max
+                                                           0
+                                                           (- (long iw)
+                                                              right-inset
+                                                              (p/display-width (:right-suffix meta))
+                                                              (p/display-width
+                                                                (or (:inline-disclosure meta) ""))
+                                                              1))
+                                                         (min (long iw)
+                                                              (long (or (:summary-width meta) iw))))
+                                                 visible (p/ellipsize prefix limit)]
+
+                                             (- (p/display-width visible)
+                                                (if (< (p/display-width visible)
+                                                       (p/display-width prefix))
+                                                  1
+                                                  0)))
+                                           (long iw))
+                                    width (min (long width)
+                                               (max 0
+                                                    (- (if (:summary-prefix meta)
+                                                         (min (long room)
+                                                              (p/display-width (subs line 1)))
+                                                         (long room))
+                                                       (long col))))]
+                              :when (pos? width)]
+
                         (let [abs-col (+ (long x) (long col))]
                           (.register interactions/hit-map
                                      {:bounds {:row abs-row :col abs-col :width (long width)}
@@ -5615,6 +5644,53 @@
 
 (defn- activity-field [m k] (get m k (get m (name k))))
 
+(defn- activity-summary-inlines
+  "Restrict summary Markdown to inline styles and HTTP(S) links."
+  [node]
+  (if (string? node)
+    [(str/replace node #"\s+" " ")]
+    (let [[tag attrs & children]
+          node
+
+          children
+          (mapcat activity-summary-inlines children)
+
+          href
+          (:href attrs)
+
+          link?
+          (and (= :a tag)
+               (string? href)
+               (re-matches #"(?i)https?://[^\s/]+[^\s]*" href)
+               (try (some? (.getHost (java.net.URI. ^String href)))
+                    (catch java.net.URISyntaxException _ false)))]
+
+      (cond (= :img tag) []
+            (= :br tag) [[:span {} " "]]
+            link? [(into [:a {:href href}] children)]
+            (contains? #{:strong :em :c :span} tag) [(into [tag {}] children)]
+            :else children))))
+
+(defn- activity-summary-entry
+  [presentation]
+  (let [text
+        (str/trim (str/replace (str (activity-field presentation :summary)) #"\s+" " "))
+
+        format
+        (or (activity-field presentation :summary-format) (get presentation "summary_format"))]
+
+    (if (contains? #{:markdown "markdown"} format)
+      (assoc (first (layout/ast->entries
+                      [:ast {} (into [:p {}] (activity-summary-inlines (vis/markdown->ast text)))]
+                      Integer/MAX_VALUE
+                      {:mode :channel}))
+        :markdown? true)
+      {:line text})))
+
+(defn- activity-summary-links
+  [entry offset]
+  (mapv #(update % :col + (long offset)) (get-in entry [:meta :links])))
+
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
@@ -5814,8 +5890,11 @@
         (let [headline
               (activity-field section :headline)
 
+              summary-entry
+              (activity-summary-entry section)
+
               summary
-              (activity-field section :summary)
+              (:line summary-entry)
 
               content
               (activity-field section :content)
@@ -5850,13 +5929,18 @@
                              :operation-col col
                              :operation-label headline})}]
 
-          (concat [{:line activity-marker :meta nil} head]
-                  (when (not-empty summary)
-                    [{:line (str activity-marker
-                                 (ellipsize-cols (str (activity-lead col) summary) width))
-                      :meta (assoc meta-base :kind :activity-evidence)}])
-                  (when open?
-                    (activity-content-entries content width col session-id artifacts running?)))))
+          (concat
+            [{:line activity-marker :meta nil} head]
+            (when (not-empty summary)
+              [{:line (str activity-marker (p/ellipsize (str (activity-lead col) summary) width))
+                :meta (assoc meta-base
+                        :kind :activity-evidence
+                        :summary-prefix (str (activity-lead col) summary)
+                        :summary-width width
+                        :links (activity-summary-links summary-entry
+                                                       (p/display-width (activity-lead col))))}])
+            (when open?
+              (activity-content-entries content width col session-id artifacts running?)))))
       (map-indexed vector sections))))
 
 (defn- activity-group-row
@@ -6260,14 +6344,15 @@
                                                        sections
                                                        (activity-field presentation :sections)
 
-                                                       caption
+                                                       summary-entry
                                                        (when presentation
-                                                         (some-> (or (:error-summary row)
-                                                                     (activity-field presentation
-                                                                                     :summary))
-                                                                 (str/replace #"\s+" " ")
-                                                                 str/trim
-                                                                 not-empty))
+                                                         (if-let [error (:error-summary row)]
+                                                           {:line (str/trim
+                                                                    (str/replace error #"\s+" " "))}
+                                                           (activity-summary-entry presentation)))
+
+                                                       caption
+                                                       (not-empty (:line summary-entry))
 
                                                        lead-word
                                                        (if caption
@@ -6340,7 +6425,9 @@
 
                                                        subject
                                                        (when-let [text (or caption object)]
-                                                         (if (#{"cat" "patch"} (:operation row))
+                                                         (if (and (not (:markdown? summary-entry))
+                                                                  (#{"cat" "patch"}
+                                                                   (:operation row)))
                                                            (:text
                                                              (activity-path-cells
                                                                text
@@ -6389,6 +6476,18 @@
                                                         (merge meta-base
                                                                {:kind :activity-row
                                                                 :headline-prefix prefix
+                                                                :summary-prefix prefix
+                                                                :summary-width
+                                                                (- (long width)
+                                                                   (p/display-width suffix)
+                                                                   (p/display-width (or mark ""))
+                                                                   2)
+                                                                :links (activity-summary-links
+                                                                         summary-entry
+                                                                         (p/display-width
+                                                                           (str (activity-lead col)
+                                                                                lead-word
+                                                                                " · ")))
                                                                 :right-suffix suffix
                                                                 :right-inset 2
                                                                 :inline-disclosure mark

@@ -663,7 +663,11 @@ function ActivitySectionView({
           className="truncate text-meta text-dialog-hint"
           title={section.summary}
         >
-          {section.summary}
+          {section.summary_format === 'markdown' ? (
+            <InlineMarkdown links>{section.summary}</InlineMarkdown>
+          ) : (
+            section.summary
+          )}
         </p>
       )}
       {open && hasContent && <ActivityBody content={section.content} running={running} />}
@@ -685,6 +689,8 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   const sections = presentation?.sections ?? [];
   const summary = presentation ? '' : activityStepObject(row);
   const caption = presentation ? (row.error_summary ?? presentation.summary) : '';
+  const linkedSummary =
+    Boolean(caption) && row.error_summary == null && presentation?.summary_format === 'markdown';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
@@ -721,6 +727,49 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
     Boolean(error) ||
     hasChildren;
 
+  const captionLabel = caption && (
+    <>
+      <span aria-hidden="true" className="text-dialog-hint">
+        ·
+      </span>
+      <span
+        data-activity-summary
+        className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
+        title={caption}
+      >
+        {linkedSummary ? (
+          <InlineMarkdown links>{caption}</InlineMarkdown>
+        ) : row.operation === 'cat' || row.operation === 'patch' ? (
+          <ActivityPath id={caption} />
+        ) : (
+          caption
+        )}
+      </span>
+    </>
+  );
+  const metadata = (
+    <>
+      {delta.additions + delta.deletions > 0 ? ' ' : null}
+      {delta.additions + delta.deletions > 0 && (
+        <span className="ml-[5px] font-mono font-normal text-dialog-hint">
+          +{delta.additions} &minus;{delta.deletions}
+        </span>
+      )}
+      {duration && (
+        <time
+          aria-label={`Duration ${duration}`}
+          className="ml-auto shrink-0 font-normal text-code-duration"
+        >
+          {duration}
+        </time>
+      )}
+      {!duration && running && (
+        <span aria-label="Running" className="ml-auto shrink-0 font-normal text-code-duration">
+          …
+        </span>
+      )}
+    </>
+  );
   const label = (
     <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
       <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
@@ -736,45 +785,8 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
           )}
         </span>
       )}
-      {caption && (
-        <>
-          <span aria-hidden="true" className="text-dialog-hint">
-            ·
-          </span>
-          <span
-            data-activity-summary
-            className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
-            title={caption}
-          >
-            {row.operation === 'cat' || row.operation === 'patch' ? (
-              <ActivityPath id={caption} />
-            ) : (
-              caption
-            )}
-          </span>
-        </>
-      )}
-      {delta.additions + delta.deletions > 0 && (
-        <>
-          {' '}
-          <span className="ml-[5px] font-mono font-normal text-dialog-hint">
-            +{delta.additions} &minus;{delta.deletions}
-          </span>
-        </>
-      )}
-      {duration && (
-        <time
-          aria-label={`Duration ${duration}`}
-          className="ml-auto shrink-0 font-normal text-code-duration"
-        >
-          {duration}
-        </time>
-      )}
-      {!duration && running && (
-        <span aria-label="Running" className="ml-auto shrink-0 font-normal text-code-duration">
-          …
-        </span>
-      )}
+      {!linkedSummary && captionLabel}
+      {!linkedSummary && metadata}
     </span>
   );
 
@@ -782,25 +794,27 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
     <li data-activity-row={row.id} data-activity-depth={depth} className="relative min-w-0">
       <div className="min-w-0">
         <Headline
-          className={
-            nested
-              ? 'min-w-0 text-ui font-medium text-code-result mouse:text-meta'
-              : 'min-w-0 text-ui font-semibold text-code-result mouse:text-meta'
-          }
+          className={`min-w-0 text-ui text-code-result mouse:text-meta ${
+            nested ? 'font-medium' : 'font-semibold'
+          } ${linkedSummary ? 'flex items-baseline gap-x-2' : ''}`}
         >
           {openable ? (
             <Disclosure
               isOpen={open}
               tone="execution"
               density="compact"
-              className="min-w-0 max-w-full"
+              className={linkedSummary ? 'min-w-0 w-auto! max-w-[45%]' : 'min-w-0 max-w-full'}
               onClick={() => setToggled(!open)}
             >
               {label}
             </Disclosure>
           ) : (
-            <div className="flex min-h-6 items-center">{label}</div>
+            <div className={`flex min-h-6 items-center ${linkedSummary ? 'min-w-0 max-w-[45%]' : ''}`}>
+              {label}
+            </div>
           )}
+          {linkedSummary && captionLabel}
+          {linkedSummary && metadata}
         </Headline>
       </div>
       {!open && failed && !presentation && (

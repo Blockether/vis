@@ -8754,6 +8754,151 @@ print(paths)"
 
       (expect (some #(and (= "clip.mp4" (:filename %)) (= 0 (:index %))) artifacts)))))
 
+(defdescribe activity-summary-markdown-test
+             (it "keeps opted-in root and section links through disclosure (#254)"
+                 (doseq [open? [false true]]
+                   (let [entries (#'render/activity-detail-entries
+                                  {:node-id "links"
+                                   :activity-expanded? (fn [key _]
+                                                         (or (= key "#band") open?))
+                                   :activity-rows [{:id "link"
+                                                    :state "succeeded"
+                                                    :operation "search"
+                                                    :presentation
+                                                    {:headline "Found"
+                                                     :summary "See [root](https://example.com/root)"
+                                                     :summary-format :markdown
+                                                     :content [{:type "text" :text "Body"}]
+                                                     :sections
+                                                     [{"headline" "Details"
+                                                       "summary"
+                                                       "See [section](https://example.com/section)"
+                                                       "summary_format" "markdown"}]}}]}
+                                  100
+                                  "links")]
+                     (expect (= #{"https://example.com/root" "https://example.com/section"}
+                                (set (map :url (mapcat #(get-in % [:meta :links]) entries)))))))))
+
+(defdescribe
+  activity-summary-safety-test
+  (it "leaves absent and inline formats literal (#254)"
+      (doseq [format [nil :inline "inline"]]
+        (let [text "[link](https://example.com) **bold** `code`"
+              entry (#'render/activity-summary-entry {:summary text :summary-format format})]
+
+          (expect (= text (:line entry)))
+          (expect (empty? (get-in entry [:meta :links]))))))
+  (it
+    "renders only safe inline links and never image links"
+    (let
+      [entry
+       (#'render/activity-summary-entry
+        {:summary-format :markdown
+         :summary
+         "**bold** `code` [safe](https://example.com) ![image](https://example.com/img) [bad](javascript:alert) [file](file:///tmp/a) [relative](/a) [mail](mailto:a@example.com)"})]
+      (expect (= ["https://example.com"] (mapv :url (get-in entry [:meta :links])))))))
+
+(defdescribe activity-summary-error-test
+             (it "keeps error overrides literal even with markdown summaries (#254)"
+                 (let [error
+                       "[error](https://example.com/error)"
+
+                       entries
+                       (#'render/activity-detail-entries
+                        {:node-id "error"
+                         :activity-expanded? (fn [_ _]
+                                               true)
+                         :activity-rows [{:id "error"
+                                          :state "failed"
+                                          :operation "search"
+                                          :error-summary error
+                                          :presentation {:headline "Search failed"
+                                                         :summary
+                                                         "[success](https://example.com/success)"
+                                                         :summary-format :markdown}}]}
+                        120
+                        "error")]
+
+                   (expect (some #(str/includes? (:line %) error) entries))
+                   (expect (empty? (mapcat #(get-in % [:meta :links]) entries))))))
+
+(defdescribe
+  activity-summary-click-test
+  (it
+    "registers painted root and section labels, not disclosure or truncated text (#254)"
+    (doseq [open?
+            [false true]
+
+            width
+            [32 90]
+
+            duration
+            [nil 12345]]
+
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "links"
+              :activity-expanded? (fn [key _]
+                                    (or (= key "#band") open?))
+              :activity-rows
+              [{:id "link"
+                :state "succeeded"
+                :operation "search"
+                :duration-ms duration
+                :presentation
+                {:headline "Found"
+                 :summary "[ROOTROOTROOTROOTROOTROOTROOTROOT](https://example.com/root)"
+                 :summary-format :markdown
+                 :content [{:type "text" :text "Body"}]
+                 :sections [{:headline "Details"
+                             :summary
+                             "[界SECTIONSECTIONSECTIONSECTIONSECTION](https://example.com/section)"
+                             :summary-format :markdown
+                             :content [{:type "text" :text "Details body"}]}]}}]}
+             width
+             "links")
+
+            terminal
+            (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
+              (com.googlecode.lanterna.TerminalSize. 100 40))
+
+            screen
+            (doto (com.googlecode.lanterna.screen.TerminalScreen. terminal) (.startScreen))]
+
+        (try (.reset interactions/hit-map)
+             (.beginFrame interactions/hit-map)
+             (render/draw-chat-bubble! (.newTextGraphics screen)
+                                       {:role :assistant
+                                        :text ""
+                                        :prewrapped-lines (mapv :line entries)
+                                        :line-meta (mapv :meta entries)}
+                                       0
+                                       2
+                                       width
+                                       {:viewport-top 0 :viewport-h 40})
+             (.commitFrame interactions/hit-map)
+             (let [hits (for [row (range 40)
+                              col (range 100)
+                              :let [hit (.lookup interactions/hit-map col row)]
+                              :when (= :url (:kind hit))]
+
+                          [col row hit])]
+               (expect (= #{"https://example.com/root" "https://example.com/section"}
+                          (set (map #(get-in % [2 :url]) hits))))
+               (doseq [[col row hit] hits]
+                 (let [cell (.getBackCharacter screen (int col) (int row))]
+                   (expect
+                     (or (str/includes?
+                           (if (= "https://example.com/root" (:url hit)) "ROOT" "界SECTION")
+                           (.getCharacterString cell))
+                         (and (= " " (.getCharacterString cell))
+                              (= "界"
+                                 (.getCharacterString
+                                   (.getBackCharacter screen (int (dec (long col))) (int row)))))))
+                   (expect (contains? (.getModifiers cell)
+                                      com.googlecode.lanterna.SGR/UNDERLINE)))))
+             (finally (.stopScreen screen)))))))
+
 (defdescribe
   activity-presentation-disclosure-test
   (it

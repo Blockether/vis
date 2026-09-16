@@ -101,6 +101,27 @@
                (assoc presentation
                  "content" [{"type" "table" "columns" ["A"] "rows" [["A" "B"]]}]))))))
 
+(deftest presentation-summary-format-test
+  ;; Regression #254: only explicitly marked summaries opt into inline Markdown.
+  (let [summary
+        "Issues: [#252](https://github.com/Blockether/vis/issues/252)"
+
+        section
+        {"headline" "Matches" "summary" summary "content" []}]
+
+    (is (activity/valid-presentation? section))
+    (doseq [format ["inline" "markdown"]]
+      (let [formatted (assoc section "summary_format" format)
+            presentation (assoc formatted "sections" [formatted])]
+
+        (is (activity/valid-presentation? presentation))
+        (is (not (activity/valid-presentation? (assoc presentation "summary" "two\nlines")))))
+      (is (not (activity/valid-presentation? (assoc section
+                                               "summary_format" format
+                                               "summary" (apply str (repeat 257 "é")))))))
+    (doseq [format [nil "" "html" true 7 []]]
+      (is (not (activity/valid-presentation? (assoc section "summary_format" format)))))))
+
 (deftest single-oversized-invocation-page-test
   ;; Regression #218: page bytes are a target; one complete invocation always fits.
   (let [fixture

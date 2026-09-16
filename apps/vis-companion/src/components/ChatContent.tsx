@@ -1043,20 +1043,28 @@ const INLINE_MARK = /[*_`~[]/;
  * its size and its colour and a mark only changes the WORDS. Block markdown has
  * no inline meaning — a heading, a fence, a list or a table would fight the row
  * it sits in — so the element list is CLOSED and anything else is unwrapped to
- * its text. A link keeps its label and drops its target for the reason a live
- * view keeps its targets in a `link` node: something a human can open is a
- * declaration, never a word inside a sentence that scrolls away.
+ * its text. Links are inert unless the caller explicitly enables summary links;
+ * that mode admits only HTTP(S) targets, never media or block elements.
  *
  * A string carrying no mark never reaches the parser at all — the same fast path
  * the terminal takes (`live_view/markdown-mark`), which is what makes this
  * affordable once per table cell.
  */
-export const InlineMarkdown = memo(function InlineMarkdown({ children }: { children: string }) {
-  if (!INLINE_MARK.test(children)) return <>{children}</>;
+export const InlineMarkdown = memo(function InlineMarkdown({
+  children,
+  links = false,
+}: {
+  children: string;
+  links?: boolean;
+}) {
+  if (!links && !INLINE_MARK.test(children)) return <>{children}</>;
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      allowedElements={['p', 'strong', 'em', 'del', 'code']}
+      allowedElements={
+        links ? ['p', 'strong', 'em', 'del', 'code', 'a'] : ['p', 'strong', 'em', 'del', 'code']
+      }
+      skipHtml={links}
       unwrapDisallowed
       components={{
         p: ({ children: content }) => <>{content}</>,
@@ -1066,6 +1074,20 @@ export const InlineMarkdown = memo(function InlineMarkdown({ children }: { child
         // The code span inherits the line's font size while its own inline box
         // keeps paragraph justification out of the authored value.
         code: ({ children: code }) => <code className={INLINE_CODE_CLASS}>{code}</code>,
+        a: ({ children: label, href }) =>
+          href && /^https?:\/\//i.test(href) ? (
+            <a
+              href={href}
+              className="font-medium text-inherit underline underline-offset-3 hover:text-code-result"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {label}
+            </a>
+          ) : (
+            <>{label}</>
+          ),
       }}
     >
       {children}
