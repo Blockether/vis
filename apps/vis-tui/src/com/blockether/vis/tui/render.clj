@@ -8157,6 +8157,38 @@
                 (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
             (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
+(defn- render-adjacent-thinking-entries
+  "Join reasoning across iteration groups whose remaining output is invisible."
+  [groups iter-entry-fn]
+  (let [flush-thinking (fn [out [idx texts :as pending]]
+                         (if pending (into out (iter-entry-fn [idx {:thinking texts}])) out))]
+    (loop [out []
+           pending nil
+           remaining (seq groups)]
+
+      (if-let [[idx entry] (first remaining)]
+        (let [thinking (:thinking entry)
+              texts (filterv #(and (string? %) (not (str/blank? %)))
+                      (if (sequential? thinking) thinking [thinking]))
+              pending (if (seq texts)
+                        [(or (first pending) idx) (into (or (second pending) []) texts)]
+                        pending)
+              body (iter-entry-fn [idx (dissoc entry :thinking)])
+              ;; Ask the renderer what remains, rather than duplicating visibility
+              ;; rules for Activity, artifacts, live views, prose and diagnostics.
+              visible? (some (fn [{:keys [line meta]}]
+                               (not (and (nil? meta)
+                                         (or (str/blank? line) (= iteration-pad-marker line)))))
+                             body)]
+
+          (if visible?
+            ;; Thinking already supplies the iteration's leading neutral margin.
+            (recur (into (flush-thinking out pending) (if pending (rest body) body))
+                   nil
+                   (next remaining))
+            (recur out pending (next remaining))))
+        (flush-thinking out pending)))))
+
 (defn- trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
@@ -8245,14 +8277,17 @@
       ;; The code blocks render flat — no TURN wrapper. The turn-level
       ;; collapsible header was removed (it only hid the blocks and carried no
       ;; information the per-block headers + op rows don't already convey).
-      (coalesce-bubble-blanks (render-iteration-entries visible-iterations
-                                                        iter-entry-fn
-                                                        show-silent?
-                                                        show-thinking?
-                                                        {:fill-w (max 1 (dec (long content-w)))
-                                                         :session-id session-id
-                                                         :session-turn-id session-turn-id
-                                                         :detail-expansions detail-expansions})))))
+      (let [groups (render-iteration-entries visible-iterations
+                                             vector
+                                             show-silent?
+                                             show-thinking?
+                                             {:fill-w (max 1 (dec (long content-w)))
+                                              :session-id session-id
+                                              :session-turn-id session-turn-id
+                                              :detail-expansions detail-expansions})]
+        (coalesce-bubble-blanks (if (and show-thinking? (not (get settings :show-python-code true)))
+                                  (render-adjacent-thinking-entries groups iter-entry-fn)
+                                  (mapcat iter-entry-fn groups)))))))
 
 (defn- queued-preview
   "One clipped line describing a queued submission.

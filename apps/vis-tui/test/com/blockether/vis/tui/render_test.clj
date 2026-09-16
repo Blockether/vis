@@ -7950,6 +7950,156 @@ h = 8"
                    (get-in grid [(dec header-row) header-col :bg])))))))
 
 (defdescribe
+  hidden-python-thinking-merge-test
+  (let [thought
+        (fn [label]
+          (str/join "\n\n" (map #(str label " paragraph " %) (range 12))))
+
+        hidden-form
+        {:code "PRIVATE_SOURCE()" :stdout "PRIVATE_RESULT" :success? true}
+
+        iterations
+        (mapv #(hash-map :thinking (thought %) :forms [hidden-form]) ["Alpha" "Beta" "Gamma"])
+
+        render*
+        (fn [trace opts]
+          (#'render/trace-render-entries
+           (merge {:iterations trace
+                   :content-w 76
+                   :session-id "thinking-merge"
+                   :session-turn-id "turn"
+                   :settings {:show-python-code false}}
+                  opts)))
+
+        headers
+        (fn [entries]
+          (filter #(and (= :toggle-details (get-in % [:meta :kind]))
+                        (str/ends-with? (str (get-in % [:meta :node-id])) ":reasoning"))
+                  entries))
+
+        copies
+        (fn [entries]
+          (distinct (keep #(when (and (= :copy-block-body (get-in % [:meta :kind]))
+                                      (str/ends-with? (str (get-in % [:meta :node-id]))
+                                                      ":reasoning"))
+                             (get-in % [:meta :text]))
+                          entries)))
+
+        text-of
+        #(str/join "\n" (map :line %))]
+
+    (it "merges only hidden-Python reasoning, with one disclosure and the full copy text"
+        (doseq [width
+                [36 76 116]
+
+                live?
+                [false true]
+
+                expanded?
+                [false true]
+
+                shown?
+                [false true]]
+
+          (let [entries (render* iterations
+                                 {:content-w width
+                                  :live? live?
+                                  :settings {:show-python-code shown?}
+                                  :detail-expansions {:vis.channel-tui/expand-all-details?
+                                                      expanded?}})]
+            (expect (= (if shown? 3 1) (count (headers entries))))
+            (expect (= (if shown? 3 1) (count (copies entries))))
+            (doseq [label ["Alpha" "Beta" "Gamma"]]
+              (expect (some #(str/includes? % (str label " paragraph 11")) (copies entries)))
+              (when expanded?
+                (expect (str/includes? (text-of entries) (str label " paragraph 11")))))
+            (when-not shown?
+              (expect (not (re-find #"PRIVATE_SOURCE|PRIVATE_RESULT|CODE|RESULT"
+                                    (text-of entries))))))))
+    (it "joins short and sequential thinking across completely invisible iterations"
+        (let [trace
+              [{:thinking "Alpha"} {:forms [hidden-form]} {:thinking ["Beta" "Gamma"]}]
+
+              entries
+              (render* trace {})]
+
+          (expect (empty? (headers entries)))
+          (expect (= ["Alpha\nBeta\nGamma"] (vec (copies entries))))
+          (expect (empty? (copies (render* trace
+                                           {:settings {:show-python-code false
+                                                       :show-thinking false}}))))))
+    (it "keeps visible output between reasoning groups in its original position"
+        (doseq [[separator label]
+                [[{:forms [(first (grouped-activity-forms #{}))]} "ACTIVITY"]
+                 [{:assistant-prose "Visible prose"} "Visible prose"]
+                 [{:forms [] :content-stream "Streamed prose"} "Streamed prose"]
+                 [{:error {:message "Independent error"}} "Independent error"]
+                 [{:forms [(assoc hidden-form :comment "Visible comment")]} "Visible comment"]
+                 [{:forms [(assoc hidden-form :display-language "bash")]} "CODE"]]]
+          (let [trace (assoc iterations 0 (merge (first iterations) separator))
+                entries (render* trace
+                                 {:detail-expansions {:vis.channel-tui/expand-all-details? true}})
+                text (text-of entries)]
+
+            (expect (= 2 (count (headers entries))))
+            (expect (< (.indexOf ^String text "Alpha paragraph 11")
+                       (.indexOf ^String text label)
+                       (.indexOf ^String text "Beta paragraph 0")
+                       (.indexOf ^String text "Gamma paragraph 11"))))))
+    (it
+      "keeps the first disclosure stable as thinking grows and Activity arrives live"
+      (let [opts
+            {:live? true}
+
+            first-header
+            (first (headers (render* (subvec iterations 0 1) opts)))
+
+            merged
+            (render* iterations opts)
+
+            with-activity
+            (assoc-in iterations [2 :forms] [(first (grouped-activity-forms #{}))])
+
+            completed
+            (render* with-activity opts)
+
+            split
+            (render* (assoc-in with-activity [0 :forms] [(first (grouped-activity-forms #{}))])
+                     opts)
+
+            node-id
+            (get-in first-header [:meta :node-id])
+
+            expanded
+            (render* with-activity
+                     (assoc opts :detail-expansions {["thinking-merge" node-id] true}))]
+
+        (expect (= [node-id] (mapv #(get-in % [:meta :node-id]) (headers merged))))
+        (expect (= [node-id] (mapv #(get-in % [:meta :node-id]) (headers completed))))
+        (expect (= 2 (count (headers split))))
+        (expect (< (.indexOf ^String (text-of expanded) "Gamma paragraph 11")
+                   (.indexOf ^String (text-of expanded) "ACTIVITY")))
+        (expect (= (render* iterations opts) merged))))
+    (it "paints one Thinking heading after hiding intermediate Python executions"
+        (let [entries
+              (render* iterations {})
+
+              captured
+              (cap/capture! {:cols 80
+                             :rows 40
+                             :paint! (fn [{:keys [g]}]
+                                       (render/draw-chat-bubble! g
+                                                                 {:role :assistant
+                                                                  :prewrapped-lines (mapv :line
+                                                                                          entries)
+                                                                  :line-meta (mapv :meta entries)}
+                                                                 0 0
+                                                                 76 {:viewport-h 40}))})]
+
+          (expect (nil? (:error captured)))
+          (expect (= 1 (count (re-seq #"THINKING" (cap/frame-text captured)))))))))
+
+(defdescribe
   python-visibility-test
   (it
     "hides Python source, stdout and diagnostics while preserving Activity live and restored"
