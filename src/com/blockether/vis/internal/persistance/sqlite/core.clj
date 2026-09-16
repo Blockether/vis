@@ -3370,6 +3370,41 @@
   (first (query-sql! db-info
                      [latest-turn-state-sql session-turn-soul-id-s session-turn-soul-id-s])))
 
+(defn db-checkpoint-session-turn-ctx!
+  "Save a newer fold checkpoint on the named running turn version, without settling it.
+   Returns false after a retry, terminal write, or newer checkpoint has won."
+  [db-info session-turn-id state-id ctx]
+  (if-not (and (ds db-info) session-turn-id state-id)
+    false
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (let [state
+                              (latest-session-turn-state tx-info (->ref session-turn-id))
+
+                              saved
+                              (<-blob (:ctx state))]
+
+                          (if (and (= (->ref state-id) (:id state))
+                                   (= "running" (:status state))
+                                   (> (long (get ctx "session_summaries_revision" 0))
+                                      (long (get saved "session_summaries_revision" 0))))
+                            (pos? (long (or (:next.jdbc/update-count
+                                              (first (execute! tx-info
+                                                               {:update :session_turn_state
+                                                                :set {:ctx (->blob (freeze-safe
+                                                                                     ctx))}
+                                                                :where [:= :id (:id state)]})))
+                                            0)))
+                            false))))))
+
+(defn- preserve-fold-checkpoint
+  "A terminal snapshot may predate a fold checkpoint that committed while it was built."
+  [saved ctx]
+  (if (> (long (get saved "session_summaries_revision" 0))
+         (long (get ctx "session_summaries_revision" 0)))
+    (merge ctx (select-keys saved ["session_summaries" "session_summaries_revision"]))
+    ctx))
+
 (defn db-retry-session-turn!
   "Create a new session_turn_state (version N+1) for an existing session_turn_soul.
    Used when re-running a turn with a different provider/model or settings.
@@ -3480,12 +3515,10 @@
                     prior-outcome
                     (assoc :prior_outcome (name prior-outcome))
 
-                    ;; Nippy-encode the CTX snapshot as of end-of-turn.
-                    ;; Live CTX = this row's ctx on the latest turn-state
-                    ;; for the latest turn-soul; history = walking the
-                    ;; soul chain.
+                    ;; Keep a fold that committed after the terminal snapshot was captured.
                     (some? ctx)
-                    (assoc :ctx (->blob (freeze-safe ctx)))
+                    (assoc :ctx
+                      (->blob (freeze-safe (preserve-fold-checkpoint (<-blob (:ctx state)) ctx))))
 
                     ;; First-class STRUCTURED terminal error (queryable),
                     ;; nippy-encoded like ctx — an error is not an answer.

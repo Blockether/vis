@@ -611,6 +611,8 @@
 (defdelegate db-turn-history [db-info session-ref])
 
 ;; --- CTX snapshots (per-turn string-keyed session_* state, Nippy in session_turn_state.ctx) ---
+(defdelegate db-checkpoint-session-turn-ctx! [db-info session-turn-id state-id ctx])
+
 (defdelegate db-load-latest-ctx [db-info session-id])
 
 (defdelegate db-load-ctx-history [db-info session-id])

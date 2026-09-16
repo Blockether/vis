@@ -3010,6 +3010,66 @@
     (reset! session-rebase-atom {:reclaimed-tokens 0 :pending? false})
     (ctx-renderer/render-ctx-delta {} cur)))
 
+(defn- durable-context-snapshot
+  "Normalize both in-turn checkpoints and terminal context snapshots for resume."
+  [environment ctx]
+  (-> (ctx-loop/stamp-cursor environment ctx)
+      ctx-engine/gc-pass
+      (dissoc "session_scope")
+      ctx-engine/strip-ephemeral))
+
+(defn- checkpoint-fold!
+  "A fold is acknowledged only after its current turn version has saved the checkpoint."
+  [environment ctx]
+  (let [{:keys [session-turn-id session-turn-state-id]} (ctx-loop/read-turn-state environment)]
+    (when-not (persistance/db-checkpoint-session-turn-ctx! (:db-info environment)
+                                                           session-turn-id
+                                                           session-turn-state-id
+                                                           (durable-context-snapshot environment
+                                                                                     ctx))
+      (throw (ex-info "fold_session could not save its checkpoint; the turn changed or ended."
+                      {:type :vis/fold-checkpoint-rejected}))))
+  nil)
+
+(defn- folded-context
+  "Record a bounded selector and supersede older intents without changing the live context."
+  [ctx intent]
+  (let [candidates
+        (conj (vec (get ctx "session_summaries"))
+              (assoc intent "at_turn" (get intent "issued_turn")))
+
+        ;; Include scopes named by earlier folds, even when absent from the live trailer.
+        universe
+        (into (vec (get ctx "engine_iter_universe"))
+              (comp (mapcat #(get % "scopes")) (filter ctx-engine/scope-key))
+              candidates)
+
+        tagged
+        (mapv #(assoc %2 "__record_idx" %1) (range) candidates)
+
+        winners
+        (-> tagged
+            (ctx-engine/expand-through universe (keys (get ctx "engine_turn_weights")))
+            ctx-engine/supersede-summaries)
+
+        kept
+        (into #{} (map #(get % "__record_idx")) winners)]
+
+    (assoc ctx
+      "session_summaries_revision" (inc (long (get ctx "session_summaries_revision" 0)))
+      "engine_fold_count" (inc (long (or (get ctx "engine_fold_count") 0)))
+      "engine_fold_measurement" (if (= "pending" (get-in ctx ["engine_fold_measurement" "status"]))
+                                  (update (get ctx "engine_fold_measurement") "fold_count" inc)
+                                  (let [sample (get ctx "engine_provider_input")]
+                                    (merge (select-keys sample ["turn" "provider" "model"])
+                                           {"status" "pending"
+                                            "fold_count" 1
+                                            "before_input_tokens" (when (= (get sample "turn")
+                                                                           (get ctx "session_turn"))
+                                                                    (get sample "input_tokens"))})))
+      ;; Preserve the original selector shape, not its expanded scope list.
+      "session_summaries" (into [] (keep-indexed #(when (contains? kept %1) %2)) candidates))))
+
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `fold_session`, closing over `ctx-atom`. It records a `:session/summaries`
@@ -3026,7 +3086,7 @@
     to discard the step with no summary line. Recorded intents are string-keyed
     because they persist inside the ctx blob; `ctx-engine/expand-through` owns
     their shape and `apply-summaries` renders them."
-  [ctx-atom & [session-rebase-atom]]
+  [ctx-atom & [session-rebase-atom checkpoint!]]
   (let [normalize-key
         (fn [value]
           ;; Some Python call shapes hand a LIST of keys across as one JSON string;
@@ -3087,65 +3147,15 @@
         record!
         (fn [intent]
           (when ctx-atom
-            (swap! ctx-atom
-              (fn [ctx]
-                (let [candidates
-                      ;; Stamp the RECORDING turn onto the intent: a range
-                      ;; cursor is re-resolved against every LATER turn's live
-                      ;; universe, so without this stamp a stale/foreign-numbered
-                      ;; cursor (`{"through" "t113"}` in a session now at t103)
-                      ;; collapses the whole live turn and the model goes blind.
-                      ;; `apply-summaries` lets a summary touch LIVE-turn scopes
-                      ;; only when `at_turn` IS that turn.
-                      (conj (vec (get ctx "session_summaries"))
-                            (cond-> intent
-                              (current-turn)
-                              (assoc "at_turn" (current-turn))))
-
-                      ;; The supersede universe is the live wire PLUS every
-                      ;; concrete scope the candidates themselves name — so a
-                      ;; bare `tN` re-fold covers earlier enumerated folds of
-                      ;; that turn even before (or after) those iterations are
-                      ;; stamped into `engine_iter_universe`.
-                      universe
-                      (into (vec (or (get ctx "engine_iter_universe") []))
-                            (comp (mapcat #(get % "scopes")) (filter ctx-engine/scope-key))
-                            candidates)
-
-                      tagged
-                      (mapv (fn [idx summary]
-                              (assoc summary "__record_idx" idx))
-                            (range)
-                            candidates)
-
-                      winners
-                      (-> tagged
-                          (ctx-engine/expand-through universe
-                                                     (keys (get ctx "engine_turn_weights")))
-                          ctx-engine/supersede-summaries)
-
-                      kept
-                      (into #{} (map #(get % "__record_idx")) winners)]
-
-                  ;; Persist the original selector shape for stable receipts/tests,
-                  ;; but discard superseded intents NOW. Rendering no longer has to
-                  ;; refine an ever-growing fold-of-fold chain on every request.
-                  (assoc ctx
-                    "engine_fold_count" (inc (long (or (get ctx "engine_fold_count") 0)))
-                    "engine_fold_measurement"
-                    (if (= "pending" (get-in ctx ["engine_fold_measurement" "status"]))
-                      (update (get ctx "engine_fold_measurement") "fold_count" inc)
-                      (let [sample (get ctx "engine_provider_input")]
-                        (merge (select-keys sample ["turn" "provider" "model"])
-                               {"status" "pending"
-                                "fold_count" 1
-                                "before_input_tokens" (when (= (get sample "turn")
-                                                               (get ctx "session_turn"))
-                                                        (get sample "input_tokens"))})))
-                    "session_summaries" (into []
-                                              (keep-indexed (fn [idx summary]
-                                                              (when (contains? kept idx) summary)))
-                                              candidates)))))))
+            ;; Serialize fold writers, but leave unrelated atom updates intact. Never do
+            ;; IO inside swap!: a retry could commit a checkpoint twice.
+            (locking ctx-atom
+              (let [after (folded-context @ctx-atom intent)]
+                (when checkpoint! (checkpoint! after))
+                (swap! ctx-atom merge
+                  (select-keys after
+                               ["session_summaries" "session_summaries_revision" "engine_fold_count"
+                                "engine_fold_measurement"]))))))
 
         fmt-tok
         (fn [t]
@@ -3205,7 +3215,10 @@
                     (reduce + 0 (keep #(get tw %) new-turns)))
 
                   toks
-                  (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))
+                  (if-let [estimate (get ctx "engine_fold_estimator")]
+                    (estimate ctx (folded-context ctx base))
+                    (when (or (map? weights) (map? (get ctx "engine_turn_weights")))
+                      (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))))
 
                   ;; A fold can legitimately cover scopes that already left the wire:
                   ;; iterations of a turn that COMPLETED normally replay no results at
@@ -3242,7 +3255,7 @@
                   ;; Only advise when a whole-turn fold really would reclaim something:
                   ;; recap-less or already-whole-turn-folded scopes need no nudge.
                   off-wire-note
-                  (when (seq recap-turns)
+                  (when (and (nil? (get ctx "engine_fold_estimator")) (seq recap-turns))
                     (str " · "
                          (count off-wire)
                          "/"
@@ -3252,9 +3265,11 @@
                          " to drop their recaps"))
 
                   removed
-                  (cond (pos? (long toks)) (str " · estimated removal ~" (fmt-tok toks) " tokens")
-                        (some? util) " · estimated removal ~0 tokens"
-                        :else "")
+                  (cond (nil? toks) " · removal estimate unavailable"
+                        (pos? (long toks)) (str " · estimated removal ~" (fmt-tok toks) " tokens")
+                        (neg? (long toks))
+                        (str " · estimated growth ~" (fmt-tok (- (long toks))) " tokens")
+                        :else " · estimated removal ~0 tokens")
 
                   ;; Removal uses a local tokenizer; input is provider usage. Subtracting
                   ;; them cannot establish the remaining context or a non-foldable floor.
@@ -3273,8 +3288,9 @@
                        (when (pos? budget) (str " · operating budget " (fmt-tok budget)))
                        (when (pos? limit) (str " · model limit " (fmt-tok limit))))]
 
-              {:note (str removed measured off-wire-note) :reclaimed-tokens toks})
-            (catch Throwable _ {:note "" :reclaimed-tokens 0})))]
+              {:note (str removed measured off-wire-note)
+               :reclaimed-tokens (max 0 (long (or toks 0)))})
+            (catch Throwable _ {:note " · removal estimate unavailable" :reclaimed-tokens 0})))]
 
     {'fold-session
      (fn fold-session [fold-key & [gist]]
@@ -3364,19 +3380,16 @@
                              str
                              str/trim
                              not-empty)
-                   {:keys [note reclaimed-tokens]} (priced base)
                    ;; Stamp the ISSUING turn so `previous-turn-context` never lets
                    ;; a whole-turn fold recorded DURING turn N erase turn N's own
                    ;; Q/A recap next request (the answer is produced after the fold;
                    ;; the gist can't summarize it). `turn` is always non-nil here —
                    ;; the guard above throws when it can't prove the current turn.
+                   base (cond-> (assoc base "issued_turn" turn)
+                          g
+                          (assoc "gist" g))
+                   {:keys [note reclaimed-tokens]} (priced base)
                    intent (cond-> base
-                            turn
-                            (assoc "issued_turn" turn)
-
-                            g
-                            (assoc "gist" g)
-
                             (not (str/blank? note))
                             (assoc "note" note))]
 
@@ -5045,16 +5058,17 @@
          :summaries summaries
          :resumed? true}))))
 
+(defn- prompt-message-base
+  "Project a fold-ledger change using the same canonical base as the next request."
+  [base summaries canonical-messages-fn]
+  (if (= summaries (:summaries base))
+    base
+    {:messages (vec (canonical-messages-fn)) :summaries summaries :resumed? false}))
+
 (defn- prompt-message-base!
   "Keep BASE while its fold ledger is unchanged; otherwise canonicalize exactly once."
   [base-atom summaries canonical-messages-fn]
-  (let [base @base-atom]
-    (if (= summaries (:summaries base))
-      base
-      (let [canonical
-            {:messages (vec (canonical-messages-fn)) :summaries summaries :resumed? false}]
-        (reset! base-atom canonical)
-        canonical))))
+  (reset! base-atom (prompt-message-base @base-atom summaries canonical-messages-fn)))
 
 (defn- conversation-trailer-for-base
   "Hide cross-turn seeds already present in an exact carried request prefix."
@@ -5064,6 +5078,34 @@
                (not (false? (:preserved-thinking/replay? iter-rec))))
       (or trailer-iters []))
     (vec (or trailer-iters []))))
+
+(defn- conversation-messages
+  "Combine the selected base and folded trailer exactly as sent to the provider."
+  [base trailer-iters replay-target options]
+  (into (vec (:messages base))
+        (conversation-suffix (conversation-trailer-for-base trailer-iters (:resumed? base))
+                             replay-target
+                             options)))
+
+(defn- request-fold-estimator
+  "Price the before/after request projections, including carried prefixes and replacement gists.
+   Neither the live base nor its fold ledger is changed by this local-tokenizer estimate."
+  [{:keys [message-base-atom canonical-messages-fn trailer-iters emergency-summaries-atom
+           replay-target conversation-options count-messages-fn]}]
+  (fn [before after]
+    (let [project (fn [ctx]
+                    (let [summaries (get ctx "session_summaries")
+                          base (prompt-message-base @message-base-atom
+                                                    summaries
+                                                    #(canonical-messages-fn ctx))]
+
+                      (conversation-messages
+                        base
+                        (apply-summaries trailer-iters (into @emergency-summaries-atom summaries))
+                        replay-target
+                        conversation-options)))]
+      (- (long (count-messages-fn (:model replay-target) (project before)))
+         (long (count-messages-fn (:model replay-target) (project after)))))))
 
 (defn- same-effective-router?
   "True when two hydrated routers carry the same values and reload generation."
@@ -8551,17 +8593,25 @@
                                            :image-descriptions initial-image-descriptions})
 
         canonical-messages
-        (fn []
-          (prompt/assemble-initial-messages
-            {:stable-prompt-messages stable-prompt-messages
-             :initial-user-content user-request
-             :turn-context turn-context
-             :user-images (:attached user-attachments)
-             :skipped-images (:skipped user-attachments)
-             :vision? initial-target-vision?
-             :image-descriptions initial-image-descriptions
-             :previous-turn-context
-             (previous-turn-context environment session-turn-id (:name initial-resolved-model))}))
+        (fn canonical-messages ([] (canonical-messages environment))
+          ([context-environment] (prompt/assemble-initial-messages {:stable-prompt-messages
+                                                                    stable-prompt-messages
+                                                                    :initial-user-content
+                                                                    user-request
+                                                                    :turn-context turn-context
+                                                                    :user-images (:attached
+                                                                                   user-attachments)
+                                                                    :skipped-images
+                                                                    (:skipped user-attachments)
+                                                                    :vision? initial-target-vision?
+                                                                    :image-descriptions
+                                                                    initial-image-descriptions
+                                                                    :previous-turn-context
+                                                                    (previous-turn-context
+                                                                      context-environment
+                                                                      session-turn-id
+                                                                      (:name
+                                                                        initial-resolved-model))})))
 
         summaries-at-turn-start
         (current-session-summaries environment)
@@ -8807,6 +8857,10 @@
     (ctx-loop/set-turn-state! environment
                               :iteration-id nil
                               :session-turn-id session-turn-id
+                              :session-turn-state-id
+                              (:state-id (last (persistance/db-list-session-turn-states
+                                                 (:db-info environment)
+                                                 session-turn-id)))
                               :user-request user-request
                               :turn-position (or turn-position 1)
                               :iteration nil
@@ -8933,13 +8987,13 @@
                  ;; that one semantic rewrite switches the base to canonical recap.
                  visible-trailer-iters (conversation-trailer-for-base summarized-trailer-iters
                                                                       (:resumed? message-base))
-                 conversation-suffix-msgs
-                 (conversation-suffix
-                   visible-trailer-iters
-                   replay-target
-                   {:describe-images
-                    (replay-image-describer environment user-request (:provider replay-target))})
-                 provider-base (into (vec messages) conversation-suffix-msgs)
+                 conversation-options
+                 {:describe-images
+                  (replay-image-describer environment user-request (:provider replay-target))}
+                 provider-base (conversation-messages message-base
+                                                      summarized-trailer-iters
+                                                      replay-target
+                                                      conversation-options)
                  message-token-counter (prompt/request-token-counter)
                  council-active (when (council/enabled? environment)
                                   (get (council/runtime (:db-info environment)
@@ -9079,6 +9133,19 @@
                              :prompt-base (if (:resumed? attempt-base) :resumed :canonical)
                              :base-message-count (count (:messages attempt-base))
                              :trailer-iteration-count (count visible-attempt-trailer)})
+                          _fold-estimator (when-let [ca (:ctx-atom attempt-env)]
+                                            (swap! ca assoc
+                                              "engine_fold_estimator"
+                                              (request-fold-estimator
+                                                {:message-base-atom message-base-atom
+                                                 :canonical-messages-fn #(canonical-messages
+                                                                           (assoc environment
+                                                                             :ctx-atom (atom %)))
+                                                 :trailer-iters trailer-iters
+                                                 :emergency-summaries-atom emergency-summaries-atom
+                                                 :replay-target (replay-context resolved-model)
+                                                 :conversation-options conversation-options
+                                                 :count-messages-fn message-token-counter})))
                           result
                           (try
                             (when (and cancel-atom @cancel-atom)
@@ -10040,12 +10107,7 @@
           ;; strip cursor metadata, then drop ephemerals before Nippy-encoding.
           ctx-snapshot
           (when-let [ca (:ctx-atom env)]
-            (let [stamped (ctx-loop/stamp-cursor env @ca)
-                  gced (ctx-engine/gc-pass stamped)
-                  clean (-> gced
-                            (dissoc "session_scope")
-                            ctx-engine/strip-ephemeral)]
-
+            (let [clean (durable-context-snapshot env @ca)]
               (reset! ca clean)
               clean))]
 
@@ -10243,17 +10305,7 @@
         ;; latest turn-soul of the session_state.
         ctx-snapshot
         (when-let [ca (:ctx-atom env)]
-          (let [stamped (ctx-loop/stamp-cursor env @ca)
-                gced (ctx-engine/gc-pass stamped)
-                ;; Strip cursor + every `"engine_*"` ephemeral
-                ;; key (warnings, pending-satisfies) before
-                ;; persisting. The next resume rebuilds the
-                ;; cursor from loop counters and starts each
-                ;; turn with empty ephemerals via empty-ctx.
-                clean (-> gced
-                          (dissoc "session_scope")
-                          ctx-engine/strip-ephemeral)]
-
+          (let [clean (durable-context-snapshot env @ca)]
             (reset! ca clean)
             clean))
 
@@ -10506,12 +10558,7 @@
         ;; Snapshot CTX like run-slash-turn! / run-normal-turn! so resume is stable.
         ctx-snapshot
         (when-let [ca (:ctx-atom env)]
-          (let [stamped (ctx-loop/stamp-cursor env @ca)
-                gced (ctx-engine/gc-pass stamped)
-                clean (-> gced
-                          (dissoc "session_scope")
-                          ctx-engine/strip-ephemeral)]
-
+          (let [clean (durable-context-snapshot env @ca)]
             (reset! ca clean)
             clean))]
 
@@ -11652,7 +11699,8 @@
             session-rebase-atom (atom {:reclaimed-tokens 0 :pending? false})
             ;; `fold_session` records a summary or discard intent using the key grammar in
             ;; `ctx-engine/fold-key`, and returns a visible receipt.
-            compaction (compaction-verbs ctx-atom session-rebase-atom)
+            compaction
+            (compaction-verbs ctx-atom session-rebase-atom #(checkpoint-fold! @environment-atom %))
             ;; Build the ctx-loop env subset used by the engine bindings + helpers.
             ;; Just the cursor counters + the single ctx-atom. Warnings
             ;; live as `:engine/warnings` on the ctx itself, no side atoms.

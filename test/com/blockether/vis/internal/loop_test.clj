@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.channel.form :as form]
+            [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -568,6 +569,9 @@
          snapshots
          (atom [])
 
+         checkpoints
+         (atom [])
+
          tid
          (persistance/db-store-session-turn! db
                                              {:parent-session-id sid
@@ -592,6 +596,12 @@
 
                             (swap! requests conj (:messages opts))
                             (swap! snapshots conj (ctx-loop/session-snapshot environment))
+                            ;; Capture data here: test failures must not become provider errors.
+                            (when (= idx 2)
+                              (swap! checkpoints conj
+                                [(get @(:ctx-atom environment) "session_summaries")
+                                 (get (persistance/db-load-latest-ctx db sid)
+                                      "session_summaries")]))
                             (merge {:api-usage {:input-tokens input :output-tokens 1}
                                     :routed/provider-id :lmstudio
                                     :routed/model "model"
@@ -604,6 +614,9 @@
                                      {:stop-reason :end :tool-calls [] :content "done"}))))]
             (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
           (expect (= 4 (count @requests)))
+          ;; A successful fold must survive before the turn finalizer runs.
+          (doseq [[live saved] @checkpoints]
+            (expect (= live saved)))
           (let [wire
                 (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
 
@@ -700,6 +713,90 @@
                  (fold-usage-scenario
                    (str "example = \"fold_session('-t1/i1', 'unused')\"\n"
                         "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
+
+(defn- fold-durability-scenario
+  "Resume an acknowledged fold after a terminal path that never saves the live context."
+  [finish!]
+  (let [db (persistance/db-create-connection! :memory)]
+    (try
+      (let [ws (persistance/db-workspace-insert!
+                 db
+                 {:repo-id "fold-test" :repo-root "/tmp/vis-fold-test" :root "/tmp/vis-fold-test"})
+            sid (persistance/db-store-session! db {:workspace-id (:id ws)})
+            prior
+            (persistance/db-store-session-turn! db {:parent-session-id sid :user-request "prior"})
+            old {"session_turn" 1
+                 "session_summaries" [{"through" "t1/i1" "at_turn" 1 "gist" "old checkpoint"}]}
+            _ (persistance/db-update-session-turn! db prior {:status :done :ctx old})
+            tid (persistance/db-store-session-turn! db
+                                                    {:parent-session-id sid
+                                                     :user-request "continue"})
+            ca (atom (assoc old
+                       "session_turn" 2
+                       "engine_iter_universe" ["t1/i1" "t2/i1"]))
+            environment {:db-info db
+                         :session-id sid
+                         :ctx-atom ca
+                         :turn-state-atom
+                         (atom {:session-turn-id tid
+                                :session-turn-state-id
+                                (:state-id (last (persistance/db-list-session-turn-states db tid)))
+                                :turn-position 2
+                                :iteration 2
+                                :form-idx 0})}
+            fold (get (#'lp/compaction-verbs ca nil #(#'lp/checkpoint-fold! environment %))
+                      'fold-session)]
+
+        (expect (str/includes? (fold "-t2/i1" "new checkpoint") "folded"))
+        (let [saved (persistance/db-load-latest-ctx db sid)]
+          (expect (= (get @ca "session_summaries") (get saved "session_summaries")))
+          (expect (not-any? #(str/starts-with? % "engine_") (keys saved)))
+          (expect (not (contains? saved "session_scope")))
+          (finish! environment tid)
+          (expect (= saved (persistance/db-load-latest-ctx db sid)))
+          (expect (= :interrupted (:status (persistance/db-read-session-turn db sid tid)))))
+        (let [restored (persistance/db-load-latest-ctx db sid)
+              projected (#'lp/apply-summaries
+                         [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout "old"}]}]
+                          [1 {:forms-vec [{:scope "t2/i1/f1" :stdout "settled"}]}]
+                          [2 {:forms-vec [{:scope "t3/i1/f1" :stdout "live"}]}]]
+                         (get restored "session_summaries"))]
+
+          (expect (= [true true nil] (mapv (comp :collapsed? second) projected)))
+          (expect (= "new checkpoint" (get (last (get restored "session_summaries")) "gist")))))
+      (finally (persistance/db-dispose-connection! db)))))
+
+(defdescribe fold-checkpoint-durability-test
+             ;; Restart orphan recovery used to restore the preceding turn's older fold ledger.
+             (it "retains the fold when restart recovery runs without a turn finalizer"
+                 (fold-durability-scenario
+                   (fn [environment _]
+                     (expect (= 1 (lp/db-sweep-orphaned-running-turns! (:db-info environment)))))))
+             (it "retains the fold when forced cancellation owns the terminal write"
+                 (fold-durability-scenario
+                   (fn [environment tid]
+                     (with-redefs [lp/db-info (constantly (:db-info environment))]
+                       (#'gateway-state/persist-forced-terminal!
+                        (:session-id environment)
+                        tid
+                        {:status :interrupted :content [] :prior-outcome :cancelled})))))
+             (it "does not acknowledge or publish a fold when checkpoint persistence fails"
+                 (let [before
+                       {"session_turn" 1 "engine_iter_universe" ["t1/i1"]}
+
+                       ca
+                       (atom before)
+
+                       fold
+                       (get (#'lp/compaction-verbs
+                             ca
+                             nil
+                             (fn [_]
+                               (throw (ex-info "checkpoint unavailable" {}))))
+                            'fold-session)]
+
+                   (expect (throws? clojure.lang.ExceptionInfo #(fold "-t1/i1" "checkpoint")))
+                   (expect (= before @ca)))))
 
 (defn- fold-measurement-fixture
   "A foldable context whose stale utilization deliberately disagrees with the response."
@@ -3737,6 +3834,128 @@
                      (stamp ca util2)
                      (expect (= util2 (get @ca "engine_utilization")))))
                (it "is a no-op on a nil ctx-atom" (expect (nil? (stamp nil util1))))))
+
+(defn- retained-fold-fixture
+  "Price a completed-turn seed whose full payload remains in an exact carried prefix."
+  []
+  (let [payload
+        (apply str (repeat 4000 "settled evidence "))
+
+        trailer
+        [[0
+          {:forms-vec [{:scope "t1/i1/f1" :stdout payload}]
+           :preserved-thinking/replay? false
+           :cross-turn/turn-status :done}]]
+
+        base
+        (atom {:messages [{:role "system" :content "stable"} {:role "user" :content payload}]
+               :summaries []
+               :resumed? true})
+
+        ca
+        (atom {"session_turn" 2
+               "session_summaries" []
+               "engine_utilization" {"last_request_tokens" 20000}})
+
+        rebase
+        (atom {:reclaimed-tokens 0 :pending? false})
+
+        estimates
+        (atom [])
+
+        canonical
+        (fn [_]
+          [{:role "system" :content "stable"} {:role "user" :content "canonical recap"}])
+
+        target
+        {:provider :openai :model "gpt-4o"}
+
+        counter
+        (prompt/request-token-counter)
+
+        estimator
+        (#'lp/request-fold-estimator
+         {:message-base-atom base
+          :canonical-messages-fn canonical
+          :trailer-iters trailer
+          :emergency-summaries-atom (atom [])
+          :replay-target target
+          :conversation-options {}
+          :count-messages-fn counter})]
+
+    (#'lp/stamp-iter-universe! ca trailer)
+    (swap! ca assoc
+      "engine_fold_estimator"
+      (fn [before after]
+        (let [estimate (estimator before after)]
+          (swap! estimates conj estimate)
+          estimate)))
+    {:ctx ca
+     :base base
+     :rebase rebase
+     :estimates estimates
+     :fold (get (#'lp/compaction-verbs ca rebase) 'fold-session)
+     :tokens (fn [ctx]
+               (let [summaries
+                     (get ctx "session_summaries")
+
+                     selected
+                     (#'lp/prompt-message-base @base summaries #(canonical ctx))]
+
+                 (counter (:model target)
+                          (#'lp/conversation-messages
+                           selected
+                           (#'lp/apply-summaries trailer summaries)
+                           target
+                           {}))))}))
+
+(defdescribe
+  retained-prefix-fold-estimate-test
+  (it "prices the retained prefix, replacement gist and canonical rebase without mutating the base"
+      (let [{:keys [ctx base rebase estimates fold tokens]}
+            (retained-fold-fixture)
+
+            before
+            @ctx
+
+            before-base
+            @base
+
+            receipt
+            (with-redefs-fn {#'lp/SESSION_REBASE_RECLAIMED_TOKENS 1000}
+              #(fold "-t1/i1" "checkpoint"))
+
+            actual
+            (- (tokens before) (tokens @ctx))]
+
+        (expect (= 0 (get-in before ["engine_iter_weights" "t1/i1"])))
+        (expect (> (first @estimates) 1000))
+        ;; The receipt itself is new content; the estimate is not provider usage.
+        (expect (< (abs (- actual (first @estimates))) 128))
+        (expect (re-find #"estimated removal ~[1-9]" receipt))
+        (expect (not (str/includes? receipt "already off-wire")))
+        (expect (= before-base @base))
+        (expect (= 20000 (get-in @ctx ["engine_utilization" "last_request_tokens"])))
+        (expect (true? (:pending? @rebase)))))
+  (it "does not charge a carried prefix twice and accounts for a larger replacement gist"
+      (let [{:keys [fold estimates]} (retained-fold-fixture)]
+        (fold "-t1/i1" "checkpoint")
+        (fold "-t1/i1" "checkpoint")
+        (expect (< (abs (second @estimates)) 128))
+        (let [receipt (fold "-t1/i1" (apply str (repeat 6000 "larger gist ")))]
+          (expect (neg? (long (last @estimates))))
+          (expect (str/includes? receipt "estimated growth")))))
+  (it "reports an unavailable estimate instead of a false zero when projection pricing fails"
+      (let [{:keys [ctx fold rebase]} (retained-fold-fixture)]
+        (swap! ctx assoc
+          "engine_fold_estimator"
+          (fn [& _]
+            (throw (ex-info "tokenizer unavailable" {}))))
+        (let [receipt (fold "-t1/i1" "checkpoint")]
+          (expect (str/includes? receipt "estimate unavailable"))
+          (expect (not (str/includes? receipt "~0 tokens")))
+          (expect (zero? (:reclaimed-tokens @rebase)))
+          (expect (seq (get @ctx "session_summaries")))))))
 
 (defdescribe
   fold-session-scope-test

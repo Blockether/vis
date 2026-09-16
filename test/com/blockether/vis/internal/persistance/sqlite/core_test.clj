@@ -2721,6 +2721,107 @@
                     :total_cost_usd 1.25}
                    row))))))
 
+(defn- checkpoint-turn
+  "Create one running turn and a durable fold snapshot in the isolated test store."
+  [db]
+  (let [sid
+        (h/store-session! db {:channel :api})
+
+        tid
+        (persistance/db-store-session-turn! db {:parent-session-id sid :user-request "fold"})]
+
+    {:sid sid
+     :tid tid
+     :state-id (:state-id (last (persistance/db-list-session-turn-states db tid)))
+     :ctx {"session_turn" 1
+           "session_summaries_revision" 1
+           "session_summaries"
+           [{"through" "t1/i1" "at_turn" 1 "issued_turn" 1 "gist" "checkpoint"}]}}))
+
+(defdescribe
+  fold-checkpoint-persistence-test
+  (it "checkpoints context without settling the turn or changing its counters"
+      (let [db
+            (h/store)
+
+            {:keys [sid tid state-id ctx]}
+            (checkpoint-turn db)
+
+            before
+            (first (raw-query db {:select [:*] :from :session_turn_state}))]
+
+        (expect (true? (persistance/db-checkpoint-session-turn-ctx! db tid state-id ctx)))
+        (expect (= ctx (persistance/db-load-latest-ctx db sid)))
+        (expect (= (dissoc before :ctx)
+                   (dissoc (first (raw-query db {:select [:*] :from :session_turn_state})) :ctx)))
+        (expect (= :running (:status (persistance/db-read-session-turn db sid tid))))))
+  (it "rejects stale and duplicate checkpoint revisions"
+      (let [db
+            (h/store)
+
+            {:keys [sid tid state-id ctx]}
+            (checkpoint-turn db)
+
+            newer
+            (assoc ctx
+              "session_summaries_revision" 2
+              "session_summaries" [{"through" "t1/i2" "gist" "newer" "at_turn" 1}])]
+
+        (expect (true? (persistance/db-checkpoint-session-turn-ctx! db tid state-id newer)))
+        (expect (false? (persistance/db-checkpoint-session-turn-ctx! db tid state-id ctx)))
+        (expect (false? (persistance/db-checkpoint-session-turn-ctx! db tid state-id newer)))
+        (expect (= newer (persistance/db-load-latest-ctx db sid)))))
+  (it "keeps a committed fold when a stale terminal snapshot wins next"
+      (let [db
+            (h/store)
+
+            {:keys [sid tid state-id ctx]}
+            (checkpoint-turn db)
+
+            stale
+            {"session_turn" 1 "session_summaries" [] "session_answer" "finished"}]
+
+        (expect (true? (persistance/db-checkpoint-session-turn-ctx! db tid state-id ctx)))
+        (expect (true? (persistance/db-update-session-turn!
+                         db
+                         tid
+                         {:status :success :ctx stale :iteration-count 3})))
+        (expect (= (assoc ctx "session_answer" "finished") (persistance/db-load-latest-ctx db sid)))
+        (expect (= 3 (:iteration-count (persistance/db-read-session-turn db sid tid))))))
+  (it "rejects a checkpoint after the terminal write wins first"
+      (let [db
+            (h/store)
+
+            {:keys [sid tid state-id ctx]}
+            (checkpoint-turn db)
+
+            terminal
+            {"session_turn" 1 "session_summaries" []}]
+
+        (expect
+          (true? (persistance/db-update-session-turn! db tid {:status :interrupted :ctx terminal})))
+        (expect (false? (persistance/db-checkpoint-session-turn-ctx! db tid state-id ctx)))
+        (expect (= terminal (persistance/db-load-latest-ctx db sid)))))
+  (it "rejects a replaced turn version even if its old row is still running"
+      (let [db
+            (h/store)
+
+            {:keys [sid tid state-id ctx]}
+            (checkpoint-turn db)
+
+            retry-id
+            (persistance/db-retry-session-turn! db tid {:status :running})]
+
+        (expect (false? (persistance/db-checkpoint-session-turn-ctx! db tid state-id ctx)))
+        (expect (nil? (persistance/db-load-latest-ctx db sid)))
+        (expect (true? (persistance/db-checkpoint-session-turn-ctx! db tid retry-id ctx)))
+        (expect (false? (persistance/db-checkpoint-session-turn-ctx!
+                          db
+                          tid
+                          state-id
+                          (assoc ctx "session_summaries_revision" 9))))
+        (expect (= ctx (persistance/db-load-latest-ctx db sid))))))
+
 (defdescribe
   runtime-state-persistence-test
   ;; A live Atom previously failed the terminal transaction and lost the answer.
