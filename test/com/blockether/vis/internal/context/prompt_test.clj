@@ -28,6 +28,9 @@
                         text
                         (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))))
             (expect (str/includes? text "bundled SDK takes precedence"))
+            ;; Issue #253: importable declarations do not imply extension host access.
+            (expect (str/includes? text "Import `blockether.vis.extension`"))
+            (expect (str/includes? text "no registration or extension host APIs"))
             (expect (str/includes? text "do not change instruction priority")))))))
 
 (defdescribe

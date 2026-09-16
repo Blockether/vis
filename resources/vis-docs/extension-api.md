@@ -31,9 +31,17 @@ Python extension entry files and `python_execution` receive these globals withou
 
 The model's system context reports the same values. A source build can report `dev`;
 these values describe the loaded build, not necessarily a published release. They are
-diagnostic metadata and do not change instruction priority. At extension load time,
-the bundled SDK takes precedence over pip and editable copies. Installing another SDK
-does not change these globals.
+diagnostic metadata and do not change instruction priority. The bundled SDK takes
+precedence over pip and editable copies in both trusted extensions and
+`python_execution`. Installing another SDK does not change these globals.
+
+In `python_execution`, you can import `blockether.vis.extension` to inspect public
+types and construct declarations without registering them. Registration and host
+callbacks such as `state` and `shell` raise `RuntimeError`; native filesystem helpers
+such as `fs.read` raise `PermissionError`. No standalone host is initialized. See
+[sandbox experimentation](python-sandbox.md#experiment-with-extension-declarations)
+for an example. The registration and host API examples below require a trusted
+extension context.
 
 ## Registration
 

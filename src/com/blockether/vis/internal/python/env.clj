@@ -1173,6 +1173,11 @@
                                 (partial py-install-tool!))
     (try (py-install-module! session "network_probe") (catch Throwable _ nil))))
 
+(def ^:private sandbox-sdk-python
+  (str "__import__('vis_sdk').install("
+       (python-string-literal (slurp (io/resource "blockether/vis/extension.py")))
+       ")"))
+
 (defn- install-shims!
   "Give `session` every registered sandbox shim: its host bindings first, then
    its Python.
@@ -1264,6 +1269,8 @@
     ;; discovery so a block may shadow it locally but can never replace it for the session.
     (exec! session "globals().setdefault('println', print)")
     (try (py-install-module! session "auto_imports") (catch Throwable _ nil))
+    ;; SDK declarations are shared source; no extension host callbacks enter the sandbox.
+    (py-exec! session sandbox-sdk-python)
     (install-protected-names! session custom-bindings)
     (py-exec! session context-bindings-python)
     (bind-ctx! session {})

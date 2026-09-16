@@ -12,6 +12,47 @@ use separate namespaces.
 Tools such as `grep`, `cat`, `patch`, `shell` and `run_tests` are available as
 Python functions. `apropos` and `doc` inspect the available API synchronously.
 
+## Experiment with extension declarations
+
+Ask Vis to inspect an SDK type or prototype a tool declaration in `python_execution`.
+The sandbox includes the bundled `blockether.vis.extension` module; you do not need
+to install `vis-agent` to import it. For example:
+
+```python
+from __future__ import annotations
+
+import inspect
+
+import blockether.vis.extension as sdk
+
+print(inspect.signature(sdk.ActivityProgress))
+progress = sdk.ActivityProgress("Inspect SDK", value=1, total=2)
+print(progress.to_wire())
+
+
+def greet(name: str) -> str:
+    """Greet one person."""
+    return "Hello, " + name
+
+
+symbol = sdk.Symbol(greet)
+print(symbol.contract)
+```
+
+You can inspect public types, validate declarations and call your own Python
+functions. This does not install a tool. `sdk.register_extension(...)` and
+extension host operations such as `sdk.state`, `sdk.shell(...)` and
+`sdk.notify(...)` raise `RuntimeError` explaining that they are unavailable in
+`python_execution`. Native filesystem helpers such as `sdk.fs.read(...)` remain
+restricted to trusted extensions and raise `PermissionError` in the sandbox.
+Importing the SDK does not relax filesystem, process or network restrictions or
+initialize the standalone SDK host.
+
+To register tools and test their host operations, load an extension using the
+[extension tutorial](extending.md). Trusted extension code runs in a separate
+process with its own host bindings. The bundled SDK takes precedence over pip and
+editable copies in both contexts; other SDK modules are not bundled sandbox APIs.
+
 ## Reading tool results
 
 A tool returns its complete result to Python, but only printed text reaches the

@@ -440,6 +440,88 @@
                                        :finish_reason "tool_calls"}]
                             :usage {:prompt_tokens 1 :completion_tokens 2 :total_tokens 3}}))))
 
+(defdescribe
+  native-sandbox-extension-sdk-test
+  ;; Issue #253: exercise the SDK bundled in the image through a real model tool call.
+  (it
+    "imports declarations in python_execution without trusted host or process access"
+    (let [dir
+          (temp-dir "vis-native-sdk-")
+
+          calls
+          (atom 0)
+
+          original-stream
+          stream-body
+
+          original-whole
+          whole-body
+
+          code
+          (str
+            "import blockether.vis.extension as sdk\n" "import inspect, subprocess\n"
+            "assert 'label' in inspect.signature(sdk.ActivityProgress).parameters\n"
+            "assert sdk.ActivityProgress('Inspect SDK', value=1, total=2).value == 1\n"
+            "prototype = sdk.Extension(name='native-prototype', description='Local declaration')\n"
+            "for operation in [lambda: sdk.register_extension(prototype), "
+            "lambda: sdk.state.get('key'), lambda: sdk.shell({'command': 'exit 0'})]:\n"
+            "    try:\n"
+            "        operation()\n" "    except RuntimeError as error:\n"
+            "        assert 'unavailable in python_execution' in str(error)\n" "    else:\n"
+            "        raise AssertionError('Extension host operation allowed')\n"
+            "assert sdk._registration['spec'] is None\n"
+            "assert 'blockether.vis._outside' not in sys.modules\n" "try:\n"
+            "    sdk.fs.read('unused')\n" "except PermissionError as error:\n"
+            "    assert 'not trusted' in str(error)\n" "else:\n"
+            "    raise AssertionError('Trusted filesystem access granted')\n" "try:\n"
+            "    subprocess.run(['/usr/bin/true'], check=True)\n" "except RuntimeError:\n"
+            "    pass\n" "else:\n"
+            "    raise AssertionError('Direct process creation allowed')\n"
+            "print('Native SDK sandbox verified')")
+
+          respond
+          (fn [stream? reply]
+            (if (= 1 (swap! calls inc))
+              (python-call-body stream? "native-sdk" code)
+              ((if stream? original-stream original-whole) reply)))]
+
+      (try
+        (with-redefs [stream-body
+                      #(respond true %)
+
+                      whole-body
+                      #(respond false %)]
+
+          (let [{:keys [server port]} (start-stub-provider! "SDK check complete.")]
+            (try (overlay! dir port)
+                 (spit (io/file dir ".vis/config.yml") "\njail:\n  enabled: true\n" :append true)
+                 (let [database (io/file dir "sessions")
+                       {:keys [finished? exit output]}
+                       (run-binary dir
+                                   [(.getAbsolutePath (require-binary))
+                                    (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                    (.getAbsolutePath database) "--raw"
+                                    "Inspect the bundled extension SDK"]
+                                   180)]
+
+                   (expect finished? output)
+                   (expect (= 0 exit) output)
+                   (expect (= 2 @calls) output)
+                   (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                     (try (let [sid (:id (first (ps/db-list-sessions store :all)))
+                                forms (mapcat :forms
+                                              (mapcat #(ps/db-list-session-turn-iterations store
+                                                                                           (:id %))
+                                                      (ps/db-list-session-turns store sid)))]
+
+                            (expect (= 1 (count forms)) (pr-str forms))
+                            (expect (every? #(nil? (:error %)) forms) (pr-str forms))
+                            (expect (= "Native SDK sandbox verified\n" (:stdout (first forms)))
+                                    (pr-str forms)))
+                          (finally (ps/db-dispose-connection! store)))))
+                 (finally (.stop ^HttpServer server 0)))))
+        (finally (delete-tree! dir))))))
+
 (defn- goal-update-body
   [stream? status]
   (python-call-body stream?

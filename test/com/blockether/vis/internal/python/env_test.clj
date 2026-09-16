@@ -27,6 +27,92 @@
                          (expect (= "True\n" (:stdout result))))
                        (expect (ep/system-var-sym? (symbol name))))))))
 
+(defdescribe
+  sandbox-extension-sdk-test
+  ;; Issue #253: declaration inspection must not acquire a trusted extension host.
+  (it
+    "imports the bundled SDK and prototypes declarations in local and worker contexts"
+    (doseq [worker? [false true]]
+      (tpc/with-own
+        [ctx {} nil {:worker? worker?}]
+        (let
+          [result
+           (ep/run-python-block
+             ctx
+             (str
+               "from __future__ import annotations\n" "import blockether.vis.extension as sdk\n"
+               "import inspect, importlib.util\n" "from dataclasses import fields\n"
+               "assert importlib.util.find_spec('blockether') is not None\n"
+               "assert importlib.util.find_spec(sdk.__name__) is not None\n"
+               "assert 'label' in inspect.signature(sdk.ActivityProgress).parameters\n"
+               "assert [f.name for f in fields(sdk.ActivityProgress)] == ['label', 'value', 'total']\n"
+               "progress = sdk.ActivityProgress('Inspect SDK', value=1, total=2)\n"
+               "def greet(name: str) -> str:\n"
+               "    'Greet one person.'\n" "    return 'Hello, ' + name\n"
+               "symbol = sdk.Symbol(greet)\n"
+               "prototype = sdk.Extension(name='sdk-prototype', alias='prototype', description='Local declaration', symbols=[symbol])\n"
+               "assert symbol.contract['name'] == 'greet'\n"
+               "assert symbol.contract['parameters'][0]['type'] == {'kind': 'scalar', 'name': 'str'}\n"
+               "assert symbol.contract['returns'] == {'kind': 'scalar', 'name': 'str'}\n"
+               "assert sdk._registration['spec'] is None\n"
+               "assert 'blockether.vis._outside' not in sys.modules\n"
+               "print(progress.label, prototype.name, greet('Ada'))"))]
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= "Inspect SDK sdk-prototype Hello, Ada\n" (:stdout result)))))))
+  (it
+    "refuses host operations and registration without installing a fallback host"
+    (doseq [worker? [false true]]
+      (tpc/with-own
+        [ctx {} nil {:worker? worker?}]
+        (let
+          [result
+           (ep/run-python-block
+             ctx
+             (str
+               "import blockether.vis.extension as sdk\n"
+               "operations = [lambda: sdk.state.get('key'), lambda: sdk.notify('hello'), "
+               "lambda: sdk.shell({'command': 'exit 0'}), "
+               "lambda: sdk.register_extension(sdk.Extension(name='blocked', description='Not installed'))]\n"
+               "for operation in operations:\n"
+               "    try:\n" "        operation()\n"
+               "    except RuntimeError as error:\n"
+               "        assert 'unavailable in python_execution' in str(error), str(error)\n"
+               "    else:\n" "        raise AssertionError('Host operation was allowed')\n"
+               "for name in dir(sdk.Host):\n" "    if name.startswith('_'):\n"
+               "        continue\n" "    try:\n"
+               "        getattr(sdk._host, name)\n" "    except RuntimeError as error:\n"
+               "        assert name in str(error)\n" "    else:\n"
+               "        raise AssertionError('Host capability exposed: ' + name)\n"
+               "assert sdk._registration['spec'] is None\n"
+               "assert 'blockether.vis._outside' not in sys.modules\n"
+               "print('Host capabilities refused')"))]
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= "Host capabilities refused\n" (:stdout result))))))))
+
+(defdescribe sandbox-sdk-runtime-restrictions-test
+             ;; Issue #253: importing declarations must not grant the SDK's native file door
+             ;; or change the confined worker's process policy.
+             (it "keeps trusted filesystem access and direct process creation refused"
+                 (tpc/with-own
+                   [ctx {} (constantly [(System/getProperty "user.dir")])
+                    {:worker? true :jail-enabled? true :enabled? false}]
+                   (let [result
+                         (ep/run-python-block
+                           ctx
+                           (str "import blockether.vis.extension as sdk\n"
+                                "import subprocess\n" "try:\n"
+                                "    sdk.fs.read('unused')\n" "except PermissionError as error:\n"
+                                "    assert 'not trusted' in str(error)\n" "else:\n"
+                                "    raise AssertionError('Trusted filesystem access granted')\n"
+                                "try:\n"
+                                "    subprocess.run(['/usr/bin/true'], check=True)\n"
+                                "except RuntimeError as error:\n"
+                                "    assert 'Refused' in str(error)\n" "else:\n"
+                                "    raise AssertionError('Direct process creation allowed')\n"
+                                "print('Runtime restrictions preserved')"))]
+                     (expect (nil? (:error result)) (pr-str result))
+                     (expect (= "Runtime restrictions preserved\n" (:stdout result)))))))
+
 (defdescribe retired-context-entry-test
              ;; Issue #180: retirement is a typed local failure, never an invitation to
              ;; recreate Python while the interrupted turn can still own side effects.

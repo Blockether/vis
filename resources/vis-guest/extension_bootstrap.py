@@ -26,12 +26,11 @@ the actual implementations, without a separate operation catalog.
 
 import asyncio as _vis_asyncio
 import dataclasses as _vis_dataclasses
-import importlib as _vis_importlib
-import importlib.machinery as _vis_machinery
 import inspect as _vis_inspect
 import json as _vis_json
-import sys as _vis_sys
 import types as _vis_types
+
+import vis_sdk as _vis_sdk
 
 # The host prepends _vis_body with the canonical SDK source.
 _vis_callables = {}
@@ -123,47 +122,15 @@ def __vis_member__(op):
 # `_host.jailed_shell`. The list is NOT written out here on purpose — it lived in
 # this file once, so a door added in the host meant a release of this library
 # before the host could use it, for a name this file only ever passed through.
-# Preserve other Blockether packages, including an installed PEP 420 namespace.
-
-for _vis_package_name in ("blockether", "blockether.vis"):
-    try:
-        _vis_package = _vis_importlib.import_module(_vis_package_name)
-    except ModuleNotFoundError as _vis_missing:
-        if _vis_missing.name != _vis_package_name:
-            raise
-        _vis_package = _vis_types.ModuleType(_vis_package_name)
-        _vis_package.__path__ = []
-        _vis_package.__package__ = _vis_package_name
-        _vis_package.__spec__ = _vis_machinery.ModuleSpec(
-            _vis_package_name, None, is_package=True
-        )
-        _vis_sys.modules[_vis_package_name] = _vis_package
-        if "." in _vis_package_name:
-            _vis_sys.modules["blockether"].vis = _vis_package
-    if not hasattr(_vis_package, "__path__"):
-        raise ImportError(f"{_vis_package_name} must be a package")
-_vis_parent = _vis_package
-_vis_mod = _vis_types.ModuleType("blockether.vis.extension")
-_vis_mod.__package__ = "blockether.vis"
-_vis_mod.__file__ = "blockether/vis/extension.py"
-_vis_mod.__spec__ = _vis_machinery.ModuleSpec("blockether.vis.extension", None)
-_vis_mod.__dict__["_host"] = _vis_types.SimpleNamespace(
-    **{
-        _vis_name[len("__vis_host_") : -len("__")]: __vis_member__(_vis_door)
-        for _vis_name, _vis_door in list(globals().items())
-        if _vis_name.startswith("__vis_host_")
-        and _vis_name.endswith("__")
-        and callable(_vis_door)
-    }
+_vis_mod = _vis_sdk.install(
+    _vis_body,  # noqa: F821 — supplied by the host with the canonical SDK source.
+    _vis_types.SimpleNamespace(
+        **{
+            _vis_name[len("__vis_host_") : -len("__")]: __vis_member__(_vis_door)
+            for _vis_name, _vis_door in list(globals().items())
+            if _vis_name.startswith("__vis_host_")
+            and _vis_name.endswith("__")
+            and callable(_vis_door)
+        }
+    ),
 )
-_vis_previous = _vis_sys.modules.get("blockether.vis.extension")
-_vis_sys.modules["blockether.vis.extension"] = _vis_mod
-try:
-    exec(compile(_vis_body, _vis_mod.__file__, "exec"), _vis_mod.__dict__)  # noqa: F821
-except BaseException:
-    if _vis_previous is None:
-        _vis_sys.modules.pop("blockether.vis.extension", None)
-    else:
-        _vis_sys.modules["blockether.vis.extension"] = _vis_previous
-    raise
-_vis_parent.extension = _vis_mod
