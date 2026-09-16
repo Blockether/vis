@@ -3549,11 +3549,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const paintSkip = useMeasuredPaintSkip(streaming);
 
   return (
-    <article
-      className="group/assistant flow-root mt-4 w-full"
-      aria-busy={streaming}
-      ref={paintSkip}
-    >
+    <article className="flow-root mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
       <div
         className={`mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
@@ -3561,8 +3557,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <TurnStamp position={turn.position} createdAt={turn.created_at ?? startedAt} />
           {onFork && (
-            // Only the action fades; the datetime and turn number stay visible.
-            <span className="flex items-center gap-x-3 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+            <span className="flex items-center gap-x-3">
               {((turn.position != null && Number.isInteger(turn.position) && turn.position > 0) ||
                 Number.isFinite(new Date(turn.created_at ?? startedAt ?? NaN).getTime())) && (
                 <span className="font-normal text-dialog-hint">{' / '}</span>

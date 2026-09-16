@@ -455,7 +455,7 @@ export const TurnHeaderOrder: Story = {
     await expect(header).toHaveTextContent('16/09/2026, 13:23:45 / T42 / Fork from this turn');
     const stamp = header.querySelector('time')!.parentElement!.getBoundingClientRect();
     const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
-    await userEvent.hover(answer);
+    await expect(fork).toBeVisible();
     const action = fork.getBoundingClientRect();
     await expect(action.top >= stamp.bottom || action.left >= stamp.right).toBe(true);
     await expect(action.right).toBeLessThanOrEqual(header.getBoundingClientRect().right);
@@ -543,8 +543,7 @@ export const Exchange: Story = {
         name: 'Fork from this turn',
       }),
     ).toBeNull();
-    await userEvent.hover(answer);
-    await waitFor(() => expect(fork).toBeVisible());
+    await expect(fork).toBeVisible();
     await expectForkAlignment(answer);
     await expectRoleSpacing(canvasElement);
     forkFromAnswer.mockClear();
@@ -560,9 +559,21 @@ export const ExchangePointer: Story = {
     const canvas = within(canvasElement);
     const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
     const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
+    // Regression: the action must not depend on hover or keyboard focus.
+    await expect(matchMedia('(min-width: 640px) and (pointer: fine)').matches).toBe(true);
+    await userEvent.unhover(answer);
+    await expect(fork).not.toHaveFocus();
+    await expect(fork).toBeVisible();
+    await userEvent.hover(answer);
+    await expect(fork).toBeVisible();
+    await userEvent.unhover(answer);
+    await expect(fork).toBeVisible();
     fork.focus();
     await expect(fork).toHaveFocus();
-    await waitFor(() => expect(fork).toBeVisible());
+    await expect(fork).toBeVisible();
+    fork.blur();
+    await expect(fork).not.toHaveFocus();
+    await expect(fork).toBeVisible();
     await expectForkAlignment(answer);
     await expectRoleSpacing(canvasElement);
   },
@@ -586,12 +597,18 @@ export const Forking: Story = {
     const canvas = within(canvasElement);
     const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
     const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
-    await userEvent.hover(answer);
+    await userEvent.unhover(answer);
+    await expect(fork).toBeVisible();
     await expect(fork).toBeDisabled();
     await expect(fork).toHaveTextContent('Forking...');
     await expectForkAlignment(answer);
     await expectRoleSpacing(canvasElement);
   },
+};
+
+export const ForkingPointer: Story = {
+  ...Forking,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 const councilRequest = {
