@@ -548,6 +548,43 @@
                      (str "Build " build)) (when (true? (field value "external")) "External REPL")
                    (when (seq resources) (counted-label (count resources) "live REPL"))])))
 
+(defn- test-target-summary
+  "What a run_tests call SELECTED, on one line: the whole selection while it fits,
+   else its first entry and how many others there were. A whole-suite run selected
+   nothing worth naming — its counts already say so."
+  [value]
+  (let [target
+        (str/trim (str (field value "target")))
+
+        entries
+        (remove str/blank? (str/split target #",\s*"))]
+
+    (cond (or (str/blank? target) (= target "full suite")) nil
+          (and (next entries) (> (count target) 60))
+          (str (first entries) " +" (dec (count entries)) " more")
+          :else (session-preview target 60))))
+
+(defn- clean-test-result?
+  "A run that passed, finished and reported no fault: its runner transcript only
+   repeats the counts."
+  [value]
+  (and (true? (field value "is_pass"))
+       (not (field value "timed_out"))
+       (empty? (field value "failures"))))
+
+(defn- test-body
+  "What a finished run shows below its summary: never the counts the summary owns,
+   never a flag for something that did not happen, and on a clean run not the
+   runner's own transcript either."
+  [value clean?]
+  (if (map? value)
+    (into {}
+          (remove (comp false? val))
+          (cond-> (dissoc value :total "total" :pass "pass" :fail "fail" :errored "errored")
+            clean?
+            (dissoc :output "output")))
+    value))
+
 (defn- test-summary
   [value]
   (let [total
@@ -559,15 +596,17 @@
         errored
         (field value "errored")]
 
-    (cond (field value "timed_out") "Test run timed out"
-          (field value "error") "Test run failed"
-          (and (number? total) (zero? (long total))) "No tests ran"
-          (number? total)
-          (summary-line [(counted-label total "test")
-                         (if (number? failed) (str failed " failed") "Failure count unavailable")
-                         (when (and (number? errored) (pos? (long errored)))
-                           (str errored " errored"))])
-          :else "No test result")))
+    (summary-line [(test-target-summary value)
+                   (cond (field value "timed_out") "Test run timed out"
+                         (field value "error") "Test run failed"
+                         (and (number? total) (zero? (long total))) "No tests ran"
+                         (number? total)
+                         (summary-line
+                           [(counted-label total "test")
+                            (if (number? failed) (str failed " failed") "Failure count unavailable")
+                            (when (and (number? errored) (pos? (long errored)))
+                              (str errored " errored"))])
+                         :else "No test result")])))
 
 (defn- council-body
   [value key]
@@ -911,35 +950,33 @@
                 :else (str (or (field value "summary") (field value "title") "")))
 
           content
-          (cond
-            (contains? #{"patch" "read_session"} op) []
-            (= op "format_code") (result-blocks (visible-result (into {}
-                                                                      (remove (comp false? val))
-                                                                      (select-result
-                                                                        ["repairs" "unbalanced"
-                                                                         "error" "diagnostics"]
-                                                                        (format-result value)))))
-            (str/starts-with? op "council.") []
-            (and (= op "cat") text)
-            [{"type" "code" "language" (code-language path) "text" (read-content text)}]
-            (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
-                                                                           "text" text}]
-            (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
-            (and (= op "grep") text)
-            [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
-            (contains? #{"draft_status" "draft_create" "draft_discard" "draft_diff"} op) []
-            :else
-            (result-blocks
-              (visible-result
-                (let [public
-                      (if (map? value) (dissoc value :title "title" :summary "summary") value)]
-                  (cond
-                    (= op "run_tests")
-                    (if (map? public)
-                      (dissoc public :total "total" :pass "pass" :fail "fail" :errored "errored")
-                      public)
-                    (get result-fields op) (select-result (get result-fields op) public)
-                    :else public)))))]
+          (cond (contains? #{"patch" "read_session"} op) []
+                (= op "format_code") (result-blocks (visible-result
+                                                      (into {}
+                                                            (remove (comp false? val))
+                                                            (select-result ["repairs" "unbalanced"
+                                                                            "error" "diagnostics"]
+                                                                           (format-result value)))))
+                (str/starts-with? op "council.") []
+                (and (= op "cat") text)
+                [{"type" "code" "language" (code-language path) "text" (read-content text)}]
+                (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
+                                                                               "text" text}]
+                (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
+                (and (= op "grep") text)
+                [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
+                (contains? #{"draft_status" "draft_create" "draft_discard" "draft_diff"} op) []
+                :else
+                (result-blocks
+                  (visible-result
+                    (let [public
+                          (if (map? value) (dissoc value :title "title" :summary "summary") value)]
+                      (cond
+                        ;; Issue #260: a clean run's own transcript repeats the
+                        ;; counts; a fault keeps it, below the structured rows.
+                        (= op "run_tests") (test-body public (clean-test-result? (or result value)))
+                        (get result-fields op) (select-result (get result-fields op) public)
+                        :else public)))))]
 
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)

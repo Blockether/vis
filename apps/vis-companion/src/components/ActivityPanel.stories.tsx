@@ -172,7 +172,7 @@ export const ResultFirst: Story = {
       'greeting_test.clj',
       'captured lines',
       'one disclosure',
-      '12 tests passed.',
+      'lazytest',
       'one disclosure',
     ];
     await expect(rows).toHaveLength(expected.length);
@@ -187,7 +187,10 @@ export const ResultFirst: Story = {
     }
     const tests = within(rows[5]);
     await expect(tests.queryByRole('table')).not.toBeInTheDocument();
-    await expect(rows[5].textContent).toContain('12 tests · 0 failed');
+    // Issue #260: the finished summary names the selected target, and a clean run
+    // keeps the runner's own transcript out of the disclosure.
+    await expect(rows[5].textContent).toContain('test/activity_test.clj · 12 tests · 0 failed');
+    await expect(rows[5].textContent).not.toContain('12 tests passed.');
     for (const row of [rows[4], rows[6]]) {
       const message = row.querySelector('p')!;
       await expect(getComputedStyle(message).textAlign).toBe('left');

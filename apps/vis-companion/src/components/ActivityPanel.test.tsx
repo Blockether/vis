@@ -62,7 +62,8 @@ it('keeps embedded document headings and code inside their Activity step', () =>
   openEverySettledStep();
   expect(screen.getByRole('heading', { name: 'Activity', level: 5 })).toBeTruthy();
   expect(screen.queryAllByRole('region', { name: 'text code' })).toHaveLength(0);
-  expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(2);
+  // Issue #260: a clean run_tests row no longer embeds its runner output.
+  expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(1);
 });
 
 it('shares a table layout without losing repeated headers or result groups', () => {

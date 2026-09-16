@@ -191,7 +191,7 @@
       "resources": []
     },
     {
-      "result_summary": "{:is_pass true, :total 12, :pass 12, :fail 0, :output \"12 tests passed.\"}",
+      "result_summary": "{:is_pass true, :target \"test/activity_test.clj\", :total 12, :pass 12, :fail 0, :framework \"lazytest\", :output \"12 tests passed.\"}",
       "id": "result-5",
       "summary": "Activity tests",
       "signal": "observation",
@@ -199,15 +199,11 @@
       "operation": "run_tests",
       "presentation": {
         "headline": "Ran tests",
-        "summary": "12 tests · 0 failed",
+        "summary": "test/activity_test.clj · 12 tests · 0 failed",
         "content": [
           {
-            "type": "heading",
-            "text": "Output"
-          },
-          {
-            "type": "code",
-            "text": "12 tests passed."
+            "type": "text",
+            "text": "Framework: lazytest · Target: test/activity_test.clj"
           }
         ]
       },
@@ -221,7 +217,7 @@
         },
         {
           "kind": "result",
-          "text": "{:is_pass true, :total 12, :pass 12, :fail 0, :output \"12 tests passed.\"}"
+          "text": "{:is_pass true, :target \"test/activity_test.clj\", :total 12, :pass 12, :fail 0, :framework \"lazytest\", :output \"12 tests passed.\"}"
         }
       ],
       "resources": []

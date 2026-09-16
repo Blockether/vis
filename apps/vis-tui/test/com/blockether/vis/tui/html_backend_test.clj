@@ -247,7 +247,7 @@
         (doseq [[row expected] (map vector
                                     rows
                                     ["greeting" "Hi" "greeting_test.clj" "captured" "disclosure"
-                                     "12 tests passed." "disclosure"])]
+                                     "lazytest" "disclosure"])]
           (paint-activity-review! hs rows opened)
           (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
                                     (.current interactions/hit-map)))
@@ -267,8 +267,13 @@
             (is (str/includes? text expected))
             (is (not (re-find #"Thread id|Is pass" text)))
             (when (= "run_tests" (name (:operation row)))
+              ;; Issue #260: the finished row names what the call selected, and a
+              ;; clean run leaves the runner transcript out of the disclosure.
               (is (str/includes? text
-                                 (if (= cols 40) "Ran tests · 12 tests" "12 tests · 0 failed")))
+                                 (if (= cols 40)
+                                   "Ran tests · test/"
+                                   "test/activity_test.clj · 12 tests · 0 failed")))
+              (is (not (str/includes? text "12 tests passed.")))
               (is (not (re-find #"Metric|Result|Field|Value" text))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 

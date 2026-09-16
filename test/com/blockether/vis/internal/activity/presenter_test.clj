@@ -38,7 +38,13 @@
         :ping ["reviewer"]
         :content "Read and Patch now show their **results** after one disclosure."} nil]
       [:run_tests "Activity tests"
-       {:is_pass true :total 12 :pass 12 :fail 0 :output "12 tests passed."} nil]
+       {:is_pass true
+        :target "test/activity_test.clj"
+        :total 12
+        :pass 12
+        :fail 0
+        :framework "lazytest"
+        :output "12 tests passed."} nil]
       [:council.get "Activity review"
        {:title "Activity review"
         :entry_id 42
@@ -469,6 +475,50 @@
           (expect (not (re-find #"Total:|Pass:|Fail:|Errored:" content)))
           (doseq [text (keep result [:output :error])]
             (expect (str/includes? content text))))))
+  ;; Regression, issue #260: a focused run named only counts, and a clean run
+  ;; pasted the runner's whole banner behind the disclosure.
+  (it
+    "names the selected targets and leaves a clean run's runner output out"
+    (doseq [[result summary evidence]
+            [[{:is_pass true
+               :target "tests/test_model.py"
+               :total 7
+               :pass 7
+               :fail 0
+               :framework "pytest"
+               :mode "cli"
+               :timed_out false
+               :repl_unusable false
+               :recovered false
+               :output "===== test session starts =====\n7 passed in 0.25s"}
+              "tests/test_model.py · 7 tests · 0 failed" nil]
+             [{:is_pass true
+               :target "tests/unit/test_model.py, tests/unit/test_view.py, tests/unit/test_api.py"
+               :total 9
+               :pass 9
+               :fail 0
+               :output "9 passed in 0.31s"} "tests/unit/test_model.py +2 more · 9 tests · 0 failed"
+              nil]
+             [{:is_pass true :target "full suite" :total 12 :pass 12 :fail 0 :output "12 passed"}
+              "12 tests · 0 failed" nil]
+             [{:is_pass false
+               :target "tests/test_model.py"
+               :total 7
+               :pass 6
+               :fail 1
+               :failures [{:test "test_rounds_down" :type "fail" :message "assert 1 == 2"}]
+               :output "===== FAILURES ====="} "tests/test_model.py · 7 tests · 1 failed"
+              "assert 1 == 2"]]]
+      (let [view (presenter/result-presentation {:operation :run_tests} result)
+            content (pr-str (get view "content"))]
+
+        (expect (= summary (get view "summary")))
+        (expect (= (some? evidence) (str/includes? content (:output result))))
+        (expect (not (str/includes? content "false")))
+        (when evidence
+          (expect (str/includes? content evidence))
+          (expect (< (long (str/index-of content evidence))
+                     (long (str/index-of content (:output result)))))))))
   (it "renders nested metadata as text rather than key/value grids"
       (let [view (presenter/result-presentation {:operation :run_tests}
                                                 {:environment {:language "clojure"
