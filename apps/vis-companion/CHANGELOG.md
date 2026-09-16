@@ -1,5 +1,31 @@
 # Vis Companion — release notes
 
+What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
+
+## 0.2.6 (6248) — 2026-09-16
+<!-- commit: f5682ff05e00b74b79db7e41bc4ada8891f197e5 -->
+
+- Await and persist recording transcripts
+- Compact desktop response controls
+- Tighten turn header spacing
+- Keep turn fork action visible
+- Close session lists with a thin divider
+- Reduce mobile response-control top spacing
+- Prune stale tests and optimize release caches
+- Align app and TUI turn header format
+- Keep mobile pager inside project header
+- Tighten pager arrows and counter spacing
+- Keep sticky pager clear while scrolling
+- Restore inline paging on wide layouts
+- Remove redundant queued attachment badges
+- Separate paging from project headings
+- Cover compact stop and send spacing
+- Tighten touch composer spacing
+- Keep List details behind disclosure (#251)
+- Support clickable summary links (#254)
+- Account for classic scrollbar geometry
+- Await painted voice-engine selection
+
 ## 0.2.3 (5984) — 2026-09-13
 <!-- commit: 20f4b93bf44e7b53a863ee2e98965e6e0f704b6f -->
 
