@@ -25,7 +25,7 @@ export type ComposerResponseControlsModel = {
 };
 
 function Divider() {
-  return <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />;
+  return <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge mouse:h-2" />;
 }
 
 /** Provider and response knobs that apply to the next submitted turn. */
@@ -35,9 +35,10 @@ export function ComposerResponseControls({
   controls: ComposerResponseControlsModel;
 }) {
   return (
-    <div className="flex w-full items-center gap-1 pt-1 mouse:gap-2.5 mouse:pt-2">
+    <div className="flex w-full items-center gap-1 pt-1 mouse:gap-1.5 mouse:pt-0.5">
       <MetaButton
         isPicker
+        density="compact"
         className="min-w-0 shrink"
         onClick={controls.model.choose}
         aria-label="Change provider and model"
@@ -50,6 +51,7 @@ export function ComposerResponseControls({
         <>
           <Divider />
           <MetaButton
+            density="compact"
             className="shrink-0"
             onMouseDown={keepKeyboard}
             onClick={() => void controls.reasoning?.cycle()}
@@ -74,6 +76,7 @@ export function ComposerResponseControls({
         <>
           <Divider />
           <MetaButton
+            density="compact"
             className="shrink-0"
             onMouseDown={keepKeyboard}
             onClick={() => void controls.verbosity?.cycle()}
@@ -93,6 +96,7 @@ export function ComposerResponseControls({
         <>
           <Divider />
           <MetaButton
+            density="compact"
             className="shrink-0"
             onMouseDown={keepKeyboard}
             onClick={() => void controls.fast?.toggle()}

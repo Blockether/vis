@@ -48,13 +48,25 @@ export const AvailableOptions: Story = {
     await canvasElement.ownerDocument.fonts.ready;
     const buttons = canvas.getAllByRole('button');
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    // Regression: mobile response controls sat too far below the input.
-    await expect(getComputedStyle(buttons[0].parentElement!).paddingTop).toBe(pointer ? '8px' : '4px');
+    // Desktop settings sit closer to the input; mobile keeps its 44px touch reach.
+    const row = buttons[0].parentElement!;
+    await expect(getComputedStyle(row).paddingTop).toBe(pointer ? '2px' : '4px');
+    await expect(getComputedStyle(row).columnGap).toBe(pointer ? '6px' : '4px');
+    const dividers = row.querySelectorAll(':scope > [aria-hidden="true"]');
+    await expect(dividers.length).toBe(buttons.length - 1);
+    for (const divider of dividers) {
+      await expect(divider.getBoundingClientRect().height).toBe(pointer ? 8 : 10);
+    }
     for (const [index, button] of buttons.entries()) {
       const box = button.getBoundingClientRect();
       await expect(box.height).toBe(pointer ? 28 : 32);
       await expect(getComputedStyle(button).fontSize).toBe('10px');
-      if (!pointer) await expect(getComputedStyle(button).letterSpacing).toBe('normal');
+      await expect(getComputedStyle(button).letterSpacing).toBe('normal');
+      const icon = button.querySelector('svg');
+      if (icon) {
+        await expect(icon.getBoundingClientRect().width).toBe(pointer ? 10 : 12);
+        await expect(icon.getBoundingClientRect().height).toBe(pointer ? 10 : 12);
+      }
       if (index > 0) {
         await expect(
           box.left - buttons[index - 1].getBoundingClientRect().right,

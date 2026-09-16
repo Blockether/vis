@@ -2466,8 +2466,19 @@ describe("the composer's own controls", () => {
   it("reports the turn's model and level in one type step, hovered one way", () => {
     const picker = classes(renderToStaticMarkup(<MetaButton isPicker>opus</MetaButton>));
     const plain = classes(renderToStaticMarkup(<MetaButton>high</MetaButton>));
+    const compact = classes(renderToStaticMarkup(<MetaButton density="compact">high</MetaButton>));
     expect(picker).toContain('underline');
     expect(plain).not.toContain('underline');
+    for (const control of [picker, plain, compact]) {
+      expect(control).toContain('text-meta');
+      expect(control).toContain('min-h-8');
+      expect(control).toContain('mouse:min-h-7');
+    }
+    for (const control of [picker, plain]) {
+      expect(control).toContain('mouse:tracking-[0.08em]');
+    }
+    expect(compact).toContain('mouse:tracking-normal');
+    expect(compact).not.toContain('mouse:tracking-[0.08em]');
   });
 
   // Regression: MetaButton destructured `children` and then rendered a

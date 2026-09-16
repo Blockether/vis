@@ -1214,9 +1214,12 @@ export function ComposerButton({
  *
  * A chip that reports a LEVEL leads with its mark, so the row lays its children
  * out itself: `inline-flex` with one gap, and the caller passes a word.
+ * Compact response controls tighten desktop tracking and icons without reducing
+ * label size or press targets.
  */
 export function MetaButton({
   isPicker = false,
+  density = 'default',
   className = '',
   children,
   disabled = false,
@@ -1224,14 +1227,21 @@ export function MetaButton({
   onPointerDown,
   onPointerUp,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { isPicker?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  isPicker?: boolean;
+  density?: 'default' | 'compact';
+}) {
   const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   return (
     <button
       type="button"
       disabled={disabled}
       {...press}
-      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-meta font-semibold uppercase tracking-normal transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] enabled:hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:tracking-[0.08em] mouse:after:content-none ${
+      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-meta font-semibold uppercase tracking-normal transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] enabled:hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:after:content-none ${
+        density === 'compact'
+          ? 'mouse:tracking-normal mouse:[&>svg]:size-2.5'
+          : 'mouse:tracking-[0.08em]'
+      } ${
         isPicker
           ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 enabled:hover:decoration-accent'
           : 'text-dialog-hint'
