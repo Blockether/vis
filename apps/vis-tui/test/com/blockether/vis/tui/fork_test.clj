@@ -60,7 +60,7 @@
 
       {:capture capture :regions (vec (.current interactions/hit-map))})))
 
-(deftest persisted-answer-has-a-fork-button-before-the-date
+(deftest persisted-answer-has-a-fork-button-after-the-date
   (let [{:keys [capture regions]}
         (header-frame review-message 76 {:viewport-top 4})
 
@@ -74,15 +74,16 @@
         (client/format-date (:timestamp review-message))]
 
     (is (nil? (:error capture)))
-    (is (str/includes? header (str "Fork at this turn  | " date)))
+    (is (re-matches #"\d{2}/\d{2}/\d{4}, \d{2}:\d{2}:\d{2}" date))
+    (is (str/includes? header (str date " /  Fork from this turn")))
     (is (= 1 (count regions)))
     (is (= {:kind :fork-at-turn :session-id "session-1" :turn-id "turn-2"}
            (select-keys hit [:kind :session-id :turn-id])))
     (is (= 5 (get-in hit [:bounds :row])))
-    (is (= (.indexOf ^String header " Fork at this turn ") (get-in hit [:bounds :col])))
-    (is (= (count " Fork at this turn ") (get-in hit [:bounds :width])))))
+    (is (= (.indexOf ^String header " Fork from this turn") (get-in hit [:bounds :col])))
+    (is (= (count " Fork from this turn ") (get-in hit [:bounds :width])))))
 
-(deftest turn-number-precedes-the-date-for-every-message-state
+(deftest date-precedes-the-turn-and-fork-for-every-message-state
   (doseq [role
           [:user :assistant]
 
@@ -102,23 +103,22 @@
           (second (str/split-lines (cap/frame-text capture)))]
 
       (is (nil? (:error capture)))
-      (is (str/includes? header "T42 | "))
-      (is (str/includes? header (client/format-date (:timestamp message))))
+      (is (str/includes? header (str (client/format-date (:timestamp message)) " / T42")))
       (when (str/includes? header "Fork")
-        (is (str/includes? header "T42 |  Fork at this turn  | "))))))
+        (is (str/includes? header "T42 /  Fork from this turn"))))))
 
 (deftest narrow-header-keeps-the-turn-number-and-date
   (let [message
         (assoc review-message :turn-position 123)
 
         {:keys [capture regions]}
-        (header-frame message 28 {})
+        (header-frame message 32 {})
 
         header
         (second (str/split-lines (cap/frame-text capture)))]
 
     (is (nil? (:error capture)))
-    (is (str/includes? header (str "T123 | " (client/format-date (:timestamp message)))))
+    (is (str/includes? header (str (client/format-date (:timestamp message)) " / T123")))
     (is (empty? regions))))
 
 (deftest history-keeps-the-persisted-turn-number-not-the-page-index
@@ -254,24 +254,24 @@
 
 (deftest narrow-header-keeps-the-date-and-shortens-the-fork-label
   (let [{:keys [capture regions]}
-        (header-frame review-message 36 {:agent-name "助手 with a long name"})
+        (header-frame review-message 40 {:agent-name "助手 with a long name"})
 
         header
         (second (str/split-lines (cap/frame-text capture)))]
 
     (is (nil? (:error capture)))
-    (is (str/includes? header (str "Fork  | " (client/format-date (:timestamp review-message)))))
+    (is (str/includes? header (str (client/format-date (:timestamp review-message)) " /  Fork")))
     (is (= 1 (count regions)))
     (is (<= 2 (get-in (first regions) [:bounds :col])))
     (is (= 6 (get-in (first regions) [:bounds :width])))))
 
 (deftest compact-action-preserves-the-agent-name-at-the-width-boundary
-  (doseq [width [40 41 42]]
+  (doseq [width [46 47 48]]
     (let [{:keys [capture regions]} (header-frame review-message width {})
           header (second (str/split-lines (cap/frame-text capture)))]
 
       (is (str/starts-with? header "  Vis "))
-      (is (= (if (< width 42) 6 19) (get-in (first regions) [:bounds :width]))))))
+      (is (= (if (< width 48) 6 21) (get-in (first regions) [:bounds :width]))))))
 
 (deftest fork-button-does-not-depend-on-timestamps
   (let [{:keys [capture regions]}
@@ -280,8 +280,8 @@
         header
         (second (str/split-lines (cap/frame-text capture)))]
 
-    (is (str/includes? header "Fork at this turn"))
-    (is (not (str/includes? header "|")))
+    (is (str/includes? header "Fork from this turn"))
+    (is (not (str/includes? header " / ")))
     (is (= 1 (count regions)))))
 
 (deftest only-persisted-assistant-turns-offer-forking

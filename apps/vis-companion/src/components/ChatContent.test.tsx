@@ -485,7 +485,7 @@ describe('turn header identity', () => {
   const createdAt = new Date(2026, 8, 16, 14, 35, 27).getTime();
 
   it.each(['completed', 'running', 'cancelled'])(
-    'shows T42 before the date and time for %s answers',
+    'shows date / turn / fork in order for %s answers',
     (status) => {
       const view = render(
         <AssistantMessage
@@ -495,7 +495,10 @@ describe('turn header identity', () => {
         />,
       );
       const header = view.container.querySelector('article')!.firstElementChild!;
-      expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+      expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42');
+      if (status === 'completed') {
+        expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42 / Fork from this turn');
+      }
       expect(header.querySelector('time')).toHaveAttribute(
         'datetime',
         new Date(createdAt).toISOString(),
@@ -511,7 +514,7 @@ describe('turn header identity', () => {
       </UserMessage>,
     );
     expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(
-      `YouT42 ${new Date(createdAt).toLocaleString()}`,
+      'You16/09/2026, 14:35:27 / T42',
     );
   });
 
@@ -519,6 +522,17 @@ describe('turn header identity', () => {
     const view = render(<AssistantMessage turn={{ turn_id: 'unknown' }} />);
     expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(/^Vis$/);
     expect(view.container.querySelector('time')).toBeNull();
+  });
+
+  it.each([
+    [{ position: 42 }, 'T42 / Fork from this turn'],
+    [{ created_at: createdAt }, '16/09/2026, 14:35:27 / Fork from this turn'],
+    [{ position: 0, created_at: NaN }, 'VisFork from this turn'],
+  ])('omits separators for absent or invalid fields: %j', (metadata, expected) => {
+    const view = render(
+      <AssistantMessage turn={{ turn_id: 'persisted-id', ...metadata }} onFork={vi.fn()} />,
+    );
+    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(expected);
   });
 });
 

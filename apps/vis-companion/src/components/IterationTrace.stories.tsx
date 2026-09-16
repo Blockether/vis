@@ -436,10 +436,39 @@ export const ActivityAxis: Story = {
 
 const forkFromAnswer = fn();
 
+export const TurnHeaderOrder: Story = {
+  render: () => (
+    <div style={{ width: 375, maxWidth: '100%' }}>
+      <AssistantMessage
+        turn={{
+          ...STORY_EXCHANGE_TURN,
+          position: 42,
+          created_at: new Date(2026, 8, 16, 13, 23, 45).getTime(),
+        }}
+        onFork={forkFromAnswer}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const answer = canvasElement.querySelector('article')!;
+    const header = answer.firstElementChild!;
+    await expect(header).toHaveTextContent('16/09/2026, 13:23:45 / T42 / Fork from this turn');
+    const stamp = header.querySelector('time')!.parentElement!.getBoundingClientRect();
+    const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
+    await userEvent.hover(answer);
+    const action = fork.getBoundingClientRect();
+    await expect(action.top >= stamp.bottom || action.left >= stamp.right).toBe(true);
+    await expect(action.right).toBeLessThanOrEqual(header.getBoundingClientRect().right);
+    forkFromAnswer.mockClear();
+    await userEvent.click(fork);
+    await expect(forkFromAnswer).toHaveBeenCalledOnce();
+  },
+};
+
 async function expectForkAlignment(answer: HTMLElement) {
   const canvas = within(answer);
   const role = canvas.getByText('Vis', { exact: true }).getBoundingClientRect();
-  const action = canvas.getByRole('button', { name: 'Fork from here' }).getBoundingClientRect();
+  const action = canvas.getByRole('button', { name: 'Fork from this turn' }).getBoundingClientRect();
   // Regression: the icon-led action must share the role label's vertical center.
   await expect(action.top + action.height / 2).toBeCloseTo(role.top + role.height / 2, 0);
   const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
@@ -508,10 +537,10 @@ export const Exchange: Story = {
     );
     await expect(getComputedStyle(bubble).paddingLeft).toBe(getComputedStyle(code).paddingLeft);
     const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
-    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
+    const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
     await expect(
       within(heading.closest('article')!).queryByRole('button', {
-        name: 'Fork from here',
+        name: 'Fork from this turn',
       }),
     ).toBeNull();
     await userEvent.hover(answer);
@@ -530,7 +559,7 @@ export const ExchangePointer: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
-    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
+    const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
     fork.focus();
     await expect(fork).toHaveFocus();
     await waitFor(() => expect(fork).toBeVisible());
@@ -556,7 +585,7 @@ export const Forking: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
-    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
+    const fork = within(answer).getByRole('button', { name: 'Fork from this turn' });
     await userEvent.hover(answer);
     await expect(fork).toBeDisabled();
     await expect(fork).toHaveTextContent('Forking...');

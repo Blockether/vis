@@ -39,14 +39,14 @@ describe('forking from a turn in the transcript', () => {
     });
 
     const verbs = await screen.findAllByRole('button', {
-      name: 'Fork from here',
+      name: 'Fork from this turn',
     });
     expect(verbs).toHaveLength(2);
     for (const [index, row] of rows.entries()) {
       const answer = screen.getByText(`Answer to ${row.request}.`).closest('article');
       expect(verbs[index].closest('article')).toBe(answer);
       const request = screen.getByText(row.request).closest('article')!;
-      expect(within(request).queryByRole('button', { name: 'Fork from here' })).toBeNull();
+      expect(within(request).queryByRole('button', { name: 'Fork from this turn' })).toBeNull();
     }
     await userEvent.click(verbs[0]);
 
@@ -63,7 +63,7 @@ describe('forking from a turn in the transcript', () => {
       },
     });
 
-    const fork = await screen.findByRole('button', { name: 'Fork from here' });
+    const fork = await screen.findByRole('button', { name: 'Fork from this turn' });
     expect(fork.closest('article')).toBe(screen.getByText('Answer to .').closest('article'));
     expect(screen.queryByText('You', { exact: true })).toBeNull();
   });
@@ -88,7 +88,7 @@ describe('forking from a turn in the transcript', () => {
     });
 
     const [fork, otherFork] = await screen.findAllByRole('button', {
-      name: 'Fork from here',
+      name: 'Fork from this turn',
     });
     await userEvent.click(fork);
     expect(fork).toBeDisabled();
@@ -100,7 +100,7 @@ describe('forking from a turn in the transcript', () => {
     await act(async () => rejectFork(new Error('Could not fork this turn')));
     expect(await screen.findByText('Could not fork this turn')).toBeVisible();
     expect(fork).toBeEnabled();
-    expect(fork).toHaveTextContent('Fork from here');
+    expect(fork).toHaveTextContent('Fork from this turn');
     expect(opened).not.toHaveBeenCalled();
   });
 });

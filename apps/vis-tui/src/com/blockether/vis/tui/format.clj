@@ -5,7 +5,7 @@
    TUI footer and the CLI status output. Each one
    is a pure transform over basic Clojure / Java values.
 
-     `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
+     `format-date`      - `java.util.Date` to `dd/MM/yyyy, HH:mm:ss` (local TZ)
      `format-clojure`   - pass-through (code is shown as written, not reformatted)
      `format-duration`  - millisecond duration to `2.3s`, `1m 15s`, etc.
      `format-bytes`     - byte count to `441B` / `1.2KB` / `150 KB`
@@ -44,10 +44,10 @@
                     (str (str/upper-case (subs s 0 1)) (subs s 1)))))))
 
 (defn format-date
-  "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
+  "Format a `java.util.Date` as `dd/MM/yyyy, HH:mm:ss` in local timezone."
   [^java.util.Date d]
   (when d
-    (.format (doto (java.text.SimpleDateFormat. "dd-MM-yyyy HH:mm")
+    (.format (doto (java.text.SimpleDateFormat. "dd/MM/yyyy, HH:mm:ss")
                (.setTimeZone (java.util.TimeZone/getDefault)))
              d)))
 

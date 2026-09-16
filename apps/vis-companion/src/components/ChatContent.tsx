@@ -3460,9 +3460,13 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   if (!hasPosition && !hasDate) return null;
   return (
     <span className="ml-auto font-normal text-dialog-hint tabular-nums">
+      {hasDate && (
+        <time dateTime={date.toISOString()}>
+          {date.toLocaleString('en-GB', { hourCycle: 'h23' })}
+        </time>
+      )}
+      {hasPosition && hasDate && ' / '}
       {hasPosition && `T${position}`}
-      {hasPosition && hasDate && ' '}
-      {hasDate && <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>}
     </span>
   );
 }
@@ -3555,16 +3559,20 @@ export const AssistantMessage = memo(function AssistantMessage({
       >
         <span>{agentName}</span>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          <TurnStamp position={turn.position} createdAt={turn.created_at ?? startedAt} />
           {onFork && (
-            // Only the action fades; the turn number and datetime stay visible.
-            <span className="mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
-              <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
+            // Only the action fades; the datetime and turn number stay visible.
+            <span className="flex items-center gap-x-3 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+              {((turn.position != null && Number.isInteger(turn.position) && turn.position > 0) ||
+                Number.isFinite(new Date(turn.created_at ?? startedAt ?? NaN).getTime())) && (
+                <span className="font-normal text-dialog-hint">{' / '}</span>
+              )}
+              <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from this turn">
                 <ForkIcon className="size-3" aria-hidden />
-                {isForking ? 'Forking...' : 'Fork from here'}
+                {isForking ? 'Forking...' : 'Fork from this turn'}
               </MetaButton>
             </span>
           )}
-          <TurnStamp position={turn.position} createdAt={turn.created_at ?? startedAt} />
         </div>
       </div>
       <div className="min-w-0 [&>:first-child]:mt-0">

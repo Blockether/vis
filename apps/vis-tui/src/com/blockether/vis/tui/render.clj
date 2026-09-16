@@ -1838,12 +1838,12 @@
 
    Layout (no outer border, no horizontal rule under the label,
    both roles left-anchored):
-     [role-label]           [T<N>] | [Fork at this turn] | [date and time]
+     [role-label]           [date and time] / [T<N>] / [Fork from this turn]
      [content lines, each with role bg fill]
      [meta line, dimmed, when present]
      [blank gap]
 
-   Persisted assistant turns offer a fork action between the turn number and date.
+   Persisted assistant turns offer a fork action after the date and turn number.
    Narrow headers shorten it to `Fork`; headers too small for both keep the metadata.
    Pointer regions carry the persisted turn and source session, never the client id.
 
@@ -2031,9 +2031,6 @@
           time-w
           (if time-str (p/display-width time-str) 0)
 
-          time-x
-          (+ (long bx) (long bubble-w) (- time-w))
-
           turn-id
           (:session-turn-id message)
 
@@ -2048,7 +2045,7 @@
                (not (#{:running :queued} status)))
 
           separator-w
-          (if time-str 3 0)
+          (if (or time-str turn-str) 3 0)
 
           turn-w
           (if turn-str (p/display-width turn-str) 0)
@@ -2057,40 +2054,40 @@
           (- (long bubble-w)
              time-w
              separator-w
-             (if turn-str (+ turn-w 3) 0)
+             (if turn-str (+ turn-w (if time-str 3 0)) 0)
              (min 8 (p/display-width label))
              1)
 
           fork-label
           (when forkable?
-            (cond (>= action-space 19) " Fork at this turn "
+            (cond (>= action-space 21) " Fork from this turn "
                   (>= action-space 6) " Fork "))
 
           fork-w
           (if fork-label (p/display-width fork-label) 0)
 
           fork-x
-          (- time-x (if fork-label (+ fork-w separator-w) 0))
+          (- (+ (long bx) (long bubble-w)) fork-w)
 
           turn-x
-          (- (if fork-label fork-x time-x) turn-w (if (and turn-str (or fork-label time-str)) 3 0))
+          (- fork-x turn-w (if (and turn-str fork-label) 3 0))
+
+          time-x
+          (- turn-x time-w (if (and time-str (or turn-str fork-label)) 3 0))
 
           label-w
-          (max 0 (- turn-x (long bx) (if (or turn-str fork-label time-str) 1 0)))]
+          (max 0 (- time-x (long bx) (if (or turn-str fork-label time-str) 1 0)))]
 
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
       (p/styled g [p/BOLD] (p/put-str! g bx label-row (p/ellipsize label label-w)))
       (when turn-str
         (p/set-colors! g t/dialog-hint t/terminal-bg)
-        (p/put-str! g turn-x label-row (str turn-str (when (or fork-label time-str) " | "))))
+        (p/put-str! g turn-x label-row (str turn-str (when fork-label " / "))))
       (when time-str
         (p/set-colors! g t/dialog-hint t/terminal-bg)
-        (p/put-str! g time-x label-row time-str))
+        (p/put-str! g time-x label-row (str time-str (when (or turn-str fork-label) " / "))))
       (when fork-label
-        (when time-str
-          (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ fork-x fork-w) label-row " | "))
         (let [hovered
               (.hovered interactions/hit-map)
 

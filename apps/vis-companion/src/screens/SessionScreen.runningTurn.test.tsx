@@ -35,7 +35,7 @@ describe('turn header metadata', () => {
       const stamps = headers.filter((header) => header.textContent?.includes('T42'));
       expect(stamps).toHaveLength(2);
       for (const header of stamps) {
-        expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+        expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42');
       }
     });
   });
@@ -59,7 +59,7 @@ describe('turn header metadata', () => {
       const stamps = headers.filter((header) => header.textContent?.includes('T42'));
       expect(stamps).toHaveLength(2);
       for (const header of stamps) {
-        expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+        expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42');
       }
     });
   });
