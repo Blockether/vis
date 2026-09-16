@@ -605,6 +605,9 @@ export function CopyChip({
  * touch and 32px under a pointer; invisible slop restores the touch target to 44px
  * without making the paper taller. Selection stays the amber edge over raised paper
  * in every form.
+ *
+ * `inset` chooses the gutter a row keeps: the standard one, or the live view's own
+ * inset, so a row inside that view lines up with the cells above and below it.
  */
 export const ListRow = forwardRef<
   HTMLButtonElement,
@@ -612,9 +615,17 @@ export const ListRow = forwardRef<
     isSelected?: boolean;
     isFramed?: boolean;
     density?: 'regular' | 'compact';
+    inset?: 'regular' | 'live-view';
   }
 >(function ListRow(
-  { isSelected = false, isFramed = false, density = 'regular', className = '', ...props },
+  {
+    isSelected = false,
+    isFramed = false,
+    density = 'regular',
+    inset = 'regular',
+    className = '',
+    ...props
+  },
   ref,
 ) {
   const paper = isFramed
@@ -626,11 +637,12 @@ export const ListRow = forwardRef<
     density === 'compact'
       ? 'relative min-h-9 py-0.5 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[""] mouse:min-h-8 mouse:py-0 mouse:after:content-none'
       : 'min-h-12 py-2';
+  const gutter = inset === 'live-view' ? 'px-(--live-view-inset)' : 'px-3';
   return (
     <button
       ref={ref}
       type="button"
-      className={`flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 motion-reduce:transition-none ${paper} ${spacing} ${className}`}
+      className={`flex w-full min-w-0 items-center gap-2 ${gutter} text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 motion-reduce:transition-none ${paper} ${spacing} ${className}`}
       {...props}
     />
   );
@@ -1221,10 +1233,12 @@ export function ComposerButton({
  * A chip that reports a LEVEL leads with its mark, so the row lays its children
  * out itself: `inline-flex` with one gap, and the caller passes a word.
  * Compact response controls tighten desktop tracking and icons without reducing
- * label size or press targets.
+ * label size or press targets. `isFlush` drops the leading pad, so a button that
+ * follows inline text stands against it instead of a step away from it.
  */
 export function MetaButton({
   isPicker = false,
+  isFlush = false,
   density = 'default',
   className = '',
   children,
@@ -1236,6 +1250,7 @@ export function MetaButton({
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isPicker?: boolean;
   density?: 'default' | 'compact';
+  isFlush?: boolean;
 }) {
   const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   return (
@@ -1243,7 +1258,7 @@ export function MetaButton({
       type="button"
       disabled={disabled}
       {...press}
-      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-meta font-semibold uppercase tracking-normal transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] enabled:hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:after:content-none ${
+      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 ${isFlush ? 'pr-1 pl-0' : 'px-1'} py-1 text-left font-mono text-meta font-semibold uppercase tracking-normal transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] enabled:hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:after:content-none ${
         density === 'compact'
           ? 'mouse:tracking-normal mouse:[&>svg]:size-2.5'
           : 'mouse:tracking-[0.08em]'

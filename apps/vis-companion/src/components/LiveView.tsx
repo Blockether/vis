@@ -771,7 +771,7 @@ function TableRows({
                 <td className="p-0 align-middle">
                   {isSelectable ? (
                     <ListRow
-                      className="pl-(--live-view-inset) pr-(--live-view-inset)"
+                      inset="live-view"
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >

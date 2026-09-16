@@ -1411,6 +1411,14 @@ export const STORY_TURN_ITERATIONS_LONG: TranscriptIteration[] = Array.from(
   },
 );
 /**
+ * THE MOMENT A TURN HEADER IS DRAWN AGAINST, and there is only one of it.
+ *
+ * A story that builds its own timestamp draws a different picture on every run and in
+ * every timezone, so the stamp a header reports is a fixture like everything else the
+ * gallery shows.
+ */
+export const STORY_TURN_STAMP = new Date(2026, 8, 16, 13, 23, 45).getTime();
+/**
  * ONE EXCHANGE — what was asked, and the turn that answered it.
  *
  * The only fixture where the human's bubble and the machine's thread are on

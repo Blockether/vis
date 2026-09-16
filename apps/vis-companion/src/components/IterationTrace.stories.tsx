@@ -10,6 +10,7 @@ import {
   STORY_TURN_ITERATIONS_ACTIVITY,
   STORY_TURN_ITERATIONS_LONG,
   STORY_TURN_ITERATIONS_SETTLED,
+  STORY_TURN_STAMP,
   STORY_THINKING_AND_CODE,
 } from '../dev/story-data';
 import { AssistantMessage, IterationTrace, UserMessage } from './ChatContent';
@@ -443,7 +444,7 @@ export const TurnHeaderOrder: Story = {
         turn={{
           ...STORY_EXCHANGE_TURN,
           position: 42,
-          created_at: new Date(2026, 8, 16, 13, 23, 45).getTime(),
+          created_at: STORY_TURN_STAMP,
         }}
         onFork={forkFromAnswer}
       />

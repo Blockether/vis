@@ -3563,7 +3563,7 @@ export const AssistantMessage = memo(function AssistantMessage({
                 <span className="font-normal text-dialog-hint">{' / '}</span>
               )}
               <MetaButton
-                className="pl-0"
+                isFlush
                 onClick={onFork}
                 disabled={isForking}
                 aria-label="Fork from this turn"
