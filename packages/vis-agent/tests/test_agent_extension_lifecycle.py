@@ -8,7 +8,6 @@ from urllib.parse import unquote, urlsplit
 
 import blockether.vis.extension as vis
 import pytest
-from blockether.vis._contracts import GATEWAY
 from blockether.vis.engine import Agent, GatewayClient, GatewayError
 from test_client import compatible, endpoint
 
@@ -112,7 +111,7 @@ def test_constructor_extensions_pump_on_calling_thread_and_use_lease(gateway, pu
         )
         for call in callback_calls:
             headers = {key.lower(): value for key, value in call[2].items()}
-            assert headers[GATEWAY["headers"]["client_id"]] == "sdk-lease"
+            assert headers["x-vis-client-id"] == "sdk-lease"
     assert sid not in state["manifests"]
     assert not any(
         method == "DELETE" and path == "/v1/clients/sdk-lease"

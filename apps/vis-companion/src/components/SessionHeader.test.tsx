@@ -3,7 +3,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import { STORY_GOAL } from '../dev/story-data';
+import type { SessionGoal } from '../lib/types';
 import { SessionHeader } from './SessionHeader';
 
 const model = {
@@ -14,6 +16,18 @@ const model = {
 } as const;
 
 describe('SessionHeader', () => {
+  it.each(gatewaySchema.$defs.session_goal.properties.status.oneOf)(
+    'shows the schema title for $const',
+    ({ const: status, title }) => {
+      render(
+        <SessionHeader
+          model={{ ...model, goal: { ...STORY_GOAL, status: status as SessionGoal['status'] } }}
+          commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
+        />,
+      );
+      expect(screen.getByRole('button', { name: /^Goal:/ })).toHaveTextContent(`Goal: ${title}`);
+    },
+  );
   it('exposes one session identity and its two navigation commands', () => {
     const back = vi.fn();
     const toggleArtifacts = vi.fn();

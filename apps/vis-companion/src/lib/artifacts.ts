@@ -17,6 +17,7 @@
  * which is why the whole vocabulary is testable without rendering a session.
  */
 
+import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
 import type { IterationAttachment, SessionArtifactRow, TranscriptTurn } from './types';
 
 /** Media types that ride the transcript as a document, never as model input. */
@@ -83,7 +84,7 @@ export function isDocMedia(mime: string | undefined, filename?: string): boolean
   );
 }
 
-export const DIFF_MEDIA = 'application/vnd.vis.diff+json';
+export const DIFF_MEDIA = schema.$defs.attachment.contentMediaType;
 
 export function isDiffMedia(mime: string | undefined): boolean {
   return baseMedia(mime) === DIFF_MEDIA;

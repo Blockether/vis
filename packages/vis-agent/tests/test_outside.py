@@ -1,10 +1,4 @@
-"""The package outside a Vis session: the contract is the specification.
-
-Every test here asks the same question in a different place — does `vis` behave
-the way the canonical contract's document says it behaves when no engine is in the room — so a
-contract op that grows, moves or changes its outside behavior fails HERE, in the
-package, and not in an extension somebody wrote against it.
-"""
+"""The SDK outside Vis implements the Host protocol and schema-backed payloads."""
 
 import inspect
 import json
@@ -19,7 +13,11 @@ import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _contracts, _outside
 
-CONTRACT = _outside.contract
+HOST_METHODS = {
+    name: method
+    for name, method in vars(vis.Host).items()
+    if inspect.isfunction(method) and not name.startswith("_")
+}
 
 
 @pytest.fixture(autouse=True)
@@ -33,11 +31,7 @@ def stop_log_sweepers():
     sweepers.clear()
 
 
-def _op(name):
-    return next(op for op in CONTRACT["ops"] if op["name"] == name)
-
-
-# -- The document and the implementation ---------------------------------------
+# -- The protocol and the implementation -------------------------------------
 
 
 def test_the_host_is_a_contract_host_and_serves_exactly_the_declared_ops():
@@ -45,21 +39,20 @@ def test_the_host_is_a_contract_host_and_serves_exactly_the_declared_ops():
     # satisfy it the same way a stranger's would.
     assert isinstance(_outside.host, vis.Host)
     served = sorted(n for n in vars(_outside.host) if not n.startswith("_"))
-    assert served == sorted(op["name"] for op in CONTRACT["ops"])
+    assert served == sorted(HOST_METHODS)
 
 
-def test_every_op_accepts_the_arity_the_contract_declares():
-    for op in CONTRACT["ops"]:
-        fn = getattr(_outside.host, op["name"])
-        if op["outside"] == "refuse":
-            continue  # a refusal takes anything and answers the same way
+def test_every_op_accepts_the_arity_the_protocol_declares():
+    for name, method in HOST_METHODS.items():
+        fn = getattr(_outside.host, name)
+        arity = len(inspect.signature(method).parameters) - 1
         params = [
             p
             for p in inspect.signature(fn).parameters.values()
             if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
         ]
         required = [p for p in params if p.default is p.empty]
-        assert len(required) <= op["arity"] <= len(params), op["name"]
+        assert len(required) <= arity <= len(params), name
 
 
 class _Recorder:
@@ -67,7 +60,7 @@ class _Recorder:
 
     def __init__(self):
         self.calls = []
-        for name in _contracts.OPS:
+        for name in HOST_METHODS:
             setattr(self, name, self._record(name))
 
     def _record(self, name):
@@ -105,19 +98,12 @@ def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
     ]
 
 
-def test_a_refusing_op_raises_the_refusal_the_contract_states():
-    for op in CONTRACT["ops"]:
-        if op["outside"] != "refuse":
-            continue
-        with pytest.raises(_outside.Refused) as raised:
-            getattr(vis._host, op["name"])({"command": "true"})
-        assert str(raised.value) == op["refusal"]
-        assert op["name"] in op["refusal"]
-
-
-def test_session_bound_operations_refuse_without_the_host():
-    refused = {op["name"] for op in CONTRACT["ops"] if op["outside"] == "refuse"}
-    assert refused == {"jailed_shell", "jailed_shell_session", "council_wake"}
+@pytest.mark.parametrize(
+    "name", ["jailed_shell", "jailed_shell_session", "council_wake"]
+)
+def test_session_bound_operations_refuse_without_the_host(name):
+    with pytest.raises(_outside.Refused, match=f"vis\\.{name}"):
+        getattr(vis._host, name)({"command": "true"})
 
 
 # -- State, logs, secrets, environment -----------------------------------------
@@ -172,7 +158,7 @@ def test_a_key_written_as_null_is_no_key_at_all():
 
 def test_a_secret_is_a_handle_until_it_is_revealed():
     handle = _outside._stash("hunter2")
-    assert handle.startswith(CONTRACT["view"]["secret_handle_prefix"])
+    assert _contracts.validate("view", "secret_handle", handle) == handle
     assert "hunter2" not in handle
     assert vis.reveal(handle) == "hunter2"
     assert vis.forget(handle) is True
@@ -458,7 +444,7 @@ def test_shell_reads_the_last_lines_from_a_negative_offset():
     assert run.logs(-2)["out"].splitlines() == ["two", "three"]
 
 
-@pytest.mark.parametrize("op", CONTRACT["shell"]["spawn_ops"])
+@pytest.mark.parametrize("op", ["run", "background"])
 def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
     # The engine's `shell` takes `{"op": "run"|"background", …}`; an extension that
     # writes what the engine documents must not be refused out here.
@@ -480,11 +466,11 @@ def test_an_op_no_engine_speaks_is_refused_by_the_whole_vocabulary():
         vis.shell({"op": "detonate", "command": "printf hi"})
     said = str(refusal.value)
     assert "detonate" in said
-    for op in CONTRACT["shell"]["spawn_ops"] + CONTRACT["shell"]["handle_ops"]:
+    for op in ("run", "background", "logs", "wait", "send", "stop"):
         assert f'"{op}"' in said
 
 
-@pytest.mark.parametrize("op", CONTRACT["shell"]["handle_ops"])
+@pytest.mark.parametrize("op", ["logs", "wait", "send", "stop"])
 def test_a_handle_op_names_the_handle_it_cannot_find(op):
     with pytest.raises(_outside.Refused, match="no such shell"):
         vis.shell({"op": op, "id": "never-started"})
@@ -587,9 +573,10 @@ def test_ask_names_what_is_wrong_with_a_form(form):
 
 def test_ask_knows_only_the_contracts_field_types(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
-    for wire_type in CONTRACT["view"]["field_types"]:
+    for branch in _contracts.definition("view", "field")["oneOf"]:
+        wire_type = branch["properties"]["type"]["const"]
         node = {"name": "a", "type": wire_type}
-        if wire_type in CONTRACT["view"]["choice_types"]:
+        if "options" in branch["properties"]:
             node["options"] = ["one", "two"]
         assert _refusal("Deploy", [node]) is None, wire_type
 
@@ -702,7 +689,7 @@ def test_a_live_view_names_what_is_wrong_with_it(view):
     assert str(raised.value)
 
 
-@pytest.mark.parametrize("op", CONTRACT["live"]["handle_ops"])
+@pytest.mark.parametrize("op", ["patch", "state", "close"])
 def test_a_live_handle_op_names_the_view_it_cannot_find(op):
     with pytest.raises(_outside.Refused) as raised:
         _outside.live(json.dumps({"op": op, "view_id": "nope"}))
@@ -752,7 +739,7 @@ def test_a_view_that_ended_answers_its_verdict_rather_than_vanishing():
 def test_a_burst_of_pushes_crosses_the_boundary_once_per_window(monkeypatch):
     # The batching window is the contract's, and a compute loop that reports
     # every iteration must not pay a host call for every iteration.
-    assert vis._FLUSH_MS == CONTRACT["live"]["flush_ms"]
+    assert vis._FLUSH_MS == 100
     crossed = []
     serve = _outside.live
 

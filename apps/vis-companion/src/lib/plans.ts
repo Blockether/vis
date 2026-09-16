@@ -1,6 +1,6 @@
-import contract from '../../../../packages/vis-contract/resources/vis-contract/plans.json';
+import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/plans.json';
 
-export type PlanAction = keyof typeof contract.actions;
+export type PlanAction = 'revise' | 'approve';
 export interface PlanInfo {
   kind: 'plan' | 'implementation';
   feature: string;
@@ -8,7 +8,7 @@ export interface PlanInfo {
 }
 
 export function planName(filename: string): Omit<PlanInfo, 'status'> | null {
-  const match = new RegExp(contract.filename_pattern).exec(filename);
+  const match = new RegExp(schema.$defs.filename.pattern).exec(filename);
   return match
     ? { kind: match[1] === 'PLAN' ? 'plan' : 'implementation', feature: match[2] }
     : null;
@@ -29,7 +29,7 @@ export function documentInfo(filename: string, text: string): PlanInfo | null {
     features.length !== 1 ||
     features[0] !== name.feature ||
     statuses.length !== 1 ||
-    !contract.statuses.includes(statuses[0])
+    !schema.$defs.status.enum.includes(statuses[0])
   )
     return null;
   return { ...name, status: statuses[0] };
@@ -42,13 +42,9 @@ export function availableActions(info: PlanInfo | null, pendingComments: boolean
 }
 
 export function actionRequest(filename: string, version: number, action: PlanAction): string {
-  if (
-    !planName(filename) ||
-    !Number.isSafeInteger(version) ||
-    version < 1 ||
-    !(action in contract.actions)
-  ) {
+  const declaration = schema.$defs.action.oneOf.find((entry) => entry.const === action);
+  if (!planName(filename) || !Number.isSafeInteger(version) || version < 1 || !declaration) {
     throw new Error('Invalid plan action or version');
   }
-  return `Read \`${filename}\` v${version} with read_attachment(${JSON.stringify(filename)}, version=${version}).\n${contract.actions[action]}`;
+  return `Read \`${filename}\` v${version} with read_attachment(${JSON.stringify(filename)}, version=${version}).\n${declaration['x-vis-request']}`;
 }

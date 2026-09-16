@@ -15,7 +15,32 @@
 
 (set! *warn-on-reflection* true)
 
-(def limits (get (document/load! "council") "limits"))
+(def ^:private schema (document/schema-document "council"))
+
+(def ^:private content-bytes
+  (get-in schema ["$defs" "publish" "properties" "content" "x-vis-max-utf8-bytes"]))
+
+(def ^:private title-bytes
+  (get-in schema ["$defs" "publish" "properties" "title" "x-vis-max-utf8-bytes"]))
+
+(def ^:private idempotency-key-bytes
+  (get-in schema ["$defs" "publish" "properties" "idempotency_key" "x-vis-max-utf8-bytes"]))
+
+(def ^:private max-recipients (get-in schema ["$defs" "entry" "properties" "ping" "maxItems"]))
+
+(def default-page-entries (get-in schema ["$defs" "page_request" "properties" "limit" "default"]))
+
+(def ^:private page-bytes (get-in schema ["$defs" "entry_page" "x-vis-max-utf8-bytes"]))
+
+(def ^:private batch-entries
+  (get-in schema ["$defs" "input_batch" "properties" "entries" "maxItems"]))
+
+(def ^:private batch-bytes (get-in schema ["$defs" "input_batch" "x-vis-max-utf8-bytes"]))
+
+(def ^:private preview-bytes
+  (get-in schema ["$defs" "preview" "properties" "content" "x-vis-max-utf8-bytes"]))
+
+(def ^:private lookup-timeout-ms (get schema "x-vis-lookup-timeout-ms"))
 
 (toggles/register-toggle! {:id "council"
                            :label "Council"
@@ -246,7 +271,7 @@
         (group! db session-id (:group_id opts))
 
         content
-        (text! (:content opts) (get limits "content_bytes"))
+        (text! (:content opts) content-bytes)
 
         reply-to
         (:reply_to opts)
@@ -279,7 +304,7 @@
 
         _
         (when title
-          (text! title (get limits "title_bytes"))
+          (text! title title-bytes)
           (when (or thread (re-find #"[\r\n\t]" title))
             (fail! :invalid-request "title is a single line, only for a new thread")))
 
@@ -289,8 +314,7 @@
               :else (vec (sort (distinct (map header/unmark-session-id (:ping opts))))))
 
         key
-        (text! (or (:idempotency_key opts) (str (random-uuid)))
-               (get limits "idempotency_key_bytes"))
+        (text! (or (:idempotency_key opts) (str (random-uuid))) idempotency-key-bytes)
 
         fingerprint
         (util/sha256-hex (pr-str [gid activation-id (:kind opts) content thread title selector
@@ -323,7 +347,7 @@
 
         (when (and required? (empty? targets))
           (fail! :invalid-request "reply_required needs at least one ping recipient"))
-        (when (> (count targets) (long (get limits "recipients")))
+        (when (> (count targets) (long max-recipients))
           (fail! :invalid-recipient "Too many Council ping recipients"))
         (doseq [id targets]
           (when (or (and (= id session-id) (not self-wake?))
@@ -356,7 +380,7 @@
                   (assoc :title
                     (or title
                         (clip (first (remove str/blank? (map str/trim (str/split-lines content))))
-                              (get limits "title_bytes"))))
+                              title-bytes)))
 
                   true
                   (assoc :source_ref (ps/db-council-source db session-id source-ref)))
@@ -438,13 +462,13 @@
         (or (:after opts) 0)
 
         limit
-        (or (:limit opts) (get limits "page_entries"))]
+        (or (:limit opts) default-page-entries)]
 
     (root! db gid (:thread_id opts))
     (bounded-page (ps/db-council-page db gid (:thread_id opts) roots? after (inc (long limit)))
                   after
                   limit
-                  (get limits "page_bytes")
+                  page-bytes
                   (if roots? :thread_id :entry_id))))
 
 (defn read-entries [db sid opts] (read-page db sid opts false))
@@ -502,15 +526,14 @@
                                                               activation
                                                               gid
                                                               after
-                                                              (inc (long (get limits
-                                                                              "batch_entries")))))}]
+                                                              (inc (long batch-entries))))}]
               (swap! input-state assoc :lookup lookup)
               lookup))
 
         job
         (:job lookup)]
 
-    (try (let [rows (deref job (long (get limits "lookup_timeout_ms")) ::timeout)]
+    (try (let [rows (deref job (long lookup-timeout-ms) ::timeout)]
            (if (= ::timeout rows)
              (throw (ex-info "Council lookup deferred" {:reason :timeout}))
              (do (swap! input-state dissoc :lookup)
@@ -568,7 +591,7 @@
 
                       previews
                       (mapv (fn [row]
-                              (let [preview (clip (:content row) (get limits "preview_bytes"))]
+                              (let [preview (clip (:content row) preview-bytes)]
                                 (-> row
                                     (dissoc :content_bytes)
                                     (assoc :content preview
@@ -577,15 +600,14 @@
                             rows)
 
                       budget
-                      (- (min (long byte-budget) (long (get limits "batch_bytes")))
-                         (utf8-size input-prefix))
+                      (- (min (long byte-budget) (long batch-bytes)) (utf8-size input-prefix))
 
                       selected
                       (if (seq pending)
                         (let [batch
                               {:entries [] :after after :has_more false :pending_replies pending}]
                           (when (<= (utf8-size (wire/json-str batch)) budget) batch))
-                        (loop [n (long (get limits "batch_entries"))]
+                        (loop [n (long batch-entries)]
                           (let [batch (bounded-page previews after n budget :entry_id)
                                 obligations (mapv (fn [entry]
                                                     {:entry_id (:entry_id entry)

@@ -1,31 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/council.json",
-  "type": "object",
-  "properties": {
-    "version": {
-      "const": 1
-    },
-    "limits": {
-      "const": {
-        "content_bytes": 65536,
-        "title_bytes": 256,
-        "recipients": 256,
-        "preview_bytes": 1024,
-        "batch_entries": 20,
-        "batch_bytes": 8192,
-        "page_entries": 50,
-        "page_bytes": 262144,
-        "lookup_timeout_ms": 100,
-        "idempotency_key_bytes": 256
-      }
-    }
-  },
-  "required": [
-    "version",
-    "limits"
-  ],
-  "additionalProperties": false,
+  "$ref": "#/$defs/entry",
+  "x-vis-lookup-timeout-ms": 100,
+  "$comment": "The Council runtime enforces UTF-8 byte budgets and lookup deadlines; JSON Schema validates portable payload shapes.",
   "$defs": {
     "group_request": {
       "type": "object",
@@ -43,11 +21,13 @@
       "properties": {
         "content": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-vis-max-utf8-bytes": 65536
         },
         "title": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-vis-max-utf8-bytes": 256
         },
         "ping": {
           "oneOf": [
@@ -65,7 +45,8 @@
         },
         "idempotency_key": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-vis-max-utf8-bytes": 256
         },
         "group_id": {
           "type": "string",
@@ -141,7 +122,8 @@
         "limit": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 50
+          "maximum": 50,
+          "default": 50
         }
       },
       "required": [],
@@ -418,7 +400,8 @@
         },
         "content": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-vis-max-utf8-bytes": 1024
         },
         "author_session_id": {
           "type": "string",
@@ -537,7 +520,8 @@
         "after",
         "has_more"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-vis-max-utf8-bytes": 262144
     },
     "thread_page": {
       "type": "object",
@@ -592,7 +576,8 @@
         "after",
         "has_more"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-vis-max-utf8-bytes": 8192
     },
     "reply_state": {
       "type": "object",

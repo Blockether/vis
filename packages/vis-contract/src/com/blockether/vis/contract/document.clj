@@ -1,5 +1,5 @@
 (ns com.blockether.vis.contract.document
-  "Loads JSON contract documents and validates them with their same-named JSON Schemas.
+  "Loads canonical JSON Schemas and validates payloads against their roots or definitions.
    `schema/common.json` supplies shared definitions. Raw validators reject values outside
    the JSON data model; engine adapters may normalize keyword maps before validation."
   (:require [clojure.java.io :as io]
@@ -23,23 +23,19 @@
 
 (def ^:private validators (atom {}))
 
-(defn- schema
+(defn schema-document
+  "The parsed canonical JSON Schema named `document-name`, cached after its first read."
   [document-name]
   (or (get @schemas document-name)
       (let [value (read-resource (str "vis-contract/schema/" document-name ".json"))]
         (swap! schemas assoc document-name value)
         value)))
 
-(defn schema-document
-  "The parsed JSON Schema document named `document-name`."
-  [document-name]
-  (schema document-name))
-
 (defn- compiled-schema
   [document-name definition]
   (let [cache-key [document-name definition]]
     (or (get @validators cache-key)
-        (let [source (schema document-name)
+        (let [source (schema-document document-name)
               schema-id (get source "$id")
               target (if definition
                        (-> (select-keys source ["$schema" "$id" "$defs"])
@@ -86,21 +82,3 @@
   "True when raw JSON-shaped data satisfies a named definition."
   [document-name definition value]
   (nil? (explain-json document-name definition value)))
-
-(defn load!
-  "The contract document named `document-name`, parsed and validated against its
-   schema. Throws `:vis/contract-missing` when either file is off the classpath
-   and `:vis/contract-invalid`, carrying the schema errors, when the document does
-   not satisfy the schema."
-  [document-name]
-  (let [resource-path
-        (str "vis-contract/" document-name ".json")
-
-        parsed
-        (read-resource resource-path)]
-
-    (when-let [{:keys [errors]} (skjema/explain (compiled-schema document-name nil) parsed)]
-      (throw (ex-info
-               (str resource-path " does not satisfy vis-contract/schema/" document-name ".json")
-               {:type :vis/contract-invalid :resource resource-path :errors errors})))
-    parsed))

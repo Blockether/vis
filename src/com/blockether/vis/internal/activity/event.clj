@@ -15,15 +15,15 @@
            [java.util.concurrent.atomic AtomicLong]
            [java.util.regex Pattern]))
 
-(def max-event-bytes (get contract/limits "max_event_bytes"))
+(def max-event-bytes contract/event-byte-limit)
 
-(def max-summary-bytes (get contract/limits "max_summary_bytes"))
+(def max-summary-bytes contract/summary-byte-limit)
 
-(def max-detail-bytes (get contract/limits "max_detail_bytes"))
+(def max-detail-bytes contract/detail-byte-limit)
 
-(def max-resources (get contract/limits "max_resources"))
+(def max-resources contract/resource-limit)
 
-(def max-diff-line-bytes (get contract/limits "max_diff_line_bytes"))
+(def max-diff-line-bytes contract/diff-line-byte-limit)
 
 (def ^:private max-summary-nodes 128)
 

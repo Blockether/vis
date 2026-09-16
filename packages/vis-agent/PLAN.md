@@ -6,7 +6,7 @@ Provide one API with two transports, without duplicating the agent.
 
 `src/blockether/vis/extension.py` is both the distributable extension SDK and the engine-executed
 module. `_outside.py` implements extension operations outside Vis; it is not a local agent.
-The gateway wire contract lives in `../vis-contract/resources/vis-contract/gateway.json`.
+The gateway wire contract lives in `../vis-contract/resources/vis-contract/schema/gateway.json`.
 The Python session client and initial managed stdio engine now exist. Root `PLAN.md`
 tracks unrelated Companion work and remains untouched. Root `TODO.md` tracks acceptance.
 
@@ -255,7 +255,7 @@ lifecycle and bounded evidence. Each `block.activity` replaces the prior project
 open/patch/close events and validated operator actions. Public input Views omit host routing and
 validation metadata; their close receipts expose the reason, never submitted answers or secret
 handles. SSE live close receipts may omit the already-streamed contents; journal polling retains
-it. Canonical documents, schemas and shared acceptance/rejection fixtures live in vis-contract.
+it. Canonical JSON Schemas and shared acceptance/rejection fixtures live in vis-contract.
 
 Runtime v0.5.0 is published at tag `v0.5.0`, commit
 `5acd3f0e861b8735b56058ebea3bf9c5041b2291`. All five release jobs succeeded and all five assets

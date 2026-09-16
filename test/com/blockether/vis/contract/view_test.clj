@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.view :as contract]
             [com.blockether.vis.internal.view.core :as view]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
@@ -57,3 +58,48 @@
         (is (not (document/valid-json? "view"
                                        "input_view"
                                        (assoc-in projected ["fields" 0 "fields" 0 key] value))))))))
+
+(deftest view-schema-is-the-source-of-runtime-vocabulary
+  (let [schema
+        (document/schema-document "view")
+
+        fields
+        (get-in schema ["$defs" "field" "oneOf"])
+
+        live-nodes
+        (get-in schema ["$defs" "live_node" "oneOf"])
+
+        names
+        #(set (map (fn [shape]
+                     (get-in shape ["properties" "type" "const"]))
+                   %))]
+
+    (is (nil? (io/resource "vis-contract/view.json")))
+    (is (= (names fields) (set (keys contract/field-types))))
+    (is (= (disj (names live-nodes) "group") (set (keys contract/live-node-types))))
+    (is (= #{:otp :password} contract/secret-types))
+    (is (= #{:multiline :password :plaintext} contract/text-types))
+    (is (= #{:multiselect :select} contract/choice-types))
+    (is (= {:min 0 :max 100 :step 1} contract/range-defaults))
+    (is (= {:length 6 :ceiling 12} contract/otp-defaults))
+    (is (= #{:id :seq :created-at :owner} contract/live-view-stamp-keys))
+    (is (= #{:created-at} contract/request-stamp-keys))
+    (is (= #{:is-secret} contract/derived-keys))
+    (doseq [[variant frames] contract/spinner-frames]
+      (is (document/valid-json? "view" "spinner_variant" (name variant)))
+      (is (= 10 (count frames))))
+    (doseq [sample ["input" "live"]]
+      (is (document/valid?
+            "view"
+            (get (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json"))) sample))))
+    (is (not (document/valid? "view" {"field_types" ["plaintext"]})))))
+
+(deftest schema-derived-key-sets-cover-each-real-operator
+  (let [schema (document/schema-document "view")]
+    (doseq [[definition discriminator actual] [["operator_action" "action"
+                                                contract/view-action-key-sets]
+                                               ["live_op" "op" contract/live-op-key-sets]]
+            shape (get-in schema ["$defs" definition "oneOf"])]
+
+      (is (= (set (keys (wire/->engine (get shape "properties"))))
+             (get actual (keyword (get-in shape ["properties" discriminator "const"]))))))))

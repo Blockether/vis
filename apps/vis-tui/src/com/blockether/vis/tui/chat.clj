@@ -937,7 +937,7 @@
   "Rows ONE Activity window asks for. The contract caps every history-bearing
    response at `max_page_rows`, so asking for exactly that is one round trip per
    window and never a request the gateway has to trim."
-  (long (get activity-contract/limits "max_page_rows")))
+  (long activity-contract/page-row-limit))
 
 (defn activity-page
   "ONE window of a form's RETAINED Activity, projected exactly like the bounded

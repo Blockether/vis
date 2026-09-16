@@ -77,7 +77,8 @@ def test_shared_fixture_covers_every_primitive_and_spinner():
         Path(__file__).parents[2]
         / "vis-contract/resources/vis-contract/fixtures/live-primitives.json"
     )
-    contract = json.loads(fixture.parent.parent.joinpath("view.json").read_text())
+    from blockether.vis._contracts import definition
+
     nodes = []
 
     def collect(items):
@@ -86,10 +87,13 @@ def test_shared_fixture_covers_every_primitive_and_spinner():
             collect(node.get("fields", []))
 
     collect(json.loads(fixture.read_text())["nodes"])
-    assert {n["type"] for n in nodes} - {"group"} == set(contract["live"]["node_types"])
-    assert {n["variant"] for n in nodes if n["type"] == "spinner"} == set(
-        contract["live"]["spinner_frames"]
-    )
+    assert {n["type"] for n in nodes} - {"group"} == {
+        branch["properties"]["type"]["const"]
+        for branch in definition("view", "live_node")["oneOf"]
+    } - {"group"}
+    assert {n["variant"] for n in nodes if n["type"] == "spinner"} == {
+        branch["const"] for branch in definition("view", "spinner_variant")["oneOf"]
+    }
 
 
 def test_documented_review_example_accepts_a_real_operator_press(monkeypatch):

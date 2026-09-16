@@ -20,7 +20,7 @@ def test_namespace_coexists_with_unrelated_modules(monkeypatch):
     contract = importlib.import_module("blockether.vis._contracts")
     assert parent.__spec__.origin is None
     assert sdk.__name__ == "blockether.vis"
-    assert contract.GATEWAY["routes"]
+    assert contract.schema("gateway")["x-vis-routes"]
     assert files(sdk).joinpath("py.typed").is_file()
     assert contract._DATA.joinpath("schema/gateway.json").is_file()
     assert sys.modules["vis"] is unrelated

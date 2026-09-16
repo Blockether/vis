@@ -1,7 +1,8 @@
 (ns com.blockether.vis.contract.surface-test
   "Contract tests for the JSON Schema-backed language-surface result shapes shared by
    format, lint, run_tests and check."
-  (:require [com.blockether.vis.contract.surface :as contract]
+  (:require [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.surface :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private lint-ok
@@ -30,6 +31,11 @@
 
 (defdescribe
   surface-test
+  (it "validates actual language-tool results at the schema root"
+      (expect (document/valid? "surface" lint-ok))
+      (expect (document/valid? "surface" test-ok))
+      (expect (document/valid? "surface" {"op" "format_code" "changed" true}))
+      (expect (not (document/valid? "surface" {"version" 1 "capabilities" ["format"]}))))
   (it "check tags a schema rejection as a surface contract violation"
       (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
                     nil

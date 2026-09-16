@@ -1,9 +1,6 @@
 {
   "resources": [
     {
-      "glob": "vis-contract/*.json"
-    },
-    {
       "glob": "vis-contract/schema/*.json"
     }
   ]

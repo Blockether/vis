@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Warm transforms outside timed cases; beforeEach still resets module state.
 import './gateway';
 import { STORY_GOAL } from '../dev/story-data';
+import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 
 class MemoryStorage implements Storage {
   private readonly rows = new Map<string, string>();
@@ -1404,6 +1405,37 @@ describe('GatewayClient abandoned requests', () => {
 });
 
 describe('session goal revisions', () => {
+  it('uses schema status alternatives and text bounds without a vocabulary catalog', async () => {
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 's1', goal: null }))),
+    );
+    await client.session('s1');
+    const properties = gatewaySchema.$defs.session_goal.properties;
+    let revision = 1;
+    for (const { const: status } of properties.status.oneOf) {
+      const goal = {
+        ...STORY_GOAL,
+        status,
+        revision: revision++,
+        objective: 'o'.repeat(properties.objective.maxLength),
+        reason: 'r'.repeat(properties.reason.maxLength),
+      };
+      expect(client.noteSessionGoal('s1', goal)?.goal).toEqual(goal);
+    }
+    const current = client.cachedSession('s1')?.goal;
+    for (const invalid of [
+      { objective: 'o'.repeat(properties.objective.maxLength + 1) },
+      { reason: 'r'.repeat(properties.reason.maxLength + 1) },
+      { status: 'unknown' },
+    ]) {
+      expect(
+        client.noteSessionGoal('s1', { ...STORY_GOAL, revision: revision++, ...invalid })?.goal,
+      ).toEqual(current);
+    }
+  });
   it('keeps live state across replay, stale reads and a cold initial fetch', async () => {
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);

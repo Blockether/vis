@@ -1,19 +1,30 @@
 (ns com.blockether.vis.contract.test-runner-test
   "Tests for the language-neutral test-runner JSON Schema and runtime helpers."
-  (:require [com.blockether.vis.contract.test-runner :as contract]
+  (:require [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.test-runner :as contract]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
-(defdescribe selector-keys-test
-             (describe "selector keys from the JSON Schema"
-                       (it "lists the three optional selector keys in order"
-                           (expect (= [:paths :include :exclude] contract/selector-keys)))))
+(defdescribe selector-schema-test
+             (it "declares the optional selectors on the payload, not in a key catalog"
+                 (expect (= #{"paths" "include" "exclude"}
+                            (set (keys (get-in (document/schema-document "test-runner")
+                                               ["$defs" "selectors" "properties"])))))))
 
-(defdescribe result-keys-test
-             (describe "result keys from the JSON Schema"
-                       (it "lists every uniform result key in order"
-                           (expect (= [:language :mode :framework :tool :ns :total :pass :fail
-                                       :errored :selected :skipped :failures :output]
-                                      contract/result-keys)))))
+(defdescribe result-schema-test
+             (it "declares the uniform result fields on the payload"
+                 (expect (= #{"language" "mode" "framework" "tool" "ns" "total" "pass" "fail"
+                              "errored" "selected" "skipped" "failures" "output"}
+                            (set (keys (get-in (document/schema-document "test-runner")
+                                               ["$defs" "result" "properties"])))))))
+
+(defdescribe schema-payloads-test
+             (it "validates selectors directly"
+                 (expect (contract/selectors-valid? {:paths ["test"] :include []}))
+                 (expect (not (contract/selectors-valid? {:paths "test"}))))
+             (it "validates a runner result at the schema root"
+                 (expect (document/valid? "test-runner" {"mode" "cli" "total" 2 "failures" []}))
+                 (expect (not (document/valid? "test-runner" {"mode" "unknown"})))
+                 (expect (not (document/valid? "test-runner" {"total" -1})))))
 
 (defdescribe split-node-id-test
              (describe

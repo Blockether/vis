@@ -1,12 +1,17 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import gatewayContract from '../../../../packages/vis-contract/resources/vis-contract/gateway.json';
+import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import { useDeskRail } from '../lib/fit-rows';
 import { markSessionId } from '../lib/session-id';
 import { ArtifactsChip } from './ArtifactsSheet';
 import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from './ui';
 
-const GOAL_STATUS = gatewayContract.session_goal.status_labels;
+const GOAL_STATUS = Object.fromEntries(
+  gatewaySchema.$defs.session_goal.properties.status.oneOf.map(({ const: status, title }) => [
+    status,
+    title,
+  ]),
+);
 
 /** Active wall time includes tools; inactive goals keep their persisted duration. */
 function GoalTime({ goal }: { goal: SessionGoal }) {

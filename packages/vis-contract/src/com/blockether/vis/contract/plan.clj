@@ -3,14 +3,14 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]))
 
-(def ^:private contract (delay (document/load! "plans")))
+(def ^:private schema (delay (document/schema-document "plans")))
 
 (defn plan-name
   "Return kind and feature only for a canonical planning filename."
   [filename]
   (when (string? filename)
-    (when-let [[_ kind feature] (re-matches (re-pattern (get @contract "filename_pattern"))
-                                            filename)]
+    (when-let [[_ kind feature]
+               (re-matches (re-pattern (get-in @schema ["$defs" "filename" "pattern"])) filename)]
       {:kind (if (= kind "PLAN") :plan :implementation) :feature feature})))
 
 (defn document-info
@@ -25,7 +25,7 @@
 
       (when (and (= [(:feature info)] (vec features))
                  (= 1 (count statuses))
-                 (some #{(first statuses)} (get @contract "statuses")))
+                 (some #{(first statuses)} (get-in @schema ["$defs" "status" "enum"])))
         (assoc info :status (first statuses))))))
 
 (defn available-actions
@@ -39,14 +39,13 @@
 (defn action-request
   "A user turn naming the exact saved version, never an unversioned latest pointer."
   [filename version action]
-  (when-not (and (plan-name filename)
-                 (integer? version)
-                 (pos? version)
-                 (contains? (get @contract "actions") (name action)))
-    (throw (ex-info "Invalid plan action or version"
-                    {:filename filename :version version :action action})))
-  (str "Read `" filename
-       "` v" version
-       " with read_attachment(" (pr-str filename)
-       ", version=" version
-       ").\n" (get-in @contract ["actions" (name action)])))
+  (let [declaration (some #(when (= (name action) (get % "const")) %)
+                          (get-in @schema ["$defs" "action" "oneOf"]))]
+    (when-not (and (plan-name filename) (integer? version) (pos? version) declaration)
+      (throw (ex-info "Invalid plan action or version"
+                      {:filename filename :version version :action action})))
+    (str "Read `" filename
+         "` v" version
+         " with read_attachment(" (pr-str filename)
+         ", version=" version
+         ").\n" (get declaration "x-vis-request"))))

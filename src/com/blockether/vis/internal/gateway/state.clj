@@ -5188,7 +5188,7 @@
               (:agent-checkpoint (ctx-loop/read-turn-state env))
 
               budget
-              (long (or (:iteration_budget opts) (get agents/limits "default_iterations")))
+              (long (or (:iteration_budget opts) agents/default-iterations))
 
               router
               (or (:router env) (lp/get-router))
@@ -5214,7 +5214,7 @@
           (when-not (and through (seq checkpoint))
             (agents/fail! :no-checkpoint
                           "Spawn requires the parent's complete model-input checkpoint"))
-          (when (or (> depth (long (get agents/limits "depth")))
+          (when (or (> depth (long agents/max-depth))
                     (and parent
                          (or (contains? #{"cancelled" "budget_limited"} (:status parent))
                              (> budget
@@ -5223,10 +5223,10 @@
             (agents/fail! :budget-exceeded
                           "Delegation exceeds the parent's depth or remaining iteration budget"))
           (when (>= (count (filter #(= team (:team_id %)) children))
-                    (long (get agents/limits "team_children")))
+                    (long agents/max-team-children))
             (agents/fail! :budget-exceeded "The task already has the maximum number of subagents"))
           (when (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
-                    (long (get agents/limits "active_children")))
+                    (long agents/max-active-children))
             (agents/fail! :budget-exceeded "The leader already has the maximum active subagents"))
           (doseq [candidate allowed]
             (agent-model! router (:provider candidate) (:model candidate))

@@ -31,31 +31,55 @@
     },
     "apiStyle": {
       "type": "string",
-      "enum": [
-        "anthropic",
-        "anthropic-messages",
-        "anthropic_messages",
-        "chat",
-        "chat-completions",
-        "chat_completions",
-        "claude",
-        "gemini",
-        "google",
-        "google-gemini",
-        "google_gemini",
-        "messages",
-        "openai",
-        "openai-chat",
-        "openai-compatible",
-        "openai-compatible-chat",
-        "openai-compatible-responses",
-        "openai-responses",
-        "openai_chat",
-        "openai_compatible",
-        "openai_compatible_chat",
-        "openai_compatible_responses",
-        "openai_responses",
-        "responses"
+      "oneOf": [
+        {
+          "enum": [
+            "anthropic",
+            "anthropic-messages",
+            "anthropic_messages",
+            "claude",
+            "messages"
+          ],
+          "default": "anthropic",
+          "x-vis-runtime": "anthropic"
+        },
+        {
+          "enum": [
+            "openai",
+            "openai-chat",
+            "openai_chat",
+            "openai-compatible",
+            "openai_compatible",
+            "openai-compatible-chat",
+            "openai_compatible_chat",
+            "chat",
+            "chat-completions",
+            "chat_completions"
+          ],
+          "default": "openai",
+          "x-vis-runtime": "openai-compatible-chat"
+        },
+        {
+          "enum": [
+            "openai-responses",
+            "openai_responses",
+            "openai-compatible-responses",
+            "openai_compatible_responses",
+            "responses"
+          ],
+          "default": "openai-responses",
+          "x-vis-runtime": "openai-compatible-responses"
+        },
+        {
+          "enum": [
+            "gemini",
+            "google",
+            "google-gemini",
+            "google_gemini"
+          ],
+          "default": "gemini",
+          "x-vis-runtime": "gemini"
+        }
       ]
     },
     "yamlValue": {
@@ -361,28 +385,26 @@
       },
       "additionalProperties": false
     },
+    "workspaceOs": {
+      "enum": [
+        "macos",
+        "linux",
+        "wsl",
+        "windows"
+      ]
+    },
     "workspaceWhen": {
       "type": "object",
       "properties": {
         "os": {
           "oneOf": [
             {
-              "enum": [
-                "macos",
-                "linux",
-                "wsl",
-                "windows"
-              ]
+              "$ref": "#/$defs/workspaceOs"
             },
             {
               "type": "array",
               "items": {
-                "enum": [
-                  "macos",
-                  "linux",
-                  "wsl",
-                  "windows"
-                ]
+                "$ref": "#/$defs/workspaceOs"
               },
               "minItems": 1
             }
@@ -1297,67 +1319,5 @@
       "additionalProperties": false
     }
   },
-  "type": "object",
-  "properties": {
-    "api_style_values": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "api_style_aliases": {
-      "type": "object",
-      "propertyNames": {
-        "$ref": "#/$defs/apiStyle"
-      },
-      "additionalProperties": {
-        "enum": [
-          "anthropic",
-          "openai-compatible-chat",
-          "openai-compatible-responses",
-          "gemini"
-        ]
-      }
-    },
-    "workspace_access_values": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "workspace_draft_values": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "workspace_os_values": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "jail_environment_values": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "titling_modes": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    }
-  },
-  "required": [
-    "api_style_values",
-    "api_style_aliases",
-    "workspace_access_values",
-    "workspace_draft_values",
-    "workspace_os_values",
-    "jail_environment_values",
-    "titling_modes"
-  ],
-  "additionalProperties": false
+  "$ref": "#/$defs/config"
 }

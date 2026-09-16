@@ -1,43 +1,77 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "version",
-    "filename_pattern",
-    "statuses",
-    "actions"
-  ],
-  "properties": {
-    "version": {
-      "const": 1
+  "$id": "https://contract.blockether.com/vis/schema/plans.json",
+  "$ref": "#/$defs/document",
+  "$defs": {
+    "filename": {
+      "type": "string",
+      "pattern": "^(PLAN|IMPLEMENTATION)-([a-z0-9]+(?:-[a-z0-9]+)*)\\.md$"
     },
-    "filename_pattern": {
-      "type": "string"
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "in-review",
+        "ready",
+        "accepted",
+        "implementing",
+        "done"
+      ]
     },
-    "statuses": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1,
-      "uniqueItems": true
-    },
-    "actions": {
+    "document": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "revise",
-        "approve"
+        "kind",
+        "feature",
+        "status"
       ],
       "properties": {
-        "revise": {
-          "type": "string",
-          "minLength": 1
+        "kind": {
+          "enum": [
+            "plan",
+            "implementation"
+          ]
         },
-        "approve": {
+        "feature": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        }
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "const": "revise",
+          "x-vis-request": "Revise this document, resolve every human comment and attach the next version under the same filename. Do not implement or change project files."
+        },
+        {
+          "const": "approve",
+          "x-vis-request": "I approve this specification and its implementation plan. Start implementation now. Check that this is the latest version, its status is ready or accepted, and no questions or comments remain before editing. If not, stop and explain what needs review. Otherwise start implementation of this exact reviewed scope, keep the versioned implementation record current and follow existing verification and permission rules."
+        }
+      ]
+    },
+    "action_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "version",
+        "action"
+      ],
+      "properties": {
+        "filename": {
+          "$ref": "#/$defs/filename"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action": {
+          "$ref": "#/$defs/action"
         }
       }
     }

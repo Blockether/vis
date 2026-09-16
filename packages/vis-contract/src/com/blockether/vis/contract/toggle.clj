@@ -3,33 +3,31 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]))
 
-(def ^:private contract (delay (document/load! "toggle")))
+(def ^:private schema (delay (document/schema-document "toggle")))
 
-(def version "Feature-toggle contract document version." (get @contract "version"))
+(def id-pattern
+  "Portable canonical toggle-id regular expression."
+  (get-in @schema ["$defs" "contribution" "properties" "id" "pattern"]))
 
-(def id-pattern "Portable canonical toggle-id regular expression." (get @contract "id_pattern"))
-
-(def types "Closed feature-toggle kinds." (set (map keyword (get @contract "types"))))
+(def types
+  "Closed feature-toggle kinds."
+  (set (map keyword (get-in @schema ["$defs" "contribution" "properties" "type" "enum"]))))
 
 (def default-type
   "Kind used when a contribution omits `:type`."
-  (keyword (get @contract "default_type")))
+  (keyword (get-in @schema ["$defs" "contribution" "properties" "type" "default"])))
 
 (def max-description-length
   "Maximum length of one settings-row description."
-  (get @contract "max_description_length"))
+  (get-in @schema ["$defs" "contribution" "properties" "description" "maxLength"]))
 
 (def boolean-true-tokens
   "Lower-case wire tokens that mean true."
-  (set (get-in @contract ["boolean_wire" "true"])))
+  (set (get-in @schema ["$defs" "boolean_true" "enum"])))
 
 (def boolean-false-tokens
   "Lower-case wire tokens that mean false."
-  (set (get-in @contract ["boolean_wire" "false"])))
-
-(def config-truthy-tokens
-  "Lower-case configuration strings that hydrate to true."
-  (set (get @contract "config_truthy")))
+  (set (get-in @schema ["$defs" "boolean_false" "enum"])))
 
 (def ^:private id-regex (re-pattern id-pattern))
 

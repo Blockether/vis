@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from blockether.vis._contracts import ACTIVITY, validate
+from blockether.vis._contracts import definition, validate
 
 from ._wire import freeze, to_wire
 
@@ -127,7 +127,9 @@ def _first_invocation_id(row: ActivityRow) -> str:
 
 
 def _operation_group_label(operation: str, rows: list[ActivityRow]) -> str:
-    labels = ACTIVITY["operation_groups"]
+    labels = definition("activity", "row")["properties"]["operation"][
+        "x-vis-group-labels"
+    ]
     if operation in labels:
         return labels[operation]
     for row in rows:
@@ -277,7 +279,10 @@ class ActivityProjection:
         if len(set(ids)) != len(ids) or (
             "history" in value
             and (
-                leaf_count > ACTIVITY["limits"]["max_page_rows"]
+                leaf_count
+                > definition("activity", "projection")["properties"]["history"][
+                    "x-vis-max-page-rows"
+                ]
                 or (
                     leaf_count > 1
                     and len(
@@ -285,7 +290,9 @@ class ActivityProjection:
                             value, ensure_ascii=False, separators=(",", ":")
                         ).encode()
                     )
-                    > ACTIVITY["limits"]["max_page_bytes"]
+                    > definition("activity", "projection")["properties"]["history"][
+                        "x-vis-page-target-bytes"
+                    ]
                 )
             )
         ):

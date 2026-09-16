@@ -343,7 +343,7 @@
   native-contract-json-resources-test
   ;; A native format_code call completed its file edit, then failed to validate
   ;; the tool result because surface.json was absent from the linked image.
-  (it "ships contract documents and schemas in the contract package's own metadata"
+  (it "ships only canonical schemas in the contract package's own metadata"
       (let [resource
             (io/resource
               "META-INF/native-image/com.blockether/vis-contract/reachability-metadata.json")]
@@ -351,8 +351,7 @@
         (let [metadata (charred/read-json (slurp resource))
               globs (set (map #(get % "glob") (get metadata "resources")))]
 
-          (expect (contains? globs "vis-contract/*.json"))
-          (expect (contains? globs "vis-contract/schema/*.json"))))))
+          (expect (= #{"vis-contract/schema/*.json"} globs))))))
 
 (defdescribe
   native-tui-resize-registration-test

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.contract.json-schema-test
-  "The published contract has one language-neutral representation: JSON documents validated by JSON Schema."
+  "JSON Schemas are the sole portable structural contracts."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
@@ -31,18 +31,16 @@
       (expect (every? #(not (.exists (io/file %)))
                       ["packages/vis-contract/contract.json"
                        "packages/vis-contract/python/src/blockether/vis_contract/contract.json"])))
-  (it "has one schema for every contract document"
-      (let [documents
-            (json-names contract-root)
-
-            schemas
-            (disj (json-names (io/file contract-root "schema")) "common")]
-
-        (expect (seq documents))
-        (expect (= documents schemas))))
-  (it "keeps API-style spellings in the JSON document and schema aligned"
-      (expect (= (set (keys (get (document/load! "config") "api_style_aliases")))
-                 (set (get-in (document/schema-document "config") ["$defs" "apiStyle" "enum"])))))
+  (it "ships no separate JSON catalogs beside the schemas"
+      (expect (empty? (json-names contract-root))))
+  (it "loads and compiles every schema without a paired catalog"
+      (let [names (json-names (io/file contract-root "schema"))]
+        (expect (seq names))
+        (doseq [schema-name names]
+          (let [schema (document/schema-document schema-name)]
+            (expect (= "https://json-schema.org/draft/2020-12/schema" (get schema "$schema")))
+            (expect (seq (get schema "$defs")))
+            (expect (boolean? (document/valid? schema-name nil)))))))
   (it "does not mirror the configuration schema in engine predicates"
       (expect (nil? (re-find #"\(def(?:n)?\s+[^\s]+-schema\b"
                              (slurp "src/com/blockether/vis/internal/config/validation.clj")))))

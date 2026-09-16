@@ -777,7 +777,7 @@
 (def ^:private ^String self-marker
   "The exact producer metadata fragment this process writes. A raw substring test
    short-circuits JSON parsing for our own journal lines."
-  (str "\"" gateway-contract/journal-producer-key "\":\"" producer-id "\""))
+  (str "\"_producer\":\"" producer-id "\""))
 
 ;; One growable read buffer, reused across polls. drain-file! runs ONLY on the
 ;; single tailer thread (poll-once! drains files sequentially), so steady-state

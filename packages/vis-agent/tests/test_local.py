@@ -4,7 +4,10 @@ import os
 import shlex
 
 import pytest
+from blockether.vis._contracts import definition
 from blockether.vis.engine import LocalEngine, TransportError
+
+_PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"]
 
 
 def test_missing_executable_is_reported_without_a_live_process(tmp_path):
@@ -101,9 +104,7 @@ def test_close_falls_back_to_owned_process_when_group_signal_is_denied(
     import signal
     import sys
 
-    from blockether.vis._contracts import GATEWAY
-
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     code = f"""import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else signal.SIG_DFL)
 print({hello!r}, flush=True)
@@ -151,9 +152,7 @@ def test_failed_close_is_terminal_but_cleanup_can_be_retried(tmp_path, monkeypat
     import signal
     import sys
 
-    from blockether.vis._contracts import GATEWAY
-
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     code = f"import time; print({hello!r}, flush=True); time.sleep(60)"
     engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
     engine.connect()
@@ -192,9 +191,7 @@ def test_close_signals_owned_group_and_reaps_its_child(tmp_path):
     import signal
     import sys
 
-    from blockether.vis._contracts import GATEWAY
-
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     stopped = tmp_path / "child-stopped"
     child_code = f"""import signal, sys, time
 from pathlib import Path
@@ -237,10 +234,9 @@ def test_request_timeout_preserves_error_and_closes_process(tmp_path):
     import json
     import sys
 
-    from blockether.vis._contracts import GATEWAY
     from blockether.vis.engine import VisTimeout
 
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     code = f"import time; print({hello!r}, flush=True); time.sleep(30)"
     with LocalEngine(
         executable=[sys.executable, "-c", code], root=tmp_path, timeout=0.1
@@ -345,11 +341,10 @@ def test_local_job_events_poll_the_canonical_resource(
 def test_stream_protocol_failure_closes_the_owned_process(tmp_path):
     import sys
 
-    from blockether.vis._contracts import GATEWAY
     from blockether.vis.engine import ProtocolError
 
     code = (
-        f"import sys; print('{{\"protocol\": {GATEWAY['protocol']['version']}}}', flush=True); "
+        f"import sys; print('{{\"protocol\": {_PROTOCOL}}}', flush=True); "
         "sys.stdin.readline(); print('not-json', flush=True); sys.stdin.read()"
     )
     with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
@@ -365,13 +360,12 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
     import json
     import sys
 
-    from blockether.vis._contracts import GATEWAY
     from blockether.vis.engine import GatewayError
 
     error = base64.b64encode(
         json.dumps({"error": {"type": "not_found"}}).encode()
     ).decode()
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     reply = json.dumps({"status": 404, "headers": {}, "content": error})
     code = f"import sys; print({hello!r}, flush=True); sys.stdin.readline(); print({reply!r}, flush=True); sys.stdin.read()"
     with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
@@ -399,9 +393,7 @@ def test_local_client_lease_uses_only_the_whitelisted_frame_header(tmp_path):
     import json
     import sys
 
-    from blockether.vis._contracts import GATEWAY
-
-    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    hello = json.dumps({"protocol": _PROTOCOL})
     code = f"""import base64, json, sys
 print({hello!r}, flush=True)
 for count, line in enumerate(sys.stdin, 1):
@@ -421,8 +413,6 @@ for count, line in enumerate(sys.stdin, 1):
         assert engine._ensure_client_lease() == "local-owner"
         reply = engine.get_capabilities()
         assert reply["count"] == 2
-        assert reply["request"]["headers"] == {
-            GATEWAY["headers"]["client_id"]: "local-owner"
-        }
+        assert reply["request"]["headers"] == {"x-vis-client-id": "local-owner"}
     with pytest.raises(TransportError, match="closed"):
         engine._ensure_client_lease()

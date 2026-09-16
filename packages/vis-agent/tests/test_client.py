@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from blockether.vis._contracts import GATEWAY
+from blockether.vis._contracts import definition, schema
 from blockether.vis.engine import (
     GatewayClient,
     GatewayError,
@@ -15,6 +15,10 @@ from blockether.vis.engine import (
     TransportError,
     VisTimeout,
 )
+
+_HANDSHAKE = definition("gateway", "handshake")["properties"]
+_ROUTES = schema("gateway")["x-vis-routes"]
+_LEASE_POLICY = schema("gateway")["x-vis-client-lease"]
 
 
 @contextmanager
@@ -58,8 +62,8 @@ def compatible(method, path, body):
     if path == "/v1/capabilities":
         return 200, {
             "protocol": {
-                "protocol": GATEWAY["protocol"]["version"],
-                "min_client": GATEWAY["protocol"]["minimum_client"],
+                "protocol": _HANDSHAKE["protocol"]["const"],
+                "min_client": _HANDSHAKE["min_client"]["const"],
             }
         }
     if path == "/v1/clients":
@@ -102,10 +106,8 @@ def test_session_lifecycle_and_headers():
             session.delete()
         headers = {k.lower(): v for k, v in calls[2][2].items()}
         assert headers["authorization"] == "Bearer test-credential"
-        assert headers[GATEWAY["headers"]["protocol"]] == str(
-            GATEWAY["protocol"]["version"]
-        )
-        assert headers[GATEWAY["headers"]["client_id"]] == "sdk-lease"
+        assert headers["x-vis-protocol"] == str(_HANDSHAKE["protocol"]["const"])
+        assert headers["x-vis-client-id"] == "sdk-lease"
         assert calls[-1][0:2] == ("DELETE", "/v1/clients/sdk-lease")
         with pytest.raises(TransportError, match="closed"):
             session.read()
@@ -352,7 +354,7 @@ def test_every_non_streaming_sdk_operation_uses_the_canonical_contract():
     ):
         client = GatewayClient(url)
         expected = 0
-        for route in GATEWAY["routes"]:
+        for route in _ROUTES:
             if route["audience"] != "sdk":
                 continue
             path = {
@@ -453,7 +455,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
 
     expected = {
         (method.upper(), route["path"])
-        for route in GATEWAY["routes"]
+        for route in _ROUTES
         if route["audience"] == "sdk" and not route["path"].startswith("/v1/clients")
         for method, op in route["operations"].items()
         if op["response"] != "sse"
@@ -584,7 +586,7 @@ def test_improve_operations_preserve_path_query_and_payload(
 
 
 def test_lease_is_renewed_while_idle_and_thread_stops(monkeypatch):
-    monkeypatch.setitem(GATEWAY["client_lease"], "keepalive_ms", 20)
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
     renewed = threading.Event()
     caps = 0
 
@@ -609,7 +611,7 @@ def test_lease_is_renewed_while_idle_and_thread_stops(monkeypatch):
 
 
 def test_failed_keepalive_is_surfaced_without_retrying_a_mutation(monkeypatch):
-    monkeypatch.setitem(GATEWAY["client_lease"], "keepalive_ms", 20)
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
     caps = 0
 
     def respond(method, path, body):

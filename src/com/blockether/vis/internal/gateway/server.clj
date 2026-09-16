@@ -3184,7 +3184,7 @@
             (if export?
               {}
               {:after (integer-param "after" 0)
-               :limit (integer-param "limit" (get activity-contract/limits "max_page_rows"))
+               :limit (integer-param "limit" activity-contract/page-row-limit)
                :q (get params "q")})))
 
         revision

@@ -12,7 +12,7 @@ import {
   ACTIVITY_STATES,
   ACTIVITY_TEXT_FORMATS,
 } from './activity';
-import contract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
+import contract from '../../../../packages/vis-contract/resources/vis-contract/schema/activity.json';
 import cases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json';
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
@@ -85,10 +85,10 @@ const activityProjection = (
 
 describe('canonical Activity admission across SDK, engine and surfaces', () => {
   it('uses the canonical vocabulary', () => {
-    expect(ACTIVITY_PRESENTERS).toEqual(contract.presenters);
-    expect(ACTIVITY_SIGNALS).toEqual(contract.signals);
-    expect(ACTIVITY_STATES).toEqual(contract.states);
-    expect(ACTIVITY_TEXT_FORMATS).toEqual(contract.text_formats);
+    expect(ACTIVITY_PRESENTERS).toEqual(contract.$defs.presenter.enum);
+    expect(ACTIVITY_SIGNALS).toEqual(contract.$defs.signal.enum);
+    expect(ACTIVITY_STATES).toEqual(contract.$defs.state.enum);
+    expect(ACTIVITY_TEXT_FORMATS).toEqual(contract.$defs.text_format.enum);
   });
   for (const sample of cases) {
     it(sample.name, () => {

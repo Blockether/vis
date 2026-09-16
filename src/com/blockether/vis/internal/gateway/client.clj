@@ -281,7 +281,7 @@
   []
   (let [{:keys [reason gateway-protocol]} (compatibility)]
     (when (and (= "gateway-too-old" reason) gateway-protocol)
-      {(gateway-contract/header :minimum-gateway-protocol) (str gateway-protocol)})))
+      {"x-vis-min-gateway-protocol" (str gateway-protocol)})))
 
 (defn- assert-compatible!
   "Refuse to drive a daemon whose wire protocol this build cannot speak, with the

@@ -48,7 +48,7 @@ import {
 
 import { createPortal } from 'react-dom';
 import * as SelectPrimitive from '@radix-ui/react-select';
-import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
@@ -2414,7 +2414,9 @@ export function DialogFrame({
 }
 
 /** Shared frame vocabulary; the app and terminal use the same cadence. */
-const SPINNER_FRAMES = viewSpec.live.spinner_frames;
+const SPINNER_FRAMES: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
+  viewSchema.$defs.spinner_variant.oneOf.map((variant) => [variant.const, variant['x-vis-frames']]),
+);
 
 // One LITERAL class per frame: Tailwind scans source text, so a computed
 // `[animation-delay:-${i}00ms]` would never be emitted. The delay is negative
@@ -2453,7 +2455,7 @@ export function Spinner({
    * rides, which is what a spinner inside a sentence wants.
    */
   tone?: 'inherit' | 'accent';
-  variant?: keyof typeof SPINNER_FRAMES;
+  variant?: 'braille' | 'dots' | 'line' | 'pulse';
   /** Placement only; the frames' own face is fixed. */
   className?: string;
 }) {

@@ -6,113 +6,167 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private source (delay (document/load! "view")))
+(def ^:private schema (document/schema-document "view"))
 
-(def ^:private document (delay (wire/->engine @source)))
+(defn- definition [name] (get-in schema ["$defs" name]))
+
+(defn- variants
+  [name discriminator]
+  (into {}
+        (map (fn [shape]
+               [(get-in shape ["properties" discriminator "const"]) shape]))
+        (get (definition name) "oneOf")))
+
+(defn- property-keys [shape] (set (keys (wire/->engine (get shape "properties")))))
+
+(defn- schema-keys [name] (property-keys (definition name)))
+
+(defn- read-only-keys
+  [shape]
+  (property-keys {"properties" (into {}
+                                     (filter (fn [[_ value]]
+                                               (get value "readOnly")))
+                                     (get shape "properties"))}))
 
 (defn- keyword-map [names] (into {} (map (juxt identity keyword)) names))
 
 (defn- keyword-set [names] (set (map keyword names)))
 
-(def version "View contract document version." (:version @document))
+(defn- enum-values [name] (get (definition name) "enum"))
 
-(def view-kinds "Wire View name to lifecycle kind." (keyword-map (:kinds @document)))
+(def ^:private fields (variants "field" "type"))
 
-(def view-actions "Wire operator action to internal action." (keyword-map (:actions @document)))
+(def ^:private live-nodes (variants "live_node" "type"))
 
-(def field-types
-  "Wire answer-field name to internal field type."
-  (keyword-map (:field-types @document)))
+(def ^:private operators (variants "operator_action" "action"))
 
-(def text-types "Answer field types carrying text." (keyword-set (:text-types @document)))
+(def ^:private patches (variants "live_op" "op"))
 
-(def choice-types "Answer field types carrying choices." (keyword-set (:choice-types @document)))
+(def view-kinds
+  "Wire View name to lifecycle kind."
+  (keyword-map (keys (variants "open_event" "kind"))))
+
+(def view-actions "Wire operator action to internal action." (keyword-map (keys operators)))
+
+(def field-types "Wire answer-field name to internal field type." (keyword-map (keys fields)))
+
+(def text-types
+  "Answer field types carrying text, excluding fixed-length one-time codes."
+  (keyword-set (for [[type shape]
+                     fields
+
+                     :when (and (contains? (get shape "properties") "min_length")
+                                (not (some #{"min_length"} (get shape "required"))))]
+
+                 type)))
+
+(def choice-types
+  "Answer field types carrying choices."
+  (keyword-set (for [[type shape]
+                     fields
+
+                     :when (contains? (get shape "properties") "options")]
+
+                 type)))
 
 (def secret-types
   "Answer field types replaced by vault handles."
-  (keyword-set (:secret-types @document)))
+  (keyword-set (for [[type shape]
+                     fields
+
+                     :when (get-in shape ["properties" "is_secret" "const"])]
+
+                 type)))
 
 (def decor-types
   "Wire decoration name to internal decoration type."
-  (keyword-map (:decor-types @document)))
+  (keyword-map (enum-values "decor_type")))
 
-(def group-type-name "Wire name of a layout group." (:group-type @document))
+(def group-type-name
+  "Wire name of a layout group."
+  (get-in (definition "group") ["properties" "type" "const"]))
 
 (def group-type "Internal type of a layout group." (keyword group-type-name))
 
 (def group-directions
   "Wire layout direction to internal direction."
-  (keyword-map (:group-directions @document)))
+  (keyword-map (enum-values "group_direction")))
 
-(def otp-defaults "Default and maximum one-time-code lengths." (:otp @document))
+(def otp-defaults
+  "Default and maximum one-time-code lengths."
+  {:length (get-in fields ["otp" "properties" "max_length" "default"])
+   :ceiling (get-in fields ["otp" "properties" "max_length" "maximum"])})
 
-(def range-defaults "Default numeric range." (:range @document))
+(def range-defaults
+  "Default numeric range."
+  (into {}
+        (map (fn [key]
+               [(keyword key) (get-in fields ["range" "properties" key "default"])]))
+        ["min" "max" "step"]))
 
 (def secret-handle-prefix
   "Prefix of an opaque secret answer handle."
-  (:secret-handle-prefix @document))
+  (subs (get (definition "secret_handle") "pattern") 1))
 
 (def live-node-types
   "Wire semantic live-node name to internal node type."
-  (keyword-map (get-in @document [:live :node-types])))
+  (keyword-map (remove #{group-type-name} (keys live-nodes))))
 
 (def link-targets
   "Wire link target name to internal target type."
-  (keyword-map (get-in @document [:live :link-targets])))
+  (keyword-map (enum-values "link_target")))
 
-(def live-ops
-  "Wire live patch operation to internal operation."
-  (keyword-map (get-in @document [:live :ops])))
+(def live-ops "Wire live patch operation to internal operation." (keyword-map (keys patches)))
 
-(def live-tones "Wire live tone to internal tone." (keyword-map (get-in @document [:live :tones])))
+(def live-tones "Wire live tone to internal tone." (keyword-map (enum-values "tone")))
 
-(def live-orders
-  "Wire table order to internal order."
-  (keyword-map (get-in @document [:live :orders])))
+(def live-orders "Wire table order to internal order." (keyword-map (enum-values "table_order")))
 
 (def live-aligns
   "Wire table alignment to internal alignment."
-  (keyword-map (get-in @document [:live :aligns])))
+  (keyword-map (enum-values "alignment")))
 
 (def live-sort-dirs
   "Wire sort direction to internal direction."
-  (keyword-map (get-in @document [:live :sort-dirs])))
+  (keyword-map (enum-values "sort_direction")))
 
 (def live-reasons
   "Wire settlement reason to internal reason."
-  (keyword-map (get-in @document [:live :reasons])))
+  (keyword-map (enum-values "settlement_reason")))
 
-(def log-defaults "Live log paint-window and patch bounds." (get-in @document [:live :log]))
+(def log-defaults
+  "Live log paint-window and patch bounds."
+  {:window-lines (get-in live-nodes ["log" "properties" "window_lines" "default"])
+   :window-lines-cap (get-in live-nodes ["log" "properties" "window_lines" "maximum"])
+   :max-patch-lines (get-in patches ["append" "properties" "lines" "maxItems"])})
 
-(def table-defaults "Live table collection and patch bounds." (get-in @document [:live :table]))
+(def table-defaults
+  "Live table collection and patch bounds."
+  {:max-rows (get-in live-nodes ["table" "properties" "max_rows" "maximum"])
+   :max-patch-rows (get-in patches ["append" "properties" "rows" "maxItems"])})
 
-(def stat-defaults "Live stat collection bound." {:max-stats (get-in @document [:live :max-stats])})
+(def stat-defaults
+  "Live stat collection bound."
+  {:max-stats (get-in live-nodes ["stat" "properties" "stats" "maxItems"])})
 
-(def step-defaults "Live step collection bound." {:max-steps (get-in @document [:live :max-steps])})
+(def step-defaults
+  "Live step collection bound."
+  {:max-steps (get-in live-nodes ["steps" "properties" "steps" "maxItems"])})
 
-(def link-defaults "Live link collection bound." {:max-links (get-in @document [:live :max-links])})
+(def link-defaults
+  "Live link collection bound."
+  {:max-links (get-in live-nodes ["link" "properties" "links" "maxItems"])})
 
-(def view-defaults "Live node collection bound." {:max-nodes (get-in @document [:live :max-nodes])})
-
-(def vocabulary
-  "Portable keyword-keyed View vocabulary from the JSON contract."
-  {:view-kinds (:kinds @document)
-   :view-actions (:actions @document)
-   :field-types (:field-types @document)
-   :text-types (:text-types @document)
-   :choice-types (:choice-types @document)
-   :secret-types (:secret-types @document)
-   :decor-types (:decor-types @document)
-   :group-type (:group-type @document)
-   :group-directions (:group-directions @document)
-   :otp (:otp @document)
-   :range (:range @document)
-   :secret-handle-prefix (:secret-handle-prefix @document)
-   :live (:live @document)})
+(def view-defaults
+  "Live node collection bound."
+  {:max-nodes (get (definition "live_view") "x-vis-max-nodes")})
 
 (def spinner-frames
   "Ten 100ms text frames per spinner variant, shared with Companion."
-  (get-in @document [:live :spinner-frames]))
+  (into {}
+        (map (fn [variant]
+               [(keyword (get variant "const")) (get variant "x-vis-frames")]))
+        (get (definition "spinner_variant") "oneOf")))
 
 (def spinner-variants
   "Wire spinner variant to internal keyword."
@@ -123,11 +177,10 @@
 (def view-action-key-sets
   "Every key one operator action may carry, selected by `:action`. Keeping these
    maps closed prevents a misspelled value or selection address from disappearing."
-  {:submit #{:action :values}
-   :cancel #{:action}
-   :select #{:action :node-id :item-ids}
-   :activate #{:action :node-id}
-   :interrupt #{:action :note}})
+  (into {}
+        (map (fn [[action shape]]
+               [(keyword action) (property-keys shape)]))
+        operators))
 
 (def ^:private decor-node-types (set (vals decor-types)))
 
@@ -147,7 +200,7 @@
   "The most characters a human's stop note carries. Stopping a view is ALWAYS
    allowed, so a longer comment is cut to this rather than turned away: a refusal
    would leave the human watching work they already told to stop."
-  500)
+  (get-in (definition "live_result") ["properties" "note" "maxLength"]))
 
 (def item-bounds
   "The keyed collection each live node type holds: which key carries it, and how
@@ -163,19 +216,21 @@
 (def live-view-stamp-keys
   "Keys the ENGINE stamps on a live view, never written in a spec: its own
    identity, owning Activity invocation, arrival time, and patch counter."
-  #{:id :seq :created-at :owner})
+  (read-only-keys (definition "live_view")))
 
-(def live-column-keys "Every key one declared table column may carry." #{:id :label :align})
+(def live-column-keys "Every key one declared table column may carry." (schema-keys "table_column"))
 
-(def live-row-keys "Every key one table row may carry." #{:id :cells :tone :branch})
+(def live-row-keys "Every key one table row may carry." (schema-keys "row"))
 
-(def live-stat-keys "Every key one stat may carry." #{:id :label :value-text :tone})
+(def live-stat-keys "Every key one stat may carry." (schema-keys "stat"))
 
-(def live-step-keys "Every key one step may carry." #{:id :label :tone :detail :value})
+(def live-step-keys "Every key one step may carry." (schema-keys "step"))
 
-(def live-link-keys "Every key one link may carry." #{:id :label :target-kind :target :tone})
+(def live-link-keys "Every key one link may carry." (schema-keys "link"))
 
-(def live-sorted-keys "Every key a `{:by …}` table order may carry." #{:by :dir})
+(def live-sorted-keys
+  "Every key a `{:by …}` table order may carry."
+  (property-keys (get-in live-nodes ["table" "properties" "order" "oneOf" 1])))
 
 (def live-group-keys
   "Every key a live layout group may carry. Shares the row/column layout
@@ -184,45 +239,35 @@
    answer fields. Nested groups use their own available width in each client.
 
    No `:name`: a live group holds no answer, so there is nothing to key."
-  #{:id :type :label :direction :fields :is-collapsible :default-expanded})
+  (property-keys (get live-nodes group-type-name)))
 
 (def live-node-keys
   "Allowed keys for a live node."
-  #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
-    :columns :rows :max-rows :order :is-selectable :selected-ids :links :total-lines
-    :default-expanded :line-tones :level :language :variant :is-active :is-disabled :clicks})
+  (reduce into #{} (map property-keys (vals (dissoc live-nodes group-type-name)))))
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
-  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms}
-        live-view-stamp-keys))
+  (schema-keys "live_view"))
 
-(def live-picture-keys
-  "Keys returned in a finished live-view picture."
-  #{:title :description :nodes})
+(def live-picture-keys "Keys returned in a finished live-view picture." (schema-keys "view"))
 
-(def live-elided-keys "Keys in an elision record." #{:node-id :items})
+(def live-elided-keys "Keys in an elision record." (schema-keys "elided"))
 
 (def live-op-key-sets
   "Allowed keys for each patch operation."
-  {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :selected-ids
-          :links :level :language :variant :is-active :is-disabled :clicks}
-   :append #{:op :node-id :lines :tone :rows :stats :steps :links}
-   :remove #{:op :node-id :item-ids}
-   :clear #{:op :node-id}
-   :add-node #{:op :node-spec :after}
-   :remove-node #{:op :node-id}})
+  (into {}
+        (map (fn [[op shape]]
+               [(keyword op) (property-keys shape)]))
+        patches))
 
 (def live-op-keys
   "Every key any patch operation may carry — the union the parser derives its
    snake_case spellings from."
   (reduce into #{} (vals live-op-key-sets)))
 
-(def live-patch-keys "Every key one patch carries." #{:view-id :seq :ops})
+(def live-patch-keys "Every key one patch carries." (schema-keys "live_patch"))
 
-(def live-result-keys
-  "Keys in the result returned to the model."
-  #{:view-id :is-completed :reason :is-from-human :note :view :elided :summary :artifact-id :error})
+(def live-result-keys "Keys in the result returned to the model." (schema-keys "live_result"))
 
 (def live-selection-snapshot-bytes
   "Maximum serialized archive-only selection pictures in one live record trailer."
@@ -250,20 +295,14 @@
    opens instantly (`:view`, the final materialized state) and where the bytes are
    (`:storage-uri`, `:size`, `:line-count`, and `:base64` only under
    [[live-artifact-inline-bytes]])."
-  #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
-    :line-count :base64 :owner})
+  (schema-keys "live_artifact"))
 
-;; The keys — one table, and the parser reads it too
-;;
-;; Every map declared below is CLOSED, so each shape's key set is written down
-;; exactly once here, and the snake_case spelling a wire spec may use is derived
-;; from these very sets by the parser's `wire-keys`. A key added here reaches
-;; both layers with no second table to keep in step.
+;; Normalized and author-written field keys come from the executable schema.
 
 (def derived-keys
   "Keys the ENGINE stamps on a normalized node, never written in a spec.
    `:is-secret` follows from the type, so a caller offering it is refused."
-  #{:is-secret})
+  (read-only-keys (get fields "checkbox")))
 
 (def request-stamp-keys
   "Keys the ENGINE stamps on a pending REQUEST, so every channel sees them on the
@@ -271,19 +310,21 @@
    Same category as [[derived-keys]] one level up — `request-keys` deliberately
    refuses them on the way in, so a reader rebuilding a view that crossed a
    process boundary lifts them across instead of re-parsing them."
-  #{:created-at})
+  (read-only-keys (definition "input_view")))
 
 (def value-keys
   "Every key an answerable field may carry, whatever its type."
-  #{:id :name :type :label :description :placeholder :is-required :is-secret :default :validate})
+  (property-keys (get fields "checkbox")))
 
-(def text-keys "Every key a typed field may carry." (into value-keys [:min-length :max-length]))
+(def text-keys "Every key a typed field may carry." (property-keys (get fields "plaintext")))
 
-(def choice-keys "Every key a field answered from `:options` may carry." (conj value-keys :options))
+(def choice-keys
+  "Every key a field answered from `:options` may carry."
+  (property-keys (get fields "select")))
 
 (def range-keys
   "Every key a field answered on a track may carry."
-  (into value-keys [:min :max :step]))
+  (property-keys (get fields "range")))
 
 (def field-keys
   "Every key a field spec may be WRITTEN with: the union of the per-type sets,
@@ -294,7 +335,7 @@
 (def group-keys
   "Every key a layout group may carry. A node that holds no answer has no key
    that describes one."
-  #{:id :name :type :label :description :direction :fields})
+  (schema-keys "group"))
 
 (def layout-keys
   "The keys only a group has. A field carrying one meant to group and forgot to
@@ -304,14 +345,11 @@
 (def decor-keys
   "Every key a decoration may carry: its own type and the words it paints. A node
    nobody can answer has nothing else to say."
-  #{:type :text})
+  (schema-keys "decor"))
 
-(def option-keys "Every key one `:options` entry may carry." #{:value :label})
+(def option-keys "Every key one `:options` entry may carry." (schema-keys "option"))
 
-(def request-keys
-  "Every key a request may carry."
-  #{:id :title :description :source :fields :submit-label :cancel-label :is-cancellable :timeout-ms
-    :channel-ids :session-id})
+(def request-keys "Every key a request may carry." (schema-keys "request"))
 
 ;; Semantic constraints that JSON Schema cannot express.
 

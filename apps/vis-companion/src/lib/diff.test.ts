@@ -1,11 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
+import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
 import { parseDiff, diffReviewRequest } from './diff';
 import { artifactKind, docKindLabel, DIFF_MEDIA, collectArtifacts } from './artifacts';
 
 describe('portable diff attachment', () => {
   it('reads the shared fixture without changing its patch', () => {
     expect(parseDiff(JSON.stringify(fixture))).toEqual(fixture);
+  });
+  it('accepts schema-declared source kinds and backends', () => {
+    expect(DIFF_MEDIA).toBe(schema.$defs.attachment.contentMediaType);
+    for (const type of schema.$defs.source.properties.type.enum) {
+      for (const backend of schema.$defs.source.properties.backend.enum) {
+        const envelope = { ...fixture, source: { type, backend } };
+        expect(parseDiff(JSON.stringify(envelope))).toEqual(envelope);
+      }
+    }
+  });
+  it('requires every schema-declared envelope field', () => {
+    for (const key of schema.$defs.envelope.required) {
+      const envelope: Record<string, unknown> = { ...fixture };
+      delete envelope[key];
+      expect(() => parseDiff(JSON.stringify(envelope))).toThrow();
+    }
   });
   it.each([
     null,

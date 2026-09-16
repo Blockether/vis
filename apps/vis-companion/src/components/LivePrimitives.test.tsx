@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
-import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import { LiveViewPanel } from './LiveView';
 import {
   applyLivePatch,
@@ -26,7 +26,13 @@ describe('the complete live vocabulary', () => {
           .filter((n) => n.type !== 'group')
           .map((n) => n.type),
       ),
-    ).toEqual(new Set(viewSpec.live.node_types));
+    ).toEqual(
+      new Set(
+        viewSchema.$defs.live_node.oneOf
+          .map((node) => node.properties.type.const)
+          .filter((type) => type !== 'group'),
+      ),
+    );
     render(<LiveViewPanel view={v} onActivate={vi.fn()} />);
     for (let level = 1; level <= 6; level++)
       expect(screen.getByRole('heading', { level })).toBeTruthy();

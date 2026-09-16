@@ -1,6 +1,5 @@
 (ns com.blockether.vis.contract.improve
-  "Editable Improve records and immutable source links. See vis-contract/improve.json for
-   hierarchy, analysis and automatic-review semantics; same-named JSON Schema owns shapes."
+  "Editable Improve records and immutable source links, validated by JSON Schema."
   (:require [com.blockether.vis.contract.document :as document]))
 
 (defn valid?

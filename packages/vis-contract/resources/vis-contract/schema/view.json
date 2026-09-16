@@ -2,249 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/view.json",
   "title": "View contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "kinds": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "actions": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "field_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "text_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "choice_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "secret_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "decor_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "group_directions": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "version": {
-      "$ref": "common.json#/$defs/version"
-    },
-    "group_type": {
-      "$ref": "common.json#/$defs/lower_token"
-    },
-    "otp": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "length": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "ceiling": {
-          "type": "integer",
-          "minimum": 1
-        }
-      },
-      "required": [
-        "length",
-        "ceiling"
-      ]
-    },
-    "range": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "min": {
-          "type": "number"
-        },
-        "max": {
-          "type": "number"
-        },
-        "step": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "min",
-        "max",
-        "step"
-      ]
-    },
-    "secret_handle_prefix": {
-      "$ref": "common.json#/$defs/non_blank_string"
-    },
-    "live": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "node_types": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "link_targets": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "ops": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "tones": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "orders": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "aligns": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "sort_dirs": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "reasons": {
-          "$ref": "common.json#/$defs/token_list"
-        },
-        "log": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "window_lines": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "window_lines_cap": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "max_patch_lines": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "window_lines",
-            "window_lines_cap",
-            "max_patch_lines"
-          ]
-        },
-        "table": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "max_rows": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "max_patch_rows": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "max_rows",
-            "max_patch_rows"
-          ]
-        },
-        "max_stats": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_steps": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_links": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_nodes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "spinner_frames": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "braille": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 10,
-              "maxItems": 10
-            },
-            "dots": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 10,
-              "maxItems": 10
-            },
-            "line": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 10,
-              "maxItems": 10
-            },
-            "pulse": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 10,
-              "maxItems": 10
-            }
-          },
-          "required": [
-            "braille",
-            "dots",
-            "line",
-            "pulse"
-          ]
-        }
-      },
-      "required": [
-        "node_types",
-        "link_targets",
-        "ops",
-        "tones",
-        "orders",
-        "aligns",
-        "sort_dirs",
-        "reasons",
-        "log",
-        "table",
-        "max_stats",
-        "max_steps",
-        "max_links",
-        "max_nodes",
-        "spinner_frames"
-      ]
-    }
-  },
-  "required": [
-    "kinds",
-    "actions",
-    "field_types",
-    "text_types",
-    "choice_types",
-    "secret_types",
-    "decor_types",
-    "group_directions",
-    "version",
-    "group_type",
-    "otp",
-    "range",
-    "secret_handle_prefix",
-    "live"
-  ],
   "$defs": {
     "operator_action": {
       "oneOf": [
@@ -398,7 +155,8 @@
         },
         "created_at": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "readOnly": true
         }
       },
       "required": [
@@ -964,7 +722,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1008,7 +767,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1060,7 +820,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1125,7 +886,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": true
+              "const": true,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1138,11 +900,15 @@
             },
             "min_length": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "default": 6,
+              "maximum": 12
             },
             "max_length": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "default": 6,
+              "maximum": 12
             }
           },
           "required": [
@@ -1179,7 +945,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": true
+              "const": true,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1231,7 +998,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1283,7 +1051,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1295,13 +1064,16 @@
               "const": "range"
             },
             "min": {
-              "type": "number"
+              "type": "number",
+              "default": 0
             },
             "max": {
-              "type": "number"
+              "type": "number",
+              "default": 100
             },
             "step": {
-              "type": "number"
+              "type": "number",
+              "default": 1
             }
           },
           "required": [
@@ -1339,7 +1111,8 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false
+              "const": false,
+              "readOnly": true
             },
             "default": {},
             "validate": {
@@ -1388,11 +1161,7 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "type": "string",
-          "enum": [
-            "heading",
-            "paragraph"
-          ]
+          "$ref": "#/$defs/decor_type"
         },
         "text": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -1423,11 +1192,7 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "direction": {
-          "type": "string",
-          "enum": [
-            "column",
-            "row"
-          ]
+          "$ref": "#/$defs/group_direction"
         },
         "fields": {
           "type": "array",
@@ -1576,11 +1341,7 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "align": {
-          "type": "string",
-          "enum": [
-            "left",
-            "right"
-          ]
+          "$ref": "#/$defs/alignment"
         }
       },
       "required": [
@@ -1602,14 +1363,7 @@
           }
         },
         "tone": {
-          "type": "string",
-          "enum": [
-            "error",
-            "idle",
-            "ok",
-            "running",
-            "warn"
-          ]
+          "$ref": "#/$defs/tone"
         },
         "branch": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -1634,14 +1388,7 @@
           "type": "string"
         },
         "tone": {
-          "type": "string",
-          "enum": [
-            "error",
-            "idle",
-            "ok",
-            "running",
-            "warn"
-          ]
+          "$ref": "#/$defs/tone"
         }
       },
       "required": [
@@ -1661,14 +1408,7 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "tone": {
-          "type": "string",
-          "enum": [
-            "error",
-            "idle",
-            "ok",
-            "running",
-            "warn"
-          ]
+          "$ref": "#/$defs/tone"
         },
         "detail": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -1703,25 +1443,13 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "target_kind": {
-          "type": "string",
-          "enum": [
-            "attachment",
-            "path",
-            "url"
-          ]
+          "$ref": "#/$defs/link_target"
         },
         "target": {
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "tone": {
-          "type": "string",
-          "enum": [
-            "error",
-            "idle",
-            "ok",
-            "running",
-            "warn"
-          ]
+          "$ref": "#/$defs/tone"
         }
       },
       "required": [
@@ -1750,14 +1478,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "tone": {
-              "type": "string",
-              "enum": [
-                "error",
-                "idle",
-                "ok",
-                "running",
-                "warn"
-              ]
+              "$ref": "#/$defs/tone"
             },
             "detail": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -1891,13 +1612,21 @@
               "type": "array",
               "maxItems": 100000,
               "items": {
-                "enum": [null, "idle", "running", "ok", "warn", "error"]
+                "enum": [
+                  null,
+                  "idle",
+                  "running",
+                  "ok",
+                  "warn",
+                  "error"
+                ]
               }
             },
             "window_lines": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 100000
+              "maximum": 100000,
+              "default": 2000
             },
             "total_lines": {
               "type": "integer",
@@ -1945,16 +1674,13 @@
             "max_rows": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 5000
+              "maximum": 5000,
+              "default": 5000
             },
             "order": {
               "oneOf": [
                 {
-                  "type": "string",
-                  "enum": [
-                    "insertion",
-                    "newest-first"
-                  ]
+                  "$ref": "#/$defs/table_order"
                 },
                 {
                   "type": "object",
@@ -1964,11 +1690,7 @@
                       "$ref": "common.json#/$defs/non_blank_string"
                     },
                     "dir": {
-                      "type": "string",
-                      "enum": [
-                        "asc",
-                        "desc"
-                      ]
+                      "$ref": "#/$defs/sort_direction"
                     }
                   },
                   "required": [
@@ -2040,11 +1762,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "direction": {
-              "type": "string",
-              "enum": [
-                "column",
-                "row"
-              ]
+              "$ref": "#/$defs/group_direction"
             },
             "fields": {
               "type": "array",
@@ -2162,13 +1880,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "variant": {
-              "type": "string",
-              "enum": [
-                "braille",
-                "dots",
-                "line",
-                "pulse"
-              ]
+              "$ref": "#/$defs/spinner_variant"
             },
             "is_active": {
               "type": "boolean"
@@ -2251,10 +1963,12 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "readOnly": true
         },
         "owner": {
-          "$ref": "#/$defs/live_owner"
+          "$ref": "#/$defs/live_owner",
+          "readOnly": true
         },
         "title": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -2289,11 +2003,13 @@
         },
         "seq": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "readOnly": true
         },
         "created_at": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "readOnly": true
         }
       },
       "required": [
@@ -2304,7 +2020,8 @@
         "timeout_ms",
         "seq",
         "created_at"
-      ]
+      ],
+      "x-vis-max-nodes": 32
     },
     "live_op": {
       "oneOf": [
@@ -2325,14 +2042,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "tone": {
-              "type": "string",
-              "enum": [
-                "error",
-                "idle",
-                "ok",
-                "running",
-                "warn"
-              ]
+              "$ref": "#/$defs/tone"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2391,13 +2101,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "variant": {
-              "type": "string",
-              "enum": [
-                "braille",
-                "dots",
-                "line",
-                "pulse"
-              ]
+              "$ref": "#/$defs/spinner_variant"
             },
             "is_active": {
               "type": "boolean"
@@ -2427,7 +2131,13 @@
             },
             "tone": {
               "description": "Semantic styling for every line in this append; log nodes only.",
-              "enum": ["idle", "running", "ok", "warn", "error"]
+              "enum": [
+                "idle",
+                "running",
+                "ok",
+                "warn",
+                "error"
+              ]
             },
             "lines": {
               "type": "array",
@@ -2629,15 +2339,7 @@
           "type": "boolean"
         },
         "reason": {
-          "type": "string",
-          "enum": [
-            "completed",
-            "failed",
-            "interrupted",
-            "superseded",
-            "timeout",
-            "undeliverable"
-          ]
+          "$ref": "#/$defs/settlement_reason"
         },
         "is_from_human": {
           "type": "boolean"
@@ -2704,15 +2406,7 @@
           "minimum": 1
         },
         "reason": {
-          "type": "string",
-          "enum": [
-            "completed",
-            "failed",
-            "interrupted",
-            "superseded",
-            "timeout",
-            "undeliverable"
-          ]
+          "$ref": "#/$defs/settlement_reason"
         },
         "view": {
           "$ref": "#/$defs/view"
@@ -2804,6 +2498,146 @@
         "reason",
         "is_from_human"
       ]
+    },
+    "tone": {
+      "type": "string",
+      "enum": [
+        "error",
+        "idle",
+        "ok",
+        "running",
+        "warn"
+      ]
+    },
+    "alignment": {
+      "type": "string",
+      "enum": [
+        "left",
+        "right"
+      ]
+    },
+    "sort_direction": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "table_order": {
+      "type": "string",
+      "enum": [
+        "insertion",
+        "newest-first"
+      ]
+    },
+    "link_target": {
+      "type": "string",
+      "enum": [
+        "attachment",
+        "path",
+        "url"
+      ]
+    },
+    "settlement_reason": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "interrupted",
+        "superseded",
+        "timeout",
+        "undeliverable"
+      ]
+    },
+    "group_direction": {
+      "type": "string",
+      "enum": [
+        "column",
+        "row"
+      ]
+    },
+    "decor_type": {
+      "type": "string",
+      "enum": [
+        "heading",
+        "paragraph"
+      ]
+    },
+    "spinner_variant": {
+      "oneOf": [
+        {
+          "const": "braille",
+          "x-vis-frames": [
+            "⠋",
+            "⠙",
+            "⠹",
+            "⠸",
+            "⠼",
+            "⠴",
+            "⠦",
+            "⠧",
+            "⠇",
+            "⠏"
+          ]
+        },
+        {
+          "const": "dots",
+          "x-vis-frames": [
+            "·",
+            "··",
+            "···",
+            "····",
+            "·····",
+            "·····",
+            "····",
+            "···",
+            "··",
+            "·"
+          ]
+        },
+        {
+          "const": "line",
+          "x-vis-frames": [
+            "-",
+            "\\",
+            "|",
+            "/",
+            "-",
+            "\\",
+            "|",
+            "/",
+            "-",
+            "-"
+          ]
+        },
+        {
+          "const": "pulse",
+          "x-vis-frames": [
+            "·",
+            "•",
+            "●",
+            "●",
+            "●",
+            "●",
+            "●",
+            "●",
+            "•",
+            "·"
+          ]
+        }
+      ]
+    },
+    "secret_handle": {
+      "type": "string",
+      "pattern": "^vis-secret:"
     }
-  }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/input_view"
+    },
+    {
+      "$ref": "#/$defs/live_view"
+    }
+  ]
 }

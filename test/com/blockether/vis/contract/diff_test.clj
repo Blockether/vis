@@ -8,7 +8,11 @@
 (defn fixture [] (diff/parse! (slurp (io/resource "vis-contract/fixtures/diff.json"))))
 
 (deftest portable-diff-envelope
-  (is (= diff/media-type (get (document/load! "diff") "media_type")))
+  (is (nil? (io/resource "vis-contract/diff.json")))
+  (is (= diff/media-type
+         (get-in (document/schema-document "diff") ["$defs" "attachment" "contentMediaType"])))
+  (is (document/valid? "diff" (fixture)))
+  (is (not (document/valid? "diff" {"version" 1 "media_type" diff/media-type})))
   (let [sample
         (fixture)
 

@@ -1,7 +1,7 @@
-"""Private reader and validator for the canonical, language-neutral Vis documents."""
+"""Private reader and validator for the canonical, language-neutral JSON Schemas."""
 
 import json
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -9,82 +9,37 @@ _DATA = Path(__file__).with_name("_data")
 if not _DATA.is_dir():
     _DATA = Path(__file__).resolve().parents[4] / "vis-contract/resources/vis-contract"
 
-
-def _load_document(name):
-    return json.loads((_DATA / f"{name}.json").read_text(encoding="utf-8"))
-
-
-_DOCUMENT_NAMES = (
+_SCHEMA_NAMES = (
     "activity",
-    "council",
     "agents",
-    "gateway",
-    "view",
-    "content",
+    "common",
     "config",
-    "toggle",
+    "content",
+    "council",
+    "diff",
+    "gateway",
+    "improve",
+    "plans",
     "provider",
     "surface",
     "symbol",
     "test-runner",
+    "toggle",
+    "view",
 )
-_SCHEMA_NAMES = (*_DOCUMENT_NAMES, "python-host", "common")
-
-_host = _load_document("python-host")
-CONTRACT = {
-    "version": _host["version"],
-    "ops": _host["ops"],
-    "shell": _host["shell"],
-    "live": _host["live"],
-    **{name.replace("-", "_"): _load_document(name) for name in _DOCUMENT_NAMES},
-}
-"""All canonical contract documents, keyed as the public Python API expects."""
-
-ACTIVITY = CONTRACT["activity"]
-"""Host-owned tool lifecycle evidence, closed vocabulary, and presentation limits."""
-
-GATEWAY = CONTRACT["gateway"]
-"""Canonical routes, headers, events, envelopes and replay semantics."""
-
-VERSION = CONTRACT["version"]
-"""Bumped whenever an op is added, removed or re-shaped."""
-
-OPS = {entry["name"]: entry for entry in CONTRACT["ops"]}
-"""Every declared op by name, in document order."""
-
-SHELL = CONTRACT["shell"]
-"""The `shell` verb's lifecycle grammar: `default_op`, `handle_ops`, `spawn_ops`."""
-
-LIVE = CONTRACT["live"]
-"""The `live` operation vocabulary and flush interval."""
-
-VIEW = CONTRACT["view"]
-"""The closed View vocabulary — lifecycle kinds, semantic nodes and their bounds."""
-
-CONTENT = CONTRACT["content"]
-"""Canonical content vocabulary."""
-
-CONFIG = CONTRACT["config"]
-"""Canonical configuration vocabulary."""
-
-TOGGLE = CONTRACT["toggle"]
-"""Canonical toggle vocabulary."""
-
-PROVIDER = CONTRACT["provider"]
-"""Canonical provider-limits vocabulary."""
-
-SURFACE = CONTRACT["surface"]
-"""Canonical language-surface vocabulary."""
-
-TEST_RUNNER = CONTRACT["test_runner"]
-"""Canonical test-runner vocabulary."""
 
 
+@cache
 def schema(name: str) -> dict[str, Any]:
-    """Read the shipped JSON Schema; never retrieve schemas from the network."""
+    """Read a shipped JSON Schema; never retrieve schemas from the network."""
     if name not in _SCHEMA_NAMES:
-        raise ValueError("unknown contract document")
-    return _load_document("schema/" + name)
+        raise ValueError("unknown contract schema")
+    return json.loads((_DATA / "schema" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def definition(name: str, key: str) -> dict[str, Any]:
+    """Read one named definition directly from its canonical JSON Schema."""
+    return schema(name)["$defs"][key]
 
 
 @lru_cache(maxsize=64)
@@ -133,13 +88,3 @@ def validate(name: str, definition: str, value: Any) -> Any:
     if not valid:
         raise ValueError(f"invalid {name}.{definition} contract")
     return value
-
-
-def op(name):
-    """The declared op called `name`, or None."""
-    return OPS.get(name)
-
-
-def refusal(name):
-    """The refusal message for an op unavailable outside Vis, if any."""
-    return OPS.get(name, {}).get("refusal")

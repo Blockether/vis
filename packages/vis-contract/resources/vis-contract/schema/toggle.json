@@ -2,59 +2,35 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/toggle.json",
   "title": "Feature-toggle contract",
-  "description": "The portable id grammar, toggle kinds, description bound and boolean token vocabulary every SDK renders.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "version",
-    "id_pattern",
-    "types",
-    "default_type",
-    "max_description_length",
-    "boolean_wire",
-    "config_truthy"
-  ],
-  "properties": {
-    "version": {
-      "$ref": "common.json#/$defs/version"
-    },
-    "id_pattern": {
-      "$ref": "common.json#/$defs/regex"
-    },
-    "types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "default_type": {
-      "$ref": "common.json#/$defs/lower_token"
-    },
-    "max_description_length": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "boolean_wire": {
-      "$ref": "#/$defs/boolean_wire"
-    },
-    "config_truthy": {
-      "$ref": "common.json#/$defs/token_list"
-    }
-  },
+  "description": "Feature-toggle contributions and the boolean tokens accepted by settings.",
   "$defs": {
-    "boolean_wire": {
-      "description": "The wire tokens each boolean value is spelled with.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
+    "boolean_true": {
+      "type": "string",
+      "enum": [
+        "1",
+        "on",
         "true",
-        "false"
-      ],
-      "properties": {
-        "true": {
-          "$ref": "common.json#/$defs/token_list"
+        "yes"
+      ]
+    },
+    "boolean_false": {
+      "type": "string",
+      "enum": [
+        "0",
+        "false",
+        "no",
+        "off"
+      ]
+    },
+    "boolean_wire": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boolean_true"
         },
-        "false": {
-          "$ref": "common.json#/$defs/token_list"
+        {
+          "$ref": "#/$defs/boolean_false"
         }
-      }
+      ]
     },
     "contribution": {
       "type": "object",
@@ -104,7 +80,8 @@
           "enum": [
             "boolean",
             "enum"
-          ]
+          ],
+          "default": "boolean"
         },
         "choices": {
           "type": "array",
@@ -126,5 +103,6 @@
         "default"
       ]
     }
-  }
+  },
+  "$ref": "#/$defs/contribution"
 }

@@ -7,7 +7,7 @@
 // prompt a re-pair.
 
 import { activityProjectionFromWire, type ActivityProjection } from './activity';
-import goalContract from '../../../../packages/vis-contract/resources/vis-contract/gateway.json';
+import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { PushGateway } from './relay';
 import {
   ATTACHMENT_MEMORY_BUDGET,
@@ -703,13 +703,15 @@ function sessionGoalFromWire(raw: unknown): SessionGoal | null {
     !g.id ||
     typeof g.objective !== 'string' ||
     !g.objective.trim() ||
-    g.objective.length > goalContract.session_goal.max_objective_chars ||
+    g.objective.length > gatewaySchema.$defs.session_goal.properties.objective.maxLength ||
     typeof g.status !== 'string' ||
-    !goalContract.session_goal.statuses.includes(g.status) ||
+    !gatewaySchema.$defs.session_goal.properties.status.oneOf.some(
+      (status) => status.const === g.status,
+    ) ||
     !(
       g.reason === null ||
       (typeof g.reason === 'string' &&
-        g.reason.length <= goalContract.session_goal.max_reason_chars)
+        g.reason.length <= gatewaySchema.$defs.session_goal.properties.reason.maxLength)
     ) ||
     !(
       g.iteration_budget === null ||

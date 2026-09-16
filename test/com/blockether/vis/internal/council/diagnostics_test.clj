@@ -12,6 +12,28 @@
 
 (h/use-mem-store!)
 
+(deftest schema-owned-publication-bounds-test
+  (let [schema
+        (document/schema-document "council")
+
+        message
+        {"kind" "informational" "content" "Check the canonical schema"}
+
+        recipients
+        (mapv #(str "session-" %) (range 256))]
+
+    (is (= 65536 (get-in schema ["$defs" "publish" "properties" "content" "x-vis-max-utf8-bytes"])))
+    (is (= 256 (get-in schema ["$defs" "publish" "properties" "title" "x-vis-max-utf8-bytes"])))
+    (is (= 8192 (get-in schema ["$defs" "input_batch" "x-vis-max-utf8-bytes"])))
+    ;; Both page readers share this budget; do not maintain a second thread-page value.
+    (is (= 262144 (get-in schema ["$defs" "entry_page" "x-vis-max-utf8-bytes"])))
+    (is (document/valid-json? "council" "publish" (assoc message "ping" recipients)))
+    (is (= 256 (get-in schema ["$defs" "entry" "properties" "ping" "maxItems"])))
+    ;; Runtime recipient resolution deduplicates pings before applying the output bound.
+    (is (document/valid-json? "council"
+                              "publish"
+                              (assoc message "ping" (vec (repeat 257 "same-session")))))))
+
 (deftest invalid-request-diagnostics-test
   ;; Reproduces Council thread #868: limit=100 exposed no actionable constraint.
   (doseq [[call opts expected] [[host/threads {"limit" 100} ["limit" "maximum" "50"]]
@@ -62,7 +84,7 @@
 
         (is (= 1 (get-in schema ["$defs" "page_request" "properties" "limit" "minimum"])))
         (is (= 50 (get-in schema ["$defs" "page_request" "properties" "limit" "maximum"])))
-        (is (= 50 (get council/limits "page_entries")))
+        (is (= 50 council/default-page-entries))
         (doseq [part ["exclusive nonnegative integer" "default 0" "1–50" "default 50"
                       "returned after" "has_more" "byte budget"]]
           (is (str/includes? text part)))))))

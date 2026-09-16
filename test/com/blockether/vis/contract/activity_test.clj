@@ -15,13 +15,9 @@
       (is (= text (activity/copy-text receipt)) name))))
 
 (deftest portable-activity-contract-test
-  (let [vocabulary
-        (document/load! "activity")
-
-        fixture
-        (json/read-str (slurp (io/resource "vis-contract/fixtures/activity.json")))]
-
-    (is (= "block.activity" (get vocabulary "event")))
+  (let [fixture (json/read-str (slurp (io/resource "vis-contract/fixtures/activity.json")))]
+    (is (nil? (io/resource "vis-contract/activity.json")))
+    (is (document/valid? "activity" fixture))
     (is (document/valid-json? "activity" "projection" fixture))
     (doseq [old-key ["anchor" "schema_version" "view_id"]]
       (is (not (document/valid-json? "activity" "projection" (assoc fixture old-key 1)))))

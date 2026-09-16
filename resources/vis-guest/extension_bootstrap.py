@@ -11,12 +11,9 @@ the host callables the engine installed into this session, exec the body into a
 module dict of its own (so the extension file's globals stay clean), and register
 it in `sys.modules` so `import blockether.vis.extension as vis` works.
 
-`_host` is an OBJECT with one attribute per op — the shape `blockether.vis.extension.Host`
-declares, and the same shape `blockether.vis._outside` builds when nobody seeded one — so a
-host is a thing anyone can implement, not a dict literal only this file knows how
-to spell. Every attribute below is an op in
-`packages/vis-contract/resources/vis-contract/python-host.json`, and
-`python_host_test` fails when this object and that document disagree.
+`_host` has one attribute per callable installed by the engine. The outside host
+implements the same interface in `blockether.vis._outside`; boundary tests compare
+the actual implementations, without a separate operation catalog.
 """
 
 # ── The host's handle on this extension's Python callables ───────────────────

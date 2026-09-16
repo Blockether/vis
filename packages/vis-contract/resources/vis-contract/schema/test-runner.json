@@ -2,52 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/test-runner.json",
   "title": "Test runner contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "version": {
-      "$ref": "common.json#/$defs/version"
-    },
-    "selector_keys": {
-      "type": "array",
-      "items": {
-        "enum": [
-          "paths",
-          "include",
-          "exclude"
-        ]
-      },
-      "minItems": 3,
-      "uniqueItems": true
-    },
-    "result_keys": {
-      "type": "array",
-      "items": {
-        "enum": [
-          "language",
-          "mode",
-          "framework",
-          "tool",
-          "ns",
-          "total",
-          "pass",
-          "fail",
-          "errored",
-          "selected",
-          "skipped",
-          "failures",
-          "output"
-        ]
-      },
-      "minItems": 13,
-      "uniqueItems": true
-    }
-  },
-  "required": [
-    "version",
-    "selector_keys",
-    "result_keys"
-  ],
+  "$ref": "#/$defs/result",
   "$defs": {
     "selectors": {
       "type": "object",

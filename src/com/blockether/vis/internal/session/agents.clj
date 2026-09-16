@@ -49,7 +49,15 @@
                            (= (:leader_id author) (:leader_id recipient))
                            (= (:team_id author) (:team_id recipient))))))))
 
-(def limits (get (document/load! "agents") "limits"))
+(def ^:private schema (document/schema-document "agents"))
+
+(def max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]))
+
+(def default-iterations (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"]))
+
+(def max-team-children (get schema "x-vis-max-team-children"))
+
+(def max-active-children (get schema "x-vis-max-active-children"))
 
 (defonce ^:private runtime (atom {}))
 

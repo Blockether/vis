@@ -5,34 +5,52 @@
             [com.blockether.vis.contract.wire :as wire])
   (:import [java.nio.charset StandardCharsets]))
 
-(def vocabulary (document/load! "activity"))
+(def ^:private schema (document/schema-document "activity"))
 
-(def presenters (set (map keyword (get vocabulary "presenters"))))
+(def presenters (set (map keyword (get-in schema ["$defs" "presenter" "enum"]))))
 
-(def limits (get vocabulary "limits"))
+(def page-row-limit
+  (get-in schema ["$defs" "projection" "properties" "history" "x-vis-max-page-rows"]))
+
+(def page-byte-target
+  (get-in schema ["$defs" "projection" "properties" "history" "x-vis-page-target-bytes"]))
+
+(def resource-limit (get-in schema ["$defs" "row" "properties" "resources" "maxItems"]))
+
+(def summary-byte-limit
+  (get-in schema ["$defs" "section" "properties" "summary" "x-vis-max-bytes"]))
+
+(def detail-byte-limit
+  (get-in schema ["$defs" "evidence" "oneOf" 0 "properties" "text" "x-vis-truncate-bytes"]))
+
+(def event-byte-limit (get-in schema ["$defs" "projection" "x-vis-max-event-bytes"]))
+
+(def diff-line-byte-limit
+  (get-in schema ["$defs" "diff_line" "properties" "text" "x-vis-truncate-bytes"]))
 
 (defn valid-presentation?
   "Admit complete content and non-nested sections with brief headlines and summaries."
   [value]
   (let [value (wire/->wire value)]
-    (and
-      (document/valid-json? "activity" "presentation" value)
-      (let [sections (cons value (get value "sections"))
-            blocks (mapcat #(get % "content") sections)
-            bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
+    (and (document/valid-json? "activity" "presentation" value)
+         (let [sections (cons value (get value "sections"))
+               blocks (mapcat #(get % "content") sections)
+               bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
 
-        (and (every? #(<= (long (bytes %)) 512) (mapcat #(map % ["headline" "summary"]) sections))
-             (every? (fn [block]
-                       (case (get block "type")
-                         "progress"
-                         (or (nil? (get block "value"))
-                             (<= (double (get block "value")) (double (get block "total"))))
+           (and (every? #(<= (long (bytes %)) (long summary-byte-limit))
+                        (mapcat #(map % ["headline" "summary"]) sections))
+                (every?
+                  (fn [block]
+                    (case (get block "type")
+                      "progress"
+                      (or (nil? (get block "value"))
+                          (<= (double (get block "value")) (double (get block "total"))))
 
-                         "table"
-                         (every? #(= (count %) (count (get block "columns"))) (get block "rows"))
+                      "table"
+                      (every? #(= (count %) (count (get block "columns"))) (get block "rows"))
 
-                         true))
-                     blocks))))))
+                      true))
+                  blocks))))))
 
 (defn valid-projection?
   "Admit lossless projections; one indivisible invocation may exceed the page byte target."
@@ -55,12 +73,11 @@
                            (valid-presentation? (get % "presentation")))
                       rows)
               (or (nil? (get value "history"))
-                  (and (<= (count (filter #(empty? (children %)) rows))
-                           (long (get limits "max_page_rows")))
+                  (and (<= (count (filter #(empty? (children %)) rows)) (long page-row-limit))
                        (or (<= (count (filter #(empty? (children %)) rows)) 1)
                            (<= (alength (.getBytes ^String (wire/json-str value)
                                                    StandardCharsets/UTF_8))
-                               (long (get limits "max_page_bytes"))))))))))
+                               (long page-byte-target)))))))))
 
 (defn from-wire
   "Valid projection in engine spelling, or nil. Never accepts retired owner/view keys."
@@ -113,7 +130,9 @@
                   (first members)]
 
               {:id (first-invocation-id row)
-               :label (or (get-in vocabulary ["operation_groups" operation])
+               :label (or (get-in schema
+                                  ["$defs" "row" "properties" "operation" "x-vis-group-labels"
+                                   operation])
                           (first (remove str/blank? (map (comp :headline :presentation) members)))
                           operation)
                :rows members}))

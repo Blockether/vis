@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.session.agents-test
-  (:require [com.blockether.vis.internal.session.agents :as agents]
+  (:require [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -11,6 +12,33 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (h/use-mem-store! {"subagents" true})
+
+(deftest schema-owned-agent-bounds-test
+  (let [schema
+        (document/schema-document "agents")
+
+        agent
+        {"session_id" "child"
+         "parent_id" "parent"
+         "leader_id" "parent"
+         "team_id" "task"
+         "task" "Inspect the existing tests"
+         "status" "queued"
+         "depth" 1
+         "iteration_budget" 32
+         "iterations_used" 0}]
+
+    (is (= agents/default-iterations
+           (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
+           32))
+    (is (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 2))
+    (is (= agents/max-team-children (get schema "x-vis-max-team-children") 32))
+    (is (= agents/max-active-children (get schema "x-vis-max-active-children") 8))
+    (is (document/valid? "agents" agent))
+    (is (not (document/valid? "agents" (assoc agent "depth" 3))))
+    (is (not (document/valid? "agents" (assoc agent "iteration_budget" 201))))
+    (is (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
+    (is (not (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))})))))
 
 (defn child!
   [db parent opts]

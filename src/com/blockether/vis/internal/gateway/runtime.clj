@@ -212,10 +212,10 @@
 (defn client-headers
   "Headers every Vis client stamps on a gateway request."
   [client-name]
-  {(contract/header :protocol) (str contract/protocol-version)
-   (contract/header :minimum-gateway-protocol) (str contract/minimum-gateway-protocol)
-   (contract/header :client) (str client-name)
-   (contract/header :client-version) (release-version)})
+  {"x-vis-protocol" (str contract/protocol-version)
+   "x-vis-min-gateway-protocol" (str contract/minimum-gateway-protocol)
+   "x-vis-client" (str client-name)
+   "x-vis-client-version" (release-version)})
 
 (defn request->client
   "Read the client's advertised protocol from a Ring request's normalized headers."
@@ -224,16 +224,15 @@
         (:headers request)
 
         parsed
-        (contract/wire->handshake {"protocol" (get h (contract/header :protocol))
-                                   "min_gateway"
-                                   (get h (contract/header :minimum-gateway-protocol))})]
+        (contract/wire->handshake {"protocol" (get h "x-vis-protocol")
+                                   "min_gateway" (get h "x-vis-min-gateway-protocol")})]
 
     {:protocol (:protocol parsed)
      :min-gateway (:min-gateway parsed)
-     :name (some-> (get h (contract/header :client))
+     :name (some-> (get h "x-vis-client")
                    str
                    not-empty)
-     :version (some-> (get h (contract/header :client-version))
+     :version (some-> (get h "x-vis-client-version")
                       str
                       not-empty)}))
 

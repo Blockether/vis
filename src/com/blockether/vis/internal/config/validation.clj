@@ -82,7 +82,7 @@
 
     (remove (fn [{path ::path keyword :keyword :as error}]
               (or (and (= "required" keyword) (contains? enum-parents (pop path)))
-                  (and (= "const" keyword) (contains? enum-paths path))
+                  (and (contains? #{"const" "oneOf"} keyword) (contains? enum-paths path))
                   (some (fn [{other-path ::path :as other}]
                           (and (not (identical? error other))
                                (< (count path) (count other-path))

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.contract.gateway-test
-  "Characterization gates for the gateway surface before its implementation owners move."
-  (:require [clojure.string :as str]
+  "Gateway payload validation and parity with the runtime HTTP surface."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
@@ -26,8 +27,7 @@
 (defdescribe
   gateway-contract-test
   (it
-    "loads a closed, independently owned gateway declaration"
-    (expect (= 5 contract/version))
+    "loads the gateway schema and consumed transport metadata"
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
@@ -39,31 +39,29 @@
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 34 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
-    (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback" "llm_routing_trace"
-                "tokens" "cost" "confidence" "eval" "duration_ms" "utilization"]
-               contract/turn-meta-keys)))
-  (it "reads deterministic language-neutral gateway data"
+    (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
+                 "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
+                 "utilization"}
+               (set contract/turn-meta-keys))))
+  (it "reads declarations directly from the schema, without a parallel catalog"
       (let [gateway
-            (document/load! "gateway")
+            (document/schema-document "gateway")
 
             devices
-            (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]
+            (first (filter #(= "/v1/devices" (get % "path")) (get gateway "x-vis-routes")))
 
-        (expect (= 5 (get gateway "version")))
+            events
+            (mapv #(get % "const") (get-in gateway ["$defs" "session_event_type" "oneOf"]))]
+
+        (expect (nil? (io/resource "vis-contract/gateway.json")))
+        (expect (= "#/$defs/session" (get gateway "$ref")))
         (expect (= {"request" "none" "response" "json"} (get-in devices ["operations" "get"])))
         (expect (= {"request" "json" "response" "json"} (get-in devices ["operations" "post"])))
-        (expect (= (sort (get-in gateway ["events" "session"]))
-                   (get-in gateway ["events" "session"])))
+        (expect (= (sort events) events))
         (expect (= "subscription.ready"
-                   (get-in gateway ["envelopes" "subscription_ready" "event"])))
-        (expect (= {"build" "build"
-                    "min_client" "min_client"
-                    "min_gateway" "min_gateway"
-                    "protocol" "protocol"
-                    "version" "version"}
-                   (get-in gateway ["envelopes" "handshake" "keys"])))
-        (expect (= {"message" "message" "type" "type"}
-                   (get-in gateway ["envelopes" "error_response" "error_keys"])))))
+                   (get-in gateway ["$defs" "subscription_ready" "properties" "type" "const"])))
+        (expect (= #{"build" "min_client" "min_gateway" "protocol" "version"}
+                   (set (get-in gateway ["$defs" "handshake" "required"]))))))
   (it "pins every built-in operation path and method from the runtime router"
       (expect (= (mapv (fn [{:keys [path operations]}]
                          {:path path :methods (set (keys operations))})
@@ -84,10 +82,10 @@
       (expect (= 13 contract/protocol-version))
       (expect (= 13 contract/minimum-client-protocol))
       (expect (= 13 contract/minimum-gateway-protocol))
-      (expect (= "x-vis-protocol" (contract/header :protocol)))
-      (expect (= "x-vis-min-gateway-protocol" (contract/header :minimum-gateway-protocol)))
-      (expect (= "x-vis-client" (contract/header :client)))
-      (expect (= "x-vis-client-version" (contract/header :client-version)))
+      (expect (every? (set (keys (get-in (document/schema-document "gateway")
+                                         ["$defs" "http_headers" "properties"])))
+                      ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
+                       "x-vis-client-version"]))
       (expect (= {:protocol 3 :min-client 2 :min-gateway 1 :version "1.2.3" :build "abc123def456"}
                  (contract/wire->handshake {"protocol" 3
                                             "min_client" "2"
@@ -108,9 +106,6 @@
                                       "original"
                                       {:message "replacement" :session_id "s1"}))))
   (it "owns session, journal and ready envelopes"
-      (expect
-        (= {:schema "schema" :sequence "seq" :session-id "session_id" :timestamp "ts" :type "type"}
-           contract/session-event-keys))
       (expect (= {"schema" 1 "seq" 7 "ts" 9 "session_id" "s1" "type" "turn.started" "text" "hello"}
                  (contract/stamp-session-event {"schema" 99 "session_id" "spoofed" "text" "hello"}
                                                "s1" 7
@@ -152,3 +147,40 @@
                         [["VIEW_OPEN_EVENT" contract/view-open-event]
                          ["VIEW_PATCH_EVENT" contract/view-patch-event]
                          ["VIEW_CLOSE_EVENT" contract/view-close-event]])))))
+
+(defdescribe
+  gateway-payload-schema-test
+  (it "validates the handshake itself, not a dictionary of its keys"
+      (let [handshake (contract/handshake {:version "1.2.3" :build "abc123"})]
+        (expect (document/valid? "gateway" "handshake" handshake))
+        (expect (not (document/valid? "gateway" "handshake" (dissoc handshake :protocol))))
+        (expect (not (document/valid? "gateway" "handshake" (assoc handshake :protocol 99))))))
+  (it "validates real error responses and keeps supported error extras"
+      (expect (document/valid-json? "gateway"
+                                    "error_response"
+                                    (contract/error-body :invalid "Bad request" {:detail "extra"})))
+      (expect (not (document/valid-json? "gateway" "error_response" {"error" {"type" "invalid"}}))))
+  (it "validates stamped events and refuses unknown event names"
+      (let [event (contract/stamp-session-event {"text" "hello"} "s1" 7 9 "turn.started")]
+        (expect (document/valid-json? "gateway" "session_event" event))
+        (expect (not (document/valid-json? "gateway" "session_event" (dissoc event "seq"))))
+        (expect (not (document/valid-json? "gateway"
+                                           "session_event"
+                                           (assoc event "type" "unknown.event"))))))
+  (it "validates ready frames with nullable goal and turn identity"
+      (let [event (contract/subscription-ready-event {:session-id "s1"
+                                                      :cursor 0
+                                                      :current-turn-id nil
+                                                      :is-live false
+                                                      :server-time-ms 9
+                                                      :goal nil})]
+        (expect (document/valid-json? "gateway" "subscription_ready" event))
+        (expect (not (document/valid-json? "gateway" "subscription_ready" (dissoc event "goal"))))
+        (expect
+          (not (document/valid-json? "gateway" "subscription_ready" (assoc event "cursor" "0"))))))
+  (it "derives terminal and queue behavior from event schema annotations"
+      (expect (= #{"turn.completed" "turn.failed" "turn.cancelled"}
+                 contract/turn-terminal-event-types))
+      (expect (= #{"turn.queued" "turn.queued.deleted" "turn.queued.updated" "turn.queued.drained"
+                   "queue.paused" "queue.resumed"}
+                 contract/queue-mirror-event-types))))

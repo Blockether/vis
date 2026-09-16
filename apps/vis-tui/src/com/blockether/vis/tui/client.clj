@@ -87,11 +87,10 @@
 
 (defn- protocol-headers
   []
-  {(gateway-contract/header :protocol) (str gateway-contract/protocol-version)
-   (gateway-contract/header :minimum-gateway-protocol) (str
-                                                         gateway-contract/minimum-gateway-protocol)
-   (gateway-contract/header :client) client-label
-   (gateway-contract/header :client-version) (release-version)})
+  {"x-vis-protocol" (str gateway-contract/protocol-version)
+   "x-vis-min-gateway-protocol" (str gateway-contract/minimum-gateway-protocol)
+   "x-vis-client" client-label
+   "x-vis-client-version" (release-version)})
 
 (defn- remote-scheme-port [scheme] (if (= "https" scheme) 443 default-port))
 

@@ -226,7 +226,7 @@ and disclosure in both clients. The
 [tested greeter entrypoint](extension-design.md#keep-the-entrypoint-small)
 demonstrates the callback beside registration. Exact portable limits and block
 shapes live in the
-[Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
+[Activity schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/activity.json).
 
 Vis keeps every admitted, redacted invocation and its complete presentation in
 the session store, without a total size or call-count cap. Companion and the TUI

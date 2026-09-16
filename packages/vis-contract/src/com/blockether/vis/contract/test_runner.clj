@@ -3,16 +3,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]))
 
-(def ^:private contract (delay (document/load! "test-runner")))
-
-(def selector-keys
-  "Optional selector keys accepted by every runner."
-  (mapv keyword (get @contract "selector_keys")))
-
-(def result-keys
-  "Uniform result keys shared by every runner."
-  (mapv keyword (get @contract "result_keys")))
-
 (defn selectors-valid?
   "True when `value` satisfies the selector JSON Schema."
   [value]

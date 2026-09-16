@@ -1,7 +1,7 @@
 """The host used when `vis` runs outside the engine.
 
-Operations follow `python-host.json`: local operations run locally, prompts use
-the terminal, and operations requiring an engine-enforced jail refuse by name.
+This module implements the Host protocol: local operations run locally, prompts
+use the terminal, and session-bound operations refuse without an engine.
 `VIS_OUTSIDE_ANSWERS` primes prompt values; `VIS_OUTSIDE_NONINTERACTIVE=1`
 returns `undeliverable` instead of blocking.
 """
@@ -26,51 +26,56 @@ from blockether.vis import _contracts
 
 
 def check_host(host):
-    """Refuse a host that does not answer every op the contract declares.
+    """Refuse a host that does not answer every implemented host operation.
 
     Answers the host, so a constructor can `return check_host(built)` — the point is
     that an incomplete host fails where it is BUILT, naming the ops it is missing,
     instead of halfway through somebody's extension.
     """
     missing = [
-        name for name in _contracts.OPS if not callable(getattr(host, name, None))
+        name for name in _IMPLEMENTATIONS if not callable(getattr(host, name, None))
     ]
     if missing:
         raise TypeError(
-            "vis contract v{} declares host ops this host does not answer: {}".format(
-                _contracts.VERSION, ", ".join(missing)
-            )
+            "host does not answer required operations: " + ", ".join(missing)
         )
     return host
 
 
-__all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
+__all__ = ["Refused", "answer_with", "host", "state_home"]
 
 
-# -- The contract -------------------------------------------------------------
-
-
-# The canonical declaration is bundled with the SDK, so this host and
-# the engine that seeds the real one read one document. Nothing is transcribed
-# here: every op name, every refusal and the whole shell grammar come from it.
-contract = _contracts.CONTRACT
-_OPS = _contracts.OPS
-_VIEW = _contracts.VIEW
+# -- Host capabilities --------------------------------------------------------
 
 
 class Refused(RuntimeError):
     """An op the contract refuses to serve outside a Vis process."""
 
 
-def _refusal(name):
-    op = _OPS[name]
+def jailed_shell(opts):
+    """Refuse a shell operation without the Vis host's confinement boundary."""
+    raise Refused(
+        "vis.jailed_shell needs the Vis host's jail; nothing outside a Vis process "
+        "can enforce it. Run the command with vis.shell when an unjailed process "
+        "is what you meant, or run this extension under vis-agent."
+    )
 
-    def refuse(*_args, **_kwargs):
-        raise Refused(op["refusal"])
 
-    refuse.__name__ = name
-    refuse.__doc__ = op["summary"]
-    return refuse
+def jailed_shell_session(opts):
+    """Refuse a persistent shell without the Vis host's confinement boundary."""
+    raise Refused(
+        "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis "
+        "process can enforce it. Run the command with vis.shell when an unjailed "
+        "process is what you meant, or run this extension under vis-agent."
+    )
+
+
+def council_wake(opts):
+    """Refuse a session wake without a bound Vis session."""
+    raise Refused(
+        "vis.council_wake (vis.council.wake) needs a bound Vis session. Outside an "
+        "extension, use sdk_session.council().wake(...) with an authenticated SDK session."
+    )
 
 
 # -- Where the outside host keeps things --------------------------------------
@@ -158,7 +163,7 @@ def notify(text, level="info"):
 # -- Secrets ------------------------------------------------------------------
 
 _VAULT = {}
-_PREFIX = _VIEW["secret_handle_prefix"]
+_PREFIX = _contracts.definition("view", "secret_handle")["pattern"].removeprefix("^")
 
 
 def _stash(plaintext):
@@ -428,15 +433,14 @@ def _result(run, stage, **extra):
     return result
 
 
-_SHELL = contract["shell"]
-_SPAWN_OPS = tuple(_SHELL["spawn_ops"])
-_HANDLE_OPS = tuple(_SHELL["handle_ops"])
+_SPAWN_OPS = ("run", "background")
+_HANDLE_OPS = ("logs", "wait", "send", "stop")
 
 
 def _shell_vocabulary():
     """The ops this host answers, worded the way the engine words its own refusal."""
     names = [
-        '"{}"{}'.format(op, " (default)" if op == _SHELL["default_op"] else "")
+        '"{}"{}'.format(op, " (default)" if op == "run" else "")
         for op in _SPAWN_OPS + _HANDLE_OPS
     ]
     return ", ".join(names[:-1]) + " or " + names[-1]
@@ -445,12 +449,10 @@ def _shell_vocabulary():
 def shell(opts):
     """Start a process, or drive one this host already started.
 
-    The op vocabulary is the CONTRACT's, not this file's: `_contracts.SHELL`
-    names which ops spawn and which drive a handle, so an extension written
-    against the engine's `{"op": "run", …}` means the same thing out here.
+    Spawn operations create a process; handle operations act on its retained ID.
     """
     opts = dict(opts or {})
-    op = str(opts.get("op") or _SHELL["default_op"]).strip()
+    op = str(opts.get("op") or "run").strip()
     if op in _SPAWN_OPS:
         run = _Run(
             opts.get("command"),
@@ -505,12 +507,29 @@ def shell(opts):
 
 # -- Asking a human, with no dialog surface -----------------------------------
 
-_GROUP = _VIEW["group_type"]
-_DECOR = set(_VIEW["decor_types"])
-_FIELDS = set(_VIEW["field_types"])
-_TEXT = set(_VIEW["text_types"])
-_CHOICE = set(_VIEW["choice_types"])
-_SECRET = set(_VIEW["secret_types"])
+_FIELD_SCHEMAS = {
+    branch["properties"]["type"]["const"]: branch
+    for branch in _contracts.definition("view", "field")["oneOf"]
+}
+_GROUP = _contracts.definition("view", "group")["properties"]["type"]["const"]
+_DECOR = set(_contracts.definition("view", "decor_type")["enum"])
+_FIELDS = set(_FIELD_SCHEMAS)
+_TEXT = {
+    kind
+    for kind, branch in _FIELD_SCHEMAS.items()
+    if "min_length" in branch["properties"] and "min_length" not in branch["required"]
+}
+_CHOICE = {
+    kind for kind, branch in _FIELD_SCHEMAS.items() if "options" in branch["properties"]
+}
+_SECRET = {
+    kind
+    for kind, branch in _FIELD_SCHEMAS.items()
+    if branch["properties"]["is_secret"]["const"]
+}
+_GROUP_DIRECTIONS = _contracts.definition("view", "group_direction")["enum"]
+_RANGE = _FIELD_SCHEMAS["range"]["properties"]
+_OTP = _FIELD_SCHEMAS["otp"]["properties"]["max_length"]
 
 _PRIMED = {}
 
@@ -604,9 +623,9 @@ def _prompt(node, kind):
         )
         return default if not typed else typed.startswith("y")
     if kind == "range":
-        low = node.get("min", _VIEW["range"]["min"])
-        high = node.get("max", _VIEW["range"]["max"])
-        step = node.get("step", _VIEW["range"]["step"])
+        low = node.get("min", _RANGE["min"]["default"])
+        high = node.get("max", _RANGE["max"]["default"])
+        step = node.get("step", _RANGE["step"]["default"])
         typed = input(f"{label} [{low}-{high} step {step}]: ").strip()
         if not typed:
             return node.get("default")
@@ -624,9 +643,7 @@ def _prompt(node, kind):
     if kind in _SECRET:
         import getpass
 
-        boxes = (
-            node.get("max_length") or node.get("min_length") or _VIEW["otp"]["length"]
-        )
+        boxes = node.get("max_length") or node.get("min_length") or _OTP["default"]
         hint = f" ({boxes} digits)" if kind == "otp" else ""
         return getpass.getpass(f"{label}{hint}: ")
     return input(f"{label}: ")
@@ -773,19 +790,17 @@ def _check_node(node, seen):
     if kind in _CHOICE and not (node.get("options") or []):
         return f"{name!r} is a {kind} and needs options to pick from"
     if kind == "otp":
-        boxes = (
-            node.get("max_length") or node.get("min_length") or _VIEW["otp"]["length"]
-        )
-        if int(boxes) > int(_VIEW["otp"]["ceiling"]):
+        boxes = node.get("max_length") or node.get("min_length") or _OTP["default"]
+        if int(boxes) > int(_OTP["maximum"]):
             return "{!r} asks for {} boxes, more than the {} a dialog fits".format(
                 name,
                 boxes,
-                _VIEW["otp"]["ceiling"],
+                _OTP["maximum"],
             )
     if kind == "range":
-        low = node.get("min", _VIEW["range"]["min"])
-        high = node.get("max", _VIEW["range"]["max"])
-        step = node.get("step", _VIEW["range"]["step"])
+        low = node.get("min", _RANGE["min"]["default"])
+        high = node.get("max", _RANGE["max"]["default"])
+        step = node.get("step", _RANGE["step"]["default"])
         if low >= high:
             return f"{name!r} has min {low} and max {high}: a track needs room"
         if step <= 0:
@@ -822,8 +837,23 @@ def _check_request(request):
 # `append` upserts an item by its id and concatenates log lines, `clear` empties,
 # `remove` drops ids), so an extension polling its own view reads the truth
 # either side of the boundary.
-_LIVE = _VIEW["live"]
-_LIVE_HOST = contract["live"]
+_LIVE_NODE_SCHEMAS = {
+    branch["properties"]["type"]["const"]: branch["properties"]
+    for branch in _contracts.definition("view", "live_node")["oneOf"]
+}
+_LIVE_NODE_TYPES = tuple(kind for kind in _LIVE_NODE_SCHEMAS if kind != _GROUP)
+_LIVE_OPS = tuple(
+    branch["properties"]["op"]["const"]
+    for branch in _contracts.definition("view", "live_op")["oneOf"]
+)
+_TONES = _contracts.definition("view", "tone")["enum"]
+_SPINNER_VARIANTS = tuple(
+    branch["const"]
+    for branch in _contracts.definition("view", "spinner_variant")["oneOf"]
+)
+_MAX_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
+_LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
+_LIVE_HANDLE_OPS = ("patch", "state", "close")
 _LIVE_ITEMS = {
     "stat": "stats",
     "steps": "steps",
@@ -845,14 +875,14 @@ def _live_check_node(node, seen, *, is_declaration=True):
         # Layout is the FORM's own vocabulary: a view arranges its nodes with the
         # same row and column a question does, and the group paints nothing itself.
         direction = node.get("direction")
-        if direction is not None and direction not in _VIEW["group_directions"]:
-            ways = ", ".join(_VIEW["group_directions"])
+        if direction is not None and direction not in _GROUP_DIRECTIONS:
+            ways = ", ".join(_GROUP_DIRECTIONS)
             return f"a {_GROUP} runs one of {ways}, got {direction!r}"
         children = node.get("fields")
         if not isinstance(children, (list, tuple)) or not children:
             return f"a {_GROUP} must arrange at least one node"
-    elif kind not in _LIVE["node_types"]:
-        types = ", ".join(_LIVE["node_types"])
+    elif kind not in _LIVE_NODE_TYPES:
+        types = ", ".join(_LIVE_NODE_TYPES)
         return f"a node is one of {types}, got {kind!r}"
     node_id = node.get("id")
     if not isinstance(node_id, str) or not node_id.strip():
@@ -874,7 +904,7 @@ def _live_check_node(node, seen, *, is_declaration=True):
         if tones is not None and (
             not isinstance(tones, list)
             or len(tones) != len(node["lines"])
-            or any(tone is not None and tone not in _LIVE["tones"] for tone in tones)
+            or any(tone is not None and tone not in _TONES for tone in tones)
         ):
             return "line_tones must have one known tone or null per line"
     if kind == "heading":
@@ -898,7 +928,7 @@ def _live_check_node(node, seen, *, is_declaration=True):
             node.pop("language", None)
         elif not isinstance(language, str) or not language.strip():
             return "a code language must be nonblank text"
-    if kind == "spinner" and node.get("variant") not in _LIVE["spinner_frames"]:
+    if kind == "spinner" and node.get("variant") not in _SPINNER_VARIANTS:
         return "unknown spinner variant"
     if kind == "button":
         if not isinstance(node.get("label"), str) or not node["label"].strip():
@@ -930,8 +960,8 @@ def _check_view(view):
         if complaint:
             return complaint
     # The bound counts the TREE: a row holding twenty nodes is twenty nodes.
-    if len(seen) > _LIVE["max_nodes"]:
-        return "a live view holds at most {} nodes".format(_LIVE["max_nodes"])
+    if len(seen) > _MAX_NODES:
+        return f"a live view holds at most {_MAX_NODES} nodes"
     return None
 
 
@@ -995,12 +1025,17 @@ def _live_bound(node):
     # keeps its window, a table its rows, so a day-long loop cannot grow this
     # process without a bound.
     if node.get("type") == "log":
-        window = int(node.get("window_lines") or _LIVE["log"]["window_lines"])
+        window = int(
+            node.get("window_lines")
+            or _LIVE_NODE_SCHEMAS["log"]["window_lines"]["default"]
+        )
         node["lines"] = list(node.get("lines") or [])[-window:]
         if "line_tones" in node:
             node["line_tones"] = node["line_tones"][-window:]
     elif node.get("type") == "table":
-        rows = int(node.get("max_rows") or _LIVE["table"]["max_rows"])
+        rows = int(
+            node.get("max_rows") or _LIVE_NODE_SCHEMAS["table"]["max_rows"]["default"]
+        )
         node["rows"] = list(node.get("rows") or [])[-rows:]
     return node
 
@@ -1016,8 +1051,8 @@ def _live_items_key(node, name):
 def _live_apply(view, op):
     """Fold one op into `view` and answer the line the transcript owes it."""
     name = op.get("op") if isinstance(op, dict) else None
-    if name not in _LIVE["ops"]:
-        names = ", ".join(_LIVE["ops"])
+    if name not in _LIVE_OPS:
+        names = ", ".join(_LIVE_OPS)
         raise Refused(f"a live op is one of {names}, got {name!r}")
     if name == "add-node":
         spec = op.get("node_spec")
@@ -1053,7 +1088,7 @@ def _live_apply(view, op):
     elif name == "append":
         key = _live_items_key(node, "lines to append")
         payload = list(op.get(key) or [])
-        if "tone" in op and (key != "lines" or op["tone"] not in _LIVE["tones"]):
+        if "tone" in op and (key != "lines" or op["tone"] not in _TONES):
             raise Refused("only log appends accept a known tone")
         if key == "lines":
             from .extension import _log_text
@@ -1124,8 +1159,8 @@ def _live_say(lines):
 
 def _live_verdict(held, ending):
     reason = str(ending.get("reason") or "completed")
-    if reason not in _LIVE["reasons"]:
-        reasons = ", ".join(_LIVE["reasons"])
+    if reason not in _LIVE_REASONS:
+        reasons = ", ".join(_LIVE_REASONS)
         raise Refused(f"a view ends for one of {reasons}, got {reason!r}")
     view = held["view"]
     verdict = {
@@ -1157,8 +1192,8 @@ def live(envelope_json):
     envelope = json.loads(envelope_json)
     if not isinstance(envelope, dict):
         raise Refused("a live envelope must be a JSON object")
-    op = str(envelope.get("op") or _LIVE_HOST["default_op"])
-    if op in _LIVE_HOST["spawn_ops"]:
+    op = str(envelope.get("op") or "open")
+    if op == "open":
         view = envelope.get("view")
         complaint = _check_view(view)
         if complaint:
@@ -1173,8 +1208,8 @@ def live(envelope_json):
         if view.get("description"):
             print(textwrap.fill(str(view["description"]), 78), file=sys.stderr)
         return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
-    if op not in _LIVE_HOST["handle_ops"]:
-        ops = ", ".join(list(_LIVE_HOST["spawn_ops"]) + list(_LIVE_HOST["handle_ops"]))
+    if op not in _LIVE_HANDLE_OPS:
+        ops = ", ".join(("open", *_LIVE_HANDLE_OPS))
         raise Refused(f"a live op is one of {ops}, got {op!r}")
     view_id = str(envelope.get("view_id") or "")
     held = _LIVE_VIEWS.get(view_id)
@@ -1242,6 +1277,9 @@ _IMPLEMENTATIONS = {
     "log": log,
     "notify": notify,
     "shell": shell,
+    "jailed_shell": jailed_shell,
+    "jailed_shell_session": jailed_shell_session,
+    "council_wake": council_wake,
     "request_input": request_input,
     "live": live,
     "activity": lambda blocks: False,
@@ -1264,24 +1302,7 @@ class _OutsideHost:
             setattr(self, name, fn)
 
     def __repr__(self):
-        return "<vis outside host: contract v{}, {} ops>".format(
-            contract["version"], len(_OPS)
-        )
+        return f"<vis outside host: {len(_IMPLEMENTATIONS)} ops>"
 
 
-def _build_host():
-    # The DOCUMENT decides what exists; this file only claims to implement it, and
-    # `check_host` is the contract's own gate: an op declared with nothing behind it
-    # fails here, at import, naming itself — not in front of a user halfway through
-    # an extension.
-    built = {}
-    for op in contract["ops"]:
-        name = op["name"]
-        if op["outside"] == "refuse":
-            built[name] = _refusal(name)
-        elif name in _IMPLEMENTATIONS:
-            built[name] = _IMPLEMENTATIONS[name]
-    return check_host(_OutsideHost(built))
-
-
-host = _build_host()
+host = check_host(_OutsideHost(_IMPLEMENTATIONS))

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/plans.json';
+import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/plans.json';
 import { actionRequest, availableActions, documentInfo } from './plans';
 import { parseAnnotated, quoteOf, renderAnnotated } from './markdown-annotations';
 
@@ -11,6 +12,13 @@ describe('shared planning contract', () => {
       expect(availableActions(info, false)).toEqual(entry.actions);
       if (info) expect(availableActions(info, true)).toEqual(['revise']);
     }
+  });
+  it('recognizes every schema-declared status and rejects unknown statuses', () => {
+    for (const status of schema.$defs.status.enum) {
+      const text = `**Feature:** search\n**Status:** ${status}`;
+      expect(documentInfo('PLAN-search.md', text)).toEqual({ kind: 'plan', feature: 'search', status });
+    }
+    expect(documentInfo('PLAN-search.md', '**Feature:** search\n**Status:** unknown')).toBeNull();
   });
   it('addresses exactly the selected saved version', () => {
     for (const action of ['revise', 'approve'] as const) {

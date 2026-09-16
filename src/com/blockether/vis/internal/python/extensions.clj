@@ -53,7 +53,6 @@
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.host :as python-host]
-            [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
@@ -487,11 +486,8 @@
   (vswap! g assoc n f))
 
 (defn ^:no-doc host-doors
-  "The `__vis_host_*` callables an extension context is given, as
-   `{name fn}` — THE list, in code rather than written out anywhere else. The
-   bootstrap passes through whatever it is handed (it used to name each one, so
-   a door added here needed a runtime release), and the contract document is
-   checked against these keys.
+  "The `__vis_host_*` callables an extension context receives as `{name fn}`.
+   The bootstrap and inert checker derive their members from these bindings.
 
    `label` is the file's name — used only for log context; durable state lives in
    the `extension_aggregate` table, owned by the running extension's identity
@@ -675,10 +671,10 @@
     install-sync-tool-in!)
   sess)
 
-(def ^:no-doc host-member-names
-  "Every `__vis_host_*` global declared by the validated `python-host.json`.
-   `python_host_test` checks the binder and packaged module against the same document."
-  (contract/host-globals))
+(defn ^:no-doc host-member-names
+  "Names from the actual host bindings, without invoking a host operation."
+  []
+  (sort (keys (host-doors nil nil nil))))
 
 (defn ^:no-doc bind-inert-host!
   "Install every host member as a REFUSAL, so the `blockether.vis.extension` module can be BUILT without
@@ -707,7 +703,7 @@
                          (throw (ex-info
                                   (str "host call " member " is not available while checking")
                                   {:type :vis/extension-check-inert :member member}))))]))
-           host-member-names)
+           (host-member-names))
      install-sync-tool-in!)
    sess))
 

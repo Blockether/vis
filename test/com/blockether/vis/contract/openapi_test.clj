@@ -90,14 +90,14 @@
       (expect (= [] (get-in @encoded ["paths" "/healthz" "get" "security"])))
       (expect (= [] (get-in @encoded ["paths" "/openapi.json" "get" "security"])))
       (expect (nil? (get-in @encoded ["paths" "/v1/models" "get" "security"])))
-      (expect (= (contract/header :gateway-secret)
+      (expect (= "x-vis-gateway-secret"
                  (get-in @encoded ["components" "securitySchemes" "gateway_secret" "name"])))
       (expect (= (set (map (comp name :audience) contract/route-table))
                  (set (mapcat (fn [[_ _ operation]]
                                 (get operation "tags"))
                               (operations @encoded))))))
   (it "answers the error envelope the contract declares"
-      (let [schema (get-in @encoded ["components" "schemas" "error"])]
+      (let [schema (get-in @encoded ["components" "schemas" "error_response"])]
         (expect (= ["error"] (get schema "required")))
         (expect (= ["type" "message"] (get-in schema ["properties" "error" "required"])))))
   (it "renders the same bytes every time, and only what JSON can hold"
@@ -122,6 +122,7 @@
                  (get-in @encoded
                          ["components" "schemas" "session" "properties" "goal" "anyOf" 1])))
       (expect (= (set (keys contract/session-goal-labels))
-                 (set (get-in @encoded
-                              ["components" "schemas" "session_goal" "properties" "status"
-                               "enum"]))))))
+                 (set (map #(get % "const")
+                           (get-in @encoded
+                                   ["components" "schemas" "session_goal" "properties" "status"
+                                    "oneOf"])))))))

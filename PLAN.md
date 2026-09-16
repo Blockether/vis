@@ -1117,3 +1117,59 @@ optimize native builds, or restart the live gateway.
 8. No live gateway restart or native build is authorized. Those constraints also prevent
    representative deployment verification and testing a new native lifecycle boundary.
    Concurrent release work remains separate.
+
+# JSON Schema as the contract source
+
+Define payloads once; derive runtime vocabulary from their schemas.
+
+## Context
+
+`packages/vis-contract/resources/vis-contract/` currently holds catalog JSON files
+and same-named schemas. Several catalogs repeat field names and enums, while some
+schemas validate catalogs instead of wire payloads. Clojure, the Python SDK and
+Companion consume these files. Remove the catalogs, not the supported behavior.
+Do not relocate them wholesale into schema annotations or retain compatibility
+readers. Existing unrelated checkout edits remain outside this work.
+
+## 1. Consolidate schemas and consumers
+
+- Rationale: make JSON Schema the only maintained structural contract.
+- Data: existing payload definitions, runtime readers, shared fixtures and package resources.
+- Acceptance criteria: no top-level catalog JSONs; consumers derive fields, vocabulary,
+  defaults and bounds from schemas; operational annotations exist only when needed.
+- Unknowns: which declarations affect runtime behavior rather than documentation alone.
+
+## 2. Verify language and packaging boundaries
+
+- Rationale: source validation alone does not prove packaged SDK or host bootstrap behavior.
+- Data: contract, engine integration, SDK, Companion and TUI regression suites.
+- Acceptance criteria: affected tests, formatting, lint/reflection and package resource
+  checks pass; tests prevent catalog reintroduction and exercise real payload validation.
+- Unknowns: pre-existing failures and concurrent changes outside the task.
+
+## 3. Review and publish
+
+- Rationale: deliver the complete refactor without absorbing unrelated work.
+- Data: final scoped diff, verification results and repository status.
+- Acceptance criteria: update contract guidance, commit only this task and push to main.
+- Unknowns: remote movement or overlapping edits requiring coordination.
+
+## Plan state
+
+1. Complete: removed 16 catalog JSONs and the obsolete Python-host declaration table.
+   The 16 remaining schemas describe real payloads; Clojure, Python, Companion and TUI
+   derive their structural contracts from them without compatibility catalog readers.
+2. Affected contract and integration tests pass, including 816 Python SDK tests,
+   2849 Companion tests and 2211 TUI tests. Formatting and lint introduce no new findings.
+   Built sdist/wheel resources contain the same 16 schemas, verified byte for byte.
+3. The native image builds and schema/host boundary cases pass. The broad native run
+   exposed unrelated stale fixtures, corrected in separate commits, and an uncommitted
+   worker hang-evidence test outside this change; it is not claimed fully green.
+4. The full core suite passes 6099 of 6102 cases. Two shared-suite skill-discovery
+   assertions fail, while all 155 Python-extension cases pass in an isolated JVM.
+   A same-JVM diagnostic reproduces a missing skill after its source throws an FFF
+   rescan timeout. The third failure flags clock calls in unrelated uncommitted workers.
+   These discovery/worker paths were not changed by the schema refactor.
+5. Scoped implementation, documentation and verification are complete. Publish this
+   change separately on main; preserve concurrent code and plan edits. No release,
+   deployment or live-service restart belongs to this work.

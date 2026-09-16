@@ -1,43 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vis.blockether.com/schema/improve.json",
-  "type": "object",
-  "properties": {
-    "version": {
-      "const": 1
-    },
-    "statuses": {
-      "const": [
-        "open",
-        "closed"
-      ]
-    },
-    "max_page_size": {
-      "const": 200
-    },
-    "analysis_format": {
-      "const": "markdown"
-    },
-    "source_policy": {
-      "const": "Council content and provenance are immutable; workflow content is separate editable analysis."
-    },
-    "hierarchy_policy": {
-      "const": "Parents and descendants share a project. Closing closes all descendants atomically. Reopening opens ancestors. Project moves include descendants."
-    },
-    "review_policy": {
-      "const": "Automatic reviews require every touched record version and a still-current settings gate in the write transaction. They do not authorize code execution or remediation."
-    }
-  },
-  "required": [
-    "version",
-    "statuses",
-    "max_page_size",
-    "analysis_format",
-    "source_policy",
-    "hierarchy_policy",
-    "review_policy"
-  ],
-  "additionalProperties": false,
+  "$ref": "#/$defs/record",
   "$defs": {
     "review-output": {
       "type": "object",

@@ -2799,10 +2799,8 @@ def forget(handle):
 # Nodes are addressed BY ID, because a view with two tables has no "the" table.
 
 _FLUSH_MS = 100
-# How long a handle may coalesce pushes before one has to cross. Mirrors
-# `:live/flush-ms` in the contract document, which `python_host_test` reads back:
-# a host round trip per written line would park the extension on the journal
-# writer once per line, so the batching is part of the contract.
+# Coalesce pushes briefly: a host round trip per written line would park the
+# extension on the journal writer once per line.
 
 _MAX_BATCH = 200
 # The most items one coalesced push carries, under every per-patch bound the
@@ -3025,9 +3023,8 @@ _LIVE_NODES = {
     "table": Table,
     "link": Link,
 }
-# The typed handle each node type answers. The engine owns the type table
-# (`view.spec/live-node-types`, rendered into the contract document);
-# `python_host_test` fails when this one names a type that is not in it.
+# The typed handle each schema-defined node type answers. Host-boundary tests
+# keep these handles aligned with the canonical View schema.
 
 
 def _cell(value):

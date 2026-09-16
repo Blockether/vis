@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from blockether.vis._contracts import GATEWAY, validate
+from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
 from blockether.vis.views import InputView, LiveView, ViewEvent
 
@@ -29,6 +29,15 @@ JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 )
 Query: TypeAlias = Mapping[str, str | int | float | bool | None]
+
+_PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"]
+_MIN_GATEWAY = definition("gateway", "handshake")["properties"]["min_gateway"]["const"]
+_ROUTES = schema("gateway")["x-vis-routes"]
+_LEASE_POLICY = schema("gateway")["x-vis-client-lease"]
+_JOB_EVENTS = {
+    branch["x-vis-direction"]: branch["const"]
+    for branch in definition("gateway", "job_event_type")["oneOf"]
+}
 
 
 class TransportError(RuntimeError):
@@ -275,7 +284,7 @@ class ExecutionLayer(ABC):
         Method, template and path parameter names are checked before network IO.
         Mutations are sent once, including on timeout or ambiguous disconnect.
         """
-        entry = next((r for r in GATEWAY["routes"] if r["path"] == route), None)
+        entry = next((r for r in _ROUTES if r["path"] == route), None)
         if (
             not entry
             or entry["audience"] != "sdk"
@@ -2193,7 +2202,7 @@ class ExecutionLayer(ABC):
         return self._job_events(
             self._job_route("speech", job_id),
             job_id,
-            GATEWAY["events"]["jobs"]["synthesize"],
+            _JOB_EVENTS["synthesize"],
             lambda: self.get_speech_job(job_id),
             **options,
         )
@@ -2203,7 +2212,7 @@ class ExecutionLayer(ABC):
         return self._job_events(
             self._job_route("voice", job_id),
             job_id,
-            GATEWAY["events"]["jobs"]["transcribe"],
+            _JOB_EVENTS["transcribe"],
             lambda: self.get_voice_job(job_id),
             **options,
         )
@@ -2213,7 +2222,7 @@ class ExecutionLayer(ABC):
         return self._job_events(
             self._job_route("speech", job_id, sid),
             job_id,
-            GATEWAY["events"]["jobs"]["synthesize"],
+            _JOB_EVENTS["synthesize"],
             lambda: self.get_session_speech_job(sid, job_id),
             **options,
         )
@@ -2223,7 +2232,7 @@ class ExecutionLayer(ABC):
         return self._job_events(
             self._job_route("voice", job_id, sid),
             job_id,
-            GATEWAY["events"]["jobs"]["transcribe"],
+            _JOB_EVENTS["transcribe"],
             lambda: self.get_session_voice_job(sid, job_id),
             **options,
         )
@@ -2304,17 +2313,15 @@ class GatewayClient(ExecutionLayer):
         if self._lease_error:
             raise TransportError("client lease keepalive failed; reconnect explicitly")
         headers = {
-            GATEWAY["headers"]["protocol"]: str(GATEWAY["protocol"]["version"]),
-            GATEWAY["headers"]["minimum_gateway_protocol"]: str(
-                GATEWAY["protocol"]["minimum_gateway"]
-            ),
-            GATEWAY["headers"]["client"]: "vis-python",
+            "x-vis-protocol": str(_PROTOCOL),
+            "x-vis-min-gateway-protocol": str(_MIN_GATEWAY),
+            "x-vis-client": "vis-python",
             "Accept": "application/json",
         }
         if self._token:
             headers["Authorization"] = "Bearer " + self._token
         if self._lease:
-            headers[GATEWAY["headers"]["client_id"]] = self._lease
+            headers["x-vis-client-id"] = self._lease
         if body is not None:
             if content is not None:
                 raise ValueError("body and content are mutually exclusive")
@@ -2353,12 +2360,11 @@ class GatewayClient(ExecutionLayer):
         if not isinstance(peer, dict):
             raise ProtocolError("malformed gateway handshake")
         version, minimum = peer.get("protocol"), peer.get("min_client")
-        ours = GATEWAY["protocol"]
         if (
             type(version) is not int
             or type(minimum) is not int
-            or version < ours["minimum_gateway"]
-            or minimum > ours["version"]
+            or version < _MIN_GATEWAY
+            or minimum > _PROTOCOL
         ):
             raise ProtocolError("incompatible gateway protocol")
         self._ensure_client_lease()
@@ -2370,7 +2376,7 @@ class GatewayClient(ExecutionLayer):
         return self
 
     def _keepalive(self):
-        policy = GATEWAY["client_lease"]
+        policy = _LEASE_POLICY
         interval = policy["keepalive_ms"] / 1000
         while not self._heartbeat_stop.wait(interval):
             try:

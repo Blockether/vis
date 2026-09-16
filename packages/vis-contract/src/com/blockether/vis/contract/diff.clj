@@ -4,9 +4,9 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]))
 
-(def ^:private contract (delay (document/load! "diff")))
+(def ^:private schema (delay (document/schema-document "diff")))
 
-(def media-type "application/vnd.vis.diff+json")
+(def media-type (get-in @schema ["$defs" "attachment" "contentMediaType"]))
 
 (defn valid?
   "True only for a complete, canonical JSON-shaped diff envelope."
@@ -43,4 +43,4 @@
        "` v" version
        " with read_attachment(" (pr-str filename)
        ", version=" version
-       ").\n" (get @contract "revision_request")))
+       ").\n" (get-in @schema ["$defs" "envelope" "x-vis-review-request"])))

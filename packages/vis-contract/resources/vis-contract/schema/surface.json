@@ -2,28 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/surface.json",
   "title": "Language tool result contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "version": {
-      "$ref": "common.json#/$defs/version"
+  "anyOf": [
+    {
+      "$ref": "#/$defs/format_result"
     },
-    "capabilities": {
-      "type": "array",
-      "items": {
-        "enum": [
-          "format",
-          "lint",
-          "test"
-        ]
-      },
-      "minItems": 3,
-      "uniqueItems": true
+    {
+      "$ref": "#/$defs/lint_result"
+    },
+    {
+      "$ref": "#/$defs/test_result"
     }
-  },
-  "required": [
-    "version",
-    "capabilities"
   ],
   "$defs": {
     "format_result": {

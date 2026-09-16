@@ -20,9 +20,8 @@ from email.message import Message
 from pathlib import Path
 from urllib.parse import urlencode
 
-from blockether.vis._contracts import GATEWAY
-
 from ._client import (
+    _PROTOCOL,
     ExecutionLayer,
     JobEvents,
     ProtocolError,
@@ -165,7 +164,7 @@ class LocalEngine(ExecutionLayer):
             if (
                 not isinstance(hello, dict)
                 or type(hello.get("protocol")) is not int
-                or hello["protocol"] != GATEWAY["protocol"]["version"]
+                or hello["protocol"] != _PROTOCOL
             ):
                 raise ProtocolError("incompatible local engine protocol")
             return self
@@ -188,7 +187,7 @@ class LocalEngine(ExecutionLayer):
             "query": urlencode(query) if query else None,
         }
         if self._lease is not None:
-            request["headers"] = {GATEWAY["headers"]["client_id"]: self._lease}
+            request["headers"] = {"x-vis-client-id": self._lease}
         if body is not None:
             request["body"] = body
         if content is not None:

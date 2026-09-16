@@ -125,7 +125,7 @@ Paths below are relative to this repository. Internal namespace paths begin at
 | Python host API | `packages/vis-agent/src/blockether/vis/extension.py` is also executed by the engine; never mirror it. |
 | Sandbox | `sandbox/` defines host policy and process integration; `python/` implements host execution. Interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read that repo's `AGENTS.md` before changing it. Keep host-call shims in `resources/vis-shims/` and host guest modules in `resources/vis-guest/`; do not copy runtime code. |
 | Shims | `attach` and `ls` expose host functions; they do not replace Python packages. Python docstrings in `resources/vis-shims/` generate apropos resources; `apropos-resource-test/regenerate!` updates them. |
-| Contracts | `packages/vis-contract/resources/vis-contract/` owns canonical JSON documents and same-named schemas; Skjema validates portable shapes. Callbacks, IO and mutable state remain local. |
+| Contracts | `packages/vis-contract/resources/vis-contract/schema/` owns canonical JSON Schemas; Skjema validates portable shapes. Derive vocabulary and bounds from schemas, never paired catalogs. Callbacks, IO and mutable state remain local. |
 | Tool declarations | `extension/core.clj` and its mirrored test own description/result/params, requiredness and wire keys. |
 | Gateway transport | `gateway/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; transport encoding failures can break event replay. |
 | Config | `config/` owns merged configuration; toggle IDs are snake_case strings and reload from merged config. |

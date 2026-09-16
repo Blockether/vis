@@ -1,27 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/agents.json",
-  "type": "object",
-  "properties": {
-    "version": {
-      "const": 1
-    },
-    "limits": {
-      "const": {
-        "depth": 2,
-        "team_children": 32,
-        "active_children": 8,
-        "default_iterations": 32,
-        "max_iterations": 200,
-        "task_chars": 8192
-      }
-    }
-  },
-  "required": [
-    "version",
-    "limits"
-  ],
-  "additionalProperties": false,
+  "$ref": "#/$defs/agent",
+  "x-vis-max-team-children": 32,
+  "x-vis-max-active-children": 8,
+  "$comment": "Child-count limits are enforced against persisted team and leader state, not one agent payload.",
   "$defs": {
     "spawn": {
       "type": "object",
@@ -43,7 +26,8 @@
         "iteration_budget": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 200
+          "maximum": 200,
+          "default": 32
         },
         "allowed_models": {
           "type": "array",
@@ -169,9 +153,7 @@
           "maximum": 2
         },
         "iteration_budget": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 200
+          "$ref": "#/$defs/spawn/properties/iteration_budget"
         },
         "iterations_used": {
           "type": "integer",

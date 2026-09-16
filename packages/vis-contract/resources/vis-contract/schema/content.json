@@ -2,44 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/content.json",
   "title": "Canonical content contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "version": {
-      "$ref": "common.json#/$defs/version"
-    },
-    "roles": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "message_statuses": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "tool_statuses": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "reasoning_visibilities": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "block_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "event_types": {
-      "$ref": "common.json#/$defs/token_list"
-    },
-    "delta_fields": {
-      "$ref": "common.json#/$defs/token_list"
-    }
-  },
-  "required": [
-    "version",
-    "roles",
-    "message_statuses",
-    "tool_statuses",
-    "reasoning_visibilities",
-    "block_types",
-    "event_types",
-    "delta_fields"
-  ],
   "$defs": {
     "block": {
       "oneOf": [
@@ -440,5 +402,6 @@
         }
       ]
     }
-  }
+  },
+  "$ref": "#/$defs/message"
 }

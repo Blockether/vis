@@ -1086,10 +1086,7 @@
                                           retained-window)]
           (let [page (chat/activity-page "sid" "a1" {:after 32 :revision 4})]
             (expect (= ["sid" "a1"
-                        {:after 32
-                         :limit (long (get activity/limits "max_page_rows"))
-                         :query nil
-                         :revision 4}]
+                        {:after 32 :limit (long activity/page-row-limit) :query nil :revision 4}]
                        @asked))
             (expect (= 274 (get-in page [:history :total])))
             (expect (= 64 (get-in page [:history :next-after])))
@@ -1100,7 +1097,7 @@
                                           (reset! asked opts)
                                           retained-window)]
           (chat/activity-page "sid" "a1" {})
-          (expect (= (long (get activity/limits "max_page_rows")) (:limit @asked))))))
+          (expect (= (long activity/page-row-limit) (:limit @asked))))))
   (it "carries a search to the record, not to the window in hand"
       (let [asked (atom nil)]
         (with-redefs [vis/activity-page (fn [_ _ opts]

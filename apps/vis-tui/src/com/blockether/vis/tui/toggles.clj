@@ -399,7 +399,7 @@
     (case (:type spec)
       :boolean
       (cond (boolean? v) v
-            (string? v) (contains? toggle-contract/config-truthy-tokens
+            (string? v) (contains? toggle-contract/boolean-true-tokens
                                    (str/lower-case (str/trim v)))
             :else (boolean v))
 

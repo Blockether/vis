@@ -1,5 +1,5 @@
 (ns com.blockether.vis.contract.openapi
-  "Renders the validated built-in gateway contract as OpenAPI 3.1.
+  "Renders the gateway payload schemas and HTTP metadata as OpenAPI 3.1.
    Extension routes remain in their extension-owned contracts."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
@@ -109,23 +109,6 @@
       (assoc item "parameters" (vec parameters))
       item)))
 
-(def ^:private error-schema
-  "The one error body every refused call answers with, as the contract spells it."
-  (let [body-key
-        (:error gateway/error-response-body-keys)
-
-        {message-key :message type-key :type}
-        gateway/error-response-error-keys]
-
-    (array-map "type" "object"
-               "required" [body-key]
-               "properties"
-               (array-map body-key
-                          (array-map "type" "object"
-                                     "required" [type-key message-key]
-                                     "properties"
-                                     (array-map type-key text-schema message-key text-schema))))))
-
 (def ^:private components
   (array-map
     "securitySchemes"
@@ -139,21 +122,20 @@
                "gateway_secret"
                (array-map "type" "apiKey"
                           "in" "header"
-                          "name" (gateway/header :gateway-secret)
+                          "name" "x-vis-gateway-secret"
                           "description"
                           "The same secret, as the header a same-machine client already sends."))
-    "schemas" (into {"error" error-schema}
-                    (walk/postwalk
-                      (fn [value]
-                        (if (and (map? value) (string? (get value "$ref")))
-                          (update value "$ref" str/replace "#/$defs/" "#/components/schemas/")
-                          value))
-                      (get (document/schema-document "gateway") "$defs")))
-    "responses" (array-map "error"
-                           (array-map
-                             "description" "The call was refused; the body names the reason."
-                             "content" {"application/json"
-                                        {"schema" {"$ref" "#/components/schemas/error"}}}))))
+    "schemas" (walk/postwalk
+                (fn [value]
+                  (if (and (map? value) (string? (get value "$ref")))
+                    (update value "$ref" str/replace "#/$defs/" "#/components/schemas/")
+                    value))
+                (get (document/schema-document "gateway") "$defs"))
+    "responses"
+    (array-map "error"
+               (array-map "description" "The call was refused; the body names the reason."
+                          "content" {"application/json"
+                                     {"schema" {"$ref" "#/components/schemas/error_response"}}}))))
 
 (defn document
   "The OpenAPI 3.1 document for the built-in gateway routes, string-keyed and
@@ -161,24 +143,22 @@
   []
   (array-map
     "openapi" openapi-version
-    "info" (array-map
-             "title" "Vis Gateway"
-             "version" (str gateway/protocol-version)
-             "summary" "The HTTP surface every Vis client speaks."
-             "description"
-             (str
-               "Built-in routes only, rendered from the Vis gateway contract "
-               "(document version " gateway/version
-               ").\n\n"
-               "`info.version` is the WIRE PROTOCOL version, which is what a client negotiates: "
-               "a call carries it in `" (gateway/header :protocol)
-               "`, and a gateway that cannot "
-               "serve the caller's protocol answers 426 with its own numbers instead of the "
-               "route's result. The routes that report the gateway's own identity answer any "
-               "protocol, so a client can always read that verdict.\n\n"
-               "Request and response bodies are JSON unless the media type says otherwise; a body "
-               "shown as an empty schema is one the contract does not constrain yet.")
-             "license" (array-map "name" "MIT"))
+    "info"
+    (array-map
+      "title" "Vis Gateway"
+      "version" (str gateway/protocol-version)
+      "summary" "The HTTP surface every Vis client speaks."
+      "description"
+      (str "Built-in routes only, rendered from the Vis gateway JSON Schema and HTTP metadata.\n\n"
+           "`info.version` is the WIRE PROTOCOL version, which is what a client negotiates: "
+           "a call carries it in `x-vis-protocol"
+           "`, and a gateway that cannot "
+           "serve the caller's protocol answers 426 with its own numbers instead of the "
+           "route's result. The routes that report the gateway's own identity answer any "
+           "protocol, so a client can always read that verdict.\n\n"
+           "Request and response bodies are JSON unless the media type says otherwise; a body "
+           "shown as an empty schema is one the contract does not constrain yet.")
+      "license" (array-map "name" "MIT"))
     "servers" [(array-map "url" "/" "description" "The gateway that served this document.")]
     "security" [(array-map "bearer" []) (array-map "gateway_secret" [])]
     "tags" [(array-map "name" "public" "description" "Answered without a token.")

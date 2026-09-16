@@ -2730,7 +2730,7 @@
          json/write-json-str))))
 
 (def ^:private live-ops
-  "The live verb operation grammar declared by validated `python-host.json`."
+  "Operations implemented by the live view host door."
   {:default "open" :spawn #{"open"} :handle #{"patch" "state" "close"}})
 
 (defn- live-op-name

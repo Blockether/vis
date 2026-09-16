@@ -5812,8 +5812,10 @@
 
 (defn db-activity-page
   "A session-authorized, keyset page of complete records. Search never clips retention."
-  [db sid aid {:keys [after limit q] :or {after 0 limit 32}}]
-  (when (or (neg? (long after)) (not (<= 1 (long limit) 32)) (and q (> (count q) 512)))
+  [db sid aid {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
+  (when (or (neg? (long after))
+            (not (<= 1 (long limit) (long activity-contract/page-row-limit)))
+            (and q (> (count q) 512)))
     (throw (ex-info "Invalid Activity page parameters" {:type :activity/invalid-page})))
   ;; One transaction keeps metadata/revision and its bounded row page consistent.
   (sqlite-write-tx!
@@ -5848,7 +5850,7 @@
               ;; A single invocation is indivisible: byte targets only split between records.
               (if (or (<= (count selected) 1)
                       (<= (activity/byte-size projection)
-                          (long (get activity-contract/limits "max_page_bytes"))))
+                          (long activity-contract/page-byte-target)))
                 projection
                 (recur (pop selected))))))))))
 

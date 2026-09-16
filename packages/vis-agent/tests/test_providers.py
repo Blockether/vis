@@ -65,21 +65,23 @@ def test_explicit_responses_path_is_preserved(responses_path):
 
 
 def test_provider_vocabulary_is_the_canonical_vocabulary():
-    for name, vocabulary in (
-        ("ProviderLimitStatus", "statuses"),
-        ("ProviderLimitScope", "scopes"),
-        ("ProviderLimitKind", "kinds"),
-        ("ProviderWindowKind", "window_kinds"),
-        ("ProviderWindowUnit", "window_units"),
-        ("ProviderLimitPrecision", "precisions"),
-        ("ProviderLimitSource", "sources"),
+    for name, definition, field in (
+        ("ProviderLimitStatus", "report", "status"),
+        ("ProviderLimitScope", "limit_row", "scope"),
+        ("ProviderLimitKind", "limit_row", "kind"),
+        ("ProviderWindowKind", "window", "kind"),
+        ("ProviderWindowUnit", "window", "unit"),
+        ("ProviderLimitPrecision", "limit_row", "precision"),
+        ("ProviderLimitSource", "limit_row", "source"),
     ):
         assert set(get_args(getattr(vis, name))) == set(
-            _contracts._load_document("provider")["limits"][vocabulary]
+            _contracts.definition("provider", definition)["properties"][field]["enum"]
         )
-    assert set(get_args(vis.ProviderAPIStyle)) == set(
-        _contracts._load_document("config")["api_style_aliases"]
-    )
+    assert set(get_args(vis.ProviderAPIStyle)) == {
+        alias
+        for branch in _contracts.definition("config", "apiStyle")["oneOf"]
+        for alias in branch["enum"]
+    }
 
 
 def test_provider_limits_match_the_shared_schema():

@@ -582,7 +582,7 @@
          #'http/request
          (fn [{:keys [method headers] :as request}]
            (swap! calls conj request)
-           (if (= "2" (get headers (gateway-contract/header :minimum-gateway-protocol)))
+           (if (= "2" (get headers "x-vis-min-gateway-protocol"))
              {:status 200
               :body
               (if (= :get method)
@@ -593,9 +593,7 @@
           (let [result (client/stop-daemon-if-idle!)]
             (is (true? (:stopped? result)))
             (is (= [:get :post] (mapv :method @calls)))
-            (is (every?
-                  #(= "2" (get-in % [:headers (gateway-contract/header :minimum-gateway-protocol)]))
-                  @calls)))))
+            (is (every? #(= "2" (get-in % [:headers "x-vis-min-gateway-protocol"])) @calls)))))
       (finally (reset! handshake previous)))))
 
 ;; The state `vis-agent update` leaves behind when a session was open: the daemon

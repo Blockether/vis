@@ -1,11 +1,14 @@
 # vis-contract
 
-`resources/vis-contract/` contains the language-neutral contracts. Each JSON
-document has a matching schema under `resources/vis-contract/schema/`. Skjema
-validates documents before Clojure uses them. The `vis-agent` Python SDK
-includes these documents; this directory is not a Python distribution.
+`resources/vis-contract/schema/` contains the language-neutral JSON Schemas.
+Skjema validates Clojure payloads; the `vis-agent` SDK ships these same schemas
+for Python validation. Runtime readers derive field names, vocabulary and bounds
+from schema definitions instead of maintaining separate catalogs.
 
-## Changing the contract
+## Changing a contract
 
-Edit the relevant document and schema, then run the affected contract tests.
+Edit the relevant schema and its consumers, then run the affected contract tests.
+Use standard schema keywords for structure, enums, defaults and constraints.
+Operational annotations describe only behavior that validation cannot express;
+callbacks, IO and mutable state belong in their implementation owners.
 This package does not depend on the Vis engine.

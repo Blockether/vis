@@ -2,124 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/activity.json",
   "title": "Activity contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "operation_groups": {"const": {"cat": "Read", "patch": "Patch", "shell": "Shell", "grep": "Search", "ls": "List", "run_tests": "Test", "lint_code": "Lint", "format_code": "Format", "repl_eval": "Eval"}},
-    "version": {
-      "const": 1
-    },
-    "event": {
-      "const": "block.activity"
-    },
-    "presenters": {
-      "const": [
-        "generic",
-        "shell",
-        "tests",
-        "patch",
-        "observation",
-        "lint",
-        "repl",
-        "format",
-        "list"
-      ]
-    },
-    "signals": {
-      "const": [
-        "generic",
-        "observation",
-        "mutation",
-        "verification"
-      ]
-    },
-    "states": {
-      "const": [
-        "idle",
-        "running",
-        "succeeded",
-        "failed",
-        "cancelled"
-      ]
-    },
-    "text_formats": {
-      "const": [
-        "inline",
-        "markdown"
-      ]
-    },
-    "limits": {
-      "const": {
-        "max_page_rows": 32,
-        "max_depth": 2,
-        "max_resources": 8,
-        "max_page_bytes": 1048576,
-        "max_summary_bytes": 512,
-        "max_detail_bytes": 2048,
-        "max_event_bytes": 262144,
-        "max_diff_line_bytes": 512
-      }
-    },
-    "semantics": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "ownership": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "delivery": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "lifecycle": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "reads": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "arguments": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "counts": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "bounds": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "declaration": {
-          "type": "string",
-          "pattern": "\\S"
-        }
-      },
-      "required": [
-        "ownership",
-        "delivery",
-        "lifecycle",
-        "arguments",
-        "reads",
-        "counts",
-        "bounds",
-        "declaration"
-      ]
-    }
-  },
-  "required": [
-    "operation_groups",
-    "version",
-    "event",
-    "presenters",
-    "signals",
-    "states",
-    "text_formats",
-    "limits",
-    "semantics"
-  ],
   "$defs": {
     "presenter": {
       "type": "string",
@@ -214,7 +96,8 @@
           ]
         },
         "text": {
-          "type": "string"
+          "type": "string",
+          "x-vis-truncate-bytes": 512
         },
         "is_redacted": {
           "const": true
@@ -239,7 +122,8 @@
               ]
             },
             "text": {
-              "type": "string"
+              "type": "string",
+              "x-vis-truncate-bytes": 2048
             }
           },
           "required": [
@@ -309,7 +193,18 @@
         },
         "operation": {
           "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "x-vis-group-labels": {
+            "cat": "Read",
+            "patch": "Patch",
+            "shell": "Shell",
+            "grep": "Search",
+            "ls": "List",
+            "run_tests": "Test",
+            "lint_code": "Lint",
+            "format_code": "Format",
+            "repl_eval": "Eval"
+          }
         },
         "presenter": {
           "$ref": "#/$defs/presenter"
@@ -690,7 +585,9 @@
             "total",
             "after",
             "next_after"
-          ]
+          ],
+          "x-vis-max-page-rows": 32,
+          "x-vis-page-target-bytes": 1048576
         }
       },
       "required": [
@@ -698,7 +595,8 @@
         "counts",
         "rows",
         "omitted"
-      ]
+      ],
+      "x-vis-max-event-bytes": 262144
     },
     "content": {
       "type": "array",
@@ -963,7 +861,8 @@
         "summary": {
           "type": "string",
           "maxLength": 512,
-          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$"
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$",
+          "x-vis-max-bytes": 512
         },
         "content": {
           "$ref": "#/$defs/content"
@@ -980,15 +879,10 @@
       "additionalProperties": false,
       "properties": {
         "headline": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512,
-          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]+$"
+          "$ref": "#/$defs/section/properties/headline"
         },
         "summary": {
-          "type": "string",
-          "maxLength": 512,
-          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$"
+          "$ref": "#/$defs/section/properties/summary"
         },
         "content": {
           "$ref": "#/$defs/content"
@@ -1006,5 +900,6 @@
         "content"
       ]
     }
-  }
+  },
+  "$ref": "#/$defs/projection"
 }

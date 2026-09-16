@@ -2,606 +2,1376 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/gateway.json",
   "title": "Gateway contract",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "version": {
-      "$ref": "common.json#/$defs/version"
-    },
-    "protocol": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 1
+  "$ref": "#/$defs/session",
+  "x-vis-routes": [
+    {
+      "audience": "sdk",
+      "operations": {
+        "put": {
+          "request": "json",
+          "response": "json"
         },
-        "minimum_client": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "minimum_gateway": {
-          "type": "integer",
-          "minimum": 1
+        "delete": {
+          "request": "none",
+          "response": "json"
         }
       },
-      "required": [
-        "version",
-        "minimum_client",
-        "minimum_gateway"
-      ]
+      "path": "/v1/sessions/:sid/client-extensions"
     },
-    "headers": {
-      "type": "object",
-      "minProperties": 1,
-      "additionalProperties": {
-        "$ref": "common.json#/$defs/non_blank_string"
-      }
-    },
-    "client_lease": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "ttl_ms": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "touch_ms": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "keepalive_ms": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "keepalive_timeout_ms": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "keepalive_route": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "semantics": {
-          "$ref": "common.json#/$defs/non_blank_string"
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
         }
       },
-      "required": [
-        "ttl_ms",
-        "touch_ms",
-        "keepalive_ms",
-        "keepalive_timeout_ms",
-        "keepalive_route",
-        "semantics"
-      ]
+      "path": "/v1/sessions/:sid/client-calls"
     },
-    "routes": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "path": {
-            "type": "string",
-            "pattern": "^/"
-          },
-          "audience": {
-            "enum": [
-              "administration",
-              "public",
-              "sdk"
-            ]
-          },
-          "operations": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "delete": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "request": {
-                    "enum": [
-                      "binary",
-                      "json",
-                      "none"
-                    ]
-                  },
-                  "response": {
-                    "enum": [
-                      "binary",
-                      "empty",
-                      "html",
-                      "json",
-                      "markdown",
-                      "negotiated",
-                      "resource",
-                      "sse"
-                    ]
-                  },
-                  "response_schema": {
-                    "enum": [
-                      "session",
-                      "session_list"
-                    ]
-                  }
-                },
-                "required": [
-                  "request",
-                  "response"
-                ]
-              },
-              "get": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "request": {
-                    "enum": [
-                      "binary",
-                      "json",
-                      "none"
-                    ]
-                  },
-                  "response": {
-                    "enum": [
-                      "binary",
-                      "empty",
-                      "html",
-                      "json",
-                      "markdown",
-                      "negotiated",
-                      "resource",
-                      "sse"
-                    ]
-                  },
-                  "response_schema": {
-                    "enum": [
-                      "session",
-                      "session_list"
-                    ]
-                  }
-                },
-                "required": [
-                  "request",
-                  "response"
-                ]
-              },
-              "patch": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "request": {
-                    "enum": [
-                      "binary",
-                      "json",
-                      "none"
-                    ]
-                  },
-                  "response": {
-                    "enum": [
-                      "binary",
-                      "empty",
-                      "html",
-                      "json",
-                      "markdown",
-                      "negotiated",
-                      "resource",
-                      "sse"
-                    ]
-                  },
-                  "response_schema": {
-                    "enum": [
-                      "session",
-                      "session_list"
-                    ]
-                  }
-                },
-                "required": [
-                  "request",
-                  "response"
-                ]
-              },
-              "post": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "request": {
-                    "enum": [
-                      "binary",
-                      "json",
-                      "none"
-                    ]
-                  },
-                  "response": {
-                    "enum": [
-                      "binary",
-                      "empty",
-                      "html",
-                      "json",
-                      "markdown",
-                      "negotiated",
-                      "resource",
-                      "sse"
-                    ]
-                  },
-                  "response_schema": {
-                    "enum": [
-                      "session",
-                      "session_list"
-                    ]
-                  }
-                },
-                "required": [
-                  "request",
-                  "response"
-                ]
-              },
-              "put": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "request": {
-                    "enum": [
-                      "binary",
-                      "json",
-                      "none"
-                    ]
-                  },
-                  "response": {
-                    "enum": [
-                      "binary",
-                      "empty",
-                      "html",
-                      "json",
-                      "markdown",
-                      "negotiated",
-                      "resource",
-                      "sse"
-                    ]
-                  },
-                  "response_schema": {
-                    "enum": [
-                      "session",
-                      "session_list"
-                    ]
-                  }
-                },
-                "required": [
-                  "request",
-                  "response"
-                ]
-              }
-            },
-            "minProperties": 1
-          }
-        },
-        "required": [
-          "path",
-          "audience",
-          "operations"
-        ]
-      },
-      "minItems": 1,
-      "uniqueItems": true
-    },
-    "events": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "session": {
-          "type": "array",
-          "items": {
-            "$ref": "common.json#/$defs/non_blank_string"
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "jobs": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "transcribe": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "synthesize": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            }
-          },
-          "required": [
-            "transcribe",
-            "synthesize"
-          ]
-        },
-        "push": {
-          "type": "array",
-          "items": {
-            "$ref": "common.json#/$defs/non_blank_string"
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "turn_terminal": {
-          "type": "array",
-          "items": {
-            "$ref": "common.json#/$defs/non_blank_string"
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "queue_mirror": {
-          "type": "array",
-          "items": {
-            "$ref": "common.json#/$defs/non_blank_string"
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "view": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "open": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "patch": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "close": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            }
-          },
-          "required": [
-            "open",
-            "patch",
-            "close"
-          ]
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
         }
       },
-      "required": [
-        "session",
-        "jobs",
-        "push",
-        "turn_terminal",
-        "queue_mirror",
-        "view"
-      ]
+      "path": "/v1/sessions/:sid/client-calls/:call_id/result"
     },
-    "envelopes": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "error_response": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "body_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            },
-            "error_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            }
-          },
-          "required": [
-            "body_keys",
-            "error_keys"
-          ]
-        },
-        "handshake": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            }
-          },
-          "required": [
-            "keys"
-          ]
-        },
-        "journal_line": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "metadata_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            }
-          },
-          "required": [
-            "metadata_keys"
-          ]
-        },
-        "session_event": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "stamp_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            }
-          },
-          "required": [
-            "schema",
-            "stamp_keys"
-          ]
-        },
-        "settled_turn": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "meta_keys": {
-              "type": "array",
-              "items": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              },
-              "minItems": 1,
-              "uniqueItems": true
-            }
-          },
-          "required": [
-            "meta_keys"
-          ]
-        },
-        "subscription_ready": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "event": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "required_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            },
-            "optional_keys": {
-              "type": "object",
-              "minProperties": 1,
-              "additionalProperties": {
-                "$ref": "common.json#/$defs/non_blank_string"
-              }
-            }
-          },
-          "required": [
-            "event",
-            "required_keys",
-            "optional_keys"
-          ]
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
         }
       },
-      "required": [
-        "error_response",
-        "handshake",
-        "journal_line",
-        "session_event",
-        "settled_turn",
-        "subscription_ready"
-      ]
+      "path": "/v1/sessions/:sid/client-calls/:call_id/activity"
     },
-    "replay": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "cursor_header": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "cursor_key": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "ready_event": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "generation_start_event": {
-          "$ref": "common.json#/$defs/non_blank_string"
+    {
+      "audience": "public",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "resource"
         }
       },
-      "required": [
-        "cursor_header",
-        "cursor_key",
-        "ready_event",
-        "generation_start_event"
-      ]
+      "path": "/docs"
     },
-    "session_goal": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "statuses": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
-        },
-        "max_objective_chars": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_reason_chars": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "status_labels": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "active": {
-              "type": "string",
-              "minLength": 1
-            },
-            "paused": {
-              "type": "string",
-              "minLength": 1
-            },
-            "blocked": {
-              "type": "string",
-              "minLength": 1
-            },
-            "budget_limited": {
-              "type": "string",
-              "minLength": 1
-            },
-            "complete": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cancelled": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "active",
-            "paused",
-            "blocked",
-            "budget_limited",
-            "complete",
-            "cancelled"
-          ]
+    {
+      "audience": "public",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "resource"
         }
       },
-      "required": [
-        "statuses",
-        "max_objective_chars",
-        "max_reason_chars",
-        "status_labels"
-      ]
+      "path": "/docs/*path"
+    },
+    {
+      "audience": "public",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/healthz"
+    },
+    {
+      "audience": "administration",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "negotiated"
+        }
+      },
+      "path": "/metrics"
+    },
+    {
+      "audience": "public",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/openapi.json"
+    },
+    {
+      "audience": "public",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/readyz"
+    },
+    {
+      "audience": "administration",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/admin/status"
+    },
+    {
+      "audience": "administration",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/admin/stop"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/capabilities"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/clients"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/clients/:cid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/devices"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/devices/:token"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/devices/actions/test"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/fs"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/fs/actions/mkdir"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/machines/order"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "put": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/actions/enable"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/actions/kill"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/actions/start"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/auth/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/auth/complete"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/auth/logout"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/auth/poll"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/:name/auth/start"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/mcp/servers/actions/test"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/models"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/projects"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "empty"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/projects/:pid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/projects/:pid/sessions"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/projects/actions/ensure"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/projects/overview"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/provider-presets"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/auth/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/auth/complete"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/auth/poll"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/auth/start"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/limits"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/logout"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/models"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/reset-credits/consume"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/status"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/router"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "session_list"
+        },
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "session"
+        }
+      },
+      "path": "/v1/sessions"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "empty"
+        },
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "session"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "session"
+        }
+      },
+      "path": "/v1/sessions/:sid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/activity/:aid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/sessions/:sid/activity/:aid/export"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/artifacts"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/attachments"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/cancel-current"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/context"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/route"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/entries"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/entries/:entry-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/members"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/threads"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/wake"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/drain-queue"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/events-since"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/forks"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/iterations/:iid/attachments"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/sessions/:sid/iterations/:iid/attachments/:idx"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/model"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "empty"
+        }
+      },
+      "path": "/v1/sessions/:sid/release"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/resources"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/resources/logs"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/resources/stop"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/resume-queue"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/seq"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/slashes"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/speech"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/speech/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/sessions/:sid/speech/jobs/:job-id/audio"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/sessions/:sid/speech/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/suggest"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/transcript"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "html"
+        }
+      },
+      "path": "/v1/sessions/:sid/transcript.html"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "markdown"
+        }
+      },
+      "path": "/v1/sessions/:sid/transcript.md"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns/:tid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns/:tid/attachments"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns/:tid/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns/:tid/trace"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/usage"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/views/:view-id/actions"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/views/input"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/views/live"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/views/live/:view-id/log/:node-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/workspace"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/workspace/root"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/actions/search"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/settings"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/review"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/:id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/settings"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/settings/:id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id/audio"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech/model"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech/voices"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech/voices/:voice-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/speech/voices/:voice-id/sample"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/voice/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice/model"
     }
-  },
-  "required": [
-    "version",
-    "protocol",
-    "headers",
-    "client_lease",
-    "routes",
-    "events",
-    "envelopes",
-    "replay",
-    "session_goal"
   ],
+  "x-vis-client-lease": {
+    "ttl_ms": 120000,
+    "touch_ms": 5000,
+    "keepalive_ms": 30000,
+    "keepalive_timeout_ms": 5000,
+    "keepalive_route": "/v1/capabilities"
+  },
   "$defs": {
     "session_goal": {
       "type": "object",
@@ -618,13 +1388,31 @@
           "pattern": "\\S"
         },
         "status": {
-          "enum": [
-            "active",
-            "paused",
-            "blocked",
-            "budget_limited",
-            "complete",
-            "cancelled"
+          "oneOf": [
+            {
+              "const": "active",
+              "title": "Active"
+            },
+            {
+              "const": "paused",
+              "title": "Paused"
+            },
+            {
+              "const": "blocked",
+              "title": "Blocked"
+            },
+            {
+              "const": "budget_limited",
+              "title": "Iteration limit reached"
+            },
+            {
+              "const": "complete",
+              "title": "Complete"
+            },
+            {
+              "const": "cancelled",
+              "title": "Cancelled"
+            }
           ]
         },
         "iteration_budget": {
@@ -762,8 +1550,16 @@
                 "type": "string",
                 "maxLength": 32768
               },
-              "version": {"type": "string", "minLength": 1, "maxLength": 128},
-              "kind": {"type": "string", "minLength": 1, "maxLength": 128},
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
               "symbols": {
                 "minItems": 1,
                 "type": "array",
@@ -929,6 +1725,387 @@
       },
       "required": [
         "calls"
+      ]
+    },
+    "handshake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "type": "integer",
+          "const": 13
+        },
+        "min_client": {
+          "type": "integer",
+          "const": 13
+        },
+        "min_gateway": {
+          "type": "integer",
+          "const": 13
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "min_client",
+        "min_gateway",
+        "version",
+        "build"
+      ]
+    },
+    "error_response": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ]
+        }
+      },
+      "required": [
+        "error"
+      ]
+    },
+    "http_headers": {
+      "type": "object",
+      "properties": {
+        "x-vis-protocol": {
+          "type": "string"
+        },
+        "x-vis-suppress-registry-recovery": {
+          "type": "string"
+        },
+        "x-vis-client-version": {
+          "type": "string"
+        },
+        "x-vis-min-gateway-protocol": {
+          "type": "string"
+        },
+        "accept": {
+          "type": "string"
+        },
+        "if-none-match": {
+          "type": "string"
+        },
+        "last-event-id": {
+          "type": "string"
+        },
+        "etag": {
+          "type": "string"
+        },
+        "x-vis-gateway-secret": {
+          "type": "string"
+        },
+        "authorization": {
+          "type": "string"
+        },
+        "x-vis-client": {
+          "type": "string"
+        },
+        "content-type": {
+          "type": "string"
+        },
+        "x-vis-client-id": {
+          "type": "string"
+        },
+        "x-vis-client-pid": {
+          "type": "string"
+        }
+      }
+    },
+    "session_event_type": {
+      "oneOf": [
+        {
+          "const": "block.activity"
+        },
+        {
+          "const": "block.output"
+        },
+        {
+          "const": "block.preview"
+        },
+        {
+          "const": "block.started"
+        },
+        {
+          "const": "content.block.completed"
+        },
+        {
+          "const": "content.block.delta"
+        },
+        {
+          "const": "content.block.started"
+        },
+        {
+          "const": "context.updated"
+        },
+        {
+          "const": "iteration.completed"
+        },
+        {
+          "const": "iteration.error"
+        },
+        {
+          "const": "provider.retry"
+        },
+        {
+          "const": "queue.paused",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "queue.resumed",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "session.agent_name_updated"
+        },
+        {
+          "const": "session.goal_updated"
+        },
+        {
+          "const": "session.model_updated"
+        },
+        {
+          "const": "session.status"
+        },
+        {
+          "const": "session.title_updated"
+        },
+        {
+          "const": "subscription.ready"
+        },
+        {
+          "const": "turn.cancelled",
+          "x-vis-turn-terminal": true
+        },
+        {
+          "const": "turn.completed",
+          "x-vis-turn-terminal": true
+        },
+        {
+          "const": "turn.failed",
+          "x-vis-turn-terminal": true
+        },
+        {
+          "const": "turn.progress"
+        },
+        {
+          "const": "turn.queued",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "turn.queued.deleted",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "turn.queued.drained",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "turn.queued.updated",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "turn.started"
+        },
+        {
+          "const": "view.close"
+        },
+        {
+          "const": "view.open"
+        },
+        {
+          "const": "view.patch"
+        }
+      ]
+    },
+    "job_event_type": {
+      "oneOf": [
+        {
+          "const": "speech.job",
+          "x-vis-direction": "synthesize"
+        },
+        {
+          "const": "voice.job",
+          "x-vis-direction": "transcribe"
+        }
+      ]
+    },
+    "push_event_type": {
+      "enum": [
+        "turn.end"
+      ]
+    },
+    "session_event": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "$ref": "#/$defs/session_event_type"
+        }
+      },
+      "required": [
+        "schema",
+        "seq",
+        "ts",
+        "session_id",
+        "type"
+      ]
+    },
+    "journal_metadata": {
+      "type": "object",
+      "properties": {
+        "_pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "_producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_store": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "_pid",
+        "_producer",
+        "_store"
+      ]
+    },
+    "turn_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "llm_selected": {},
+        "llm_actual": {},
+        "is_llm_fallback": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "llm_routing_trace": {},
+        "tokens": {},
+        "cost": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "confidence": {},
+        "eval": {},
+        "duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "utilization": {}
+      }
+    },
+    "subscription_ready": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "subscription.ready"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_live": {
+          "type": "boolean"
+        },
+        "server_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/session_goal"
+            }
+          ]
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "latest_iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "session_id",
+        "cursor",
+        "current_turn_id",
+        "is_live",
+        "server_time_ms",
+        "goal"
       ]
     }
   }

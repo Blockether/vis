@@ -1737,16 +1737,14 @@
               (app {:request-method :get
                     :uri "/v1/sessions"
                     :headers {"origin" origin
-                              (gateway-contract/header :protocol)
-                              (str gateway-contract/protocol-version)}})
+                              "x-vis-protocol" (str gateway-contract/protocol-version)}})
 
               authed
               (app {:request-method :get
                     :uri "/v1/sessions"
                     :headers {"origin" origin
                               "authorization" "Bearer sekret"
-                              (gateway-contract/header :protocol)
-                              (str gateway-contract/protocol-version)}})]
+                              "x-vis-protocol" (str gateway-contract/protocol-version)}})]
 
           (testing "preflight OPTIONS short-circuits auth with 204"
             (is (= 204 (:status preflight)))

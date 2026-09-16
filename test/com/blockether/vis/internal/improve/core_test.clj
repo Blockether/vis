@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.improve.core-test
   (:require [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.improve :as contract]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -43,7 +44,7 @@
         record
         (improve/create! db {:title "Investigate" :content "## Analysis\nNot reproduced."})]
 
-    (is (= 1 (get (document/load! "improve") "version")))
+    (is (document/valid? "improve" (wire/->wire record)))
     (is (contract/valid? :record record) (pr-str record))
     (is (= "open" (:status record)))
     (is (nil? (:entry_id record)))

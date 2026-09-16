@@ -35,6 +35,7 @@
             [clojure.string :as str]
             [charred.api :as json]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.wire :as contract-wire]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -164,10 +165,7 @@
           (atom [])
 
           handshake
-          (into {}
-                (map (fn [[k v]]
-                       [(get gateway-contract/handshake-keys k) v]))
-                (gateway-contract/handshake {:version "dev" :build "fixture"}))]
+          (contract-wire/->wire (gateway-contract/handshake {:version "dev" :build "fixture"}))]
 
       (try (.createContext server
                            "/"

@@ -2,41 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/symbol.json",
   "title": "Inert Python extension symbol description",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "version": {
-      "const": 1
-    },
-    "parameter_kinds": {
-      "const": [
-        "positional_only",
-        "positional_or_keyword",
-        "var_positional",
-        "keyword_only",
-        "var_keyword"
-      ]
-    },
-    "type_kinds": {
-      "const": [
-        "any",
-        "null",
-        "scalar",
-        "opaque",
-        "unresolved",
-        "union",
-        "literal",
-        "generic",
-        "record",
-        "reference"
-      ]
-    }
-  },
-  "required": [
-    "version",
-    "parameter_kinds",
-    "type_kinds"
-  ],
+  "$ref": "#/$defs/declaration",
   "$defs": {
     "type": {
       "type": "object",

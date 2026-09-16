@@ -4,37 +4,45 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private contract (delay (document/load! "config")))
+(def ^:private schema (delay (document/schema-document "config")))
 
-(def api-style-values "Documented provider API styles." (vec (get @contract "api_style_values")))
+(def ^:private api-styles (get-in @schema ["$defs" "apiStyle" "oneOf"]))
+
+(def api-style-values "Documented provider API styles." (mapv #(get % "default") api-styles))
 
 (def api-style-aliases
   "Accepted provider API-style spelling to normalized runtime spelling."
-  (get @contract "api_style_aliases"))
+  (into {}
+        (mapcat (fn [style]
+                  (map #(vector % (get style "x-vis-runtime")) (get style "enum"))))
+        api-styles))
 
 (defn definition-property-names
-  "Property names declared by one object definition in config.json."
+  "Property names declared by one object definition in the configuration schema."
   [definition]
-  (some-> (document/schema-document "config")
-          (get-in ["$defs" definition "properties"])
+  (some-> (get-in @schema ["$defs" definition "properties"])
           keys
           set))
 
 (def workspace-access-values
   "Accepted workspace access spellings."
-  (set (get @contract "workspace_access_values")))
+  (set (get-in @schema ["$defs" "workspaceEntry" "properties" "access" "enum"])))
 
 (def workspace-draft-values
   "Workspace draft policies."
-  (set (get @contract "workspace_draft_values")))
+  (set (get-in @schema ["$defs" "workspaceEntry" "properties" "draft" "enum"])))
 
-(def workspace-os-values "Workspace host selectors." (set (get @contract "workspace_os_values")))
+(def workspace-os-values
+  "Workspace host selectors."
+  (set (get-in @schema ["$defs" "workspaceOs" "enum"])))
 
 (def jail-environment-values
   "Sandbox environment modes."
-  (set (get @contract "jail_environment_values")))
+  (set (get-in @schema ["$defs" "jail" "properties" "environment" "enum"])))
 
-(def titling-modes "Session title modes." (set (get @contract "titling_modes")))
+(def titling-modes
+  "Session title modes."
+  (set (get-in @schema ["$defs" "titling" "properties" "mode" "enum"])))
 
 (defn config-valid?
   "True when the raw string-keyed configuration satisfies the contract schema."

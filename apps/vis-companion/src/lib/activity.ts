@@ -16,8 +16,28 @@
  * History-backed snapshots are bounded windows, not complete histories. Their
  * durable identity and cursor let the clients retrieve every retained operation.
  */
-import activityContract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
-const ACTIVITY_LIMITS = activityContract.limits;
+import activitySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/activity.json';
+
+const PAGE_ROW_LIMIT = activitySchema.$defs.projection.properties.history['x-vis-max-page-rows'];
+const PAGE_BYTE_TARGET = activitySchema.$defs.projection.properties.history['x-vis-page-target-bytes'];
+const RESOURCE_LIMIT = activitySchema.$defs.row.properties.resources.maxItems;
+const SUMMARY_BYTE_LIMIT = activitySchema.$defs.section.properties.summary['x-vis-max-bytes'];
+
+type RowSchema = {
+  properties: Record<string, { items?: { $ref: string } }>;
+  required: string[];
+};
+
+function rowSchema(depth: number): RowSchema | null {
+  const definitions = activitySchema.$defs as unknown as Record<string, RowSchema>;
+  let shape = definitions.row;
+  for (let level = 0; level < depth; level++) {
+    const ref = shape.properties.children?.items?.$ref;
+    if (!ref) return null;
+    shape = definitions[ref.slice('#/$defs/'.length)];
+  }
+  return shape;
+}
 
 export type OperationGroup = {
   id: string;
@@ -54,7 +74,8 @@ export function argumentGroups(rows: readonly ActivityRow[]): ArgumentGroup[] {
  * falling back to the operation name when no member has one.
  */
 export function operationGroups(rows: readonly ActivityRow[]): OperationGroup[] {
-  const labels: Readonly<Record<string, string>> = activityContract.operation_groups;
+  const labels: Readonly<Record<string, string>> =
+    activitySchema.$defs.row.properties.operation['x-vis-group-labels'];
   const byOperation = new Map<string, ActivityRow[]>();
   for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
     const members = byOperation.get(row.operation);
@@ -96,30 +117,30 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
-export const ACTIVITY_PRESENTERS = [
-  'generic',
-  'shell',
-  'tests',
-  'patch',
-  'observation',
-  'lint',
-  'repl',
-  'format',
-  'list',
-] as const;
-export const ACTIVITY_SIGNALS = ['generic', 'observation', 'mutation', 'verification'] as const;
-export const ACTIVITY_STATES = ['idle', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+export const ACTIVITY_PRESENTERS = activitySchema.$defs.presenter.enum as readonly ActivityPresenter[];
+export const ACTIVITY_SIGNALS = activitySchema.$defs.signal.enum as readonly ActivitySignal[];
+export const ACTIVITY_STATES = activitySchema.$defs.state.enum as readonly ActivityState[];
 /**
  * How a row's own words are to be READ. Absent means literal: a path, a glob or a command
  * must never be re-read as markup, so the engine DECLARES the format per field and the
  * renderer never guesses it from the characters.
  */
-export const ACTIVITY_TEXT_FORMATS = ['inline', 'markdown'] as const;
+export const ACTIVITY_TEXT_FORMATS = activitySchema.$defs.text_format
+  .enum as readonly ActivityTextFormat[];
 
-export type ActivityPresenter = (typeof ACTIVITY_PRESENTERS)[number];
-export type ActivityTextFormat = (typeof ACTIVITY_TEXT_FORMATS)[number];
-export type ActivitySignal = (typeof ACTIVITY_SIGNALS)[number];
-export type ActivityState = (typeof ACTIVITY_STATES)[number];
+export type ActivityPresenter =
+  | 'generic'
+  | 'shell'
+  | 'tests'
+  | 'patch'
+  | 'observation'
+  | 'lint'
+  | 'repl'
+  | 'format'
+  | 'list';
+export type ActivityTextFormat = 'inline' | 'markdown';
+export type ActivitySignal = 'generic' | 'observation' | 'mutation' | 'verification';
+export type ActivityState = 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface ActivityResource {
   type: string;
@@ -268,7 +289,7 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       const line = section[key];
       if (
         typeof line !== 'string' ||
-        bytes(line) > 512 ||
+        bytes(line) > SUMMARY_BYTE_LIMIT ||
         /[\u0000-\u001f\u007f\u2028\u2029]/.test(line)
       )
         return null;
@@ -547,38 +568,9 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
 }
 
 function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
-  if (depth > ACTIVITY_LIMITS.max_depth) return null;
+  const shape = rowSchema(depth);
   const raw = record(value);
-  if (
-    !raw ||
-    !hasExactKeys(
-      raw,
-      [
-        'id',
-        'sequence',
-        'operation',
-        'presenter',
-        'signal',
-        'state',
-        'summary',
-        'resources',
-        'evidence',
-      ],
-      [
-        'argument_key',
-        'read_key',
-        'group_token',
-        'duration_ms',
-        'result_summary',
-        'error_summary',
-        'children',
-        'is_truncated',
-        'summary_format',
-        'result_format',
-        'presentation',
-      ],
-    )
-  ) {
+  if (!shape || !raw || !hasExactKeys(raw, shape.required, Object.keys(shape.properties))) {
     return null;
   }
   const id = optionalText(raw.id);
@@ -642,7 +634,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     typeof raw.summary !== 'string' ||
     resources === null ||
     resources.length !== resourcesRaw!.length ||
-    resources.length > ACTIVITY_LIMITS.max_resources ||
+    resources.length > RESOURCE_LIMIT ||
     evidence === null ||
     evidence.length !== evidenceRaw!.length ||
     (raw.group_token !== undefined && groupToken === undefined) ||
@@ -750,9 +742,9 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     parsedRows.some((row) => row === null) ||
     new Set(ids).size !== ids.length ||
     (history !== undefined &&
-      (activityLeafCount(rows) > ACTIVITY_LIMITS.max_page_rows ||
+      (activityLeafCount(rows) > PAGE_ROW_LIMIT ||
         (activityLeafCount(rows) > 1 &&
-          new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_page_bytes)))
+          new TextEncoder().encode(JSON.stringify(raw)).length > PAGE_BYTE_TARGET)))
   ) {
     return null;
   }

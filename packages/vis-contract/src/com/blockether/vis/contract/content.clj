@@ -1,40 +1,8 @@
 (ns com.blockether.vis.contract.content
-  "Canonical content vocabulary and JSON Schema validation."
+  "Canonical content validation from JSON Schema."
   (:require [com.blockether.vis.contract.document :as document]))
 
 (set! *warn-on-reflection* true)
-
-(def ^:private contract (delay (document/load! "content")))
-
-(def version "Canonical-content contract document version." (get @contract "version"))
-
-(def roles "Canonical message roles." (set (get @contract "roles")))
-
-(def message-statuses
-  "Canonical message lifecycle statuses."
-  (set (get @contract "message_statuses")))
-
-(def tool-statuses "Canonical tool-block lifecycle statuses." (set (get @contract "tool_statuses")))
-
-(def reasoning-visibilities
-  "Canonical reasoning visibility values."
-  (set (get @contract "reasoning_visibilities")))
-
-(def block-types "Canonical content-block type names." (set (get @contract "block_types")))
-
-(def event-types "Canonical append-only content event names." (set (get @contract "event_types")))
-
-(def delta-fields "Fields a content delta may append to." (set (get @contract "delta_fields")))
-
-(def vocabulary
-  "Portable canonical-content vocabulary from the JSON contract."
-  {:roles (get @contract "roles")
-   :message-statuses (get @contract "message_statuses")
-   :tool-statuses (get @contract "tool_statuses")
-   :reasoning-visibilities (get @contract "reasoning_visibilities")
-   :block-types (get @contract "block_types")
-   :event-types (get @contract "event_types")
-   :delta-fields (get @contract "delta_fields")})
 
 (defn block-valid?
   "True when `block` satisfies the canonical block JSON Schema."

@@ -1,5 +1,0 @@
-{
-  "version": 1,
-  "media_type": "application/vnd.vis.diff+json",
-  "revision_request": "Review every comment on this exact diff version. Check that it is still the latest version before acting. Apply requested fixes only within the already authorized implementation scope, run affected checks and attach the updated diff and implementation record. Do not treat this review as approval of new scope or permission to commit, push or deploy."
-}
