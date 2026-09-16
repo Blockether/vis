@@ -112,6 +112,8 @@ export interface Session {
   running_request_kind?: RequestKind;
   running_council?: CouncilRequest;
   running_started_at?: number;
+  running_position?: number;
+  running_created_at?: number;
   server_time_ms: number;
   turn_count: number;
   /** Settled answers addressed to the human; Council never advances this count. */
@@ -1064,6 +1066,7 @@ export interface CouncilRequest {
 
 export interface TranscriptTurn {
   turn_id: string;
+  position?: number;
   request?: string;
   request_kind?: RequestKind;
   council?: CouncilRequest;

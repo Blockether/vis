@@ -315,6 +315,30 @@
 
 (defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
 
+(defn- turn-metadata
+  "Read the engine's canonical header facts once its durable turn exists.
+   The initial turn.started precedes allocation; later events fill the gap."
+  [sid tid]
+  (when tid
+    (let [turn (turn-record sid tid)]
+      (if (and (:position turn) (:created_at turn))
+        (select-keys turn [:position :created_at])
+        (try (when-let [row (persistance/db-read-session-turn (lp/db-info) sid tid)]
+               (let [metadata (cond-> {}
+                                (pos-int? (:position row))
+                                (assoc :position (:position row))
+
+                                (instance? java.util.Date (:created-at row))
+                                (assoc :created_at (.getTime ^java.util.Date (:created-at row))))]
+                 (when turn
+                   (update-existing-session! sid
+                                             (fn [entry]
+                                               (if (get-in entry [:turns tid])
+                                                 (update-in entry [:turns tid] merge metadata)
+                                                 entry))))
+                 metadata))
+             (catch Exception _ nil))))))
+
 (defn- archive-terminal-turn!
   "Persist the gateway-only projection, then release execution inputs and hooks.
    File I/O and callback disposal must never run inside the registry CAS."
@@ -348,7 +372,7 @@
                         (assoc (select-keys (merge current patch)
                                             [:turn_id :session_id :status :idempotency_key
                                              :event_start_seq :started_at :queued_at :completed_at
-                                             :cancelling_at :request_kind])
+                                             :position :created_at :cancelling_at :request_kind])
                           ::archive archive
                           ::archive-error (nil? archive)
                           ::run-key (or (::run-key current)
@@ -641,7 +665,8 @@
    ;; Serialize cursor assignment, disk publication, and local delivery. Disk I/O
    ;; never occurs in a retryable registry update. Shared journals keep their own seq.
    (let [canonical-payload
-         (wire/canonical payload)
+         (let [payload (wire/canonical payload)]
+           (merge payload (wire/canonical (turn-metadata sid (get payload "turn_id")))))
 
          lock
          (event-store/lock-for sid)
@@ -1970,7 +1995,7 @@
   [turn]
   (when turn
     (let [turn
-          (read-turn-record turn)
+          (merge (read-turn-record turn) (turn-metadata (:session_id turn) (:turn_id turn)))
 
           turn-id
           (str (or (:turn_id turn) (:id turn)))
@@ -2087,6 +2112,7 @@
 
     {:turn_id id
      :session_id (str sid)
+     :position (:position row)
      :role "assistant"
      :status status
      :request (or (get-in row [:council :content]) (:user-request row))
@@ -4913,7 +4939,8 @@
                                                (get-in entry [:turns live-turn-id :status]))
                                   (do (bus/retract-live! sid) nil)
                                   live-turn-id)))
-          current-turn (get-in entry [:turns current-turn-id])
+          current-turn (merge (get-in entry [:turns current-turn-id])
+                              (turn-metadata sid current-turn-id))
           last-turn (some->> (:turn-order entry)
                              peek
                              (get (:turns entry)))
@@ -4979,7 +5006,13 @@
             (:council current-turn))
 
           (and current-turn-id (nat-int? (:started_at current-turn)))
-          (assoc :running_started_at (:started_at current-turn)))))))
+          (assoc :running_started_at (:started_at current-turn))
+
+          (pos-int? (:position current-turn))
+          (assoc :running_position (:position current-turn))
+
+          (nat-int? (:created_at current-turn))
+          (assoc :running_created_at (:created_at current-turn)))))))
 
 (defn fork-points
   "Every turn of `sid` a fork can be cut AT, oldest-first, as lean wire rows

@@ -732,6 +732,7 @@
                                  ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
                                  ;; like the live send path scopes them by :client-turn-id.
                                  :session-turn-id (get q "turn_id")
+                                 :turn-position (get q "position")
                                  :request-kind (some-> (get q "request_kind")
                                                        keyword)
                                  :council (get q "council"))
@@ -820,7 +821,9 @@
                                                                                 ms))))
                                                                    (java.util.Date.)))
                                       true
-                                      (assoc :session-turn-id (get q "turn_id"))
+                                      (assoc :session-turn-id
+                                        (get q "turn_id") :turn-position
+                                        (get q "position"))
 
                                       (seq traces)
                                       (assoc :traces traces)
@@ -1448,6 +1451,29 @@
 
       nil)))
 
+(defn- deliver-gateway-event!
+  "Deliver turn header metadata independently of an event's visible progress."
+  [on-chunk event]
+  (when on-chunk
+    (when-let [chunk (gateway-event->chunk event)]
+      (on-chunk chunk))
+    (let [turn-id
+          (event-get event :turn-id)
+
+          position
+          (event-get event :position)
+
+          created-at
+          (event-get event :created-at)]
+
+      (when (and turn-id (or (pos-int? position) (nat-int? created-at)))
+        (on-chunk (cond-> {:phase :turn-metadata :turn-id turn-id}
+                    (pos-int? position)
+                    (assoc :turn-position position)
+
+                    (nat-int? created-at)
+                    (assoc :created-at-ms created-at)))))))
+
 (defn subscribe-session-events!
   "PERSISTENT live event subscription for one open session tab.
 
@@ -1473,8 +1499,7 @@
         cleanup
         (vis/gateway-mux-subscribe! sid
                                     (fn [event]
-                                      (try (when-let [chunk (gateway-event->chunk event)]
-                                             (on-chunk chunk))
+                                      (try (deliver-gateway-event! on-chunk event)
                                            (catch Throwable _ nil)))
                                     cursor)]
 
@@ -1619,6 +1644,11 @@
             :running-council
             (or (get soul "running_council") (get running-turn "council")))
 
+          tid
+          (assoc :running-position
+            (or (get soul "running_position") (get running-turn "position")) :running-created-at
+            (or (get soul "running_created_at") (get running-turn "created_at")))
+
           (nat-int? local-running-started-at)
           (assoc :running-started-at local-running-started-at)
 
@@ -1634,10 +1664,7 @@
    (try
      (vis/gateway-submit-turn-sync! id
                                     (cond-> {:request text
-                                             :on-event (fn [event]
-                                                         (when-let [chunk (gateway-event->chunk
-                                                                            event)]
-                                                           (when on-chunk (on-chunk chunk))))}
+                                             :on-event #(deliver-gateway-event! on-chunk %)}
                                       ;; Client-minted correlation id: makes the submit
                                       ;; idempotent AND lets this tab recognise its own
                                       ;; turn in queue events by id, not by text.
@@ -1682,11 +1709,7 @@
   "Attach to an already submitted gateway turn and return canonical content."
   ([session tid] (attach! session tid {}))
   ([{:keys [id]} tid {:keys [on-chunk]}]
-   (try (vis/gateway-attach-turn-sync! id
-                                       tid
-                                       {:on-event (fn [event]
-                                                    (when-let [chunk (gateway-event->chunk event)]
-                                                      (when on-chunk (on-chunk chunk))))})
+   (try (vis/gateway-attach-turn-sync! id tid {:on-event #(deliver-gateway-event! on-chunk %)})
         (catch Exception e
           (cond (:gateway-disconnected (ex-data e)) (throw e)
                 (vis/cancellation? e) {"content" [{"id" (str (java.util.UUID/randomUUID))

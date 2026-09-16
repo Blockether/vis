@@ -481,6 +481,47 @@ describe('compact diff blocks', () => {
   });
 });
 
+describe('turn header identity', () => {
+  const createdAt = new Date(2026, 8, 16, 14, 35, 27).getTime();
+
+  it.each(['completed', 'running', 'cancelled'])(
+    'shows T42 before the date and time for %s answers',
+    (status) => {
+      const view = render(
+        <AssistantMessage
+          turn={{ turn_id: 'persisted-id', position: 42, created_at: createdAt, status }}
+          streaming={status === 'running'}
+          onFork={status === 'completed' ? vi.fn() : undefined}
+        />,
+      );
+      const header = view.container.querySelector('article')!.firstElementChild!;
+      expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+      expect(header.querySelector('time')).toHaveAttribute(
+        'datetime',
+        new Date(createdAt).toISOString(),
+      );
+      expect(header.querySelector('time')).toBeVisible();
+    },
+  );
+
+  it('shows the same turn number and datetime on the request header', () => {
+    const view = render(
+      <UserMessage position={42} createdAt={createdAt}>
+        Request
+      </UserMessage>,
+    );
+    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(
+      `YouT42 ${new Date(createdAt).toLocaleString()}`,
+    );
+  });
+
+  it('does not invent a number or date for missing metadata', () => {
+    const view = render(<AssistantMessage turn={{ turn_id: 'unknown' }} />);
+    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(/^Vis$/);
+    expect(view.container.querySelector('time')).toBeNull();
+  });
+});
+
 describe('request speaker labels', () => {
   // Provenance is persisted metadata, never a request-text convention.
   it.each(['Council wake — literal user text', 'Hello', ''])('keeps %j on the user rail', (request) => {

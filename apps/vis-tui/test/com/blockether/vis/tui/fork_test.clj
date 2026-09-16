@@ -82,6 +82,153 @@
     (is (= (.indexOf ^String header " Fork at this turn ") (get-in hit [:bounds :col])))
     (is (= (count " Fork at this turn ") (get-in hit [:bounds :width])))))
 
+(deftest turn-number-precedes-the-date-for-every-message-state
+  (doseq [role
+          [:user :assistant]
+
+          status
+          [:running :completed :failed :cancelled]]
+
+    (let [message
+          (assoc review-message
+            :role role
+            :status status
+            :turn-position 42)
+
+          {:keys [capture]}
+          (header-frame message 76 {})
+
+          header
+          (second (str/split-lines (cap/frame-text capture)))]
+
+      (is (nil? (:error capture)))
+      (is (str/includes? header "T42 | "))
+      (is (str/includes? header (client/format-date (:timestamp message))))
+      (when (str/includes? header "Fork")
+        (is (str/includes? header "T42 |  Fork at this turn  | "))))))
+
+(deftest narrow-header-keeps-the-turn-number-and-date
+  (let [message
+        (assoc review-message :turn-position 123)
+
+        {:keys [capture regions]}
+        (header-frame message 28 {})
+
+        header
+        (second (str/split-lines (cap/frame-text capture)))]
+
+    (is (nil? (:error capture)))
+    (is (str/includes? header (str "T123 | " (client/format-date (:timestamp message)))))
+    (is (empty? regions))))
+
+(deftest history-keeps-the-persisted-turn-number-not-the-page-index
+  (let [messages (@#'chat/turns->messages
+                  [{"turn_id" "turn-42"
+                    "position" 42
+                    "status" "completed"
+                    "request" "Check the change"
+                    "created_at" 1789115400000
+                    "content" [{"id" "answer" "type" "prose" "markdown" "Ready"}]}])]
+    (is (= [42 42] (mapv :turn-position messages)))
+    (is (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
+           (mapv :timestamp messages)))))
+
+(deftest live-metadata-arrives-even-without-visible-progress
+  (let [chunks (atom [])]
+    (with-redefs [client/gateway-attach-turn-sync! (fn [_ _ {:keys [on-event]}]
+                                                     (on-event {"type" "content.block.started"
+                                                                "turn_id" "turn-42"
+                                                                "position" 42
+                                                                "created_at" 1789115400000})
+                                                     {"content" []})]
+      (chat/attach! {:id "session-1"} "turn-42" {:on-chunk #(swap! chunks conj %)}))
+    (is
+      (= [{:phase :turn-metadata :turn-id "turn-42" :turn-position 42 :created-at-ms 1789115400000}]
+         @chunks))))
+
+(deftest live-turn-metadata-stays-with-its-message-pair-after-completion
+  (let [before
+        @state/app-db
+
+        old
+        (assoc review-message
+          :session-turn-id "old"
+          :client-turn-id "old")
+
+        messages
+        [old (assoc (chat/user-message "Check") :client-turn-id "local-42")
+         (assoc (chat/assistant-message [])
+           :client-turn-id "local-42"
+           :pending? true)]]
+
+    (try (reset! state/app-db {:session {:id "session-1"}
+                               :active-tab-id "session-1"
+                               :render-version 0
+                               :loading? true
+                               :gateway-turn-id "turn-42"
+                               :live-turn-client-id "local-42"
+                               :messages messages})
+         (state/dispatch [:sync-turn-metadata nil
+                          {:turn-id "foreign" :turn-position 99 :created-at-ms 1}])
+         (is (= messages (:messages @state/app-db)))
+         (state/dispatch [:sync-turn-metadata nil
+                          {:turn-id "turn-42" :turn-position 42 :created-at-ms 1789115400000}])
+         (let [stamped
+               (:messages @state/app-db)
+
+               completed
+               (@#'state/replace-pending-assistant
+                stamped
+                (assoc (chat/assistant-message []) :client-turn-id "local-42"))]
+
+           (is (= old (first stamped)))
+           (is (= [42 42] (mapv :turn-position (rest stamped))))
+           (is (= ["turn-42" "turn-42"] (mapv :session-turn-id (rest stamped))))
+           (is (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
+                  (mapv :timestamp (rest completed))))
+           (is (= [42 42] (mapv :turn-position (rest completed)))))
+         (finally (reset! state/app-db before)))))
+
+(deftest reopened-running-turn-keeps-its-number-and-canonical-date
+  (let [before
+        @state/app-db
+
+        sid
+        (str (random-uuid))
+
+        created-at
+        1789115400000]
+
+    (try (doseq [source [:soul :turn]]
+           (with-redefs [client/gateway-soul (constantly (cond-> {"id" sid
+                                                                  "status" "running"
+                                                                  "current_turn_id" "turn-42"
+                                                                  "running_request" "Check"
+                                                                  "running_started_at" (+ created-at
+                                                                                          10000)}
+                                                           (= source :soul)
+                                                           (assoc "running_position"
+                                                             42 "running_created_at"
+                                                             created-at)))
+                         client/gateway-list-turns (constantly (if (= source :turn)
+                                                                 [{"turn_id" "turn-42"
+                                                                   "status" "running"
+                                                                   "position" 42
+                                                                   "created_at" created-at}]
+                                                                 []))
+                         chat/history-page (fn [& _]
+                                             {:messages []})
+                         client/worker-future (fn [& _])
+                         client/cancellation-set-future! (fn [& _])]
+
+             (let [resumed (chat/resume-session sid)]
+               (reset! state/app-db {:session resumed :active-tab-id sid :render-version 0})
+               (state/dispatch [:attach-running-turn nil resumed])
+               (is (= [42 42] (mapv :turn-position (:messages @state/app-db))))
+               (is (= [(java.util.Date. created-at) (java.util.Date. created-at)]
+                      (mapv :timestamp (:messages @state/app-db)))))))
+         (finally (reset! state/app-db before)))))
+
 (deftest fork-hover-matches-copy-and-only-highlights-the-target-turn
   (let [original @theme/active-theme-id]
     (try (doseq [id (keys shared/built-in-themes)]

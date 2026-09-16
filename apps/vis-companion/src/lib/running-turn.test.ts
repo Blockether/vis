@@ -193,6 +193,62 @@ describe('Activity ownership inside a running turn', () => {
   });
 });
 
+describe('canonical turn header metadata', () => {
+  const createdAt = 1_789_545_327_000;
+
+  it('learns metadata from a progress frame after the durable turn is allocated', () => {
+    const updated = reduceRunningTurnEvent(
+      runningTurn,
+      event({
+        type: 'turn.progress',
+        turn_id: runningTurn.id,
+        position: 42,
+        created_at: createdAt,
+        progress: 'thinking',
+        iteration: 7,
+      }),
+    );
+    expect(updated).toMatchObject({
+      position: 42,
+      createdAt,
+      startedAt: runningTurn.startedAt,
+      progress: { kind: 'thinking', iteration: 7 },
+    });
+    expect(reduceRunningTurnEvent(updated, reasoning('working'))).toMatchObject({
+      position: 42,
+      createdAt,
+    });
+  });
+
+  it('does not take metadata from a different turn', () => {
+    const updated = reduceRunningTurnEvent(
+      runningTurn,
+      event({
+        type: 'turn.progress',
+        turn_id: 'other-turn',
+        position: 99,
+        created_at: createdAt,
+      }),
+    );
+    expect(updated?.position).toBeUndefined();
+    expect(updated?.createdAt).toBeUndefined();
+  });
+
+  it('uses a known start-frame position without replacing the device elapsed clock', () => {
+    const updated = reduceRunningTurnEvent(
+      runningTurn,
+      event({
+        type: 'turn.started',
+        turn_id: runningTurn.id,
+        position: 42,
+        created_at: createdAt,
+        started_at: createdAt,
+      }),
+    );
+    expect(updated).toMatchObject({ position: 42, createdAt, startedAt: runningTurn.startedAt });
+  });
+});
+
 // Regression, reported from a phone: "when a new turn starts there is sometimes a
 // flicker, as if the status went from sent to accepted by the gateway". The
 // elapsed line under "Vis" counts `Date.now() - startedAt` on the DEVICE, and

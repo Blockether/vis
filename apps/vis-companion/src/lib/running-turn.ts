@@ -32,6 +32,9 @@ export interface TurnProgress {
 
 export interface RunningTurn {
   id?: string;
+  position?: number;
+  /** Canonical wall-clock timestamp, distinct from the device's elapsed clock. */
+  createdAt?: number;
   request: string;
   requestKind?: RequestKind;
   council?: CouncilRequest;
@@ -155,6 +158,8 @@ export function reduceRunningTurnEvent(
     const own = turn && (!turn.id || turn.id === startedId) ? turn : null;
     return {
       id: startedId,
+      position: typeof event.position === 'number' ? event.position : own?.position,
+      createdAt: typeof event.created_at === 'number' ? event.created_at : own?.createdAt,
       request: eventString(event, 'request'),
       requestKind: event.request_kind,
       council: event.council,
@@ -179,6 +184,15 @@ export function reduceRunningTurnEvent(
     };
   }
   if (!turn) return turn;
+  // The gateway allocates the durable row after turn.started. Later frames carry
+  // its canonical identity without resetting the trace or the device's clock.
+  if (turn.id && event.turn_id === turn.id) {
+    const position = typeof event.position === 'number' ? event.position : turn.position;
+    const createdAt = typeof event.created_at === 'number' ? event.created_at : turn.createdAt;
+    if (position !== turn.position || createdAt !== turn.createdAt) {
+      turn = { ...turn, position, createdAt };
+    }
+  }
   // A settled bubble never re-animates on a trailing or replayed body frame.
   if (turn.status !== 'running') return turn;
 

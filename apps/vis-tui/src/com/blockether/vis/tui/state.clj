@@ -461,12 +461,16 @@
    newer turn which may already be active in the same tab."
   [answer trace wall-ms
    {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count
-           duration-ms tokens cost confidence session-turn-id status client-turn-id slash]}]
+           duration-ms tokens cost confidence session-turn-id turn-position timestamp status
+           client-turn-id slash]}]
   (->
-    (chat/assistant-message (vec (or answer [])))
+    (chat/assistant-message (vec (or answer [])) (or timestamp (java.util.Date.)))
     (cond->
       session-turn-id
       (assoc :session-turn-id session-turn-id)
+
+      (pos-int? turn-position)
+      (assoc :turn-position turn-position)
 
       (seq trace)
       (assoc :traces (chat/drop-answered-trace-prose trace answer))
@@ -532,7 +536,7 @@
 
         carry-over
         (fn [old resp]
-          (cond-> resp
+          (cond-> (merge resp (select-keys old [:turn-position :timestamp :session-turn-id]))
             (and (not (contains? resp :slash?)) (:slash? old))
             (assoc :slash? true)
 
@@ -4319,6 +4323,43 @@
                                                       q)
                                                 (conj q staged)))))))))))
 
+(defn- stamp-turn-messages
+  "Keep canonical turn metadata on its user/assistant pair, never a newer submission."
+  [workspace {:keys [turn-id turn-position created-at-ms]}]
+  (let [messages
+        (vec (:messages workspace))
+
+        pending-index
+        (when (= turn-id (:gateway-turn-id workspace))
+          (pending-assistant-index messages (:live-turn-client-id workspace)))
+
+        client-id
+        (when pending-index (:client-turn-id (nth messages pending-index)))
+
+        metadata
+        (cond-> {:session-turn-id turn-id}
+          (pos-int? turn-position)
+          (assoc :turn-position turn-position)
+
+          (nat-int? created-at-ms)
+          (assoc :timestamp (java.util.Date. (long created-at-ms))))]
+
+    (if (and turn-id (seq messages))
+      (assoc workspace
+        :messages (mapv (fn [message]
+                          (if (or (= turn-id (:session-turn-id message))
+                                  (and client-id (= client-id (:client-turn-id message))))
+                            (merge message metadata)
+                            message))
+                        messages))
+      workspace)))
+
+(reg-event-db
+  :sync-turn-metadata
+  (fn [db [_ workspace-id metadata]]
+    (let [workspace-id (or workspace-id (current-tab-id db))]
+      (if workspace-id (update-tab db workspace-id #(stamp-turn-messages % metadata)) db))))
+
 (reg-event-fx
   :sync-turn-clock
   ;; The gateway's `turn.started` carries the canonical run clock, turn id,
@@ -4383,7 +4424,10 @@
                     (assoc :turn-start-ms local-started-at-ms)
 
                     (and matching-live-start? (:loading? w) turn-id (nil? (:gateway-turn-id w)))
-                    (assoc :gateway-turn-id turn-id))))]
+                    (assoc :gateway-turn-id turn-id)
+
+                    (and matching-live-start? (:loading? w) turn-id)
+                    (stamp-turn-messages {:turn-id turn-id}))))]
 
           (cond-> {:db db'}
             (and awaiting-cancel? sid)
@@ -4528,12 +4572,13 @@
                                messages))
 
           options
-          {:client-turn-id (:client-id terminal)
-           :status (terminal-status (:status terminal))
-           :request-kind (:request-kind terminal)
-           :subagent (:subagent terminal)
-           :terminal-sync? true
-           :terminal-trace (:trace terminal)}]
+          (merge (select-keys (get messages idx) [:turn-position :timestamp :session-turn-id])
+                 {:client-turn-id (:client-id terminal)
+                  :status (terminal-status (:status terminal))
+                  :request-kind (:request-kind terminal)
+                  :subagent (:subagent terminal)
+                  :terminal-sync? true
+                  :terminal-trace (:trace terminal)})]
 
       (cond (nil? idx) {:db db}
             ;; A resend started during the grace period. Settle only the old bubble;
@@ -5034,7 +5079,10 @@
                               :turn-start-ms (or (:running-started-at session)
                                                  (System/currentTimeMillis))
                               :input-history-index nil
-                              :input-history-draft nil))))
+                              :input-history-draft nil)
+                       (stamp-turn-messages {:turn-id tid
+                                             :turn-position (:running-position session)
+                                             :created-at-ms (:running-created-at session)}))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 
 (reg-event-fx :sibling-turn-started
@@ -5892,6 +5940,9 @@
                                    (try (dispatch [:sync-turn-clock workspace-id chunk])
                                         (catch Throwable _ nil))
 
+                                   :turn-metadata
+                                   (dispatch [:sync-turn-metadata workspace-id chunk])
+
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))
                                                   (or (:tasks chunk) (:facts chunk)))
@@ -6043,6 +6094,9 @@
                                    :turn-start
                                    (try (dispatch [:sync-turn-clock workspace-id chunk])
                                         (catch Throwable _ nil))
+
+                                   :turn-metadata
+                                   (dispatch [:sync-turn-metadata workspace-id chunk])
 
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))

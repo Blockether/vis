@@ -7,6 +7,64 @@ import activityFixture from '../../../../packages/vis-contract/resources/vis-con
 import { reduceRunningTurnEvent } from '../lib/running-turn';
 import type { SseEvent } from '../lib/types';
 
+describe('turn header metadata', () => {
+  it.each([false, true])('keeps the canonical position and datetime when live=%s', async (live) => {
+    const createdAt = new Date(2026, 8, 16, 14, 35, 27).getTime();
+    renderSessionScreen({
+      session: sessionFixture({
+        live,
+        current_turn_id: live ? 'turn-42' : null,
+        running_started_at: live ? createdAt : undefined,
+      }),
+      client: {
+        transcript: async () => [
+          {
+            turn_id: 'turn-42',
+            position: 42,
+            created_at: createdAt,
+            request: 'A paginated request',
+            status: live ? 'running' : 'completed',
+            iterations: [],
+          },
+        ],
+      },
+    });
+    await screen.findByText('A paginated request');
+    await waitFor(() => {
+      const headers = [...document.querySelectorAll('article > div:first-child')];
+      const stamps = headers.filter((header) => header.textContent?.includes('T42'));
+      expect(stamps).toHaveLength(2);
+      for (const header of stamps) {
+        expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+      }
+    });
+  });
+
+  it('uses canonical live metadata before the transcript row is available', async () => {
+    const createdAt = new Date(2026, 8, 16, 14, 35, 27).getTime();
+    renderSessionScreen({
+      session: sessionFixture({
+        live: true,
+        current_turn_id: 'turn-42',
+        running_request: 'An adopted request',
+        running_position: 42,
+        running_created_at: createdAt,
+        running_started_at: createdAt + 10_000,
+      }),
+      client: { transcript: async () => [], turnTrace: async () => [] },
+    });
+    await screen.findByText('An adopted request');
+    await waitFor(() => {
+      const headers = [...document.querySelectorAll('article > div:first-child')];
+      const stamps = headers.filter((header) => header.textContent?.includes('T42'));
+      expect(stamps).toHaveLength(2);
+      for (const header of stamps) {
+        expect(header).toHaveTextContent(`T42 ${new Date(createdAt).toLocaleString()}`);
+      }
+    });
+  });
+});
+
 describe('Council transcript requests', () => {
   it.each([false, true])('keeps persisted provenance when live=%s', async (live) => {
     const council = {

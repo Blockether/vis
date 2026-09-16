@@ -1838,13 +1838,13 @@
 
    Layout (no outer border, no horizontal rule under the label,
    both roles left-anchored):
-     [role-label]                  [Fork at this turn] | [timestamp]
+     [role-label]           [T<N>] | [Fork at this turn] | [date and time]
      [content lines, each with role bg fill]
      [meta line, dimmed, when present]
      [blank gap]
 
-   Persisted assistant turns offer a fork action before the optional timestamp.
-   Narrow headers shorten it to `Fork`; headers too small for both keep the date.
+   Persisted assistant turns offer a fork action between the turn number and date.
+   Narrow headers shorten it to `Fork`; headers too small for both keep the metadata.
    Pointer regions carry the persisted turn and source session, never the client id.
 
    User content rows get a subtle blue-gray background block
@@ -2004,6 +2004,9 @@
         zone-fg
         (if error? fg-color t/answer-fg)
 
+        turn-str
+        (when (pos-int? (:turn-position message)) (str "T" (:turn-position message)))
+
         time-str
         (vis/format-date timestamp)
 
@@ -2047,8 +2050,16 @@
           separator-w
           (if time-str 3 0)
 
+          turn-w
+          (if turn-str (p/display-width turn-str) 0)
+
           action-space
-          (- (long bubble-w) time-w separator-w (min 8 (p/display-width label)) 1)
+          (- (long bubble-w)
+             time-w
+             separator-w
+             (if turn-str (+ turn-w 3) 0)
+             (min 8 (p/display-width label))
+             1)
 
           fork-label
           (when forkable?
@@ -2061,12 +2072,18 @@
           fork-x
           (- time-x (if fork-label (+ fork-w separator-w) 0))
 
+          turn-x
+          (- (if fork-label fork-x time-x) turn-w (if (and turn-str (or fork-label time-str)) 3 0))
+
           label-w
-          (max 0 (- (if fork-label fork-x time-x) (long bx) (if (or fork-label time-str) 1 0)))]
+          (max 0 (- turn-x (long bx) (if (or turn-str fork-label time-str) 1 0)))]
 
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
       (p/styled g [p/BOLD] (p/put-str! g bx label-row (p/ellipsize label label-w)))
+      (when turn-str
+        (p/set-colors! g t/dialog-hint t/terminal-bg)
+        (p/put-str! g turn-x label-row (str turn-str (when (or fork-label time-str) " | "))))
       (when time-str
         (p/set-colors! g t/dialog-hint t/terminal-bg)
         (p/put-str! g time-x label-row time-str))

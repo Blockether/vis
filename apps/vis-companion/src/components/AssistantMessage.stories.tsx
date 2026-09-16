@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, within } from 'storybook/test';
-import { AssistantMessage } from './ChatContent';
+import { expect, fn, within } from 'storybook/test';
+import { AssistantMessage, UserMessage } from './ChatContent';
 
 const response = `## Walidacja strategii
 
@@ -101,5 +101,43 @@ export const WideAnswerTable: Story = {
         },
       ],
     },
+  },
+};
+
+export const TurnHeaders: Story = {
+  render: () => (
+    <div className="space-y-6">
+      {[280, 720].map((width) => (
+        <section key={width} style={{ width, maxWidth: '100%' }}>
+          <UserMessage position={42} createdAt={1_789_545_327_000}>
+            A request
+          </UserMessage>
+          <AssistantMessage
+            turn={{
+              turn_id: 'turn-42',
+              position: 42,
+              created_at: 1_789_545_327_000,
+              status: 'completed',
+            }}
+            onFork={fn()}
+          />
+        </section>
+      ))}
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const headers = canvasElement.querySelectorAll('article > div:first-child');
+    expect(headers).toHaveLength(4);
+    for (const header of headers) {
+      const time = header.querySelector('time')!;
+      expect(header).toHaveTextContent(`T42 ${new Date(1_789_545_327_000).toLocaleString()}`);
+      expect(time).toBeVisible();
+      const bounds = header.getBoundingClientRect();
+      const stamp = time.parentElement!.getBoundingClientRect();
+      expect(stamp.left).toBeGreaterThanOrEqual(bounds.left);
+      expect(stamp.right).toBeLessThanOrEqual(bounds.right + 1);
+      expect(stamp.bottom).toBeLessThanOrEqual(bounds.bottom + 1);
+      expect(getComputedStyle(time.parentElement!).opacity).toBe('1');
+    }
   },
 };

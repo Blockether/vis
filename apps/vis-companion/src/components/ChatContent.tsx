@@ -3431,6 +3431,20 @@ function useMeasuredPaintSkip(live: boolean) {
   return ref;
 }
 
+function TurnStamp({ position, createdAt }: { position?: number; createdAt?: number }) {
+  const date = createdAt == null ? null : new Date(createdAt);
+  const hasDate = date != null && Number.isFinite(date.getTime());
+  const hasPosition = position != null && Number.isInteger(position) && position > 0;
+  if (!hasPosition && !hasDate) return null;
+  return (
+    <span className="ml-auto font-normal text-dialog-hint tabular-nums">
+      {hasPosition && `T${position}`}
+      {hasPosition && hasDate && ' '}
+      {hasDate && <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>}
+    </span>
+  );
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   agentName = 'Vis',
@@ -3515,18 +3529,21 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-2 flex min-h-11 items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
+        className={`mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
         <span>{agentName}</span>
-        {onFork && (
-          // Reserve the action's space; reveal it on answer hover or keyboard focus.
-          <span className="mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
-            <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
-              <ForkIcon className="size-3" aria-hidden />
-              {isForking ? 'Forking...' : 'Fork from here'}
-            </MetaButton>
-          </span>
-        )}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          {onFork && (
+            // Only the action fades; the turn number and datetime stay visible.
+            <span className="mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+              <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
+                <ForkIcon className="size-3" aria-hidden />
+                {isForking ? 'Forking...' : 'Fork from here'}
+              </MetaButton>
+            </span>
+          )}
+          <TurnStamp position={turn.position} createdAt={turn.created_at ?? startedAt} />
+        </div>
       </div>
       <div className="min-w-0 [&>:first-child]:mt-0">
         <IterationTrace
@@ -3712,11 +3729,15 @@ export const UserMessage = memo(function UserMessage({
   attachments,
   requestKind = 'user',
   council,
+  position,
+  createdAt,
 }: {
   children: string;
   attachments?: GatewayAttachment[];
   requestKind?: RequestKind;
   council?: CouncilRequest;
+  position?: number;
+  createdAt?: number;
 }) {
   const parts = parseUserMessage(children);
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -3758,13 +3779,14 @@ export const UserMessage = memo(function UserMessage({
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
     <article className="mt-4 w-full">
-      <div className="mb-2 flex min-h-11 items-center font-mono text-meta font-bold text-you-role mouse:min-h-7">
+      <div className="mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold text-you-role mouse:min-h-7">
         <span>
           {requestKind === 'council' ? 'Council' : 'You'}
           {requestKind === 'council' &&
             council &&
             ` · ${councilKindLabel[council.kind]} · Thread #${council.thread_id}`}
         </span>
+        <TurnStamp position={position} createdAt={createdAt} />
       </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}

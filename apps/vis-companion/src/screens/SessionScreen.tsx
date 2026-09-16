@@ -1631,6 +1631,8 @@ export function SessionScreen({
             : Date.now();
       const adopted: RunningTurn = {
         id: tid,
+        position: persisted?.position ?? row?.running_position,
+        createdAt: persisted?.created_at ?? row?.running_created_at ?? row?.running_started_at,
         request: row?.running_request ?? persisted?.request ?? '',
         requestKind: row?.running_request_kind ?? persisted?.request_kind,
         council: row?.running_council ?? persisted?.council,
@@ -4022,6 +4024,8 @@ export function SessionScreen({
           <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id}>
             {(request || (turn.attachments?.length ?? 0) > 0) && (
               <UserMessage
+                position={turn.position}
+                createdAt={turn.created_at}
                 requestKind={turn.request_kind}
                 council={turn.council}
                 attachments={turn.attachments}
@@ -4088,6 +4092,8 @@ export function SessionScreen({
       <div className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`} data-live="true">
         {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
           <UserMessage
+            position={runningTurn.position}
+            createdAt={runningTurn.createdAt ?? runningTurn.startedAt}
             requestKind={runningTurn.requestKind}
             council={runningTurn.council}
             attachments={liveAttachments}
@@ -4099,6 +4105,8 @@ export function SessionScreen({
           agentName={session?.agent_name}
           turn={{
             turn_id: runningTurn.id ?? 'live',
+            position: runningTurn.position,
+            created_at: runningTurn.createdAt ?? runningTurn.startedAt,
             request: runningTurn.request,
             status: runningTurn.status,
             iterations: runningTurn.iterations,

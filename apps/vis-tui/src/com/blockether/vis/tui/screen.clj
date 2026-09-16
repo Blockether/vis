@@ -5131,6 +5131,9 @@
                   (do (state/dispatch [:sync-turn-clock tab-id chunk])
                       (state/dispatch [:sibling-turn-started tab-id chunk]))
 
+                  :turn-metadata
+                  (state/dispatch [:sync-turn-metadata tab-id chunk])
+
                   :turn-terminal
                   (state/dispatch [:sync-turn-terminal tab-id chunk])
 
