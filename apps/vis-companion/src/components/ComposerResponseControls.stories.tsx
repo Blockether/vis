@@ -43,6 +43,8 @@ export const AvailableOptions: Story = {
     for (const [index, button] of buttons.entries()) {
       const box = button.getBoundingClientRect();
       await expect(box.height).toBe(pointer ? 28 : 32);
+      await expect(getComputedStyle(button).fontSize).toBe('10px');
+      if (!pointer) await expect(getComputedStyle(button).letterSpacing).toBe('normal');
       if (index > 0) {
         await expect(
           box.left - buttons[index - 1].getBoundingClientRect().right,

@@ -37,6 +37,14 @@ describe('composer response controls', () => {
       />,
     );
 
+    // Keep the iOS footer visually compact without shrinking its touch targets.
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).toHaveClass('text-meta', 'tracking-normal', 'min-h-8');
+    }
+    expect(
+      screen.getByRole('button', { name: 'Change provider and model' }).parentElement,
+    ).toHaveClass('gap-1', 'pt-2');
+
     fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
     fireEvent.click(
       screen.getByRole('button', {

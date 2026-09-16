@@ -5,6 +5,11 @@ import userEvent from '@testing-library/user-event';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
+it('keeps composer controls adjacent with room for separate 44px touch targets', () => {
+  renderSessionScreen();
+  expect(screen.getByLabelText('Message Vis').parentElement).toHaveClass('gap-3');
+});
+
 // jsdom lays nothing out, so the composer's geometry is handed over here: the
 // shipped box is `h-8 py-2 text-ui` — 32px around one 16px line between 8px
 // paddings — and it may grow to `max-h-20`, 80px. A character is ~6px wide at

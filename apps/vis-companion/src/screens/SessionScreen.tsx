@@ -4615,7 +4615,7 @@ export function SessionScreen({
                 </div>
               )}
 
-              <div className="flex items-end gap-5 p-1.5 mouse:gap-2 mouse:p-1">
+              <div className="flex items-end gap-3 p-1.5 mouse:gap-2 mouse:p-1">
                 <ComposerAttachmentPicker
                   accept={(
                     capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']

@@ -35,7 +35,7 @@ export function ComposerResponseControls({
   controls: ComposerResponseControlsModel;
 }) {
   return (
-    <div className="flex w-full items-center gap-2.5 pt-3.5 mouse:pt-2">
+    <div className="flex w-full items-center gap-1 pt-2 mouse:gap-2.5">
       <MetaButton
         isPicker
         className="min-w-0 shrink"
