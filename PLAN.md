@@ -1049,8 +1049,15 @@ new binary into the running gateway.
     verify the current versioned install layout and execute the guide's project
     workflow without counting its separate shared-package example. Together with
     the four goal cases, seven affected native checks pass; no production code changed.
-15. Concurrent verified work is advancing main. No Vis release tag exists; final
-    source CI, complete artifact publication and tester delivery remain pending.
+15. Deterministic datetime gallery fixtures and disposal guards for terminal transcript
+    polling pass their regressions and all 3256 Companion cases (two platform skips).
+    Late transcript and metadata results cannot replace a newly opened session.
+16. Source CI exposed duplicate canonical-row reads during archive recovery after turn
+    header hydration was added. The shared lazy read passes 13 focused cases, including
+    missing, running and failed reads, and all 611 gateway cases. Formatting passes;
+    lint and reflection findings match the pre-edit baseline.
+17. Verified schema and Activity presentation changes are on main. No Vis release tag
+    exists; final source CI, complete artifact publication and tester delivery remain pending.
 
 # Shared FFF lifecycle and retention experiments
 

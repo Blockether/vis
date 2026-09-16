@@ -220,27 +220,29 @@
   (get-in @registry [(sid-key sid) :turns tid]))
 
 (defn- read-turn-record
-  [turn]
-  (if (or (::archive turn) (::archive-error turn))
-    (merge (try (if-let [archive (::archive turn)]
-                  (turn-archive/read-turn archive)
-                  (throw (java.io.IOException. "Archive write failed")))
-                (catch Exception _
-                  (or (try (when-let [row (persistance/db-read-session-turn (lp/db-info)
-                                                                            (:session_id turn)
-                                                                            (:turn_id turn))]
-                             (when (not= :running (:status row))
-                               {:request (:user-request row)
-                                :content (:content row)
-                                :error (:error row)
-                                :council (:council row)}))
-                           (catch Exception _ nil))
-                      {:error "Terminal turn history is unavailable"
-                       :content [(content/error "history_unavailable"
-                                                "Terminal turn history is unavailable"
-                                                true)]})))
-           (dissoc turn ::archive ::run-key ::archive-error))
-    turn))
+  ([turn]
+   (read-turn-record
+     turn
+     (delay (persistance/db-read-session-turn (lp/db-info) (:session_id turn) (:turn_id turn)))))
+  ([turn canonical-row]
+   (if (or (::archive turn) (::archive-error turn))
+     (merge (try (if-let [archive (::archive turn)]
+                   (turn-archive/read-turn archive)
+                   (throw (java.io.IOException. "Archive write failed")))
+                 (catch Exception _
+                   (or (try (when-let [row @canonical-row]
+                              (when (not= :running (:status row))
+                                {:request (:user-request row)
+                                 :content (:content row)
+                                 :error (:error row)
+                                 :council (:council row)}))
+                            (catch Exception _ nil))
+                       {:error "Terminal turn history is unavailable"
+                        :content [(content/error "history_unavailable"
+                                                 "Terminal turn history is unavailable"
+                                                 true)]})))
+            (dissoc turn ::archive ::run-key ::archive-error))
+     turn)))
 
 (defn- council-state
   [entry]
@@ -318,26 +320,28 @@
 (defn- turn-metadata
   "Read the engine's canonical header facts once its durable turn exists.
    The initial turn.started precedes allocation; later events fill the gap."
-  [sid tid]
-  (when tid
-    (let [turn (turn-record sid tid)]
-      (if (and (:position turn) (:created_at turn))
-        (select-keys turn [:position :created_at])
-        (try (when-let [row (persistance/db-read-session-turn (lp/db-info) sid tid)]
-               (let [metadata (cond-> {}
-                                (pos-int? (:position row))
-                                (assoc :position (:position row))
+  ([sid tid]
+   (turn-metadata sid tid (delay (persistance/db-read-session-turn (lp/db-info) sid tid))))
+  ([sid tid canonical-row]
+   (when tid
+     (let [turn (turn-record sid tid)]
+       (if (and (:position turn) (:created_at turn))
+         (select-keys turn [:position :created_at])
+         (try (when-let [row @canonical-row]
+                (let [metadata (cond-> {}
+                                 (pos-int? (:position row))
+                                 (assoc :position (:position row))
 
-                                (instance? java.util.Date (:created-at row))
-                                (assoc :created_at (.getTime ^java.util.Date (:created-at row))))]
-                 (when turn
-                   (update-existing-session! sid
-                                             (fn [entry]
-                                               (if (get-in entry [:turns tid])
-                                                 (update-in entry [:turns tid] merge metadata)
-                                                 entry))))
-                 metadata))
-             (catch Exception _ nil))))))
+                                 (instance? java.util.Date (:created-at row))
+                                 (assoc :created_at (.getTime ^java.util.Date (:created-at row))))]
+                  (when turn
+                    (update-existing-session! sid
+                                              (fn [entry]
+                                                (if (get-in entry [:turns tid])
+                                                  (update-in entry [:turns tid] merge metadata)
+                                                  entry))))
+                  metadata))
+              (catch Exception _ nil)))))))
 
 (defn- archive-terminal-turn!
   "Persist the gateway-only projection, then release execution inputs and hooks.
@@ -1994,8 +1998,13 @@
 (defn- wire-turn
   [turn]
   (when turn
-    (let [turn
-          (merge (read-turn-record turn) (turn-metadata (:session_id turn) (:turn_id turn)))
+    (let [;; Archive recovery and header hydration must share the same database read.
+          canonical-row
+          (delay (persistance/db-read-session-turn (lp/db-info) (:session_id turn) (:turn_id turn)))
+
+          turn
+          (merge (read-turn-record turn canonical-row)
+                 (turn-metadata (:session_id turn) (:turn_id turn) canonical-row))
 
           turn-id
           (str (or (:turn_id turn) (:id turn)))

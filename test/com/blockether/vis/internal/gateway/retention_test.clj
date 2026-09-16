@@ -141,38 +141,68 @@
              (finally (#'state/drop-session! sid)))))))
 
 (deftest terminal-archive-falls-back-to-one-canonical-turn-test
-  (let [sid
-        (str (random-uuid))
+  (doseq [header [{} {:position 42 :created-at (java.util.Date. 1234)}]]
+    (let [sid (str (random-uuid))
+          tid (str (random-uuid))
+          registry (atom {sid {:turn-order [tid]
+                               :turns {tid {:turn_id tid
+                                            :session_id sid
+                                            :status "completed"
+                                            ::state/archive-error true}}}})
+          calls (atom [])]
 
-        tid
-        (str (random-uuid))
+      (with-redefs-fn {#'state/registry registry
+                       #'lp/db-info (constantly nil)
+                       #'persistence/db-read-session-turn
+                       (fn [_ s t]
+                         (swap! calls conj [s t])
+                         (merge {:status :done
+                                 :user-request "canonical request"
+                                 :content [{"type" "prose" "markdown" "canonical answer"}]}
+                                header))}
+        (fn []
+          (let [turn (state/get-turn sid tid)]
+            (is (= "canonical request" (get turn "request")))
+            (is (= (:position header) (get turn "position")))
+            (is (= (some-> ^java.util.Date (:created-at header)
+                           .getTime)
+                   (get turn "created_at"))))
+          (is (= [[sid tid]] @calls)
+              "Archive recovery and header hydration share one canonical row.")
+          (with-redefs [persistence/db-read-session-turn (fn [& _]
+                                                           (throw (java.io.IOException.)))]
+            (is (= "completed" (get (first (state/list-turns sid)) "status")))
+            (is (= "Terminal turn history is unavailable"
+                   (get (first (state/list-turns sid)) "error")))))))))
 
-        registry
-        (atom {sid {:turn-order [tid]
-                    :turns {tid {:turn_id tid
-                                 :session_id sid
-                                 :status "completed"
-                                 ::state/archive-error true}}}})
+(deftest unavailable-terminal-archive-reads-canonical-turn-once-test
+  (doseq [failure [:missing :running :exception]]
+    (testing (name failure)
+      (let [sid (str (random-uuid))
+            tid (str (random-uuid))
+            registry (atom {sid {:turns {tid {:turn_id tid
+                                              :session_id sid
+                                              :status "completed"
+                                              ::state/archive-error true}}}})
+            calls (atom [])]
 
-        calls
-        (atom [])]
+        (with-redefs-fn {#'state/registry registry
+                         #'lp/db-info (constantly nil)
+                         #'persistence/db-read-session-turn
+                         (fn [_ s t]
+                           (swap! calls conj [s t])
+                           (case failure
+                             :missing
+                             nil
 
-    (with-redefs-fn {#'state/registry registry
-                     #'lp/db-info (constantly nil)
-                     #'persistence/db-read-session-turn
-                     (fn [_ s t]
-                       (swap! calls conj [s t])
-                       {:status :done
-                        :user-request "canonical request"
-                        :content [{"type" "prose" "markdown" "canonical answer"}]})}
-      (fn []
-        (is (= "canonical request" (get (state/get-turn sid tid) "request")))
-        (is (= [[sid tid]] @calls))
-        (with-redefs [persistence/db-read-session-turn (fn [& _]
-                                                         (throw (java.io.IOException.)))]
-          (is (= "completed" (get (first (state/list-turns sid)) "status")))
-          (is (= "Terminal turn history is unavailable"
-                 (get (first (state/list-turns sid)) "error"))))))))
+                             :running
+                             {:status :running :content [{"type" "prose" "markdown" "pending"}]}
+
+                             :exception
+                             (throw (java.io.IOException.))))}
+          (fn []
+            (is (= "Terminal turn history is unavailable" (get (state/get-turn sid tid) "error")))
+            (is (= [[sid tid]] @calls))))))))
 
 (deftest stale-archive-write-does-not-replace-new-run-test
   (let [sid

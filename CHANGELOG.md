@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Update the embedded Python runtime to 0.5.20 for Linux and macOS. Windows runtime artifacts and desktop packaging remain disabled.
 - Keep routine Activity summaries compact and retain detailed results, errors and execution timing.
+- Merge successful patches to the same file into one chronological Activity preview without changing retained history or copy output.
+- Use JSON Schema as the single source for portable data contracts across the engine and clients.
 
 ## [v0.2.3] - 2026-09-12
 
