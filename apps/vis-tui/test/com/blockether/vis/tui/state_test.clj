@@ -1398,7 +1398,13 @@
           (promise)
 
           release-gateway
-          (promise)]
+          (promise)
+
+          cancel-task
+          (atom nil)
+
+          submit-cancel
+          @#'state/gateway-cancel-io!]
 
       (with-redefs [vis/cancel!
                     (fn [token]
@@ -1410,6 +1416,10 @@
                       @release-gateway
                       {:status "cancelling"})
 
+                    state/gateway-cancel-io!
+                    (fn [f]
+                      (reset! cancel-task (submit-cancel f)))
+
                     vis/notify!
                     (fn [text & kvs]
                       (reset! notified [text kvs]))]
@@ -1420,13 +1430,20 @@
                               :cancelling? false
                               :live-turn-client-id "cid"
                               :render-version 0})
-        ;; This returns while the gateway call is deliberately blocked.
-        (state/dispatch [:cancel-turn])
-        (expect (= :token @cancelled))
-        (expect (= true (deref gateway-started 1000 :timeout)))
-        (expect (true? (:cancelling? @state/app-db)))
-        (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
-        (deliver release-gateway true)))))
+        (try
+          ;; This returns while the gateway call is deliberately blocked.
+          (state/dispatch [:cancel-turn])
+          (expect (= :token @cancelled))
+          (expect (= true (deref gateway-started 1000 :timeout)))
+          (expect (true? (:cancelling? @state/app-db)))
+          (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
+          (finally (deliver release-gateway true)
+                   ;; Release CI caught this callback notifying the NEXT test after
+                   ;; with-redefs had ended. Join the exact task; cancel I/O is not FIFO.
+                   (await-enqueue! @cancel-task)))
+        (expect (= ["Cancellation accepted. You can send again." [:level :info :ttl-ms 2500]]
+                   @notified))
+        (expect (false? (:cancelling? @state/app-db)))))))
 
 ;; Regression, issue: session e8c9dbc9-388d-43a4-8264-9dd5adec4449 - the human pressed
 ;; cancel for ten minutes and the gateway journal recorded ZERO cancel requests. With
