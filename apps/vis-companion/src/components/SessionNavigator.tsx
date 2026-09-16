@@ -87,16 +87,16 @@ export function SectionHeader({
 }) {
   const header = (
     <header
-      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-2 @md:[&>:last-child]:col-start-3' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-3' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
   );
   if (!navigation) return header;
   return (
-    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto] @md:grid-cols-[minmax(0,1fr)_auto_auto]">
+    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto]">
       {header}
-      <div className="z-20 col-span-full col-start-1 row-start-2 flex items-center justify-end bg-page px-2 @md:col-span-1 @md:col-start-2 @md:row-start-1 @md:bg-transparent @md:px-4">
+      <div className="z-20 col-start-2 row-start-1 flex items-center justify-end @md:px-4">
         {navigation}
       </div>
     </div>
@@ -371,7 +371,10 @@ export function Pager({
       onClick={() => onPage(target)}
       disabled={disabled || target < 1 || target > pageCount}
     >
-      <ChevronIcon back={isBack} className="mx-auto size-3" />
+      <ChevronIcon
+        back={isBack}
+        className={`mx-auto size-3 ${isBack ? 'translate-x-1' : '-translate-x-1'} mouse:translate-x-0`}
+      />
     </IconButton>
   );
   return (

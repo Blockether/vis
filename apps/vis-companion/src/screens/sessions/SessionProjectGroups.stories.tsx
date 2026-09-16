@@ -164,14 +164,10 @@ export const AcceptNewerSession: Story = {
         matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 48 : 52,
       );
       const pagerBounds = pager.getBoundingClientRect();
-      if (pendingBounds.width >= 448) {
-        await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
-        await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
-        const create = header.querySelector('button:last-child')!;
-        await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
-      } else {
-        await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
-      }
+      await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
+      await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
+      const create = header.querySelector('button:last-child')!;
+      await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
       await expect(pagerBounds.right).toBeLessThanOrEqual(pendingBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();
@@ -266,11 +262,10 @@ export const ScrolledNarrowPane: Story = {
     await expect(pane.scrollTop).toBe(160);
     await expect(header.getBoundingClientRect().top).toBe(pane.getBoundingClientRect().top);
     await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      header.getBoundingClientRect().bottom,
+      header.getBoundingClientRect().top,
     );
-    // The pinned second row needs its own paper, not the moving session text behind it.
-    await expect(getComputedStyle(pager.parentElement!).backgroundColor).toBe(
-      getComputedStyle(pane).backgroundColor,
+    await expect(pager.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      header.getBoundingClientRect().bottom,
     );
     await expect(getComputedStyle(header).position).not.toBe('sticky');
     for (const button of within(pager).getAllByRole('button')) {
