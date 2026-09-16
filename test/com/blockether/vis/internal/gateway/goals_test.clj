@@ -40,7 +40,7 @@
           (is (= goal (:goal (first (#'introspection/foundation-sessions-data env)))))
           (is (= goal (get-in (#'introspection/foundation-inspect-data env sid) [:session :goal]))))
         (with-open [out (ByteArrayOutputStream.)]
-          (#'server/sse-ready! out (str sid) 0 [])
+          (#'server/sse-ready! out (str sid) 0 [] (state/soul sid))
           (let [frame (->> (str/split-lines (.toString out "UTF-8"))
                            (some #(when (str/starts-with? % "data:") (subs % 5)))
                            json/read-json)]

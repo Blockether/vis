@@ -103,7 +103,7 @@
             (is (= "Grace" (get (state/soul sid) "agent_name")))
             (is (= "Grace" (get (state/session-workspace-info sid) "agent_name")))
             (let [out (java.io.ByteArrayOutputStream.)]
-              (#'server/sse-ready! out sid 0 [])
+              (#'server/sse-ready! out sid 0 [] (state/soul sid))
               (is (str/includes? (.toString out "UTF-8") "\"agent_name\":\"Grace\"")))
             (is (str/starts-with? (prompt/build-system-prompt {:workspace-root (.getPath project)})
                                   "You are Grace."))
