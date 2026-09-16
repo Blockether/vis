@@ -15,9 +15,9 @@
    rail, an upload, the gateway's own intake — calls [[request!]] the moment the file
    arrives and paints [[outcome]] while the human is still typing. By the time the
    turn is sent the words are normally already in hand; a turn that finds the work
-   still running JOINS it under a deadline instead of starting its own. Nothing is
-   ever transcribed twice, and nobody waits for a recording that was attached a
-   minute ago.
+   still running JOINS it before the model is asked. A long recording must not
+   become a request that silently omits the user's words. Waiting callers may
+   cancel without abandoning the shared transcription worker.
 
    Four properties keep it affordable and honest:
 
@@ -74,17 +74,6 @@
    it does not have. A row that carries `:transcription` carries no status at all."
   #{PENDING UNAVAILABLE SILENT})
 
-(def ^:private ^:const MAX_STARTED_PER_PASS
-  "How many recordings ONE pass may put on the worker. The registry makes the steady
-   state free, so this only bounds a message that arrives carrying a pile of memos."
-  4)
-
-(def ^:private ^:const JOIN_DEADLINE_MS
-  "Wall-clock cap on WAITING for a transcript inside a turn. The work itself is not
-   abandoned — it keeps running on the worker and a later pass collects it — but the
-   human's request never parks behind an hour of speech."
-  120000)
-
 (def ^:private ^:const MAX_REGISTRY_ENTRIES 64)
 
 (defn enabled? "Whether attachment transcription may run at all." [] (toggles/enabled? TOGGLE_ID))
@@ -126,10 +115,9 @@
   (reset! work* {}))
 
 (defn- content-digest
-  "Registry key: the payload's own bytes plus the container they ride in."
-  [{:keys [base64 media-type path]}]
-  (let [digest (util/sha256 (util/utf8
-                              (str media-type "|" (or (not-empty (str base64)) (str path)))))]
+  "Registry key: the payload, independent of an intake correction to its MIME type."
+  [{:keys [base64 path]}]
+  (let [digest (util/sha256 (util/utf8 (or (not-empty (str base64)) (str path))))]
     (.encodeToString (Base64/getUrlEncoder) digest)))
 
 (defn- ascii-at?
@@ -349,13 +337,9 @@
         (or (:outcome (get @work* k)) (do (start! k attachment) (outcome attachment)))))))
 
 (defn transcribe-attachment
-  "This recording's OUTCOME, waiting up to [[JOIN_DEADLINE_MS]] for words.
-
-   Work already running is JOINED, never restarted; a recording nobody has asked
-   about is started here. At the deadline the answer is `pending` and the worker
-   keeps going, so the turn walks away from an hour of speech without throwing it
-   away."
-  [attachment]
+  "Wait for this recording's outcome. A caller may stop waiting through `:cancelled?`;
+   the shared worker continues so the result can still be stored and displayed."
+  [attachment & [{:keys [cancelled?]}]]
   (let [gated (gate attachment)]
     (if (not= ::ok gated)
       ;; A refusal this side of the engine is exactly the silence turn 35 could not
@@ -366,14 +350,15 @@
             {:keys [outcome result]} (start! k attachment)]
 
         (or outcome
-            (let [answer (deref result JOIN_DEADLINE_MS ::timeout)]
-              (if (= ::timeout answer)
-                (do (tel/log! {:level :warn
-                               :id ::transcribe-deadline
-                               :data {:filename (:filename attachment) :ms JOIN_DEADLINE_MS}
-                               :msg "left an attached recording transcribing past the turn"})
-                    {:status PENDING :reason :deadline})
-                answer)))))))
+            (if-not cancelled?
+              @result
+              (loop []
+
+                (when (cancelled?)
+                  (throw (InterruptedException.
+                           "Waiting for recording transcription was cancelled")))
+                (let [answer (deref result 250 ::waiting)]
+                  (if (= ::waiting answer) (recur) answer)))))))))
 
 (defn- walk-recordings
   "`attachments` with `answer-for` applied to every RECORDING that has no words yet,
@@ -385,16 +370,17 @@
     (if (empty? rows)
       rows
       (mapv (fn [{:keys [media-type transcription] :as attachment}]
-              (if-not (and (attachments/audio-media-type? media-type)
-                           (str/blank? (str transcription)))
+              (if-not (attachments/audio-media-type? media-type)
                 attachment
-                (let [answer (answer-for attachment)]
-                  (cond-> attachment
-                    (:transcription answer)
-                    (assoc :transcription (:transcription answer))
+                (if-not (str/blank? (str transcription))
+                  (dissoc attachment :transcription-status)
+                  (let [answer (answer-for attachment)]
+                    (cond-> (dissoc attachment :transcription-status)
+                      (:transcription answer)
+                      (assoc :transcription (:transcription answer))
 
-                    (:status answer)
-                    (assoc :transcription-status (:status answer))))))
+                      (:status answer)
+                      (assoc :transcription-status (:status answer)))))))
             rows))))
 
 (defn request-attachments!
@@ -408,28 +394,8 @@
   (walk-recordings attachments request!))
 
 (defn transcribe-attachments
-  "`attachments` with every RECORDING carrying its own `:transcription`, or — when
-   there are no words to carry — the `:transcription-status` that says why.
-
-   The call for the moment the words are actually NEEDED: work already running is
-   joined, a recording nobody asked about is started here, and a pass may start at
-   most [[MAX_STARTED_PER_PASS]] of them. Nothing is transcribed twice, and a
-   recording still running at the deadline answers `pending` rather than holding the
-   turn."
-  [attachments]
-  (let [budget (volatile! (long MAX_STARTED_PER_PASS))]
-    (walk-recordings attachments
-                     (fn [attachment]
-                       (let [known (outcome attachment)]
-                         (cond
-                           ;; Settled, whichever way: the registry already paid for it.
-                           (and known (not= PENDING (:status known))) known
-                           ;; Running (a composer asked at attach time) — join it, which costs no
-                           ;; budget because nothing new is started. Otherwise this pass may start
-                           ;; one until its budget runs out.
-                           (or known (pos? (long @budget))) (do (when-not known
-                                                                  (vswap! budget
-                                                                          (fn [n]
-                                                                            (dec (long n)))))
-                                                                (transcribe-attachment attachment))
-                           :else {:status PENDING :reason :budget}))))))
+  "Join every recording before its words are consumed, preserving attachment order.
+   Staging remains nonblocking; consumption never substitutes a pending placeholder
+   for a long recording or for recordings beyond a per-pass budget."
+  [attachments & [opts]]
+  (walk-recordings attachments #(transcribe-attachment % opts)))

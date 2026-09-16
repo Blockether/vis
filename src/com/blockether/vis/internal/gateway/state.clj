@@ -2835,11 +2835,12 @@
 
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce no chunk for a long time:
-   shell/Python execution and Activity waits. The stall watchdog never cancels
-   these phases. Other phases (provider-call, reasoning/content streaming,
+   shell/Python execution, Activity waits and local recording transcription. The
+   watchdog never cancels these phases. Other phases (provider-call, reasoning/content streaming,
    response-parse, and the between-iteration `:iteration-final` gap) are
    engine/provider-internal and must never sit idle for `TURN_STALL_TIMEOUT_MS`."
-  #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg})
+  #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg
+    :attachment-transcription})
 
 (def ^:private stall-lifecycle-phases
   "Phases whose chunks are engine LIFECYCLE markers, not model output. `loop`
@@ -2849,7 +2850,7 @@
    The marker still moves the idle deadline — the wait legitimately begins there —
    it just no longer claims the model said anything. Output already produced by an
    earlier iteration remains turn-level progress."
-  #{:provider-call})
+  #{:provider-call :attachment-transcription})
 
 (defn- advance-turn-stall-state
   "Records the live phase, but moves the deadline only for real progress.

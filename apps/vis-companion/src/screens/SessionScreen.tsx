@@ -3998,6 +3998,73 @@ export function SessionScreen({
     };
   }, [client, sid, runningTurnId, runningTurnNeedsAttachmentRefresh]);
 
+  // A recording can finish after its turn, or while this screen is closed. Recover
+  // its words on reopening too; a terminal model response is not an ASR terminal.
+  const pendingRecordingTurns = turns
+    .filter(
+      (turn) =>
+        turn.turn_id !== runningTurnId &&
+        turn.attachments?.some(
+          (row) =>
+            row.media_type?.startsWith('audio/') &&
+            !row.transcription?.trim() &&
+            (!row.transcription_status || row.transcription_status === 'pending'),
+        ),
+    )
+    .map((turn) => turn.turn_id)
+    .join('|');
+  useEffect(() => {
+    if (!pendingRecordingTurns) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let remaining = pendingRecordingTurns.split('|');
+    for (const turn of turnsRef.current) {
+      if (remaining.includes(turn.turn_id) && turn.attachments?.length) {
+        client.rememberSentAttachments(sid, turn.turn_id, turn.attachments);
+      }
+    }
+    const refresh = async () => {
+      const updates = await Promise.all(
+        remaining.map(async (id): Promise<readonly [string, GatewayAttachment[]]> => {
+          try {
+            return [
+              id,
+              await client.fetchTurnAttachments(sid, id, controller.signal, true),
+            ] as const;
+          } catch {
+            return [id, []] as const;
+          }
+        }),
+      );
+      if (controller.signal.aborted) return;
+      const byId = new Map(updates.filter(([, rows]) => rows.length));
+      setTurns((current) =>
+        current.map((turn) => {
+          const rows = byId.get(turn.turn_id);
+          return rows ? { ...turn, attachments: rows } : turn;
+        }),
+      );
+      remaining = updates
+        .filter(
+          ([, rows]) =>
+            !rows.length ||
+            rows.some(
+              (row) =>
+                row.media_type?.startsWith('audio/') &&
+                !row.transcription?.trim() &&
+                (!row.transcription_status || row.transcription_status === 'pending'),
+            ),
+        )
+        .map(([id]) => id);
+      if (remaining.length) timer = window.setTimeout(refresh, 1000);
+    };
+    void refresh();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [client, sid, pendingRecordingTurns]);
+
   // The turn a fork is being cut through, so its own verb can say so while the
   // gateway copies the conversation. The fork is a session of its own; the app
   // goes straight into it and this one stays exactly as it was.

@@ -3694,19 +3694,41 @@
    handed, which is exactly the `position` it stored. Blank words are refused rather
    than written, because an empty string reads as a recording nobody found speech in.
 
-   Returns true when a row took the words."
+   Changed words invalidate the owning session's exact provider prefix, so the next
+   request rebuilds it from durable history. Repeating the same words is a no-op.
+
+   Returns true when the inbound row exists and has the requested words."
   [db-info session-turn-soul-id position transcription]
-  (boolean (when
-             (and (ds db-info) session-turn-soul-id position (not (str/blank? (str transcription))))
-             (sqlite-write-tx!
-               db-info
-               (fn [tx-info]
-                 (execute! tx-info
-                           {:update :session_attachment
-                            :set {:transcription (str transcription)}
-                            :where [:and [:= :session_turn_soul_id (->ref session-turn-soul-id)]
-                                    [:= :session_turn_iteration_id nil] [:= :position position]]})
-                 true)))))
+  (boolean
+    (when (and (ds db-info) session-turn-soul-id position (not (str/blank? (str transcription))))
+      (sqlite-write-tx!
+        db-info
+        (fn [tx-info]
+          (let [where
+                [:and [:= :session_turn_soul_id (->ref session-turn-soul-id)]
+                 [:= :session_turn_iteration_id nil] [:= :position position]]
+
+                row
+                (query-one! tx-info
+                            {:select [:transcription] :from :session_attachment :where where})]
+
+            (when row
+              (when (not= (str transcription) (:transcription row))
+                (execute! tx-info
+                          {:update :session_attachment
+                           :set {:transcription (str transcription)}
+                           :where where})
+                ;; A prefix captured before these words existed cannot replay them.
+                ;; Rebuild the next request from durable history in every session state.
+                (execute! tx-info
+                          {:update :session_state
+                           :set {:prompt_cache_state nil}
+                           :where [:= :session_soul_id
+                                   {:select [:s.session_soul_id]
+                                    :from [[:session_state :s]]
+                                    :join [[:session_turn_soul :t] [:= :t.session_state_id :s.id]]
+                                    :where [:= :t.id (->ref session-turn-soul-id)]}]}))
+              true)))))))
 
 (defn- human-attachment-revision
   "Authorize a human revision inside the append transaction, retaining producer capabilities."

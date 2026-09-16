@@ -114,7 +114,7 @@
    prompt, which is why the manifest also says how much it is not showing."
   8000)
 
-(defn- transcript-lines
+(defn recording-transcript
   "The manifest's two lines about a recording's words: what was said, and — when
    nobody could say — why there is nothing to read.
 
@@ -230,7 +230,7 @@
                                           ;; Quoted here, the model reads what was said instead
                                           ;; of being told a file exists — and when there are no
                                           ;; words, it is told THAT rather than nothing.
-                                          (transcript-lines transcription transcription-status)
+                                          (recording-transcript transcription transcription-status)
                                           (when text
                                             (str "\n  " model
                                                  " looked at it and reported: " text)))))

@@ -196,3 +196,62 @@
   (it "tells the model when the machine could not transcribe the recording"
       (let [content (str (user-content [(assoc (memo) :transcription-status at/UNAVAILABLE)]))]
         (expect (re-find #"could NOT transcribe the recording" content)))))
+
+;; Regression: session 388aa964-07cf-498a-a6d7-71c49c86b491 lost a long recording
+;; at the two-minute join deadline, even though the worker later finished it.
+(defdescribe completed-recordings-test
+             (it "waits for the worker instead of giving the model a timed-out placeholder"
+                 (register-fake! "unused")
+                 (let [answer
+                       {:transcription "the complete recording"}
+
+                       result
+                       (reify
+                         clojure.lang.IDeref
+                           (deref [_] answer)
+                         clojure.lang.IBlockingDeref
+                           (deref [_ _ timeout-value] timeout-value))]
+
+                   ;; Model a job that outlives any bounded join without a two-minute test sleep.
+                   (with-redefs-fn {#'at/start! (fn [& _]
+                                                  {:result result})}
+                     #(expect (= answer (at/transcribe-attachment (memo)))))))
+             (it "does not omit the fifth recording from the model's request"
+                 (register-fake! "spoken words")
+                 (let [rows (at/transcribe-attachments (mapv (comp memo str) (range 5)))]
+                   (expect (= 5 (count @calls)))
+                   (expect (every? #(= "spoken words" (:transcription %)) rows))))
+             (it "clears pending status when the words arrive"
+                 (register-fake! "ready words")
+                 (let [row (first (at/transcribe-attachments
+                                    [(assoc (memo) :transcription-status at/PENDING)]))]
+                   (expect (= "ready words" (:transcription row)))
+                   (expect (not (contains? row :transcription-status)))
+                   (expect (not (re-find #"still being made" (str (user-content [row])))))))
+             (it "shares work when intake corrects the declared MIME type"
+                 (register-fake! "same bytes")
+                 (at/transcribe-attachments [(memo)])
+                 (at/transcribe-attachments [(assoc (memo) :media-type "audio/mpeg")])
+                 (expect (= 1 (count @calls))))
+             (it "cancels a waiting turn without losing the worker's result"
+                 (let [hold
+                       (promise)
+
+                       cancelled?
+                       (atom false)]
+
+                   (register-fake! "saved after cancellation" hold)
+                   (let [staged
+                         (at/request-attachments! [(memo)])
+
+                         waiting
+                         (future (try (at/transcribe-attachments staged
+                                                                 {:cancelled? #(deref cancelled?)})
+                                      (catch InterruptedException _ ::cancelled)))]
+
+                     (try (reset! cancelled? true)
+                          (expect (= ::cancelled (deref waiting 2000 ::timeout)))
+                          (deliver hold true)
+                          (expect (= "saved after cancellation" (:transcription (settled (memo)))))
+                          (expect (= 1 (count @calls)))
+                          (finally (deliver hold true) (future-cancel waiting)))))))

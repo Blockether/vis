@@ -2236,6 +2236,12 @@
             history (provider-history-metadata d (map :id turns))
             iterations-by-turn (:iterations history)
             turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
+            recordings-by-turn
+            (group-by (comp str :turn-soul-id)
+                      (filter #(and (nil? (:iteration-id %))
+                                    (attachments/audio-media-type? (:media-type %))
+                                    (not (str/blank? (:transcription %))))
+                              (persistance/db-list-session-attachments-meta d session-id)))
             turn-metadata
             (mapv (fn [turn]
                     (let [iterations (filter #(= :done (:status %))
@@ -2288,7 +2294,14 @@
 
                       (when (or unfinished? (not (str/blank? answer)))
                         {:turn (:turn metadata)
-                         :user-request (:user-request turn)
+                         :user-request
+                         (str (:user-request turn)
+                              (apply str
+                                (for [recording (get recordings-by-turn (str (:id turn)))]
+                                  (str "\n\nAttached recording: " (:filename recording)
+                                       " (attachment id: " (:id recording)
+                                       ")" (prompt/recording-transcript (:transcription recording)
+                                                                        nil)))))
                          :answer answer
                          :interrupted? (interrupted-turn-status? (:status turn))
                          :cancelled? (= :cancelled (:status turn))
@@ -8248,6 +8261,19 @@
            (update (f journal) :trace #(mapv (partial read-trace journal) %)))
          (finally (java.nio.file.Files/deleteIfExists path)))))
 
+(defn- transcribe-turn-attachments
+  "Join recording work without charging local speech time to the provider watchdog."
+  [rows {:keys [hooks cancel-atom cancel-token]}]
+  (when (some #(and (attachments/audio-media-type? (:media-type %)) (str/blank? (:transcription %)))
+              rows)
+    (when-let [on-chunk (:on-chunk hooks)]
+      (on-chunk {:phase :attachment-transcription :iteration 1})))
+  (audio-transcribe/transcribe-attachments rows
+                                           {:cancelled? #(or (some-> cancel-atom
+                                                                     deref)
+                                                             (cancellation/cancelled?
+                                                               cancel-token))}))
+
 (defn- iteration-loop*
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -8414,8 +8440,9 @@
           ;; speech engine turns it into its own words — once, content-keyed. This
           ;; is the ONE place that waits for them, because this is where they are
           ;; read: the manifest quotes them where the audio cannot go.
-          {:attached (audio-transcribe/transcribe-attachments
-                       (into (vec (:user/attachments environment)) (:attached disk)))
+          {:attached (transcribe-turn-attachments
+                       (into (vec (:user/attachments environment)) (:attached disk))
+                       {:hooks hooks :cancel-atom cancel-atom :cancel-token cancel-token})
            :skipped (into (vec (:user/skipped-attachments environment)) (:skipped disk))})
 
         _

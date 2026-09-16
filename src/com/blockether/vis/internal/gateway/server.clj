@@ -3401,8 +3401,22 @@
    is a SEPARATE endpoint and not a fatter turn row."
   [request]
   (if-let [sid (path-sid request)]
-    (let [rows (state/turn-attachments sid (path-tid request))
-          refreshed (audio-transcribe/request-attachments! (wire/->engine rows))
+    (let [tid (path-tid request)
+          rows (state/turn-attachments sid tid)
+          original (wire/->engine rows)
+          refreshed (audio-transcribe/request-attachments! original)
+          ;; A cancelled/finished turn can outlive its joiner. Collecting its words
+          ;; must repair the durable row too, not only this one HTTP response.
+          _ (doseq [[before after] (map vector original refreshed)
+                    :let [position (:position before)
+                          words (:transcription after)]
+                    ;; Live/deduplicated rails have no durable ordinal. Their joiner
+                    ;; stores words from the original vector; only stored rows repair here.
+                    :when (and (some? position)
+                               (not (str/blank? words))
+                               (not= words (:transcription before)))]
+
+              (persistance/db-set-turn-attachment-transcription! (lp/db-info) tid position words))
           response (if (= "true" (query-str request "transcription_only"))
                      (mapv #(dissoc % :base64) refreshed)
                      refreshed)]
