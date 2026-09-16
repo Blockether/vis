@@ -507,7 +507,13 @@
               (expect (str/includes? (:body (first requests)) "3 consecutive goal continuations")
                       "The linked image must include the current model-assessed blocker audit")
               (when resolution
-                (expect (str/includes? output "Native goal resolved.") output)
+                ;; #216: terminal tool evidence ends the goal without another provider request.
+                (expect (str/includes? output
+                                       (str "Goal "
+                                            resolution
+                                            ": Native fixture verified the terminal condition."))
+                        output)
+                (expect (not (str/includes? output "Native goal resolved.")))
                 (doseq [n (range 1 (inc progress-count))]
                   (let [messages (get (json/read-json (:body (nth requests n))) "messages")
                         previous (filter #(= "assistant" (get % "role")) messages)]
@@ -525,7 +531,7 @@
                         turns (ps/db-list-session-turns store sid)
                         saved (vec (mapcat #(ps/db-list-session-turn-iterations store (:id %))
                                            turns))
-                        progress (filterv :assistant-prose saved)
+                        prose (filterv :assistant-prose saved)
                         forms (mapcat :forms saved)]
 
                     (expect (= 1 (count sessions)))
@@ -533,11 +539,16 @@
                     (expect (= status (get goal "status")))
                     (expect (= iterations (get goal "iterations_used")))
                     (expect (= budget (get goal "iteration_budget")))
-                    (expect (= (mapv #(str "Native goal progress " % ".")
-                                     (range 1 (inc progress-count)))
-                               (mapv :assistant-prose progress)))
-                    (expect (every? #(empty? (:forms %)) progress)
-                            "Progress replies must not persist fake validation-error forms")
+                    ;; #216: empty replies retain diagnostics without fabricating provider work.
+                    (expect (= (if (= "paused" status)
+                                 (vec (repeat iterations
+                                              (str "Provider returned no executable tool call or "
+                                                   "answer text; nothing was executed.")))
+                                 (mapv #(str "Native goal progress " % ".")
+                                       (range 1 (inc progress-count))))
+                               (mapv :assistant-prose prose)))
+                    (expect (every? #(empty? (:forms %)) prose)
+                            "Prose rows must not persist fake validation-error forms")
                     (expect (every? #(nil? (:error %)) forms) (pr-str forms))
                     (when resolution
                       (expect (= 1 (count forms)))
@@ -551,10 +562,10 @@
   native-goal-continuation-test
   (it "retains repeated progress beyond the empty-reply limit before explicit completion"
       (native-goal-case!
-        {:progress-count 4 :resolution "complete" :budget 10 :status "complete" :iterations 6}))
+        {:progress-count 4 :resolution "complete" :budget 10 :status "complete" :iterations 5}))
   (it "stops after an explicit blocker without losing the preceding progress replies"
       (native-goal-case!
-        {:progress-count 3 :resolution "blocked" :budget 10 :status "blocked" :iterations 5}))
+        {:progress-count 3 :resolution "blocked" :budget 10 :status "blocked" :iterations 4}))
   (it "retains the last progress reply but makes no request beyond the iteration budget"
       (native-goal-case! {:progress-count 1 :budget 1 :status "budget_limited" :iterations 1}))
   (it "still pauses an unresolved goal after genuinely empty replies"
@@ -1151,7 +1162,7 @@
           (doto (io/file dir "source/plugins/greeting") .mkdirs)
 
           destination
-          (io/file dir ".vis/extensions/native-center-example")
+          (io/file dir ".vis/extensions/native-center-example/current")
 
           args
           [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "extension" "install"
@@ -1166,10 +1177,13 @@
                  "raise RuntimeError('install must not execute code')\n")
            (let [refused (run-binary dir args 60)]
              (expect (not= 0 (:exit refused)))
-             (expect (not (.exists destination))))
+             (expect (not (.exists (.getParentFile destination)))))
            (let [installed (run-binary dir (conj args "--trust") 60)]
              (expect (= 0 (:exit installed)) (:output installed))
              (expect (Files/isSymbolicLink (.toPath destination)))
+             (expect (= "1.0.0" (str (Files/readSymbolicLink (.toPath destination)))))
+             (expect (Files/isSymbolicLink (.toPath (io/file (.getParentFile destination)
+                                                             "1.0.0"))))
              (expect (= (.getCanonicalFile project) (.getCanonicalFile destination)))
              (expect (not (.exists (io/file project "uv.lock")))))
            (finally (delete-tree! dir))))))
@@ -1214,7 +1228,7 @@
        (native-environment)
 
        destination
-       (io/file dir ".vis/extensions/native-github-example")]
+       (io/file dir ".vis/extensions/native-github-example/current")]
 
       (try
         (spit (io/file project "pyproject.toml")
@@ -1266,15 +1280,15 @@
               (expect (not (.exists (io/file dir "imported"))))
               ;; Git installs use a copied managed snapshot, not a link to the source checkout.
               (expect (Files/isSymbolicLink (.toPath destination)))
-              (let [^File snapshot-project (.getCanonicalFile destination)
-                    ^File snapshot (.getParentFile snapshot-project)
+              (expect (= "1.0.0" (str (Files/readSymbolicLink (.toPath destination)))))
+              (let [^File snapshot (.getCanonicalFile destination)
                     receipt
                     (json/read-json (slurp (io/file snapshot "receipt.json")) :key-fn keyword)]
 
-                (expect (= (.getCanonicalFile
-                             (io/file dir ".vis/extensions/.versions/native-github-example"))
+                (expect (= (.getCanonicalFile (io/file dir ".vis/extensions/native-github-example"))
                            (.getParentFile snapshot)))
-                (expect (= "project" (.getName snapshot-project)))
+                (expect (= "1.0.0" (.getName snapshot)))
+                (expect (not (Files/isSymbolicLink (.toPath snapshot))))
                 (expect (= {:name "native-github-example"
                             :version "1.0.0"
                             :repository_url url
@@ -1627,6 +1641,8 @@
                (mapcat (fn [[_ _indent source]]
                          (str/split-lines source)))
                (map str/trim)
+               ;; The shared-package workflow is separate from this project-environment example.
+               (filter #(str/starts-with? % "vis-agent python uv "))
                vec)
 
           registration-command

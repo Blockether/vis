@@ -1016,9 +1016,8 @@ new binary into the running gateway.
    runtime provisioning now shares one installation; both new regressions and all
    11 runtime cases pass. The first full post-fix installed SDK run passes 38/38.
 6. A fresh Vis native image builds against the published runtime. All 12 affected
-   binary cases pass, including real packages in JVM/native workers. Recent main
-   CI still has an unassigned macOS job despite an online, idle matching runner;
-   local diagnosis needs read-only access. No runner or gateway was restarted.
+   binary cases pass, including real packages in JVM/native workers. This selected
+   boundary coverage is not proof that the full native release suite passes.
 7. Candidate `18ad4fe2f` and follow-up `0a43fab47` are on `main`. Documentation
    deployment and CodeQL pass. All 62 documentation tests and 3230 Companion tests
    pass locally (two platform skips). Story fixtures still reject mutation timers,
@@ -1039,8 +1038,19 @@ new binary into the running gateway.
     Activity disclosure and recognize both padded section rules. All 2210 TUI cases
     pass in a clean JVM. Formatting and clj-kondo pass; the host reflection checker
     reports the same unrelated `caption-count` warning in the committed baseline.
-12. The matching macOS runner is still online and idle with its CI job unassigned.
-    No Vis release tag exists; green source CI and full publication remain pending.
+12. macOS source CI resumed after an explicitly authorized runner restart. Both
+    platform suites and the AOT gate pass at `942db083d`. The Linux installed-SDK job
+    failed on an upstream GraalVM download returning HTTP 500; its retry was
+    superseded by a newer main push. No gateway restart or release-gate bypass occurred.
+13. Native goal coverage exposed stale pre-`#216` expectations. All four cases now
+    pass with immediate terminal tool summaries and durable empty-response diagnostics;
+    the corresponding JVM terminal-goal boundary also passes. Production behavior is unchanged.
+14. All three native installer/documented-example regressions now pass. Fixtures
+    verify the current versioned install layout and execute the guide's project
+    workflow without counting its separate shared-package example. Together with
+    the four goal cases, seven affected native checks pass; no production code changed.
+15. Concurrent verified work is advancing main. No Vis release tag exists; final
+    source CI, complete artifact publication and tester delivery remain pending.
 
 # Shared FFF lifecycle and retention experiments
 
