@@ -244,3 +244,47 @@ export const DesktopWithPaging: Story = {
   ...PhoneWithPaging,
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
+
+// Regression: scrolling a narrow session pane must not paint rows through its pager.
+export const ScrolledNarrowPane: Story = {
+  args: pagedArgs,
+  render: (args) => (
+    <div
+      className="@container h-80 w-full max-w-[414px] overflow-y-auto bg-page"
+      data-testid="scroll-pane"
+    >
+      <ProjectGroup {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const pane = page.getByTestId('scroll-pane');
+    const pager = page.getByRole('navigation', { name: 'Pages of /CryptoSafe sessions' });
+    const header = pane.querySelector('header')!;
+    pane.scrollTop = 160;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await expect(pane.scrollTop).toBe(160);
+    await expect(header.getBoundingClientRect().top).toBe(pane.getBoundingClientRect().top);
+    await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      header.getBoundingClientRect().bottom,
+    );
+    // The pinned second row needs its own paper, not the moving session text behind it.
+    await expect(getComputedStyle(pager.parentElement!).backgroundColor).toBe(
+      getComputedStyle(pane).backgroundColor,
+    );
+    await expect(getComputedStyle(header).position).not.toBe('sticky');
+    for (const button of within(pager).getAllByRole('button')) {
+      const bounds = button.getBoundingClientRect();
+      await expect(
+        document
+          .elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+          ?.closest('button'),
+      ).toBe(button);
+    }
+  },
+};
+
+export const ScrolledNarrowDesktopPane: Story = {
+  ...ScrolledNarrowPane,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};

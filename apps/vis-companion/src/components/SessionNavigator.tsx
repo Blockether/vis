@@ -25,7 +25,7 @@ const HEADER_TYPE = 'text-title';
  * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
+  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
 
 /** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -87,7 +87,7 @@ export function SectionHeader({
 }) {
   const header = (
     <header
-      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-2 @md:[&>:last-child]:col-start-3' : 'flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-2 @md:[&>:last-child]:col-start-3' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
@@ -96,7 +96,7 @@ export function SectionHeader({
   return (
     <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto] @md:grid-cols-[minmax(0,1fr)_auto_auto]">
       {header}
-      <div className="z-20 col-span-full col-start-1 row-start-2 flex items-center justify-end px-2 @md:col-span-1 @md:col-start-2 @md:row-start-1 @md:px-4">
+      <div className="z-20 col-span-full col-start-1 row-start-2 flex items-center justify-end bg-page px-2 @md:col-span-1 @md:col-start-2 @md:row-start-1 @md:bg-transparent @md:px-4">
         {navigation}
       </div>
     </div>
