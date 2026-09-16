@@ -499,7 +499,7 @@
             "Symbol name | One narrow `apropos(pattern)` in the known namespace; broaden only after no useful match"
             "Arguments | `import inspect; print(inspect.signature(fn))`; not `doc()`"
             "Semantics | Name the missing precondition/effect/unit/retry/limit"
-            "Nested types | Traverse available `fn.contract` in memory"
+            "Result shape | `doc(name)` lists return-model fields under Model schemas"
             "`apropos(pattern)` filters SYMBOL names" "`doc(name)` returns"
             "obey its stated preconditions"]]
           (expect (str/includes? discovery rule) rule)))
@@ -556,7 +556,14 @@
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["mappings `r['key']`, records `r.field`"
                       "Inspect unknown shapes via keys/types or `dir(value)`, not `__dict__`"
-                      "Use error-provided keys, never guessed wrappers"]]
+                      "Use error-provided keys and fields, never guessed wrappers or synonyms"]]
+          (expect (str/includes? text rule) rule))))
+  ;; #259: a record's fields come from its model and its errors, never from guessed synonyms.
+  (it "reads extension records through their public fields and error-listed names"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq [rule ["An extension result is a frozen record of its public fields"
+                      "methods never cross, only declared sequences iterate"
+                      "a wrong name raises KeyError/AttributeError listing the real fields"]]
           (expect (str/includes? text rule) rule))))
   (it
     "recovers a successful mutation's saved result rather than issuing it again"
@@ -675,7 +682,8 @@
       ;; 8.5k → 9.1k for #231: one demand-driven discovery policy, including recovery and reuse.
       ;; 9.1k → 9.7k for #232: registered call shape, semantic prose and withheld defaults.
       ;; 9.7k → 10k for #239: type-directed recovery and explicit issue-tracker routing.
-      (expect (< (count text) 10000))
+      ;; 10k → 10.3k for #259: extension results are field records whose errors list the real fields.
+      (expect (< (count text) 10300))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]

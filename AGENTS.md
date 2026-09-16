@@ -32,6 +32,11 @@ Required checks must pass, and the scoped changes must be safely separable from 
 This does not authorize unrelated changes, releases, deployments, live service restarts or history
 rewrites. For other tasks, commit and push only when explicitly requested.
 
+A task requested end to end is authorized to completion, including commits and pushes in every
+repository it touches, the `deps.edn` pin bump for a changed sibling repository and, when that
+repository's native libraries change, its release. Decide those steps yourself; only a Vis product
+release still needs its own explicit request. Report every commit, push and release in the final reply.
+
 For issue fixes, always inform the reporter and other users on the issue after the verified fix
 is pushed: post a concise summary of the user-visible change, verification and commit. Ensure
 the issue is closed when fully resolved; a closing commit may do this automatically. Leave

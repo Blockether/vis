@@ -13,6 +13,14 @@ for as_list in (False, True):
     assert r["results"] is r.results and r["total"] == 20
     assert not hasattr(r, "remote_only") and not hasattr(r, "_private")
     assert not hasattr(r, "__dict__")
+    # Issue #259: an unknown attribute names the record's fields instead of a bare AttributeError.
+    try:
+        _ = r.methods
+    except AttributeError as error:
+        assert "PageList has no field 'methods'" in str(error), str(error)
+        assert "results, total" in str(error), str(error)
+    else:
+        raise AssertionError("Unknown attribute allowed")
     try:
         r[0] = None
     except TypeError:

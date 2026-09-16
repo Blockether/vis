@@ -106,7 +106,7 @@ the catalog; visibility is not access control. Rebuild the snapshot after declar
 | --- | --- |
 | `catalog.spec()` | Tuple of top-level `ToolSpec` or `NamespaceSpec` values |
 | `catalog.spec("store.items.read")` | One callable's `ToolSpec` |
-| `catalog.spec("store.items")` | `NamespaceSpec` with fully named callable descendants |
+| `catalog.spec("store.items")` | `NamespaceSpec(name, members)`: the fully named `ToolSpec` of every public callable descendant |
 | `catalog.help("store.items.read")` | `HelpDocument(tool, text)` generated from the registered documentation |
 | `catalog.help("store")` | Generated reference for all public descendants |
 
@@ -137,7 +137,9 @@ shows field descriptions with `Annotated`. Private fields and original methods d
 not cross into the sandbox.
 
 Generated records support both `result.url` and `result["url"]`, including nested
-records. An unknown field raises `KeyError` listing the available fields.
+records. An unknown name raises `KeyError` (`result["missing"]`) or `AttributeError`
+(`result.missing`) listing the available fields, so `hasattr` and `getattr(result, name, default)`
+keep their usual meaning.
 By default, records are not iterable, have no length, and reject non-string indices
 with `TypeError`. Field assignment remains unsupported. These records are not mappings:
 names such as `items`, `keys` and `get` remain available for your fields rather than

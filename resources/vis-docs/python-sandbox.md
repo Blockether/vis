@@ -76,6 +76,15 @@ more output than the model needs.
 `apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
 shows one compact row per symbol; attributes, indexing and `doc(row)` still work.
 
+Extension tools answer with records built from their public fields, not with the
+extension's own Python objects: a `PageList` result has `r.results` or `r["results"]`
+and `r.total`, but none of the original methods. A name that is not a field raises
+`KeyError` (`r["methods"]`) or `AttributeError` (`r.methods`) listing the fields the
+record does have; use one of those instead of guessing another name. `doc(tool)` shows
+the same fields under **Model schemas**. Only records whose extension declares a
+[backing field](extension-api.md#field-backed-sequences) iterate; read other records
+through their list field.
+
 `read_session()` also returns more data than its printed summary. The full history,
 including folded steps, is under `transcript["turns"]`, then `iterations`, then
 `blocks`. Each block holds `code`, `stdout` and any `error`. `list_sessions()`
