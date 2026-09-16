@@ -21,7 +21,8 @@
             [com.blockether.vis.internal.workspace.drafts :as drafts]
             [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.util :as util]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel]))
 
 ;; #245: enforce draft isolation at the session-creation boundary, not only in the UI.
 (defdescribe
@@ -4942,6 +4943,113 @@
                   ;; The same concrete failure the channels render.
                   (expect (= (:content written) (:content payload))))))
           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid)))))))
+
+(defdescribe
+  worker-failure-diagnostics-test
+  ;; #252: message-less startup failures must remain diagnosable after reconnect.
+  (it
+    "persists a diagnostic reference and logs a redacted cause chain and stack"
+    (let [sid
+          (str (random-uuid))
+
+          tid
+          "failure"
+
+          token
+          (cancellation/cancellation-token)
+
+          registry
+          @#'state/registry
+
+          writes
+          (atom [])
+
+          events
+          (atom [])
+
+          cause
+          (ex-info "startup failed token=fixture-secret" {:private "never-log-this"})
+
+          failure
+          (doto (InterruptedException.) (.initCause cause))]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn tid
+           :turn-order [tid]
+           :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+        (let [{:keys [signals]}
+              (tel/with-signals
+                (with-redefs-fn {#'lp/send! (fn [& _]
+                                              (throw failure))
+                                 #'lp/db-info (constantly ::db)
+                                 #'persistance/db-update-session-turn! (fn [_ _ opts]
+                                                                         (swap! writes conj opts)
+                                                                         true)
+                                 #'state/append-event! (fn [_ type payload & _]
+                                                         (swap! events conj [type payload]))
+                                 #'state/emit-context-updated! (constantly nil)
+                                 #'state/record-metrics! (constantly nil)}
+                  #(#'state/run-turn! sid tid "continue" {:cancel-token token})))
+
+              card
+              (first (:content (last @writes)))
+
+              signal
+              (first (filter #(= :error (:level %)) signals))
+
+              rendered-log
+              ((tel/format-signal-fn) signal)
+
+              diagnostic
+              (:data signal)
+
+              exception
+              (:exception diagnostic)]
+
+          (expect (= "turn_failed" (get card "code")))
+          (expect (str/includes? (str (get card "message")) "java.lang.InterruptedException"))
+          (expect (some? (:diagnostic-id diagnostic)))
+          (expect (= (get card "id") (:diagnostic-id diagnostic)))
+          (expect (str/includes? (str (get card "message")) (str (:diagnostic-id diagnostic))))
+          (expect (= sid (:session-id diagnostic)))
+          (expect (= tid (:turn-id diagnostic)))
+          (expect (= "java.lang.InterruptedException" (:class (first exception))))
+          (expect (= "clojure.lang.ExceptionInfo" (:class (second exception))))
+          (expect (seq (:stack (first exception))))
+          (expect (not (str/includes? (pr-str diagnostic) "fixture-secret")))
+          (expect (not (str/includes? (pr-str diagnostic) "never-log-this")))
+          (expect (str/includes? rendered-log (get card "id")))
+          (expect (str/includes? rendered-log "clojure.lang.ExceptionInfo"))
+          (expect (str/includes? rendered-log (first (:stack (first exception)))))
+          (expect (not (str/includes? rendered-log "fixture-secret")))
+          (expect (= (:content (last @writes))
+                     (:content (second (first (filter #(= "turn.failed" (first %)) @events)))))))
+        (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
+
+(defdescribe worker-exception-diagnostic-bounds-test
+             (it "bounds cyclic cause chains and redacts messages before clipping"
+                 (let [a
+                       (Exception. (str "token=fixture-secret " (apply str (repeat 5000 "x"))))
+
+                       b
+                       (Exception. "nested")
+
+                       _
+                       (.initCause a b)
+
+                       _
+                       (.initCause b a)
+
+                       diagnostic
+                       (#'state/worker-exception-diagnostic a)]
+
+                   (expect (= 8 (count diagnostic)))
+                   (expect (= 4096 (count (:message (first diagnostic)))))
+                   (expect (every? #(<= (count (:stack %)) 64) diagnostic))
+                   (expect (not (str/includes? (pr-str diagnostic) "fixture-secret"))))))
 
 ;; Recursive project delete. Until now DELETE of a project removed the row and
 ;; scattered its member sessions back to project-less, so there was no way at all

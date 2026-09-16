@@ -733,11 +733,11 @@
 (defn sandbox-if-built
   "The environment's sandbox ONLY when it already exists, nil while it does not.
 
-   Never builds one. This is the read for teardown and for liveness questions,
-   where an absent sandbox is an answer rather than a reason to make one."
+   Never builds one. A failed initializer leaves no sandbox even though its delay
+   is realized. Teardown and liveness inspection must not rethrow that cached error."
   [environment]
   (when-let [pending (:python-sandbox environment)]
-    (when (realized? pending) @pending)))
+    (when (realized? pending) (try @pending (catch Throwable _ nil)))))
 
 (defn python-context-if-built
   "The environment's Python context ONLY when it already exists.
@@ -1373,9 +1373,8 @@
    enough: background native Python code can hold the GIL after a block finishes.
 
    An environment whose sandbox is not built YET is enterable: entering is what
-   builds it. Answering this question must never start an interpreter, so a
-   sandbox that does not exist is judged by retirement alone — the disposed set
-   is keyed by session, and a session that was never created cannot be in it."
+   builds it. A sandbox whose initialization failed is not enterable. Answering
+   this question must never start an interpreter or retry failed initialization."
   [environment]
   (let [retired? (true? (some-> (:python-context-retired-atom environment)
                                 deref))]
@@ -1385,7 +1384,9 @@
            (if-let [worker (worker-of session)]
              (pyext/worker-ready? worker session)
              true))
-      (boolean (and (:python-sandbox environment) (not retired?))))))
+      (boolean (and (:python-sandbox environment)
+                    (not (realized? (:python-sandbox environment)))
+                    (not retired?))))))
 
 (def ^:private guest-budget-ms
   "How long a between-turns guest call may hold the TURN thread.

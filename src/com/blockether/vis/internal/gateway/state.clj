@@ -3241,6 +3241,17 @@
       (.start))
     nil))
 
+(defn- worker-exception-diagnostic
+  "Bounded, redacted throwable details; never include exception data or raw throwables."
+  [^Throwable throwable]
+  (mapv (fn [^Throwable cause]
+          (let [message (some-> (.getMessage cause)
+                                util/redact-secret-text)]
+            {:class (.getName (class cause))
+             :message (when message (util/truncate message 4096))
+             :stack (mapv #(util/redact-secret-text (str %)) (take 64 (.getStackTrace cause)))}))
+        (take 8 (take-while some? (iterate #(.getCause ^Throwable %) throwable)))))
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -3586,10 +3597,17 @@
                                     :supported (vec (:supported data))}]
                  :reasoning-effort {:requested (:requested data) :iterations []}})
 
+              diagnostic-id
+              (when-not user-cancel? (str (random-uuid)))
+
+              exception
+              (when-not user-cancel? (worker-exception-diagnostic t))
+
               err
               (cond user-cancel? nil
                     stalled? (str (stall-failure-text stall) " (force-cancelled)")
-                    :else (ex-message t))
+                    :else (let [{:keys [class message]} (first exception)]
+                            (if (str/blank? message) class message)))
 
               content
               (cond user-cancel? []
@@ -3600,11 +3618,18 @@
                     ;; the TUI (and the app) as raw unformatted text.
                     (and (not stalled?) (provider-error/provider-failure? t))
                     (provider-error/provider-error-content t)
-                    :else [(content/error "turn_failed" (or err "Turn failed") false)])]
+                    :else [(content/error diagnostic-id
+                                          "turn_failed"
+                                          (str err " (Diagnostic: " diagnostic-id ")")
+                                          false)])]
 
           (if user-cancel?
             (tel/log! :info ["gateway: turn cancelled by user" tid])
-            (tel/log! :error ["gateway: turn worker failed" tid err]))
+            (tel/log!
+              {:level :error
+               :data
+               {:diagnostic-id diagnostic-id :session-id sid :turn-id tid :exception exception}}
+              ["gateway: turn worker failed" tid err]))
           (when (claim-terminal!)
             ;; The worker unwound BEFORE the engine's own terminal write (a throw out
             ;; of the iteration loop — an interrupted retry backoff, a dead provider
