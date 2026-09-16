@@ -1007,15 +1007,27 @@ describe('Modal and DialogFrame as a phone sheet', () => {
   it('keeps question dialogs compact and gives desktop settings a wider box', () => {
     expect(source).toContain("DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'");
     expect(source).toContain("'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'");
-    expect(source).toContain(
-      "'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
-    );
+    expect(source).toContain('} ${boxHeight}`}');
     // One width for every dialog that asks ONE question, so a question and a file
     // browser are the same rectangle. `wide` is the settings box and nothing else:
     // two columns side by side is a LAYOUT, and it is the only one in the app.
     expect(source).not.toContain('sm:max-w-md');
     expect(source).not.toContain('sm:max-w-lg');
     expect(settingsSource).toContain('<Modal size="wide" onDismiss={onClose}>');
+  });
+
+  // Regression, user report (settings on the phone stood on a panel of blank paper): the
+  // wide sheet was stretched to the whole glass, so a closed application fold over three
+  // machines left two thirds of the screen empty under the last row. It stops at its
+  // content now and rises from the bottom edge, like every `fit` sheet.
+  it('stops the settings sheet at its content on a phone', () => {
+    expect(source).toContain("const stopsAtContent = size !== 'full';");
+    expect(source).toContain(
+      "? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`",
+    );
+    expect(source).toContain("stopsAtContent ? 'items-end' : 'items-stretch'");
+    // The desktop box is untouched: two columns inside the one 38rem rectangle.
+    expect(source).toContain("size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'");
   });
 
   it('slides the frame in from below by its own height, and only tips in on desktop', () => {
@@ -1794,9 +1806,9 @@ describe('Modal, fit', () => {
   it('has a size that stops at its content, next to the full-screen one', () => {
     expect(uiSource).toContain("size?: 'full' | 'fit' | 'wide';");
     // The sheet still arrives from the bottom edge — same scrim, same physics.
-    expect(uiSource).toContain("size === 'fit' ? 'items-end' : 'items-stretch'");
+    expect(uiSource).toContain("stopsAtContent ? 'items-end' : 'items-stretch'");
     expect(uiSource).toContain(
-      "size === 'fit' ? 'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
+      "? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`",
     );
   });
 
@@ -1805,9 +1817,9 @@ describe('Modal, fit', () => {
   // glass, so the provider picker — fifteen presets, taller than any phone — grew to
   // the cap and stood its title and subtitle under the status bar's clock. The
   // ceiling is the glass minus the notch, and the sheet keeps clearing none itself.
-  it('stops a fit sheet that reaches its cap below the notch', () => {
-    const fit = uiSource.slice(uiSource.indexOf("size === 'fit' ? 'max-h-"));
-    expect(fit.slice(0, 80)).toContain('calc(100%-env(safe-area-inset-top))');
+  it('stops a sheet that reaches its cap below the notch', () => {
+    const ceiling = uiSource.slice(uiSource.indexOf('const boxHeight = stopsAtContent'));
+    expect(ceiling.slice(0, 160)).toContain('max-h-[calc(100%-env(safe-area-inset-top))]');
     expect(uiSource).not.toContain("'max-h-full sm:h-auto'");
   });
 
@@ -1835,10 +1847,10 @@ describe('Modal, fit', () => {
   // welded to the BOTTOM edge, and it still padded its top with the notch inset —
   // 47px of dead panel paper above the title on every iPhone. The frame cannot see
   // which sheet it stands in, so the sheet tells it.
-  it('tells the frame inside it that no notch stands above a fit sheet', () => {
-    expect(uiSource).toContain('const IsFitSheet = createContext(false);');
-    expect(uiSource).toContain("<IsFitSheet.Provider value={size === 'fit'}>");
-    expect(uiSource).toContain("isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'");
+  it('tells the frame inside it that no notch stands above a content sheet', () => {
+    expect(uiSource).toContain('const IsContentSheet = createContext(false);');
+    expect(uiSource).toContain('<IsContentSheet.Provider value={stopsAtContent}>');
+    expect(uiSource).toContain("isContentSheet ? '' : 'pt-[env(safe-area-inset-top)]'");
   });
 
   // The pause that BLOCKS a run is a question too, and it was the last surface

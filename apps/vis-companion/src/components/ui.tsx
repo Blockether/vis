@@ -2051,8 +2051,8 @@ export function Banner({
  *
  * A dialog that sizes itself to its content makes the scrim jump — "Manage projects"
  * stood two-thirds of the window tall while the question beside it was a strip. Above
- * `sm:` they are the same rectangle and the CONTENT scrolls inside it; below it the
- * sheet is simply the whole phone.
+ * `sm:` they are the same rectangle and the CONTENT scrolls inside it; below it a
+ * `full` sheet is simply the whole phone.
  */
 const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
 
@@ -2071,14 +2071,14 @@ const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
  * had already drifted into two copies of the same forty characters.
  */
 /**
- * WHICH sheet a `DialogFrame` is standing in — the one thing it cannot see about
- * itself. A `fit` sheet stops at its content and is welded to the BOTTOM edge, so
- * there is no notch above it to clear: padding its top with the safe-area inset
- * hangs 47 dead pixels of panel paper over the title on every iPhone, on the very
- * dialog whose whole point is to take no more height than it needs. Default
- * `false`, so a frame opened outside `Modal` keeps clearing the notch.
+ * WHETHER THE SHEET AROUND A `DialogFrame` STOPS AT ITS CONTENT — the one thing the
+ * frame cannot see about itself. Such a sheet is welded to the BOTTOM edge and starts
+ * partway down the glass, so there is no notch above it to clear: padding its top with
+ * the safe-area inset hangs 47 dead pixels of panel paper over the title on every
+ * iPhone. Default `false`, so a frame opened outside `Modal`, and the full-bleed sheet
+ * that IS the whole phone, keep clearing the notch.
  */
-const IsFitSheet = createContext(false);
+const IsContentSheet = createContext(false);
 
 /**
  * WHERE A LAYER THAT COVERS THE APP IS MOUNTED, AND HOW IT IS POSITIONED.
@@ -2118,19 +2118,27 @@ export function Modal({
    *
    * `wide` is SETTINGS, and settings only: the one dialog that stands two columns
    * beside each other (this device, and the machines) rather than asking one
-   * question. Same scrim, same physics, same height — only the width differs, and
-   * below `sm:` it is the identical full-bleed sheet, where the columns stack.
+   * question. Same scrim, same physics, same desktop box — only the width differs.
+   * Below `sm:` the columns stack and, like `fit`, it stops at its content.
    */
   size?: 'full' | 'fit' | 'wide';
   children: ReactNode;
 }) {
   const { host: portalHost, position } = overlayLayer();
   const dismissOnClick = useRef(false);
+  // ONLY `full` PAPERS THE WHOLE PHONE. Reported over settings on an iPhone: with the
+  // application fold closed and three machines listed, two thirds of the glass below the
+  // last row was blank panel. A sheet that stops at its content rises from the bottom
+  // edge instead, and its ceiling is the glass minus the notch it never stands under.
+  const stopsAtContent = size !== 'full';
+  const boxHeight = stopsAtContent
+    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
+    : DIALOG_DESKTOP_HEIGHT;
 
   return createPortal(
     <div
       className={`${position} inset-0 z-50 flex justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
-        size === 'fit' ? 'items-end' : 'items-stretch'
+        stopsAtContent ? 'items-end' : 'items-stretch'
       }`}
       role="presentation"
       onPointerDown={(event) => {
@@ -2150,11 +2158,13 @@ export function Modal({
 
           A `fit` dialog is one exception, and it is a SIZE rather than a second
           modal: same scrim, same physics, same box — it simply stops at its content.
-          Its ceiling is the glass MINUS the notch: a fit sheet clears no notch itself
-          (`IsFitSheet`), so one that has grown to its cap — fifteen provider presets —
-          would otherwise stand its title under the clock.
+          Its ceiling is the glass MINUS the notch: a sheet that stops at its content
+          clears no notch itself (`IsContentSheet`), so one grown to its cap — fifteen
+          provider presets — would otherwise stand its title under the clock.
           `wide` is the other, and it is a LAYOUT rather than a mood: settings stands
-          two columns wide, and 36rem split in half is two columns of nothing.
+          two columns wide, and 36rem split in half is two columns of nothing. It stops
+          at its content on the phone as well, where a short fleet left the glass below
+          the last row as blank paper.
 
           The scrim is settings' own — ink at 85% under a 2px blur, faded
           in rather than snapped on. That dialog was hand-rolled beside this one and
@@ -2163,11 +2173,11 @@ export function Modal({
       <div
         className={`flex w-full flex-col ${
           size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'
-        } ${size === 'fit' ? 'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`}
+        } ${boxHeight}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
-        <IsFitSheet.Provider value={size === 'fit'}>{children}</IsFitSheet.Provider>
+        <IsContentSheet.Provider value={stopsAtContent}>{children}</IsContentSheet.Provider>
       </div>
     </div>,
     portalHost,
@@ -2386,13 +2396,13 @@ export function DialogFrame({
   closeLabel?: string;
   className?: string;
 }) {
-  // A sheet that stops at its content starts halfway down the glass, so the notch
-  // is not above it and the top inset is dead space (`IsFitSheet`).
-  const isFitSheet = useContext(IsFitSheet);
+  // A sheet that stops at its content starts partway down the glass, so the notch
+  // is not above it and the top inset is dead space (`IsContentSheet`).
+  const isContentSheet = useContext(IsContentSheet);
   return (
     <section
       className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel ${
-        isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'
+        isContentSheet ? '' : 'pt-[env(safe-area-inset-top)]'
       } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
