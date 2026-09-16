@@ -864,9 +864,10 @@
         (fmt-toks cap)
         " compaction budget. "
         (if required?
-          "Fold settled search/tool sweeps and superseded reads NOW with one broad fold_session(\"-tN/iK\", gist) through the last completed scope"
-          (str "Use one broad fold_session(\"-tN/iK\", gist) through the last completed scope"
-               (when urgent? " before another large tool call")))
+          "Fold settled search/tool sweeps and superseded reads NOW with one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
+          (str
+            "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
+            (when urgent? " before another large tool call")))
         "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view

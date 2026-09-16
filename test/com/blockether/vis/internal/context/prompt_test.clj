@@ -771,11 +771,11 @@
                ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
                ;; but named no callable, so `fold_session` had to be remembered or
                ;; rediscovered through `doc()` — every other verb in the core is named.
-               "`fold_session(key, gist)`" "Fold obsolete settled work"
+               "Fold obsolete settled work: always `print(fold_session(key, gist))`"
                ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
                ;; but not the KEY it takes, so the shape was guessed — a selector structure
                ;; or a bare id that resolved to nothing. The key grammar is in the core now.
-               "the key is a STRING" "`\"-t2/i9\"` everything through it"
+               "STRING key" "`\"-t2/i9\"` everything through it"
                ;; Nothing stores a folded step for later: the gist is the whole survivor,
                ;; and a prompt that hints otherwise buys a fold the model regrets.
                "a folded step is NOT re-readable, so the gist is what survives"
@@ -786,7 +786,7 @@
                "research-to-implementation boundary" "`hint` as the default fold threshold"
                "Require a substantial next" "repeated large/clipped results"
                "clearly worth one cache reset" "beat append-only history"
-               "Make the next iteration only" "`fold_session(\"-tN/iK\", gist)`"
+               "Make the next iteration only" "`print(fold_session(\"-tN/iK\", gist))`"
                "last completed research step" "oldest settled prefix folds" "live step stays out"
                "one cache discontinuity" "One broad fold"
                ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
@@ -798,6 +798,10 @@
                "verification, edit/test state and dirty files"
                "omit raw outputs and full files/tests" "confirm reduction"]]
         (expect (str/includes? text required)))
+      ;; A bare return value produces no stdout: every fold example must print its receipt.
+      (doseq [example (re-seq #"`[^`]*fold_session\([^`]*`" text)]
+        (expect (str/starts-with? example "`print(fold_session("))
+        (expect (str/ends-with? example "))`")))
       ;; These assertions pin prompt content, not model compliance.
       (doseq
         [required

@@ -3265,7 +3265,7 @@
                          " to drop their recaps"))
 
                   removed
-                  (cond (nil? toks) " · removal estimate unavailable"
+                  (cond (nil? toks) (when util " · removal estimate unavailable")
                         (pos? (long toks)) (str " · estimated removal ~" (fmt-tok toks) " tokens")
                         (neg? (long toks))
                         (str " · estimated growth ~" (fmt-tok (- (long toks))) " tokens")

@@ -1202,13 +1202,17 @@
         (let [hint (eng/over-budget-hint required 6 6)]
           (doseq [text
                   ["ACTION REQUIRED" "210k" "200k" "Fold settled search/tool sweeps"
-                   "one broad fold_session" "last completed scope"
+                   "one broad print(fold_session" "last completed scope"
                    "preserve decisions, edits, and verification" "preserve exact physical paths"
                    "If the edit is ready and the next patch fits available headroom, patch first"
                    "compact actionable checkpoint" "exact paths/symbols" "hypothesis"
                    "intended edit/test" "dirty files" "never bare or abbreviated filenames"
                    "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
+    (it "prints the fold receipt at every pressure level"
+        (doseq [util [advisory urgent required]]
+          (expect (str/includes? (eng/over-budget-hint util 6 6)
+                                 "print(fold_session(\"-tN/iK\", gist))"))))
     (it "never silently expires while pressure remains"
         (expect (some? (eng/over-budget-hint required 6 6)))
         (expect (some? (eng/over-budget-hint required 60 6))))
