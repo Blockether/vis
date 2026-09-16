@@ -37,10 +37,10 @@
              (:output result))
 
           project-link
-          (io/file cwd ".vis/extensions/native-sync-example")
+          (io/file cwd ".vis/extensions/native-sync-example/current")
 
           global-link
-          (io/file global "extensions/native-sync-example")]
+          (io/file global "extensions/native-sync-example/current")]
 
       (try (spit (io/file sdk "pyproject.toml") "[project]\nname='vis-agent'\nversion='0.1.0'\n")
            (spit (io/file source "pyproject.toml")
@@ -61,8 +61,12 @@
            (expect (not (.exists global-link)))
            (expect (not= 0 (:exit (#'native/run-binary cwd args 60))))
            (expect (str/includes? (run ["--trust"]) "installed"))
-           (expect (Files/isSymbolicLink (.toPath project-link)))
-           (expect (Files/isSymbolicLink (.toPath global-link)))
+           ;; Versioned installs select a local-source snapshot through a relative current link.
+           (doseq [link [project-link global-link]]
+             (expect (Files/isSymbolicLink (.toPath link)))
+             (expect (= "1.0.0" (str (Files/readSymbolicLink (.toPath link)))))
+             (expect (Files/isSymbolicLink (.toPath (io/file (.getParentFile link) "1.0.0"))))
+             (expect (= (.getCanonicalFile source) (.getCanonicalFile link))))
            (expect (.isDirectory (io/file source ".venv")))
            (let [lock
                  (slurp (io/file source "uv.lock"))
