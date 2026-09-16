@@ -2440,7 +2440,7 @@
     (if-let [pid (:pid lease)]
       (discovery/pid-alive-cached? pid)
       (<= (- (util/now-ms) (long (or (:last-seen-at lease) (:connected-at lease) 0)))
-          CLIENT_LEASE_TTL_MS))))
+          (long CLIENT_LEASE_TTL_MS)))))
 
 (defn- client-extension-handler
   [operation]
@@ -3187,15 +3187,15 @@
 
         page
         (when (and sid aid)
-          (persistance/db-activity-page
-            (lp/db-info)
-            sid
-            (str aid)
-            (if export?
-              {}
-              {:after (integer-param "after" 0)
-               :limit (integer-param "limit" activity-contract/page-row-limit)
-               :q (get params "q")})))
+          (persistance/db-activity-page (lp/db-info)
+                                        sid
+                                        (str aid)
+                                        (if export?
+                                          {}
+                                          {:after (integer-param "after" 0)
+                                           :limit (integer-param "limit"
+                                                                 activity-contract/page-row-limit)
+                                           :q (get params "q")})))
 
         revision
         (integer-param "revision" nil)]

@@ -595,7 +595,7 @@
   [entry initial]
   (let [initial-stage (get-in initial ["extensions" "stage"])]
     (when (or (contains? #{"initializing" "failed"} initial-stage)
-              (pos? (get-in initial ["extensions" "failed"] 0)))
+              (pos? (long (get-in initial ["extensions" "failed"] 0))))
       (let [deadline (+ (util/now-ms) 600000)]
         (binding [*out* *err*]
           (when (= "initializing" initial-stage)

@@ -53,7 +53,6 @@
       (is (= 409 (status #(review/analyze! {:provider "missing" :model "m"} []))))
       (is (= 409 (status #(review/analyze! {:provider "p" :model "missing"} []))))
       ;; Deliberately invalid route: the adapter must reject before keyword routing.
-      #_{:clj-kondo/ignore [:type-mismatch]}
       (is (= 409 (status #(review/analyze! {:provider nil :model nil} []))))
       (is (= 1 (count @calls))))))
 
