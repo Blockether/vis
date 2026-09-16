@@ -381,7 +381,7 @@ export function Pager({
     <nav
       aria-label={`Pages of ${label}`}
       aria-disabled={disabled || undefined}
-      className="flex shrink-0 items-center justify-end gap-1.5 whitespace-nowrap mouse:gap-0"
+      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}

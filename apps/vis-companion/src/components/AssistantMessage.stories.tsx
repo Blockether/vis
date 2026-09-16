@@ -126,19 +126,22 @@ export const TurnHeaders: Story = {
     </div>
   ),
   play: async ({ canvasElement }) => {
-    const timestamp = new Intl.DateTimeFormat(undefined, {
+    // Both clients stamp a turn the same way: the time in en-GB on a 24-hour clock,
+    // then the turn number (`fix(transcript): align app and TUI turn header format`).
+    const timestamp = new Intl.DateTimeFormat('en-GB', {
       year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
     }).format(1_789_545_327_000);
     const headers = canvasElement.querySelectorAll('article > div:first-child');
     expect(headers).toHaveLength(4);
     for (const header of headers) {
       const time = header.querySelector('time')!;
-      expect(header).toHaveTextContent(`T42 ${timestamp}`);
+      expect(header).toHaveTextContent(`${timestamp} / T42`);
       expect(time).toBeVisible();
       const bounds = header.getBoundingClientRect();
       const stamp = time.parentElement!.getBoundingClientRect();
