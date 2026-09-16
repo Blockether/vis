@@ -760,9 +760,11 @@ export const Composer: Story = {
         if (name.endsWith('overlay')) {
           await expect(box.width).toBe(44);
         } else {
+          // Strip reach is one pitch wide — the 32px box plus the strip's 4px gap —
+          // and 44px tall, so neighbours tile instead of covering each other.
           const reach = getComputedStyle(button, '::after');
           if (reach.content !== 'none') {
-            await expect(parseFloat(reach.width)).toBe(44);
+            await expect(parseFloat(reach.width)).toBe(36);
             await expect(parseFloat(reach.height)).toBe(44);
           }
         }

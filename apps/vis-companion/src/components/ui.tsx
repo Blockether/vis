@@ -1144,7 +1144,9 @@ function useTapPress(
  *
  * Every tone is a bare glyph in the same 32px / 28px layout box. Intent changes
  * the ink, never an enclosing border or circular fill. Overlays keep a full
- * 44px target; strip controls use invisible reach for touch.
+ * 44px target; strip controls carry invisible reach for touch — 44px tall, the
+ * strip's own padding, and one pitch wide: the 32px box plus the strip's 4px
+ * gap, so adjacent reaches tile instead of swallowing each other's press.
  *
  * The PRESS itself is `useTapPress` above: this strip is tapped with the
  * keyboard up more than anything else in the app, and on iOS a tap is not
@@ -1180,7 +1182,7 @@ export function ComposerButton({
   const frame =
     surface === 'overlay'
       ? 'size-11'
-      : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
+      : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-9 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
     quiet: 'text-dialog-hint enabled:hover:text-dialog-hint-key disabled:text-muted',
     recording: 'animate-pulse text-err-ink disabled:text-muted motion-reduce:animate-none',

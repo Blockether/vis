@@ -5,9 +5,9 @@ import userEvent from '@testing-library/user-event';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
-it('keeps composer controls adjacent with room for separate 44px touch targets', () => {
+it('keeps composer controls tight without letting two touch targets overlap', () => {
   renderSessionScreen();
-  expect(screen.getByLabelText('Message Vis').parentElement).toHaveClass('gap-3');
+  expect(screen.getByLabelText('Message Vis').parentElement).toHaveClass('gap-1');
 });
 
 it('keeps stop and send adjacent in the compact composer rail', () => {
@@ -31,10 +31,10 @@ it('keeps stop and send adjacent in the compact composer rail', () => {
   const slot = stop.parentElement!;
   expect(slot).toHaveClass('size-8');
   expect(slot.nextElementSibling).toBe(send);
-  expect(send).toHaveClass('size-8', 'after:size-11');
-  expect(stop).toHaveClass('size-8', 'after:size-11');
+  expect(send).toHaveClass('size-8', 'after:h-11', 'after:w-9');
+  expect(stop).toHaveClass('size-8', 'after:h-11', 'after:w-9');
   expect(send.parentElement).toBe(slot.parentElement);
-  expect(send.parentElement).toHaveClass('gap-3', 'mouse:gap-2');
+  expect(send.parentElement).toHaveClass('gap-1', 'mouse:gap-2');
 });
 
 // jsdom lays nothing out, so the composer's geometry is handed over here: the

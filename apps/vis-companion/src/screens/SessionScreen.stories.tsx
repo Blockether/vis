@@ -83,9 +83,11 @@ export const ComposerHeights: Story = {
       await expect(box.top).toBe(input.top);
       await expect(box.bottom).toBe(input.bottom);
     }
-    const reach = pointer ? 0 : 6;
+    // Touch reach is invisible: 2px past each side of a 32px box, half of the
+    // strip's 4px gap, so the attach target may meet the field but never cover it.
+    const reach = pointer ? 0 : 2;
     await expect(input.left - attach.getBoundingClientRect().right - reach).toBeGreaterThanOrEqual(
-      8,
+      0,
     );
 
     await userEvent.type(
@@ -173,13 +175,16 @@ export const RunningComposerHeights: Story = {
       await expect(box.top).toBe(input.top);
       await expect(box.bottom).toBe(input.bottom);
     }
+    // Touch reach is invisible: 2px past each side of a 32px box, half of the
+    // strip's 4px gap. The strip is compact, so those targets tile — adjacent
+    // ones may meet, but none may overlap and swallow another control's press.
     const targets = [...row.querySelectorAll('button, textarea')].map((element) => {
       const box = element.getBoundingClientRect();
-      const reach = !pointer && element.tagName === 'BUTTON' ? 6 : 0;
+      const reach = !pointer && element.tagName === 'BUTTON' ? 2 : 0;
       return { left: box.left - reach, right: box.right + reach };
     });
     for (let index = 1; index < targets.length; index += 1) {
-      await expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
+      await expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(0);
     }
   },
 };

@@ -2432,7 +2432,8 @@ describe("the composer's own controls", () => {
       expect(box(tone)).not.toContain('focus-visible:ring-accent/60');
       expect(box(tone)).toContain('size-8');
       expect(box(tone)).toContain('mouse:size-7');
-      expect(box(tone)).toContain('after:size-11');
+      expect(box(tone)).toContain('after:h-11');
+      expect(box(tone)).toContain('after:w-9');
       expect(box(tone)).not.toContain('overflow-hidden');
     }
   });

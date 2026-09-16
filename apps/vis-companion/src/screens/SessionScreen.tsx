@@ -4694,7 +4694,10 @@ export function SessionScreen({
                 </div>
               )}
 
-              <div className="flex items-end gap-3 p-1.5 mouse:gap-2 mouse:p-1">
+              {/* ONE pitch for the whole strip: 32px boxes 4px apart, which is exactly
+                the invisible touch reach every ComposerButton carries, so the controls
+                sit close together and no two targets overlap. */}
+              <div className="flex items-end gap-1 p-1.5 mouse:gap-2 mouse:p-1">
                 <ComposerAttachmentPicker
                   accept={(
                     capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']
