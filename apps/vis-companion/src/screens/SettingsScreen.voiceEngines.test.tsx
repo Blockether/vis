@@ -97,11 +97,18 @@ function machine(
   };
 }
 
-function Harness({ client }: { client: GatewayClient }) {
+function Harness({
+  client,
+  beforePaint,
+}: {
+  client: GatewayClient;
+  beforePaint?: (prefs: SpeechPrefs) => Promise<void> | undefined;
+}) {
   const [prefs, setPrefs] = useState(initialPrefs);
   async function onChange(write: () => Promise<void>) {
     await write();
     const next = await getSpeechPrefs();
+    await beforePaint?.(next);
     setPrefs(next);
     return next;
   }
@@ -249,7 +256,16 @@ describe('the speech-engines band', () => {
 
   it("separates gateway engines from the selected device's premium voices", async () => {
     const { client } = machine();
-    render(<Harness client={client} />);
+    let releasePaint!: () => void;
+    const pendingPaint = new Promise<void>((resolve) => {
+      releasePaint = resolve;
+    });
+    render(
+      <Harness
+        client={client}
+        beforePaint={(prefs) => (prefs.ttsEngine === 'pocket-tts-local' ? pendingPaint : undefined)}
+      />,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
@@ -275,11 +291,16 @@ describe('the speech-engines band', () => {
     await waitFor(async () =>
       expect((await getSpeechPrefs()).deviceVoice).toBe('com.apple.voice.premium.en-US.Samantha'),
     );
-    expect(screen.getByRole('button', { name: /TTS.*This device · Samantha/ })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /TTS.*This device · Samantha/ })).toBeTruthy(),
+    );
     fireEvent.click(pocket);
 
     await waitFor(async () => expect((await getSpeechPrefs()).ttsEngine).toBe('pocket-tts-local'));
-    expect(pocket.getAttribute('aria-pressed')).toBe('true');
+    // CI run 35070917117: persisted preferences do not imply a painted selection.
+    expect(pocket.getAttribute('aria-pressed')).toBe('false');
+    releasePaint();
+    await waitFor(() => expect(pocket.getAttribute('aria-pressed')).toBe('true'));
     expect(screen.getByRole('button', { name: /^Samantha/ })).toBeTruthy();
   });
 

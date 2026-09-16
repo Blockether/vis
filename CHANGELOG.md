@@ -14,6 +14,8 @@ Includes the draft, session history, SDK and Activity improvements prepared for 
 ### Fixed
 - Use the canonical gateway handshake in native TUI verification.
 - Isolate native release gateway checks from existing services and reject unhealthy startup.
+- Restore mobile session startup by initializing syntax highlighting before loading language grammars.
+- Keep project headers, session counts and pagination aligned on narrow screens and with larger fonts.
 
 ## [v0.2.5] - 2026-09-16
 
