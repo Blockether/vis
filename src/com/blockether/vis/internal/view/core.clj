@@ -1270,8 +1270,10 @@
                   (bool-value fail! ":is-disabled" value false))
    :clicks (fn [fail! value]
              (live-long fail! ":clicks" value))
+   ;; A BLANK detail clears it: a declaration leaves an empty detail out, so a
+   ;; `set` must be able to take one away again instead of refusing the patch.
    :detail (fn [fail! value]
-             (live-text fail! ":detail" value))
+             (if (and (string? value) (str/blank? value)) "" (live-text fail! ":detail" value)))
    :label (fn [fail! value]
             (live-text fail! ":label" value))
    :tone (fn [fail! value]

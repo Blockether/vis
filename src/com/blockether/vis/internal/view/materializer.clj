@@ -276,7 +276,12 @@
       (let [row-ids (set (map :id (:rows node)))]
         (when-let [missing (first (remove row-ids (:selected-ids op)))]
           (invalid-patch! (:id node) (str "there is no row " missing " to select")))))
-    (let [merged (merge node (select-keys op (vec given)))]
+    (let [merged (cond-> (merge node (select-keys op (vec given)))
+                   ;; A blank `:detail` REMOVES it — the same "no detail" a declaration
+                   ;; states by leaving the key out, so a status can drop the second
+                   ;; line it was carrying instead of refusing the patch.
+                   (and (contains? given :detail) (str/blank? (:detail op)))
+                   (dissoc :detail))]
       (checked-node (if (contains? given :stats)
                       (assoc merged :stats (checked-count! merged (:stats op)))
                       merged)))))

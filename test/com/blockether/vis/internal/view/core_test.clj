@@ -1567,6 +1567,11 @@
         (expect (nil? (patch {:op :add-node
                               :node-spec {:id "extra" :type :status :text "x" :tone :idle}})))
         (expect (nil? (patch {:op :remove-node :node-id "extra"})))))
+  (it "accepts a blank :detail on a set, because clearing one is not a missing value"
+      (expect (nil? (hs/live-patch-error
+                      {:view-id "view-1" :seq 1 :ops [{:op :set :node-id "state" :detail ""}]})))
+      (expect (= {:op :set :node-id "state" :detail ""}
+                 (hi/normalize-live-op {:op :set :node-id "state" :detail "  "}))))
   (it "refuses an operation nobody implements, and a key no operation declares"
       (expect (some? (hs/live-patch-error
                        {:view-id "view-1" :seq 1 :ops [{:op :nudge :node-id "out"}]})))

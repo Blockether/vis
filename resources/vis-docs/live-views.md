@@ -303,6 +303,10 @@ A view declares its nodes once, each with an id, and addresses them by id.
 `vis.output(...)` builds a `log` node; it is named `output` so it never shadows
 `vis.log`, the engine log line.
 
+A status keeps its `detail` until you replace it. Pass an empty one —
+`view["state"].set("Polling", detail="")` — to clear that second line, which
+leaves the status exactly as if you had declared it without a detail.
+
 Keyed updates insert new ids or update existing ones without changing their
 position. Log lines have no ids and are appended. `window_lines` limits the
 recent lines retained by a client; `.clear()` removes both displayed and
@@ -443,6 +447,11 @@ Live groups retain their own collapse behavior and their children’s Live
 interactions; shared layout does not turn them into Ask fields or produce
 answer values. `view.add(node, after="hosts")` inserts into the group containing
 `hosts`. Removing a group removes its children.
+
+A group needs at least one node. `vis.row(id)` or `vis.column(id)` with nothing
+in it raises immediately, because a row arranging nothing is a typo rather than
+an empty container. For a section that fills while the view runs, declare its
+first node and add the rest with `view.add(node, after=id)`.
 
 Use `vis.divider("section-break")` between sections, like an HTML `<hr>`. It fills
 its current container’s width in the terminal and Companion, including inside

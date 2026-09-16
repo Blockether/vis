@@ -1082,6 +1082,10 @@ def _live_apply(view, op):
         raise Refused("a divider has no mutable state")
     if name == "set":
         node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
+        # `live/apply-set`: a blank detail CLEARS it, like a declaration that
+        # leaves the key out.
+        if "detail" in op and not str(op["detail"]).strip():
+            node.pop("detail", None)
         complaint = _live_check_node(node, set(), is_declaration=False)
         if complaint:
             raise Refused(complaint)

@@ -2738,6 +2738,20 @@ def option(value, label=None):
     return {"value": value} if label is None else {"value": value, "label": label}
 
 
+def _group_fields(builder, fields):
+    # A group ARRANGES nodes, so one arranging nothing is a typo. Refuse it
+    # where it was written, instead of letting the host refuse the whole view
+    # or patch and make a finished operation look failed.
+    if not fields:
+        raise ValueError(
+            f"vis.{builder}() needs at least one node: a group arranges nodes, "
+            "and an empty one arranges nothing. For a section that fills while a "
+            "live view runs, declare its first node and add the rest with "
+            "view.add(node, after=id)."
+        )
+    return list(fields)
+
+
 def _group(direction, fields):
     # A group answers nothing and never appears in `values`, which stays flat
     # however deep the tree goes. A LEADING STRING is the group's id: a live view
@@ -2747,7 +2761,7 @@ def _group(direction, fields):
     if fields and isinstance(fields[0], str):
         group["id"] = fields[0]
         fields = fields[1:]
-    group["fields"] = list(fields)
+    group["fields"] = _group_fields(direction, fields)
     return group
 
 
@@ -3646,6 +3660,10 @@ class _LiveRecorder:
             node.update(
                 {k: self._copy(v) for k, v in op.items() if k not in ("op", "node_id")}
             )
+            # `live/apply-set`: a blank detail CLEARS it, like a declaration
+            # that leaves the key out.
+            if "detail" in op and not str(op["detail"]).strip():
+                node.pop("detail", None)
         elif action == "clear":
             key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
             node[key] = []
@@ -3953,7 +3971,7 @@ def disclosure(node_id, label, *nodes, default_expanded=False):
         {
             "label": str(label),
             "direction": "column",
-            "fields": list(nodes),
+            "fields": _group_fields("disclosure", nodes),
             "is_collapsible": True,
             "default_expanded": default_expanded,
         },

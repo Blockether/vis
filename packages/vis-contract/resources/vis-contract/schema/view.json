@@ -2039,7 +2039,8 @@
               "type": "string"
             },
             "detail": {
-              "$ref": "common.json#/$defs/non_blank_string"
+              "type": "string",
+              "description": "Blank text clears the status' detail; a declaration omits it instead."
             },
             "tone": {
               "$ref": "#/$defs/tone"

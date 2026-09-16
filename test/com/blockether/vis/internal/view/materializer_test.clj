@@ -219,6 +219,19 @@
         (expect (str/includes? (refusal
                                  #(patched v {:op :append :node-id "t" :rows [(row "a" "A" "1")]}))
                                "no such node"))))
+  (it "clears a status' detail with a blank one, the way a declaration leaves it out"
+      ;; Issue #255: a `set` carrying detail "" refused the whole patch, so a
+      ;; poller with nothing to add this round could not take the line away.
+      (let [v
+            (view {:id "state" :type :status :text "queued" :tone :idle :detail "attempt 1"})
+
+            cleared
+            (patched v {:op :set :node-id "state" :text "polling" :detail ""})]
+
+        (expect (= "attempt 1" (:detail (node v "state"))))
+        (expect (nil? (:detail (node cleared "state"))))
+        (expect (= "polling" (:text (node cleared "state"))))
+        (expect (nil? (hs/live-view-error cleared)))))
   (it
     "grows and drops a node inside a ROW, because a group is layout — not another address space"
     (let [v

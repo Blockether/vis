@@ -331,3 +331,30 @@ def test_divider_refuses_mutation(host_kind):
             assert state["view"]["nodes"][0] == divider
     finally:
         host(json.dumps({"op": "close", "view_id": view_id}))
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_a_blank_detail_clears_the_status_line(monkeypatch, host_kind):
+    # Issue #255: a poller with nothing to add this round sent detail="" and the
+    # host refused the whole patch, so a finished operation looked failed.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    with vis.live(
+        "Poll", [vis.status("state", "Polling", detail="attempt 1")], flush_ms=0
+    ) as view:
+        assert view.state()["nodes"][0]["detail"] == "attempt 1"
+        view["state"].set("Polling", detail="")
+        assert "detail" not in view.state()["nodes"][0]
+
+
+def test_a_group_arranging_nothing_is_refused_where_it_was_written():
+    # Issue #255: an empty layout group used to reach the host as an invalid view.
+    for build in (
+        lambda: vis.column("targets"),
+        lambda: vis.row(),
+        lambda: vis.disclosure("targets", "Targets"),
+    ):
+        with pytest.raises(ValueError, match="at least one node"):
+            build()
