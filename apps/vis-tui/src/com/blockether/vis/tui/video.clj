@@ -340,6 +340,7 @@
                                               :kitty
                                               (str (timg/kitty-transmit data image-id)
                                                    (timg/kitty-place {:id image-id
+                                                                      :placement-id image-id
                                                                       :cols cols'
                                                                       :rows rows'
                                                                       :img-w (:width f)

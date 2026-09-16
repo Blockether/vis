@@ -2645,6 +2645,61 @@ therapy line 2"
                        (expect (= 20 (long (:rows scrolled))))
                        (expect (= 20 (long (:cols scrolled)))))))))
 
+(defdescribe
+  kitty-multiple-image-placement-test
+  ;; #257: every rendered region needs independent placement ownership, including
+  ;; two occurrences of the same file. Scrolling must remove only the old region.
+  (it
+    "places two regions independently and preserves the second while scrolling"
+    (doseq [second-path ["/tmp/second.png" "/tmp/first.png"]]
+      (let [image-state (atom {:transmits {} :order [] :placed #{} :next-id 1})
+            first-region {:row 2
+                          :col 3
+                          :img {:id "turn/image/1"
+                                :path "/tmp/first.png"
+                                :mime "image/png"
+                                :cols 10
+                                :rows 6
+                                :width 100
+                                :height 120}}
+            second-region {:row 10
+                           :col 3
+                           :img (assoc (:img first-region)
+                                  :id "turn/image/2"
+                                  :path second-path)}
+            emit (fn [regions]
+                   (let [sb (StringBuilder.)]
+                     (#'screen/emit-kitty-images! sb regions)
+                     (str sb)))
+            placements (fn [s]
+                         (mapv rest (re-seq #"a=p,i=(\d+),p=(\d+)" s)))]
+
+        (with-redefs [screen/kitty-image-state image-state
+                      timg/kitty-png (fn [_ _ _]
+                                       {:data "AAAA" :w 100 :h 120})]
+
+          (let [initial (emit [first-region second-region])
+                pairs (placements initial)
+                [first-id first-placement] (first pairs)
+                second-pair (second pairs)
+                scrolled (emit [(assoc second-region :row 2)])
+                returned (emit [first-region second-region])]
+
+            (expect (= 2 (count pairs)))
+            (expect (= 2 (count (set (map second pairs)))))
+            (expect (= [second-pair] (placements scrolled)))
+            (expect (str/includes? scrolled
+                                   (str "a=d,d=i,i=" first-id ",p=" first-placement ",q=2")))
+            (expect (not (str/includes? scrolled "a=t")))
+            (expect (= pairs (placements returned)))
+            (expect (not (str/includes? returned "a=t")))
+            (with-redefs [screen/kitty-max-transmits 1]
+              (expect (not (str/includes? (emit [first-region second-region]) "d=I")))
+              (let [pruned (emit [second-region])]
+                (expect (str/includes? pruned (str "a=d,d=I,i=" first-id ",q=2")))
+                (expect (not (str/includes? pruned (str "a=d,d=I,i=" (first second-pair) ",q=2"))))
+                (expect (= 1 (count (:transmits @image-state))))))))))))
+
 ;; Regression, reported bug: dropping a picture into a turn and letting the view
 ;; auto-scroll to the bottom tore the drawing off its frame — it kept the screen
 ;; row it already had, so it slid downward out of its box and over the chrome

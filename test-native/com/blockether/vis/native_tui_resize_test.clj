@@ -3,6 +3,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [charred.api :as json]
+            [com.blockether.imaging :as img]
             [com.blockether.vis.contract.gateway :as gateway]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]])
@@ -11,8 +12,20 @@
            (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.util.concurrent TimeUnit)))
 
+(defn- image-attachments
+  []
+  (mapv (fn [[id width height color]]
+          (with-open [image (img/blank width height color)]
+            {"id" id
+             "source" "user"
+             "media_type" "image/png"
+             "filename" (str id ".png")
+             "base64" (.encodeToString (java.util.Base64/getEncoder)
+                                       ^bytes (img/encode image :png))}))
+        [["first" 1358 1030 "red"] ["second" 702 648 "blue"]]))
+
 (defn- start-gateway-stub!
-  [& [slow-model? requests clipboard?]]
+  [& [slow-model? requests clipboard? images]]
   (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
     (.createContext
       server
@@ -49,17 +62,24 @@
                            {"offset" 0
                             "total" 1
                             "has_more" false
-                            "turns"
-                            [{"turn_id" "native-highlighting"
-                              "status" "completed"
-                              "request"
-                              (if clipboard? "Copy: Zażółć gęślą jaźń 中文 😀" "Show Python syntax.")
-                              "content" [{"id" "code"
+                            "turns" [(if images
+                                       {"turn_id" "native-images"
+                                        "status" "completed"
+                                        "request" "Inspect both images."
+                                        "attachments" images
+                                        "content" []}
+                                       {"turn_id" "native-highlighting"
+                                        "status" "completed"
+                                        "request" (if clipboard?
+                                                    "Copy: Zażółć gęślą jaźń 中文 😀"
+                                                    "Show Python syntax.")
+                                        "content"
+                                        [{"id" "code"
                                           "type" "prose"
                                           "markdown"
                                           (str "```python\n"
                                                "vis_identifier_marker = \"vis_string_marker\"\n"
-                                               "```")}]}]}
+                                               "```")}]})]}
 
                            {})
                     data (.getBytes ^String (json/write-json-str body) "UTF-8")]
@@ -87,7 +107,10 @@
             (atom [])
 
             server
-            (start-gateway-stub! (some? model-key) requests clipboard?)]
+            (start-gateway-stub! (some? model-key)
+                                 requests
+                                 clipboard?
+                                 (when (= "images" mode) (image-attachments)))]
 
         (try
           (let [process (.start
@@ -106,6 +129,7 @@
                        (expect (str/includes?
                                  output
                                  (cond (= "theme" mode) "native theme restored after restart"
+                                       (= "images" mode) "native Kitty image scrolling verified"
                                        clipboard? "native clipboard verified"
                                        model-key "input responsive during slow model HTTP"
                                        :else "resized to 100x35"))
@@ -146,3 +170,9 @@
              (it
                "keeps a selected theme in the runtime user's home through idle, repaint and restart"
                (check-native-tui! "theme")))
+
+(defdescribe native-tui-image-scrolling-test
+             ;; #257: exercise persisted attachments, viewport clipping and the Java encoder
+             ;; through the built native executable, not just isolated escape builders.
+             (it "places both images while scrolling and removes only departed placements"
+                 (check-native-tui! "images")))

@@ -336,11 +336,11 @@
    cursor: draw it into a `cols`×`rows` cell box, optionally cropped to the visible
    vertical slice (`crop-top`/`crop-bottom` cell rows over an `img-w`×`img-h` px
    image) via the protocol's source rectangle — the SAME `x/y/w/h` math the fork's
-   crop `encodeKitty` uses, because it is the same code. Reusing placement id `p=1`
-   REPLACES the prior placement, so a scroll moves the picture atomically: no
-   delete-all, no re-upload, no flash."
-  [{:keys [id cols rows crop-top crop-bottom img-w img-h]}]
+   crop `encodeKitty` uses. The image id and explicit `placement-id` identify one
+   placement. Reusing that pair moves only that region, without re-uploading."
+  [{:keys [id placement-id cols rows crop-top crop-bottom img-w img-h]}]
   (TerminalImage/placeKitty (int id)
+                            (int placement-id)
                             (int (or cols 0))
                             (int (or rows 0))
                             (int (or crop-top 0))
@@ -349,11 +349,10 @@
                             (int (or img-h 0))))
 
 (defn kitty-delete-placement
-  "Kitty sequence removing image `id`'s placement while KEEPING its uploaded data,
-   so an image scrolled off screen leaves no ghost yet needs no re-upload if it
-   scrolls back into view."
-  [id]
-  (TerminalImage/deleteKittyPlacement (int id)))
+  "Remove the specified image/placement pair while keeping uploaded data and
+   other placements, so scrolling back into view needs no re-upload."
+  [id placement-id]
+  (TerminalImage/deleteKittyPlacement (int id) (int placement-id)))
 
 (defn kitty-free-image
   "Kitty sequence deleting image `id` AND freeing its uploaded data — used when the

@@ -44,6 +44,10 @@ def check_resize(binary, home, gateway, mode=None):
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.environ["TERM"] = "xterm-256color"
         os.environ.pop("TSLP_NATIVE_PATH", None)
+        if mode == "images":
+            os.environ["TERM_PROGRAM"] = "kitty"
+            os.environ.pop("TMUX", None)
+            os.environ.pop("STY", None)
         if clipboard_mode:
             os.environ["PATH"] = f"{helpers}:{os.environ.get('PATH', '')}"
             os.environ["VIS_TEST_CLIPBOARD"] = str(clipboard_file)
@@ -168,7 +172,7 @@ def check_resize(binary, home, gateway, mode=None):
                     f"native TUI closed its terminal: {pending[-2000:]!r}"
                 )
             pending += chunk
-            output = (output + chunk)[-131072:]
+            output = (output + chunk)[-(1048576 if mode == "images" else 131072) :]
             consumed = 0
             for match in sequence.finditer(pending):
                 params, _, command = match.groups()
@@ -225,6 +229,73 @@ def check_resize(binary, home, gateway, mode=None):
     try:
         await_bottom(20)
         print("initial 80x24 painted", flush=True)
+        if mode == "images":
+            # #257: inspect the actual native Kitty stream across both image boxes.
+            await_bottom(1, idle=True)
+            os.write(master, b"\x1b[<64;20;8M" * 30)
+            await_bottom(1, idle=True)
+            for _ in range(25):
+                os.write(master, b"\x1b[<65;20;8M")
+                await_bottom(0.2, idle=True)
+            uploads, placed, placement_owners = {}, {}, {}
+            visible_sizes = set()
+            saw_both = False
+            deletes = 0
+            upload_id, payload = None, b""
+            for match in re.finditer(rb"\x1b_G([^\x1b]*)\x1b\\|\x1b8", output):
+                command = match.group(1)
+                if command is None:
+                    # End of a graphics frame: departed placements are gone now.
+                    saw_both |= len(set(placed.values())) == 2
+                    continue
+                head, _, data = command.partition(b";")
+                fields = dict(
+                    item.split(b"=", 1) for item in head.split(b",") if b"=" in item
+                )
+                action = fields.get(b"a")
+                if action == b"t":
+                    upload_id, payload = int(fields[b"i"]), b""
+                if upload_id is not None and (action == b"t" or b"m" in fields):
+                    payload += data
+                    if fields.get(b"m", b"0") == b"0":
+                        png = base64.b64decode(payload, validate=True)
+                        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+                        uploads[upload_id] = struct.unpack(">II", png[16:24])
+                        upload_id = None
+                elif action == b"p":
+                    image_id, placement_id = int(fields[b"i"]), int(fields[b"p"])
+                    assert image_id in uploads, f"Placement without upload: {fields}"
+                    previous_owner = placement_owners.setdefault(placement_id, image_id)
+                    assert previous_owner == image_id, "Two images share a placement ID"
+                    width, height = uploads[image_id]
+                    assert (
+                        int(fields.get(b"y", 0)) + int(fields.get(b"h", height))
+                        <= height
+                    )
+                    assert int(fields.get(b"w", width)) <= width
+                    placed[image_id, placement_id] = (width, height)
+                    visible_sizes.add((width, height))
+                elif action == b"d" and fields.get(b"d") == b"i":
+                    assert b"p" in fields, "Deletion must target one placement"
+                    pair = int(fields[b"i"]), int(fields[b"p"])
+                    assert pair in placed, f"Deleting an unknown placement: {pair}"
+                    del placed[pair]
+                    deletes += 1
+                elif action == b"d" and fields.get(b"d") == b"I":
+                    image_id = int(fields[b"i"])
+                    uploads.pop(image_id, None)
+                    assert all(pair[0] != image_id for pair in placed)
+                elif action == b"d" and fields.get(b"d") == b"A":
+                    placed.clear()
+                    uploads.clear()
+            assert visible_sizes == {(1358, 1030), (702, 648)}, visible_sizes
+            assert saw_both, "Never placed both images in a viewport transition"
+            assert deletes, "Scrolling did not remove departed placements"
+            assert (702, 648) in placed.values(), (
+                "Second image is blank after scrolling"
+            )
+            print("native Kitty image scrolling verified", flush=True)
+            return
         if theme_mode:
             initial_bg = b"1a/1b/26" if mode == "theme" else b"0c/0e/12"
             await_bottom(8, background=initial_bg)

@@ -2003,8 +2003,9 @@
 (defonce ^:private active-html-terminal (atom nil))
 
 (defonce ^:private kitty-image-state
-  ;; Kitty images upload once per path and box, then use cheap placements. Track
-  ;; insertion order for eviction and the IDs currently on screen.
+  ;; Cache each rendered region and box independently, even for the same file.
+  ;; Each upload owns one placement with the same numeric ID. Track insertion
+  ;; order for eviction and the IDs currently on screen.
   (atom {:transmits {} :order [] :placed #{} :next-id 1}))
 
 (def ^:private kitty-max-transmits
@@ -2030,12 +2031,11 @@
       (.append sb seqstr))))
 
 (defn- emit-kitty-images!
-  "Append Kitty graphics for `regions` to `sb`, transmitting each unique image ONCE
-   and RE-PLACING it every frame. Walks `kitty-image-state`: a first sight uploads
-   the PNG (`a=t`) under a fresh id; every region then emits only a cursor move +
-   placement (`a=p`, which replaces the prior placement in place). Placements gone
-   from view are deleted (data kept); the transmit cache is capped so a long session
-   can't pin unbounded terminal image memory. Mutates `kitty-image-state`."
+  "Append Kitty graphics for `regions` to `sb`, uploading each region/box once
+   and re-placing it on later frames. Regions have independent cached image and
+   placement IDs even when they reference the same file. Placements leaving the
+   viewport are deleted without freeing data; evict the oldest off-screen
+   uploads above the cache cap. Mutates `kitty-image-state`."
   [^StringBuilder sb regions]
   (let [st @kitty-image-state]
     (loop [rs regions
@@ -2045,7 +2045,7 @@
            next-id (long (:next-id st))]
 
       (if-let [{:keys [row col img]} (first rs)]
-        (let [tkey [(:path img) (:cols img) (:rows img)]
+        (let [tkey [(:id img) (:path img) (:cols img) (:rows img)]
               [transmits order next-id entry]
               (if-let [e (get transmits tkey)]
                 [transmits order next-id e]
@@ -2067,6 +2067,7 @@
                 (.append sb
                          ^String
                          (timg/kitty-place {:id (:id entry)
+                                            :placement-id (:id entry)
                                             :cols (:cols img)
                                             :rows (:rows img)
                                             :crop-top (:crop-top img)
@@ -2078,7 +2079,7 @@
         ;; All regions emitted. Delete placements that left the viewport (keep data),
         ;; then evict the oldest off-screen transmits if we're over the cap.
         (do (doseq [id (:placed st)]
-              (when-not (placed id) (.append sb ^String (timg/kitty-delete-placement id))))
+              (when-not (placed id) (.append sb ^String (timg/kitty-delete-placement id id))))
             (let [[transmits order]
                   (loop [transmits transmits
                          order order]
