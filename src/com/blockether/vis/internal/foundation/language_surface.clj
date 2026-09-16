@@ -105,7 +105,13 @@
           " still serves the Vars already loaded: `repl_eval` `(require 'my.prod.ns :reload)` for"
           " each one you edited, or `repl_stop` and let a clean JVM run them."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
-          " whole-project lint (omit code/paths) does both; no separate reflection tool.")))))
+          " whole-project lint (omit code/paths) does both; no separate reflection tool."))
+      (when (contains? data "python")
+        (str "\n  python repl_eval NEVER starts a REPL: it needs one THIS session already"
+             " started with `repl_start(\"python\", {\"cwd\": …})` for that same directory, and"
+             " refuses otherwise — start it first, `repl_stop` when you are done. NOTHING else"
+             " in the pack needs it: `run_tests` runs a one-shot hermetic CPython (or the"
+             " project runner), and `format_code`/`lint_code` are in-process Ruff.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
