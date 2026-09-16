@@ -494,16 +494,18 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS runner pickup guard ──────────────────────────────────────────────
-  # An offline or busy runner, or a label no machine
-  # carries leaves the job queued, and GitHub waits up to 24 h before failing it.
-  # Watch from an unrelated free Linux runner and report the routing problem while
-  # the release can still be re-dispatched. This does not cancel a late build; if
-  # the runner comes back, the asset may still attach.
+  # A label no machine carries, or a runner that never comes back, leaves the
+  # job queued, and GitHub waits up to 24 h before failing it. Watch from an
+  # unrelated free Linux runner and report the routing problem while the release
+  # can still be re-dispatched. One self-hosted mac also queues this build behind
+  # its own sibling jobs, so a late pickup is normal: warn at WARN_MINUTES and
+  # fail only when no builder takes the job at all. Neither cancels a late build;
+  # if the runner frees up, the asset still attaches.
   macos-pickup:
     name: native / macOS builder pickup
     if: inputs.only != 'linux'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 100
     permissions:
       # `contents: write` at the top of this file REPLACES the default token
       # scopes, so reading the job list of this very run must be asked for.
@@ -513,13 +515,17 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       MACOS_RUNNER: vis-macos-arm64
       TARGET_REF: ${{ inputs.tag || github.ref_name }}
-      DEADLINE_MINUTES: "25"
+      POLL_SECONDS: "15"
+      WARN_MINUTES: "25"
+      DEADLINE_MINUTES: "90"
     steps:
-      - name: Fail fast when no macOS builder takes the job
+      - name: Report when no macOS builder takes the job
         shell: bash
         run: |
           set -euo pipefail
+          warn_at=$(( WARN_MINUTES * 60 ))
           deadline=$(( SECONDS + DEADLINE_MINUTES * 60 ))
+          warned=0
           while :; do
             if ! status="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
                         --jq '.jobs[] | select(.name | endswith("macos-arm64.tar.gz")) | .status')"; then
@@ -528,10 +534,14 @@ jobs:
             fi
             case "$status" in
               in_progress|completed)
-                echo "${MACOS_RUNNER} took the macOS build (${status})"
+                echo "${MACOS_RUNNER} took the macOS build (${status}) after $(( SECONDS / 60 )) min"
                 exit 0
                 ;;
             esac
+            if [ "$warned" -eq 0 ] && [ "$SECONDS" -ge "$warn_at" ]; then
+              warned=1
+              echo "::warning::No runner labelled ${MACOS_RUNNER} has started the macOS build for ${TARGET_REF} after ${WARN_MINUTES} min. It is most likely busy with another job; the build still attaches once it frees up."
+            fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               if [ "$status" = unavailable ]; then
                 echo '::error::GitHub job status remained unavailable at the pickup deadline'
@@ -540,5 +550,5 @@ jobs:
               fi
               exit 1
             fi
-            sleep 15
+            sleep "$POLL_SECONDS"
           done

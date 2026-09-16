@@ -1387,14 +1387,15 @@
 (defdescribe
   native-pickup-behavior-test
   (it
-    "retries transient job-list failures and never mistakes unavailable status for pickup"
-    ;; Release 35079085070 failed on HTTP 502 while its macOS job later ran.
+    "retries transient job-list failures, warns about a late pickup and fails at the deadline"
+    ;; Release 35079085070 failed on HTTP 502 while its macOS job later ran, and release
+    ;; 35135873213 failed the guard at 25 min while the one busy mac took the job at 32.
     (let [workflow
           (slurp ".github/workflows/native-release.yml")
 
           script
           (-> workflow
-              (str/split #"      - name: Fail fast when no macOS builder takes the job" 2)
+              (str/split #"      - name: Report when no macOS builder takes the job" 2)
               second
               (str/split #"        run: \|\n" 2)
               second
@@ -1413,10 +1414,15 @@
             "#!/usr/bin/env bash\necho call >> \"$TEST_CALLS\"\n"
             "if [[ $TEST_MODE == transient && $(wc -l < \"$TEST_CALLS\") -eq 1 ]]; then exit 1; fi\n"
             "if [[ $TEST_MODE == unavailable ]]; then exit 1; fi\n"
+            "if [[ $TEST_MODE == late && $(wc -l < \"$TEST_CALLS\") -eq 1 ]]; then echo queued; exit 0; fi\n"
             "if [[ $TEST_MODE == queued ]]; then echo queued; else echo in_progress; fi\n"))
         (write-executable! (io/file dir "sleep") "#!/usr/bin/env bash\nexit 0\n")
-        (doseq [[mode deadline expected] [["transient" "1" 0] ["unavailable" "0" 1] ["queued" "0" 1]
-                                          ["running" "0" 0]]]
+        ;; A builder that is merely busy takes the job late: that warns once and still succeeds.
+        (doseq [[mode deadline expected report]
+                [["transient" "1" 0 nil]
+                 ["unavailable" "0" 1 "::error::GitHub job status remained unavailable"]
+                 ["queued" "0" 1 "::error::No runner labelled"] ["running" "0" 0 nil]
+                 ["late" "90" 0 "::warning::No runner labelled"]]]
           (spit calls "")
           (let [{:keys [exit output]}
                 (run-bash ["bash" "-c" script]
@@ -1425,10 +1431,13 @@
                            "GITHUB_RUN_ID" "123"
                            "MACOS_RUNNER" "fixture-mac"
                            "TARGET_REF" "v1.2.3"
+                           "POLL_SECONDS" "0"
+                           "WARN_MINUTES" "0"
                            "DEADLINE_MINUTES" deadline
                            "TEST_CALLS" (.getAbsolutePath calls)
                            "TEST_MODE" mode})]
             (expect (= expected exit) (str mode ": " output))
+            (when report (expect (str/includes? output report) (str mode ": " output)))
             (when (= mode "transient") (expect (= 2 (count (str/split-lines (slurp calls))))))))
         (finally (delete-tree! dir))))))
 
