@@ -30,9 +30,8 @@ export const Fleet: Story = {
   play: async ({ args, canvas }) => {
     const name = canvas.getByText('tower');
     await name.ownerDocument.fonts.ready;
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
-    await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '22px');
+    await expect(getComputedStyle(name).fontSize).toBe('13px');
+    await expect(getComputedStyle(name).lineHeight).toBe('20px');
     await expect(getComputedStyle(name).fontWeight).toBe('500');
     const rank = canvas.getByText('Primary', { exact: true });
     await expect(getComputedStyle(rank).fontSize).toBe('11px');

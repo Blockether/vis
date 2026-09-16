@@ -54,8 +54,12 @@ import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } f
 
 /**
  * Shared reading roles for settings, lists and forms. Size, weight and quiet ink
- * belong to the role; callers control placement only. Touch labels stay larger,
- * while descriptions and metadata never shrink below their readable steps.
+ * belong to the role; callers control placement only. ONE STEP FOR BOTH FACES: a
+ * heading, a label and an option each took a step UP under a finger, so the sheet
+ * that reads as a column on a desktop read as a poster on a phone — a provider's
+ * whole name claimed the width of the screen and clipped mid-word. Only a
+ * control's BOX is tighter under a pointer; the words are the same size on both,
+ * and descriptions and metadata never shrink below their readable steps.
  * Use inherited ink inside a selected control or a semantic status container.
  */
 export function Text({
@@ -70,10 +74,10 @@ export function Text({
   tone?: 'default' | 'inherit';
 }) {
   const role = {
-    heading: 'text-subhead font-semibold mouse:text-title',
+    heading: 'text-title font-semibold',
     section: 'text-body font-semibold',
-    label: 'text-subhead font-medium mouse:text-title',
-    option: 'text-subhead font-normal mouse:text-title',
+    label: 'text-title font-medium',
+    option: 'text-title font-normal',
     description: 'text-body font-normal',
     meta: 'text-ui font-normal',
   }[variant];

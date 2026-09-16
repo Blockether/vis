@@ -128,8 +128,7 @@ export const Typography: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const name = await canvas.findByText('filesystem', { exact: true });
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
+    await expect(getComputedStyle(name).fontSize).toBe('13px');
     await expect(getComputedStyle(name).fontWeight).toBe('500');
     for (const element of [
       canvas.getByText('npx', { exact: true }),

@@ -159,6 +159,20 @@ describe('shared text roles', () => {
     expect(html).toContain('title="https://gateway.example.com/mcp"');
     expect(html).toContain('gateway.example.com</p>');
   });
+
+  // Regression (reported over the settings sheet on a phone: the writing in it is
+  // a bit too big): a heading, a label and an option each took a step UP under a
+  // finger, so a provider's name claimed the width of a phone and clipped
+  // mid-word. A reading role is ONE step on both faces — only a control's box is
+  // tighter under a pointer.
+  it.each(['heading', 'section', 'label', 'option', 'description', 'meta'] as const)(
+    'reads %s at one step under a finger and under a pointer',
+    (variant) => {
+      expect(renderToStaticMarkup(<Text variant={variant}>Providers</Text>)).not.toContain(
+        'mouse:text-',
+      );
+    },
+  );
 });
 
 describe('shared settings headers', () => {

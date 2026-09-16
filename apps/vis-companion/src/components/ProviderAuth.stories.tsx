@@ -31,12 +31,11 @@ type Story = StoryObj<typeof meta>;
 export const Fleet: Story = {
   args: { auth: storyProviderAuth() },
   play: async ({ args, canvas }) => {
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     for (const provider of args.auth.providers!) {
       const name = canvas.getByText(provider.label, { exact: true });
       await name.ownerDocument.fonts.ready;
-      await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
-      await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '22px');
+      await expect(getComputedStyle(name).fontSize).toBe('13px');
+      await expect(getComputedStyle(name).lineHeight).toBe('20px');
       await expect(getComputedStyle(name).fontWeight).toBe('500');
       // Names lead; routing status is readable metadata, not another bold heading.
       const label = provider.is_default ? 'Default' : provider.is_fallback ? 'Fallback' : null;

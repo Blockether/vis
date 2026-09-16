@@ -1305,15 +1305,14 @@ export const Settings: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const labels = ['Voice', 'Piper (gateway)', 'This device'].map((name) =>
       canvas.getByText(name),
     );
     await labels[0].ownerDocument.fonts.ready;
     for (const label of labels) {
       const style = getComputedStyle(label);
-      await expect(style.fontSize).toBe(pointer ? '13px' : '15px');
-      await expect(style.lineHeight).toBe(pointer ? '20px' : '22px');
+      await expect(style.fontSize).toBe('13px');
+      await expect(style.lineHeight).toBe('20px');
       await expect(style.fontFamily).toBe(getComputedStyle(labels[0]).fontFamily);
     }
     for (const value of ['Piper English', 'ready', 'system TTS']) {

@@ -264,8 +264,10 @@ export const FormTypography: Story = {
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const label = page.getByText('Server name', { exact: true });
     const hint = page.getByText('Arguments are passed directly, never through a shell.');
-    await expect(getComputedStyle(label).fontSize).toBe(pointer ? '13px' : '15px');
-    await expect(getComputedStyle(label).lineHeight).toBe(pointer ? '20px' : '22px');
+    // A reading role is one step on both faces; only the control's box is tighter
+    // under a pointer, which is what the textareas below still answer to.
+    await expect(getComputedStyle(label).fontSize).toBe('13px');
+    await expect(getComputedStyle(label).lineHeight).toBe('20px');
     await expect(getComputedStyle(hint).fontSize).toBe('12px');
     await expect(getComputedStyle(hint).lineHeight).toBe('18px');
     const args = page.getByRole('textbox', { name: /^Arguments — one per line/ });
