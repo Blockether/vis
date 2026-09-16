@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.8] - 2026-09-16
+
+### Fixed
+- Keep folded context across requests, price the retained request prefix and always print fold receipts in prompt examples.
+- Keep mobile paging controls pressable and stamp turns in en-GB.
+
+### Changed
+- Warn before failing when the macOS release builder takes a native job late, so a queued build still attaches its asset.
+
+## [v0.2.7] - 2026-09-16
+
+### Added
+- Merge adjacent thinking blocks in the TUI when Python output is hidden.
+
+### Fixed
+- Keep session deletions in sync across the app, the TUI and every connected client.
+- Keep project headers, paging controls, turn actions and the settings sheet usable on phones, with tighter composer, live view and response-control spacing.
+- Await and store voice transcripts, cap recording waits and show transcription progress.
+- Keep Python sandbox results faithful: opt-in result sequences survive, unknown record attributes are explained and sandbox SDK declarations are visible.
+- Recover a session whose sandbox initialization was cancelled.
+- Keep Activity List details behind disclosure, refuse empty view groups and clear a status when its detail is blank.
+- Align turn headers between the app and the TUI, and isolate inline Kitty image placements.
+
+### Changed
+- Raise the pooled file-index budget for large workspaces and prune stale work from release caches in CI.
+
 ## [v0.2.6] - 2026-09-16
 
 Includes the draft, session history, SDK and Activity improvements prepared for v0.2.5, whose native verification blocked publication.
@@ -6286,7 +6312,9 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.8...HEAD
+[v0.2.8]: https://github.com/Blockether/vis/compare/v0.2.7...v0.2.8
+[v0.2.7]: https://github.com/Blockether/vis/compare/v0.2.6...v0.2.7
 [v0.2.6]: https://github.com/Blockether/vis/compare/v0.2.5...v0.2.6
 [v0.2.5]: https://github.com/Blockether/vis/compare/v0.2.3...v0.2.5
 [v0.2.3]: https://github.com/Blockether/vis/releases/tag/v0.2.3
