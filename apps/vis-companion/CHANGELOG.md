@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.8 (6354) — 2026-09-17
+<!-- commit: 72afec37eecb23ba7d391a4cd7a6a7870f10b996 -->
+
+- Show every retained operation in Activity
+- Stand the ask form in the session pane
+- Detach pending images instead of deleting them
+- Step thinking paragraph gap to the compact scale
+- Loosen thinking paragraph spacing
+- Put step disclosure marks beside their names
+- Hold the THINKING label still through its toggle
+- Align open health sections with their labels
+- Replace existence checks with real assertions
+- Run the MCP settle poll on a fake clock
+- Pool unit tests in VM forks, not VM threads
+- Keep live table branches collapsed by default
+- Request macOS microphone and camera entitlements
+- One github-copilot provider for every seat plan
+- Let a story play function wait for its first paint
+- Run unit tests in VM contexts, not worker processes
+- Alert from the macOS desktop app
+- Keep the thinking band one type step below the answer
+- Replace markup pins with behavior + convention tests
+- Mirror the composer gutters in the completion list
+
 ## 0.2.6 (6248) — 2026-09-16
 <!-- commit: f5682ff05e00b74b79db7e41bc4ada8891f197e5 -->
 
