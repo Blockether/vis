@@ -1820,12 +1820,13 @@ export const ThinkingBand = memo(function ThinkingBand({
         </Disclosure>
       )}
       {/* Reasoning streams one sentence per line, so nearly every line renders
-          as its own paragraph and the shared compact gap (my-2) would double
-          the band's vertical rhythm; keep it a step under that here. The collapsed
-          peek holds REASONING_PREVIEW_LINES rows at this step's 16px line box. */}
+          as its own paragraph, and this gap alone sets the band's vertical
+          rhythm; it is pinned here instead of drifting with the shared compact
+          scale. The collapsed peek clamps at REASONING_PREVIEW_LINES 16px line
+          boxes, so a wider gap trades peeked rows for air. */}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[3rem] overflow-hidden' : ''} min-w-0 italic [&_p]:my-1.5`}
+        className={`${collapsible && !expanded ? 'max-h-[3rem] overflow-hidden' : ''} min-w-0 italic [&_p]:my-2`}
       >
         <Markdown compact hardBreaks>
           {normalized}

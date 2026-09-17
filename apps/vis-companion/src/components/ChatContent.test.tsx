@@ -445,7 +445,7 @@ describe('Markdown list columns', () => {
 // instead of matching the answer body's mouse:text-title, and its collapsed
 // peek holds REASONING_PREVIEW_LINES rows at this step's 16px line box.
 // Reasoning streams one sentence per line, so nearly every line renders as
-// its own paragraph and the band keeps its gap a step under the shared compact one.
+// its own paragraph, and the band pins that paragraph gap to the compact step.
 describe('thinking band presentation', () => {
   it('stays one type step below the answer and clamps its peek to three rows', () => {
     const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
@@ -459,7 +459,7 @@ describe('thinking band presentation', () => {
       expect(band).toHaveClass('text-ui');
       expect(band).not.toHaveClass('mouse:text-title');
       const body = view.container.querySelector('div.italic') as HTMLDivElement;
-      expect(body).toHaveClass('max-h-[3rem]', 'overflow-hidden', '[&_p]:my-1.5');
+      expect(body).toHaveClass('max-h-[3rem]', 'overflow-hidden', '[&_p]:my-2');
       expect(view.container.textContent).toContain('THINKING');
     } finally {
       height.mockRestore();
