@@ -1259,12 +1259,9 @@ describe('Activity follows the combined Python source', () => {
       expect(JSON.stringify(turn)).toBe(original);
       return;
     }
-    const toggles = painted.getAllByRole('button', {
-      name: 'Expand error details',
-    });
-    expect(toggles).toHaveLength(2);
-    expect(toggles[0]).toHaveTextContent('Failed');
-    expect(toggles[0]).toHaveAttribute('aria-expanded', 'false');
+    const failures = painted.getByRole('button', { name: 'Expand all error details' });
+    expect(failures).toHaveTextContent('Failed ×2');
+    expect(failures).toHaveAttribute('aria-expanded', 'false');
     expect(painted.container.textContent).toContain('29ms');
     expect(painted.container.textContent).not.toContain(message);
     expect(painted.container.textContent).not.toContain(trace);
@@ -1273,20 +1270,40 @@ describe('Activity follows the combined Python source', () => {
     fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
     expect(painted.container.textContent).not.toContain(message);
     fireEvent.click(painted.getByRole('button', { name: 'Collapse code' }));
-    fireEvent.click(toggles[0]);
-    expect(toggles[0]).toHaveAttribute('aria-expanded', 'true');
+    // One press on the count opens every failure under it, not only the first.
+    fireEvent.click(failures);
+    expect(failures).toHaveAttribute('aria-expanded', 'true');
     expect(painted.container.textContent).toContain(message);
     expect(painted.container.textContent).toContain(trace);
-    expect(painted.container.textContent).not.toContain('print(private_result)');
-    expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
-    fireEvent.click(toggles[1]);
     expect(painted.container.textContent).toContain('SECOND_FAILURE');
-    fireEvent.click(toggles[0]);
-    fireEvent.click(toggles[1]);
+    expect(painted.container.textContent).not.toContain('print(private_result)');
+    fireEvent.click(painted.getByRole('button', { name: 'Collapse all error details' }));
     expect(painted.container.textContent).not.toContain(message);
     expect(painted.container.textContent).not.toContain(trace);
     expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
     expect(JSON.stringify(turn)).toBe(original);
+  });
+
+  // Failures that stand next to each other are one outcome with a count, not a
+  // column of identical red bands the reader has to open one at a time.
+  it('counts adjacent failures under a single head', () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: 'first()', error: { message: 'FIRST_FAILURE' } },
+          { source: 'second()', error: { message: 'SECOND_FAILURE' } },
+          { source: 'third()', error: { message: 'THIRD_FAILURE' } },
+        ])}
+      />,
+    );
+    expect(painted.queryAllByRole('button', { name: 'Expand error details' })).toHaveLength(0);
+    const failures = painted.getByRole('button', { name: 'Expand all error details' });
+    expect(failures).toHaveTextContent('Failed ×3');
+    expect(painted.container.textContent).not.toContain('FIRST_FAILURE');
+    fireEvent.click(failures);
+    expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
+    expect(painted.getByText(/SECOND_FAILURE/)).toBeVisible();
+    expect(painted.getByText(/THIRD_FAILURE/)).toBeVisible();
   });
 
   it('keeps mixed outcomes independently collapsible', () => {

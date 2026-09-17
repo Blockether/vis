@@ -1268,6 +1268,62 @@ const ToolCard = memo(function ToolCard({
   );
 });
 
+/**
+ * ADJACENT FAILURES ARE ONE OUTCOME. Several calls that failed under one program
+ * painted a column of identical red `Failed` bands: the same word three times,
+ * and the reader still had to open each band to learn what differed. The run
+ * gets a single head that counts it — `Failed ×3`, the Activity panel's own
+ * idiom — and one press prints every body at once, because a reader who opens a
+ * count of failures wants all of them, not the first.
+ */
+const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm[] }) {
+  const [open, setOpen] = useState(false);
+  const errored = cards.filter((card) => card.error != null);
+  // An interruption is not a failure: it keeps its own band and never joins the count.
+  const failures = errored.filter((card) => !interruptedPython(card));
+  if (errored.length === 0) return null;
+  if (failures.length < 2)
+    return (
+      <>
+        {errored.map((card, index) => (
+          <ToolCard key={index} form={card} embedded />
+        ))}
+      </>
+    );
+  return (
+    <>
+      {errored
+        .filter((card) => interruptedPython(card))
+        .map((card, index) => (
+          <ToolCard key={index} form={card} embedded />
+        ))}
+      <div data-code-result className="min-w-0 bg-result pb-1 text-meta text-code-result">
+        <Disclosure
+          isOpen={open}
+          tone="execution"
+          inlineChevron
+          className="min-w-0"
+          aria-label={open ? 'Collapse all error details' : 'Expand all error details'}
+          onClick={() => setOpen((shown) => !shown)}
+        >
+          <BandLabel tone="err">Failed ×{failures.length}</BandLabel>
+        </Disclosure>
+        {open &&
+          failures.map((card, index) => (
+            <pre
+              key={index}
+              className={`m-0 whitespace-pre-wrap break-words font-mono${
+                index > 0 ? ' mt-1 border-t border-code-edge pt-1' : ''
+              }`}
+            >
+              {resultBody(card)}
+            </pre>
+          ))}
+      </div>
+    </>
+  );
+});
+
 function formCode(form: TranscriptForm): string {
   // The canonical formatted surface, falling back to whatever source the event
   // carried. A block is the program the model wrote; there is no second dialect.
@@ -1564,13 +1620,7 @@ const FormTrace = memo(function FormTrace({
           showCode={showCode && Boolean(code)}
           hasActivity={hasActivity}
           duration={formatDuration(form.duration_ms)}
-          failure={
-            cards.some((card) => card.error != null)
-              ? cards
-                  .filter((card) => card.error != null)
-                  .map((card, index) => <ToolCard key={index} form={card} embedded />)
-              : undefined
-          }
+          failure={<FailedCards cards={cards} />}
         >
           {stdout && <ToolCard form={{ stdout }} embedded />}
         </CollapsibleFormCode>
