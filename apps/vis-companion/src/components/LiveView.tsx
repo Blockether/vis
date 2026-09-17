@@ -108,19 +108,21 @@ const LOG_PAGE = 200;
 /**
  * The node's name, in the label voice the dialog's fields already use.
  *
- * CAPS CARRY THE NAME, and only the name. A live label often says what it is a
- * label OF — `Failure · vis-agent + vis-contract (PyPI packages)`, `Timeline ·
- * macos-latest` — and setting the whole line in caps shouts the very part that
- * has to be read: caps strip the ascenders and descenders a word is recognised
- * by, so a long tail stops being scannable and starts competing with the rows it
- * introduces. Everything up to the first `·` is the name; what follows is
- * ordinary type at the same size and colour.
+ * WEIGHT CARRIES THE NAME, not caps. A live label often says what it is a label
+ * OF — `Failure · vis-agent + vis-contract (PyPI packages)`, `Timeline ·
+ * macos-latest` — and the name itself is whatever the extension called the thing:
+ * `Last observed pool state`, `glms-tests/glms-test-data #6043`. Caps strip the
+ * ascenders and descenders a word is recognised by, so a shouted build identifier
+ * stops being scannable and starts competing with the rows it introduces. The name
+ * keeps the case its author wrote it in, exactly as the terminal paints it, and
+ * stands out by ink and weight instead. Everything up to the first `·` is the name;
+ * what follows is ordinary type at the same size.
  */
 function NodeLabel({ children }: { children: string }) {
   const [name, ...rest] = children.split(' · ');
   return (
     <span className="block font-mono text-meta text-dialog-hint">
-      <span className="uppercase tracking-[0.08em]">{name}</span>
+      <span className="font-bold text-white">{name}</span>
       {rest.length > 0 && <span> · {rest.join(' · ')}</span>}
     </span>
   );
@@ -165,6 +167,19 @@ function rowInk(tone: LiveTone): string {
 /** A phase that has not run yet is not part of the picture, so it steps back. */
 function stepInk(tone: LiveTone): string {
   return tone === 'idle' ? 'text-dialog-hint' : rowInk(tone);
+}
+
+/**
+ * A rule is PUNCTUATION, not wallpaper. A line between every node turned the panel
+ * into a ledger: a heading, the sentence under it, two links and a closed drawer
+ * each arrived in their own banded row, and the rule that actually says something —
+ * the one fencing a table off from the prose around it — read like all the others.
+ * The terminal draws a line where the view ASKS for one and along a table's own
+ * rails; the app draws the same two, and spacing carries everything else.
+ */
+function rowRule(previous: LiveNode | undefined, node: LiveNode): string {
+  if (!previous || previous.type === 'divider' || node.type === 'divider') return '';
+  return previous.type === 'table' || node.type === 'table' ? 'border-t border-dialog-edge' : '';
 }
 
 /**
@@ -708,7 +723,7 @@ function TableRows({
               <th
                 key={column.id}
                 scope="col"
-                className={`px-(--live-view-inset) py-2 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
+                className={`px-(--live-view-inset) py-2 font-bold text-meta text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -1184,16 +1199,13 @@ export function LiveViewPanel({
             {error}
           </p>
         )}
-        <ul
-          className={`divide-y divide-dialog-edge [&>li[data-live-divider]]:border-b-0 [&>li:has(+li[data-live-divider])]:border-b-0 ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
-        >
-          {view.nodes.map((node) => (
+        <ul className={view.description ? '[&>li:first-child]:pt-0' : ''}>
+          {view.nodes.map((node, index) => (
             // Table cells own their padding; an outer inset makes the first and last
             // rows uneven relative to the internal separators. Keep labelled headings inset.
             <li
               key={node.id}
-              data-live-divider={node.type === 'divider' || undefined}
-              className={`min-w-0 ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+              className={`min-w-0 ${rowRule(view.nodes[index - 1], node)} ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
             >
               <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
             </li>

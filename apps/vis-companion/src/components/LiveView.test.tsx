@@ -154,10 +154,10 @@ describe('a live view on the phone', () => {
     expect(screen.getByRole('columnheader', { name: 'Host' })).toBeTruthy();
   });
 
-  // Caps are for the NAME. A live node names what it is a label OF — the failing
-  // job, the runner the timeline belongs to — and a whole line of caps shouts the
-  // part that has to be read.
-  it('sets the node name in caps and leaves its qualifier in ordinary type', () => {
+  // Weight is for the NAME, and caps are for no one's words but ours. A live node
+  // names what it is a label OF — the failing job, the build a console belongs to —
+  // and those words are the extension's, so they keep the case it wrote them in.
+  it('sets the node name apart by weight and keeps the case its author wrote', () => {
     paint({
       view: withNode(opened(), {
         id: 'tail',
@@ -168,11 +168,44 @@ describe('a live view on the phone', () => {
         total_lines: 1,
       }),
     });
-    const caps = [...document.querySelectorAll('span.uppercase')].filter((one) =>
-      one.textContent?.startsWith('Failure'),
-    );
-    expect(caps.map((one) => one.textContent)).toEqual(['Failure']);
-    expect(caps[0]?.parentElement?.textContent).toBe('Failure · Run native build');
+    const name = [...document.querySelectorAll('span')].find(
+      (one) => one.textContent === 'Failure',
+    )!;
+    expect(name.className).toContain('font-bold');
+    expect(name.className).not.toContain('uppercase');
+    expect(name.parentElement?.textContent).toBe('Failure · Run native build');
+  });
+
+  // A rule is punctuation, not wallpaper: sentences ride one band and the line that
+  // survives is the one fencing a table off from the prose around it.
+  it('rules a table off and leaves ordinary rows to spacing', () => {
+    const view: LiveView = {
+      ...opened(),
+      nodes: [
+        { id: 'queued', type: 'paragraph', text: 'Build queued.' },
+        { id: 'left', type: 'paragraph', text: 'Two jobs left.' },
+        {
+          id: 'hosts',
+          type: 'table',
+          label: 'Hosts',
+          columns: [{ id: 'host', label: 'Host', align: 'left' }],
+          rows: [],
+          max_rows: 5000,
+          order: 'insertion',
+          is_selectable: false,
+          selected_ids: [],
+        },
+        { id: 'written', type: 'paragraph', text: 'Report written.' },
+      ],
+    };
+    paint({ view });
+    const rows = [...document.querySelectorAll('section > ul > li')];
+    expect(rows.map((one) => one.className.includes('border-t'))).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
   });
   // A path or an attachment names a place on the MACHINE: dressing it as a link
   // would promise a tap that does nothing under the thumb.
