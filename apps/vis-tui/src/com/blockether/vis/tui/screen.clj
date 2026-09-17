@@ -6535,8 +6535,21 @@
                                   (state/dispatch [:order-project-tabs (mapv :session-id specs)])
                                   (persist-tabs!)))
                               (catch Throwable _ nil))))))
+                 rearm-startup! (fn []
+                                  ;; A provider may have appeared since the last attempt, so reload the
+                                  ;; config the worker reads before arming the same deferred startup.
+                                  (let [c (vis/load-config)]
+                                    (state/dispatch [:set-config c])
+                                    (state/dispatch [:force-provider-limits-refresh]))
+                                  (vreset! startup-task nil)
+                                  (start-startup!))
                  startup-pending? (fn []
-                                    (and (:config @state/app-db) (not= ::settled @startup-task)))
+                                    (let [task @startup-task]
+                                      (and (:config @state/app-db)
+                                           (not= ::settled task)
+                                           ;; Startup gave up on a missing provider: the screen stays live
+                                           ;; and reads input the cheap blocking way until the user retries.
+                                           (not= ::no-provider task))))
                  settle-startup!
                  (fn []
                    (let [task @startup-task]
@@ -6568,22 +6581,36 @@
                                (show-sessions!))
                              (when-not (or (:session-id opts) (:resume opts))
                                (restore-project-tabs!)))
-                           (and error
-                                (vis-config/no-provider-ex error)
-                                (compare-and-set! startup-retried? false true))
-                           (do
-                             ;; The dialog must own input on THIS thread. Once it saves,
-                             ;; re-arm the same deferred worker exactly once.
-                             (with-dialog-lock #(open-settings-modal! screen "Providers"))
-                             (let [c (vis/load-config)]
-                               (state/dispatch [:set-config c])
-                               (state/dispatch [:force-provider-limits-refresh]))
-                             (vreset! startup-task nil)
-                             (start-startup!))
+                           (and error (vis-config/no-provider-ex error))
+                           (if (compare-and-set! startup-retried? false true)
+                             (do
+                               ;; The dialog must own input on THIS thread. Once it saves,
+                               ;; re-arm the same deferred worker exactly once.
+                               (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                               (rearm-startup!))
+                             ;; Still no usable provider. Startup stops here instead of
+                             ;; taking the application down: the screen stays open so the
+                             ;; user can configure a provider and get a session afterwards.
+                             (do (vreset! startup-task ::no-provider)
+                                 (vis/notify!
+                                   (str "No provider is configured yet. Press Ctrl+X O to add "
+                                        "one, and this session starts right after you save it.")
+                                   :level :warn
+                                   :ttl-ms nil)))
                            :else (do (vreset! startup-task ::settled)
                                      (throw (or error
                                                 (ex-info "TUI startup worker returned no session"
                                                          {})))))))))
+                 retry-startup!
+                 (fn []
+                   ;; Runs after a provider dialog closes. Only a startup that gave up on a
+                   ;; missing provider retries; a session already bound is never rebuilt.
+                   (when (and (= ::no-provider @startup-task) (nil? (:session @state/app-db)))
+                     (when-not (some #(= startup-build-id (:build-id %)) (:tabs @state/app-db))
+                       ;; The tab waiting for this session was closed meanwhile; open a
+                       ;; fresh one so the bind has a home instead of an orphan session.
+                       (state/dispatch [:open-building-tab startup-build-id]))
+                     (rearm-startup!)))
                  select-project!
                  (fn [project]
                    (request-project!
@@ -7714,7 +7741,9 @@
                                      ;; In-session search owns F3 and its upper bar; provider choices live
                                      ;; under Settings.
                                      :providers
-                                     (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                                     (do (with-dialog-lock #(open-settings-modal! screen
+                                                                                  "Providers"))
+                                         (retry-startup!))
 
                                      ;; MCP servers live INSIDE Settings now: one
                                      ;; toggle row per server (enable/disable, or
@@ -7724,7 +7753,8 @@
                                      (with-dialog-lock #(open-settings-modal! screen "MCP Servers"))
 
                                      :settings
-                                     (with-dialog-lock #(open-settings-modal! screen))
+                                     (do (with-dialog-lock #(open-settings-modal! screen))
+                                         (retry-startup!))
 
                                      ;; App verbs reachable from the palette (Ctrl+P)
                                      ;; in addition to their direct keys — the palette
@@ -8031,6 +8061,7 @@
                          :providers
                          (do (when-not (:dialog-open? @state/app-db)
                                (with-dialog-lock #(open-settings-modal! screen "Providers")))
+                             (retry-startup!)
                              (recur))
 
                          :pick-file

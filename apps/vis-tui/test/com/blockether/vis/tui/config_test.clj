@@ -42,3 +42,28 @@
          (finally (System/setProperty "user.home" original-home)
                   (doseq [file (reverse (file-seq home))]
                     (io/delete-file file true))))))
+
+(def ^:private no-provider-body
+  ;; Exactly what the gateway puts on the wire for a 503: a hyphenated type
+  ;; nested under "error" (packages/vis-contract .../contract/gateway.clj).
+  {"error" {"type" "no-provider" "message" "make-router requires at least one provider"}})
+
+(defn- client-ex
+  "The exception the TUI gateway client throws for an HTTP error response."
+  [status body]
+  (ex-info (get-in body ["error" "message"] "request failed")
+           (assoc body
+             :http-status status
+             :vis/user-error true)))
+
+(deftest no-provider-ex-test
+  ;; Regression: the startup 503 must be recognised here, or the TUI reports
+  ;; "make-router requires at least one provider" and exits instead of opening
+  ;; the Providers dialog.
+  (is (true? (config/no-provider-ex (client-ex 503 no-provider-body))))
+  (is (true? (config/no-provider-ex
+               (ex-info "Could not start session" {} (client-ex 503 no-provider-body)))))
+  (is (false? (config/no-provider-ex
+                (client-ex 500 {"error" {"type" "engine-error" "message" "boom"}}))))
+  (is (false? (config/no-provider-ex (ex-info "no data" {}))))
+  (is (false? (config/no-provider-ex nil))))

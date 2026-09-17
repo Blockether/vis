@@ -56,9 +56,18 @@
 
 (defn save-toggles! [snapshot] (update! #(assoc % "toggles" snapshot)))
 
+(def no-provider-error-type
+  "Gateway `error.type` for a router that resolved no usable provider."
+  "no-provider")
+
 (defn no-provider-ex
+  "True when `error`, or any exception in its cause chain, is the gateway's
+   no-provider failure. The standalone TUI only ever sees the error body the
+   gateway put on the wire, so this matches that shape."
   [error]
-  (let [data (ex-data error)]
-    (or (= :provider/no-provider (:type data))
-        (= :vis/no-provider (:type data))
-        (= "no_provider" (get data "type")))))
+  (boolean (some (fn [^Throwable cause]
+                   (= no-provider-error-type (get-in (ex-data cause) ["error" "type"])))
+                 (take-while some?
+                             (iterate (fn [^Throwable cause]
+                                        (.getCause cause))
+                                      error)))))
