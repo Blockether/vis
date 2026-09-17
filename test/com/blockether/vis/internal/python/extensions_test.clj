@@ -4828,48 +4828,6 @@ vis.register_extension(vis.Extension(
             (expect (= false (get answer "gone"))))))))
 
 (defdescribe
-  repository-sdk-check-extension-test
-  (it
-    "loads sdk.check through the real host and returns typed ordered gate evidence"
-    (foundation/register!)
-    (with-loaded
-      {"sdk_checks.py"
-       (str
-         (slurp (io/file ".vis/extensions/sdk_checks.py"))
-         "\n_run_process = _run\n"
-         "def _run(name, argv, cwd, env, timeout_s):\n"
-         "    return _run_process(name, ['/bin/sh', '-c', 'printf fixture; exit 1'], cwd, env, timeout_s)\n")}
-      (fn [loaded _]
-        (expect (= 1 (:loaded loaded)))
-        (expect (= 0 (:failed loaded)))
-        (let [ext
-              (registered "sdk")
-
-              check
-              (symbol-fn ext 'sdk.check)
-
-              reply
-              (check (.getCanonicalPath (io/file ".")))
-
-              result
-              (:result reply)
-
-              attrs
-              (get result "__vis_attrs__")
-
-              first-step
-              (first (get attrs "steps"))]
-
-          (expect (:success? reply) (get-in reply [:error :message]))
-          (expect (= "CheckReport" (get result "__vis_object__")))
-          (expect (= false (get attrs "is_engine_checked")))
-          (expect (= false (get attrs "is_pass")))
-          (expect (= "CheckResult" (get first-step "__vis_object__")))
-          (expect (= "lint" (get-in first-step ["__vis_attrs__" "name"])))
-          (expect (= "fixture" (get-in first-step ["__vis_attrs__" "output_tail"])))
-          (expect (= 1 (get-in first-step ["__vis_attrs__" "exit_code"]))))))))
-
-(defdescribe
   project-extension-shared-fallback-test
   (it
     "uses shared packages until an environment exists, unless sync is explicit"

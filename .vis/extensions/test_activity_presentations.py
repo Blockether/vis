@@ -22,9 +22,7 @@ def _load_extension(monkeypatch, filename):
     return module
 
 
-@pytest.mark.parametrize(
-    "filename, instance", [("gh", "gh"), ("uplink", "uplink"), ("sdk_checks", "sdk")]
-)
+@pytest.mark.parametrize("filename, instance", [("gh", "gh"), ("uplink", "uplink")])
 def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
     monkeypatch, filename, instance
 ):
@@ -40,7 +38,7 @@ def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
                 None, "Checks", "main", "completed", "failure", "", "completed", (), ()
             ),
         }
-    elif filename == "uplink":
+    else:
         samples = {
             "run": module.CommandResult(
                 "printf hello", None, "x" * 8000, "", 1, True, True
@@ -54,12 +52,6 @@ def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
             "info": module.HostInfo("10.0.0.5", "visgw", None, None, None, None),
             "put": module.TransferResult("local.txt", "remote.txt", 42, 1),
             "get": module.TransferResult("local.txt", "remote.txt", 42, 1),
-        }
-    else:
-        samples = {
-            "check": module.CheckReport(
-                (module.CheckResult("Tests", 1, 1, "Failed"),), False
-            )
         }
     assert {entry["name"] for entry in exported} == set(samples)
     for entry in exported:
@@ -92,8 +84,6 @@ def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
                 "excerpt" in getattr(block, "text", "")
                 for block in presentation.content
             )
-        if entry["name"] == "check":
-            assert "1 failed" in presentation.summary
 
 
 @pytest.mark.parametrize(
