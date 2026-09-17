@@ -79,7 +79,15 @@ with descriptions. They are excluded from default searches and do not become
 workspace roots or grant Python filesystem tools additional access. Explicit
 catalog grants retain their access mode and search setting; deny rules still win.
 
-Per-call environment overrides do not add runtime grants. A different or
+When a language call or an `environment:` declaration selects `JAVA_HOME`, Vis puts
+that JDK's `bin` directory first on the child's `PATH` and grants the jailed child
+read-only access to it. The launcher and every JVM it starts then run the JDK you
+chose — including `tools.deps` dependency preparation, which spawns a bare `java`
+and never reads `JAVA_HOME` itself. An environment that also sets or unsets `PATH`
+wins, and Vis leaves the search order alone. A `JAVA_HOME` whose `bin` holds no
+executable `java` selects nothing.
+
+Other per-call environment overrides do not add runtime grants. A different or
 unrecognized toolchain needs an explicit grant; host toolchain changes require
 `/reload` before an existing session gains access.
 

@@ -49,7 +49,8 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
-  (:import (java.nio.file FileSystems Path PathMatcher Paths)
+  (:import (java.io File)
+           (java.nio.file FileSystems Path PathMatcher Paths)
            (java.util HashMap)))
 
 (defn unenforceable-reason
@@ -803,10 +804,76 @@
                         {:type ::session-jail-missing :session-id session-id})))
       policy)))
 
+(defn- java-launcher-bin
+  "`<java-home>/bin` when that directory really holds an executable `java`, else
+   nil — a `JAVA_HOME` naming no launcher selected no JDK and rewrites nothing."
+  [java-home]
+  (when-not (str/blank? (str java-home))
+    (try (let [bin
+               (File. (str java-home) "bin")
+
+               launcher
+               (File. bin "java")]
+
+           (when (and (.isFile launcher) (.canExecute launcher)) (.getAbsolutePath bin)))
+         (catch Exception _ nil))))
+
+;; ── A selected JDK is the java every descendant runs ────────────────────────
+;; `tools.deps` prepares a `:deps/prep-lib` dependency by spawning
+;; `["java" "-cp" … "clojure.main" …]` through a bare `ProcessBuilder`, which
+;; resolves argv[0] on `PATH` and never reads `JAVA_HOME`, and which no shell
+;; alias or function ever sees. A managed launch that selected a JDK would
+;; therefore boot its own launcher with that JDK and every nested prep JVM with
+;; whatever `java` the operator's `PATH` names first (#264). So the selection is
+;; carried where each descendant already looks: the child's own `PATH`.
+
+(defn with-selected-java-home
+  "`policy` with the JDK its environment SELECTS made the `java` every descendant
+   process finds, and readable by a confined child.
+
+   Only a SELECTED `JAVA_HOME` moves anything — an `environment:` declaration or
+   ONE call's `env` delta, both already resolved into `:env-values`. The
+   operator's ambient environment is left exactly as it is, because Vis chose
+   nothing there.
+
+   Precedence is deterministic: an environment that also selects `PATH`, or
+   unsets it, wins whole — between two explicit selections the one that names the
+   search order is the one that meant it. Otherwise `<JAVA_HOME>/bin` is
+   PREPENDED to the `PATH` the child would have had, so the selected launcher is
+   found first and everything else still resolves. A `JAVA_HOME` whose `bin`
+   holds no executable `java` selects nothing and changes nothing."
+  [policy]
+  (let [values
+        (declared-env policy)
+
+        bin
+        (java-launcher-bin (get values "JAVA_HOME"))]
+
+    (if (or (nil? bin) (contains? values "PATH") (contains? (set (:env-removals policy)) "PATH"))
+      policy
+      (let [inherited
+            (not-empty (System/getenv "PATH"))
+
+            home
+            (File. (str (get values "JAVA_HOME")))
+
+            roots
+            (distinct (keep identity
+                            [(.getAbsolutePath home)
+                             (try (.getCanonicalPath home) (catch Exception _ nil))]))]
+
+        (cond-> (assoc policy
+                  :env-values (assoc (:env-values policy)
+                                "PATH" (str bin
+                                            (when inherited (str File/pathSeparator inherited)))))
+          (not (:disabled? policy))
+          (update :allow-read #(vec (distinct (concat % roots)))))))))
+
 (defn session-process-spawn!
   "THE managed-language launch contract. Resolve `session-id` atomically, derive
-   its REPL/test policy, merge this call's environment delta, and spawn through
-   [[spawn!]]. Unknown, disposed, or failing sessions are denied before spawn.
+   its REPL/test policy, merge this call's environment delta, carry a selected
+   JDK into the child's `PATH`, and spawn through [[spawn!]]. Unknown, disposed,
+   or failing sessions are denied before spawn.
 
    Options additionally accept `:loopback-port`, `:env`, and every [[spawn!]]
    option. The returned value is a `java.lang.Process`."
@@ -814,5 +881,6 @@
   ([session-id argv directory {:keys [loopback-port env] :as opts}]
    (let [policy (-> (session-base-policy! session-id)
                     (language-process-policy loopback-port)
-                    (with-call-env (call-env-values env)))]
+                    (with-call-env (call-env-values env))
+                    with-selected-java-home)]
      (spawn! argv directory policy (dissoc opts :loopback-port :env)))))

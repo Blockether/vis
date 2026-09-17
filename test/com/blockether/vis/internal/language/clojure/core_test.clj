@@ -455,7 +455,7 @@
                             #'test-runner/run-via-repl (fn [& _]
                                                          {"error" "Could not locate lazytest/core"})
                             #'test-runner/run-via-cli
-                            (fn [_root norm]
+                            (fn [_sid _root norm]
                               (reset! called true)
                               {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                            #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
@@ -481,7 +481,7 @@
                                  (fn [& _]
                                    (throw (ex-info "run_tests must never start a REPL" {})))
                                  #'test-runner/run-via-cli
-                                 (fn [_root norm]
+                                 (fn [_sid _root norm]
                                    (reset! called true)
                                    {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                   #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
@@ -525,7 +525,7 @@
                                                                      (reset! seen dir)
                                                                      nil)
                                   #'test-runner/run-via-cli
-                                  (fn [_root norm]
+                                  (fn [_sid _root norm]
                                     {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                    #(test-runner/clj-test-fn {:workspace/root (.getAbsolutePath root)}
                                              {"paths" ["services/svc/test"]}))

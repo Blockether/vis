@@ -26,7 +26,8 @@
             [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.contract.test-runner :as contract]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]))
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.core :as vis]))
 
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each REQUESTED namespace FROM SOURCE
@@ -1373,46 +1374,66 @@
 
 (defn- timeout-error [] (str "test run timed out after " rt/RUN_TESTS_TIMEOUT_MS "ms"))
 
+(def ^:private drain-grace-ms
+  "How long a finished child's pipe may still be drained before its output is
+   taken as it stands: a grandchild that inherited the write end can hold it open
+   long after the test process itself is gone."
+  2000)
+
+(defn- drain-stream
+  "Copy one child stream into memory on its own thread. A pipe nobody reads fills
+   and stops the child, so both are drained for the whole life of the run, and the
+   sink stays readable while the pump is still waiting."
+  [^java.io.InputStream in]
+  (let [sink (java.io.ByteArrayOutputStream.)]
+    {:in in :sink sink :pump (future (try (io/copy in sink) (catch Throwable _ nil)))}))
+
+(defn- drained
+  "Everything that stream produced, closing a pipe a grandchild is still holding
+   open past the grace so no test run outlives its own deadline."
+  [{:keys [^java.io.InputStream in ^java.io.ByteArrayOutputStream sink pump]}]
+  (when (= ::pending (deref pump drain-grace-ms ::pending))
+    (try (.close in) (catch Throwable _ nil)))
+  (.toString sink "UTF-8"))
+
 (defn- run-command
-  "Run one owned subprocess within an absolute monotonic deadline. Files retain
-   complete stdout/stderr without reader futures or pipes a grandchild can hold
-   open. Timeout and interruption tear down the tree before this call returns."
-  [root argv deadline]
+  "Run one owned subprocess within an absolute monotonic deadline, through the
+   managed-language spawn boundary (#264). The clean-JVM test command crosses the
+   same jail and environment contract as this session's managed nREPL, so the JDK
+   the project or the call selected is the one the launcher AND every tools.deps
+   prep process it spawns run. Timeout and interruption tear down the tree before
+   this call returns."
+  [session-id root argv deadline]
   (try (if (<= (long deadline) (System/nanoTime))
          {:exit -1 :out "" :err "" :timed-out true}
-         (let [dir
-               (java.nio.file.Files/createTempDirectory
-                 "vis-test-run-"
-                 (make-array java.nio.file.attribute.FileAttribute 0))
+         (let [^Process p
+               (vis/session-process-spawn! session-id (vec argv) root nil)
 
                out
-               (io/file (str dir) "stdout")
+               (drain-stream (.getInputStream p))
 
                err
-               (io/file (str dir) "stderr")]
+               (drain-stream (.getErrorStream p))
 
-           (try (let [p
-                      (.start (doto (ProcessBuilder. ^java.util.List (vec argv))
-                                (.directory (io/file root))
-                                (.redirectOutput out)
-                                (.redirectError err)))
+               done?
+               (try (.close (.getOutputStream p))
+                    (.waitFor p
+                              (max 0 (- (long deadline) (System/nanoTime)))
+                              java.util.concurrent.TimeUnit/NANOSECONDS)
+                    (finally (when (.isAlive p) (shell/kill-tree! p))))
 
-                      done?
-                      (try (.close (.getOutputStream p))
-                           (.waitFor p
-                                     (max 0 (- (long deadline) (System/nanoTime)))
-                                     java.util.concurrent.TimeUnit/NANOSECONDS)
-                           (finally (when (.isAlive p) (shell/kill-tree! p))))]
+               stdout
+               (drained out)
 
-                  (cond-> {:exit (if (.isAlive p) -1 (.exitValue p))
-                           :out (slurp out)
-                           :err (slurp err)
-                           :timed-out (not done?)}
-                    (.isAlive p)
-                    (assoc :err (str (slurp err) "\nCould not terminate test process"))))
-                (finally (java.nio.file.Files/deleteIfExists (.toPath out))
-                         (java.nio.file.Files/deleteIfExists (.toPath err))
-                         (java.nio.file.Files/deleteIfExists dir)))))
+               stderr
+               (drained err)]
+
+           (cond-> {:exit (if (.isAlive p) -1 (.exitValue p))
+                    :out stdout
+                    :err stderr
+                    :timed-out (not done?)}
+             (.isAlive p)
+             (assoc :err (str stderr "\nCould not terminate test process")))))
        (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e))
        (catch Exception e {:exit -1 :out "" :err (ex-message e)})))
 
@@ -1420,7 +1441,7 @@
   "Run the discovered command in a clean JVM. Exit zero is insufficient: require
    a nonempty test summary, preserve effective namespace focus, and report the
    executed test count as selected (the common numeric result contract)."
-  [root norm]
+  [session-id root norm]
   (let [sel
         (cond-> (select-keys norm [:nses :vars :include :exclude :focused?])
           (and (false? (:namespace-focus? norm)) (empty? (:vars norm)))
@@ -1461,7 +1482,7 @@
       (assoc base "error" "this runner has no supported focus adapter; no tests started")
       :else
       (let [res
-            (run-command root cmd (test-deadline))
+            (run-command session-id root cmd (test-deadline))
 
             out
             (command-output res)
@@ -1578,7 +1599,7 @@
   "Use the project's own shadow launcher and build. Never silently broaden
    unsupported var/tag selectors or classpath aliases. A pass requires actual
    tests reported by the final execution step, including Karma's own reporter."
-  [root nses norm output-root]
+  [session-id root nses norm output-root]
   (let
     [nses
      (if (focused? (assoc norm :nses nses)) nses [])
@@ -1613,7 +1634,7 @@
            (fn [acc {:keys [argv compile?]}]
              (let
                [res
-                (run-command root argv deadline)
+                (run-command session-id root argv deadline)
 
                 out
                 (command-output res)
@@ -1716,12 +1737,12 @@
   "Own one run's output directory through compilation and Node execution.
    Keep it under the project so Node still resolves project dependencies. Never
    traverse symlinks during cleanup or delete the user's watch output."
-  [root nses norm]
+  [session-id root nses norm]
   (let [dir (java.nio.file.Files/createTempDirectory
               (.toPath (io/file root))
               ".vis-shadow-run-"
               (make-array java.nio.file.attribute.FileAttribute 0))]
-    (try (run-via-shadow* root nses norm (str dir))
+    (try (run-via-shadow* session-id root nses norm (str dir))
          (finally (with-open [paths (java.nio.file.Files/walk
                                       dir
                                       (make-array java.nio.file.FileVisitOption 0))]
@@ -1737,10 +1758,10 @@
    run would only re-hang on. Nothing here starts or relaunches a REPL — reviving one
    is the caller's own `repl_start` call. The outcome is announced on :note so the result
    explains itself."
-  [root norm result]
+  [session-id root norm result]
   (cond (get result "repl_unusable")
         (let [cli
-              (run-via-cli root norm)
+              (run-via-cli session-id root norm)
 
               why
               (get result "error")
@@ -1981,13 +2002,16 @@
                (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations))
                :else root)
 
+         session-id
+         (:session-id env)
+
          ;; REUSE, never spawn. `live-repl-for-dir` answers THIS session's REPL for the
          ;; project only while it ANSWERS, nil otherwise — run_tests starts nothing. With
          ;; no REPL up the suite runs in a clean JVM through the build tool's own test
          ;; command, which is also what a fresh session gets. A ClojureScript run never
          ;; asks: a JVM nREPL cannot load a `.cljs` namespace.
          port
-         (when-not cljs? (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root)))]
+         (when-not cljs? (:port (repl-manager/live-repl-for-dir session-id eff-root)))]
 
      ;; An explicit location that is NOT THERE is a misspelling, not an empty
      ;; suite: answering "no test namespaces under <path>" for a path that does
@@ -2027,22 +2051,22 @@
            (cond
              ;; ClojureScript: the project's shadow-cljs build, shelled. There is no
              ;; JVM path to fall back to.
-             cljs? (run-via-shadow eff-root nses norm)
+             cljs? (run-via-shadow session-id eff-root nses norm)
              ;; A REPL this session already keeps up for the project — the fast inner
              ;; loop. It reloads only the namespaces it RUNS, so production Vars the
              ;; caller edited stay as that REPL holds them (`repl_eval` `:reload`, or
              ;; stop the REPL and let the clean JVM run it).
              port (run-via-repl eff-root nses sel port)
              ;; The default: the build tool's own test command, in a clean JVM.
-             :else (run-via-cli eff-root norm))
+             :else (run-via-cli session-id eff-root norm))
 
            result
-           (recover-if-unusable eff-root norm result)
+           (recover-if-unusable session-id eff-root norm result)
 
            result'
            (if (and (get result "error")
                     (str/includes? (get result "error") "Could not locate lazytest/core"))
-             (run-via-cli eff-root norm)
+             (run-via-cli session-id eff-root norm)
              result)]
 
        (extension/success {:result (surface/check :test-fn

@@ -8,13 +8,32 @@
             [clojure.string :as str]
             [clojure.test :as ct]
             [com.blockether.vis.contract.surface :as contract]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nc]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
             [com.blockether.vis.internal.language.clojure.shadow-cljs :as shadow]
             [com.blockether.vis.internal.language.clojure.test-runner :as tr]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.foundation.shell :as shell-owner]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+(def ^:private test-session
+  "Every managed spawn these tests make is attributed to ONE session id."
+  "test-runner-test-session")
+
+;; Every REAL spawn below crosses the managed-process boundary (#264), which
+;; resolves the calling session's jail before it starts anything — exactly as a
+;; language call does.
+(set-ns-context! [(around-each
+                    [f]
+                    (process-jail/register-session-jail!
+                      test-session
+                      (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")
+                                                          (System/getProperty "user.dir")])
+                                   :net-enabled? false
+                                   :repl-proxy-port nil}))
+                    (try (f) (finally (process-jail/unregister-session-jail! test-session))))])
 
 (def ^:private run-via-repl
   @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-repl)
@@ -69,8 +88,15 @@
                                         (= :something-else (:type (ex-data e)))))]
                      (expect (true? thrown?))))))
 
-(def ^:private recover-if-unusable
-  @#'com.blockether.vis.internal.language.clojure.test-runner/recover-if-unusable)
+(defn- recover-if-unusable
+  "Recovery for [[test-session]]: which session owns the clean-JVM run is the
+   subject of the spawn-boundary tests, not of these."
+  [root norm result]
+  (@#'com.blockether.vis.internal.language.clojure.test-runner/recover-if-unusable
+   test-session
+   root
+   norm
+   result))
 
 (defdescribe
   recover-if-unusable-test
@@ -78,7 +104,7 @@
   ;; THIS turn, and bringing a REPL back is the caller's own `repl_start` call.
   (it "runs the CLI suite in a clean JVM when the reused server was unusable"
       (with-redefs [com.blockether.vis.internal.language.clojure.test-runner/run-via-cli
-                    (fn [_root _norm]
+                    (fn [_sid _root _norm]
                       {"mode" "cli" "is_pass" true "note" "7 cases"})]
         (let [r (recover-if-unusable "/proj" {} {"repl_unusable" true "error" "down"})]
           (expect (= "cli" (get r "mode")))
@@ -88,7 +114,7 @@
   (it "keeps the timeout error for a wedged eval and shells no CLI"
       (let [cli-called (atom false)]
         (with-redefs [com.blockether.vis.internal.language.clojure.test-runner/run-via-cli
-                      (fn [_root _norm]
+                      (fn [_sid _root _norm]
                         (reset! cli-called true)
                         {})]
           (let [r (recover-if-unusable "/proj" {} {"repl_wedged" true "error" "timed out"})]
@@ -540,7 +566,10 @@
                                                            :name "adds-test"}]})]
                    (expect (re-find #"no test var matched" (get result "error"))))))
 
-(def ^:private run-via-cli @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-cli)
+(defn- run-via-cli
+  "The CLI runner for [[test-session]]."
+  [root norm]
+  (@#'com.blockether.vis.internal.language.clojure.test-runner/run-via-cli test-session root norm))
 
 (defn- with-cli-run
   "Run the cli fallback against a canned shell result, with no project on disk."
@@ -865,15 +894,20 @@
    a case that took the WRONG runtime is caught by which key appeared."
   [ws arg]
   (let [seen (atom {})]
-    (with-redefs [repl-manager/live-repl-for-dir (fn [_sid _root]
+    (with-redefs [repl-manager/live-repl-for-dir (fn [session-id _root]
+                                                   (swap! seen assoc :repl-session session-id)
                                                    nil)
                   com.blockether.vis.internal.language.clojure.test-runner/run-via-cli
-                  (fn [root norm]
-                    (swap! seen assoc :cli-root root :cli-nses (:nses norm))
+                  (fn [session-id root norm]
+                    (swap! seen assoc :cli-session session-id :cli-root root :cli-nses (:nses norm))
                     {"mode" "cli" "ns" (first (:nses norm))})
                   com.blockether.vis.internal.language.clojure.test-runner/run-via-shadow
-                  (fn [root nses norm]
-                    (swap! seen assoc :root root :nses nses :build (:build norm))
+                  (fn [session-id root nses norm]
+                    (swap! seen assoc
+                      :session session-id
+                      :root root
+                      :nses nses
+                      :build (:build norm))
                     {"mode" "cli" "tool" "shadow-cljs" "ns" (first nses)})]
 
       (tr/clj-test-fn {:workspace/root ws :session-id "sid"} arg)
@@ -935,14 +969,20 @@
                                    {"paths" ["repositories/app/test/repro/core_test.cljs"]})]
                         (expect (= (str root "/repositories/app") (:root seen))))))))
 
-(def ^:private run-via-shadow
-  @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-shadow)
+(defn- run-via-shadow
+  "The shadow-cljs runner for [[test-session]]."
+  [root nses norm]
+  (@#'com.blockether.vis.internal.language.clojure.test-runner/run-via-shadow
+   test-session
+   root
+   nses
+   norm))
 
 (defn- sh-answering
   "Record commands and answer the execution result. Shadow compile steps get a
    successful compiler report; tests of compiler failure stub tr/run-command directly."
   [calls exit out]
-  (fn [_dir args _deadline]
+  (fn [_sid _dir args _deadline]
     (swap! calls conj (vec (take-while string? args)))
     (if-let [build (second (drop-while #(not= "compile" %) args))]
       {:exit 0 :out (str "[:" build "] Build completed. (1 files)\n") :err ""}
@@ -970,7 +1010,7 @@
                    (with-project
                      cljs-project
                      (fn [root]
-                       (with-redefs [tr/run-command (fn [_dir args _deadline]
+                       (with-redefs [tr/run-command (fn [_sid _dir args _deadline]
                                                       (if (= "node" (first args))
                                                         {:exit 1 :out test-out :err err}
                                                         {:exit 0 :out compile-out :err ""}))]
@@ -1635,7 +1675,7 @@
       (fn [root]
         (with-redefs
           [tr/run-command
-           (fn [_dir args _deadline]
+           (fn [_sid _dir args _deadline]
              (if (= "node" (first args))
                {:exit 1
                 :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
@@ -1650,7 +1690,7 @@
                     (fn [root]
                       (let [calls (atom [])]
                         (with-redefs [tr/run-command
-                                      (fn [_dir args _deadline]
+                                      (fn [_sid _dir args _deadline]
                                         (swap! calls conj (first args))
                                         {:exit 0 :out "shadow-cljs - HELP\n" :err ""})]
                           (expect (false? (get (run-via-shadow root [] {}) "is_pass")))
@@ -1690,7 +1730,7 @@
               (let [calls (atom [])]
                 (with-redefs
                   [tr/run-command
-                   (fn [_dir args _deadline]
+                   (fn [_sid _dir args _deadline]
                      (swap! calls conj (first args))
                      (if (= "node" (first args))
                        (do (expect (= (last @outputs) (second args)))
@@ -1828,7 +1868,7 @@
 
                         (with-redefs
                           [tr/run-command
-                           (fn [dir args deadline]
+                           (fn [sid dir args deadline]
                              (when (and (= "node" (first args))
                                         (compare-and-set! interposed? false true))
                                (spit (io/file root "test/repro/fail_test.cljs")
@@ -1836,7 +1876,7 @@
                                      :append
                                      true)
                                (eval! "(shadow.cljs.devtools.api/watch-compile! :test)"))
-                             (real-command dir args deadline))]
+                             (real-command sid dir args deadline))]
                           (run! deps-cfg {"ns" "repro.core-test"} true 1))
                         (expect @interposed?))
                       ;; Both compilers must finish before either Node starts. This also
@@ -1847,7 +1887,7 @@
                               outputs (atom [])]
 
                           (with-redefs [tr/run-command
-                                        (fn [dir args deadline]
+                                        (fn [sid dir args deadline]
                                           (when (= "node" (first args))
                                             (swap! outputs conj (second args))
                                             (.countDown ready)
@@ -1856,7 +1896,7 @@
                                                               java.util.concurrent.TimeUnit/SECONDS)
                                               (throw (ex-info "parallel Node barrier timed out"
                                                               {}))))
-                                          (real-command dir args deadline))]
+                                          (real-command sid dir args deadline))]
                             (let [runs (mapv (fn [ns-name]
                                                (future (:result (tr/clj-test-fn {:workspace/root
                                                                                  root}
@@ -1964,6 +2004,47 @@
                   (try (expect (or (nil? h) (not (.isAlive ^java.lang.ProcessHandle h))))
                        (finally (when h (.destroyForcibly ^java.lang.ProcessHandle h))))))))))))
 
+(defn- canned-process
+  "A real, cheap process standing in for the one the managed spawn would start."
+  [^String script]
+  (.start (ProcessBuilder. ^java.util.List (vec ["/bin/sh" "-c" script]))))
+
+(defdescribe
+  managed-spawn-boundary-test
+  ;; #264: the clean-JVM test command is a MANAGED process, exactly like this
+  ;; session's nREPL — one jail, one resolved environment — instead of a raw
+  ;; ProcessBuilder that inherits whatever the engine happened to start with.
+  (it "gives the clean-JVM launch the same session the managed REPL lookup used"
+      (let [seen (atom {})]
+        (with-project
+          {"deps.edn" "{:paths [\"src\"]}\n" "test/repro/core_test.clj" "(ns repro.core-test)\n"}
+          (fn [root]
+            (with-redefs [repl-manager/live-repl-for-dir
+                          (fn [session-id _root]
+                            (swap! seen assoc :repl-session session-id)
+                            nil)
+                          com.blockether.vis.internal.language.clojure.test-runner/run-via-cli
+                          (fn [session-id _root _norm]
+                            (swap! seen assoc :cli-session session-id)
+                            {"mode" "cli" "is_pass" true})]
+
+              (tr/clj-test-fn {:workspace/root root :session-id "sid-264"} {"paths" ["test"]})
+              (expect (= "sid-264" (:repl-session @seen)))
+              (expect (= "sid-264" (:cli-session @seen))))))))
+  (it "hands the command to that session's managed spawn and still captures output"
+      (let [seen (atom nil)]
+        (with-redefs [vis/session-process-spawn!
+                      (fn [session-id argv dir _opts]
+                        (reset! seen {:session-id session-id :argv (vec argv) :dir dir})
+                        (canned-process "printf ran; printf oops >&2"))]
+          (let [r
+                (#'tr/run-command test-session "/proj" ["clojure" "-M:test"] (#'tr/test-deadline))]
+            (expect (= {:session-id test-session :argv ["clojure" "-M:test"] :dir "/proj"} @seen))
+            (expect (= 0 (:exit r)))
+            (expect (false? (:timed-out r)))
+            (expect (= "ran" (:out r)))
+            (expect (= "oops" (:err r))))))))
+
 (defdescribe
   subprocess-command-contract-test
   ;; #207: exercise the actual process boundary, not just a canned shell result.
@@ -1975,6 +2056,7 @@
         (let
           [r
            (#'tr/run-command
+            test-session
             root
             ["bash" "-c"
              "cat; printf 'first\n'; for ((i=0;i<20000;i++)); do echo output; echo warning >&2; done; printf 'last\n'; exit 7"]
@@ -1986,27 +2068,34 @@
   (it "does not launch another process after its shared deadline expires"
       (with-project {}
                     (fn [root]
-                      (let [r (#'tr/run-command root ["bash" "-c" "touch unexpected"] 0)]
+                      (let [r
+                            (#'tr/run-command test-session root ["bash" "-c" "touch unexpected"] 0)]
                         (expect (:timed-out r))
                         (expect (not (.exists (io/file root "unexpected"))))))))
   (it "reports a failed spawn as data and removes its capture directory"
-      (with-project
-        {}
-        (fn [root]
-          (let [dirs
-                (fn []
-                  (set (filter #(str/starts-with? % "vis-test-run-")
-                               (.list (io/file (System/getProperty "java.io.tmpdir"))))))
+      (with-project {}
+                    (fn [root]
+                      (let [dirs
+                            (fn []
+                              (set (filter #(str/starts-with? % "vis-test-run-")
+                                           (.list (io/file (System/getProperty
+                                                             "java.io.tmpdir"))))))
 
-                before
-                (dirs)
+                            before
+                            (dirs)
 
-                r
-                (#'tr/run-command root [(str root "/missing-command")] (#'tr/test-deadline))]
+                            r
+                            (#'tr/run-command
+                             test-session
+                             root
+                             [(str root "/missing-command")]
+                             (#'tr/test-deadline))]
 
-            (expect (= -1 (:exit r)))
-            (expect (str/includes? (:err r) "missing-command"))
-            (expect (= before (dirs)))))))
+                        (expect (not (zero? (:exit r))))
+                        ;; The jail reports the failed exec; `run-via-cli` is what
+                        ;; names the command it asked for (#264).
+                        (expect (str/includes? (:err r) "No such file or directory"))
+                        (expect (= before (dirs)))))))
   (it "cannot pass a timed-out process even if it printed a pass and exited zero on TERM"
       (with-project {}
                     (fn [root]
@@ -2036,7 +2125,7 @@
           (let [deadlines (atom [])]
             (with-redefs [rt/RUN_TESTS_TIMEOUT_MS 1234
                           tr/run-command
-                          (fn [_root _argv deadline]
+                          (fn [_sid _root _argv deadline]
                             (swap! deadlines conj deadline)
                             (if (= 1 (count @deadlines))
                               {:exit 0 :out "[:test] Build completed.\n" :err "compiler warning"}

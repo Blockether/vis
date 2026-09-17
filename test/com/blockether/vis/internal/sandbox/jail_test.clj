@@ -268,6 +268,92 @@
            (is (pos? (.pid process))))
          (finally (pj/unregister-session-jail! "t-sid")))))
 
+(defn- fake-jdk!
+  "A JDK-shaped directory whose `bin/java` is a runnable stand-in launcher that
+   answers `answer`, so a test can tell WHICH `java` a child actually found."
+  [dir answer]
+  (let [launcher (io/file dir "bin" "java")]
+    (io/make-parents launcher)
+    (spit launcher (str "#!/bin/sh\nprintf %s " answer "\n"))
+    (.setExecutable launcher true false)
+    (.getAbsolutePath (io/file dir))))
+
+(defn- delete-tree!
+  "Delete `file` and everything below it."
+  [^java.io.File file]
+  (when (.isDirectory file) (run! delete-tree! (.listFiles file)))
+  (.delete file))
+
+(deftest selected-java-home-leads-the-child-path
+  ;; #264: a call that SELECTED a JDK still ran every nested bare `java` — a
+  ;; `tools.deps` prep JVM above all — from whatever the operator's `PATH` named
+  ;; first, because a `ProcessBuilder` resolves argv[0] there and never reads
+  ;; `JAVA_HOME`.
+  (let [dir
+        (io/file (System/getProperty "java.io.tmpdir") (str "vis-jdk-" (System/nanoTime)))
+
+        chosen
+        (fake-jdk! (io/file dir "chosen") "chosen-jdk")
+
+        bin
+        (str chosen "/bin")]
+
+    (try (testing "the selected launcher is found first and everything else still resolves"
+           (let [policy (pj/with-selected-java-home {:allow-read ["/ro"]
+                                                     :env-values {"JAVA_HOME" chosen}})]
+             (is (= (str bin java.io.File/pathSeparator (System/getenv "PATH"))
+                    (get-in policy [:env-values "PATH"])))
+             (is (some #{chosen} (:allow-read policy))
+                 "a confined child may read the JDK it was told to run")))
+         (testing "an environment that also selects PATH wins whole"
+           (let [policy (pj/with-selected-java-home {:env-values {"JAVA_HOME" chosen
+                                                                  "PATH" "/only/here"}})]
+             (is (= "/only/here" (get-in policy [:env-values "PATH"])))))
+         (testing "an environment that UNSETS PATH keeps it unset"
+           (let [policy (pj/with-selected-java-home {:env-values {"JAVA_HOME" chosen}
+                                                     :env-removals ["PATH"]})]
+             (is (nil? (get-in policy [:env-values "PATH"])))))
+         (testing "an unenforced jail still names the launcher, and grants no roots"
+           (let [policy (pj/with-selected-java-home {:disabled? true
+                                                     :env-values {"JAVA_HOME" chosen}})]
+             (is (str/starts-with? (get-in policy [:env-values "PATH"]) bin))
+             (is (nil? (:allow-read policy)))))
+         (testing "a JAVA_HOME whose bin holds no executable java selects nothing"
+           (let [policy {:env-values {"JAVA_HOME" (.getAbsolutePath (io/file dir "empty"))}}]
+             (is (= policy (pj/with-selected-java-home policy)))))
+         (testing "an environment Vis chose nothing in is left exactly as it is"
+           (let [policy {:env-values {}}]
+             (is (= policy (pj/with-selected-java-home policy)))))
+         (finally (delete-tree! dir)))))
+
+(deftest selected-java-home-reaches-a-nested-bare-java
+  ;; The failing shape from #264 end to end: the child resolves a BARE `java`,
+  ;; with no shell alias and no `JAVA_HOME` lookup of its own, and must land on
+  ;; the JDK this call selected.
+  (let [dir
+        (io/file (System/getProperty "java.io.tmpdir") (str "vis-jdk-spawn-" (System/nanoTime)))
+
+        chosen
+        (fake-jdk! (io/file dir "chosen") "chosen-jdk")
+
+        run-java
+        (fn [opts]
+          (let [^Process process (pj/session-process-spawn! "t-java-home" ["/bin/sh" "-c" "java"]
+                                                            "/tmp" (merge {:merge-stderr? true}
+                                                                          opts))]
+            (.waitFor process)
+            (str/trim (slurp (.getInputStream process)))))]
+
+    (pj/register-session-jail! "t-java-home"
+                               (constantly {:roots-fn (constantly ["/tmp" (.getCanonicalPath dir)])
+                                            :net-enabled? false
+                                            :repl-proxy-port nil}))
+    (try (is (= "chosen-jdk" (run-java {:env {"JAVA_HOME" chosen}}))
+             "a nested bare `java` runs the JDK the call selected")
+         (is (not= "chosen-jdk" (run-java {}))
+             "a call that selected no JDK leaves the child's search order alone")
+         (finally (pj/unregister-session-jail! "t-java-home") (delete-tree! dir)))))
+
 (deftest env-scrub-allowlist
   (testing
     "a confined child inherits ONLY the non-secret allowlist plus the RESOLVED
