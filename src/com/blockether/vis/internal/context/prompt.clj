@@ -59,8 +59,8 @@
     (let
       [render-turn
        (fn [i
-            {:keys [turn user-request answer interrupted? cancelled? results checkpoint? turns
-                    gist]}]
+            {:keys [turn user-request answer partial-answer interrupted? cancelled? results
+                    checkpoint? turns gist]}]
          (if checkpoint?
            (str "# ⋯ folded turn" (when (< 1 (count turns)) "s")
                 " " (str/join ", " turns)
@@ -73,9 +73,16 @@
                              str
                              str/trim
                              not-empty)
+                 ;; What the model had already said when the turn was cut short. It
+                 ;; is not an answer — it is the last thing it told the user before
+                 ;; the cancel, and without it the next turn starts from nothing.
+                 part (some-> partial-answer
+                              str
+                              str/trim
+                              not-empty)
                  turn-no (or turn (inc (long i)))]
 
-             (when (or req ans (seq results))
+             (when (or req ans part (seq results))
                (str
                  "# ── turn "
                  turn-no
@@ -94,6 +101,10 @@
                                        results))
                         "\n"))
                  (when ans (str "you answered:\n" ans))
+                 (when part
+                   (str "you answered so far (partial — this turn ended before you finished):\n"
+                        part
+                        "\n"))
                  (cond
                    (and cancelled? (not ans))
                    (str
@@ -101,7 +112,9 @@
                      "persisted results remain valid; do not repeat settled work. The unfinished edge "
                      "was aborted. Follow the latest user request.</turn_cancelled>")
                    (and interrupted? (not ans))
-                   "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it."))))))]
+                   (if part
+                     "⚠ this turn was INTERRUPTED before it finished — the answer above is only what you had said by then. The work above is unfinished; continue it."
+                     "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))))]
       (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (def ^:private manifest-transcript-chars

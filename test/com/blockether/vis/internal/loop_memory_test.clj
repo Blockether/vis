@@ -335,6 +335,9 @@
     (let [reads
           (atom [])
 
+          body-reads
+          (atom [])
+
           turns
           [{:id "folded" :position 1 :status :done} {:id "visible" :position 2 :status :done}
            {:id "unfinished" :position 3 :status :cancelled}
@@ -369,8 +372,9 @@
 
                     db/db-list-iterations
                     (fn [_ ids]
-                      (expect (empty? ids))
-                      {})
+                      (swap! body-reads into (map str ids))
+                      {"c" {:id "c"
+                            :forms [{:scope "t3/i1" :src "grep({\"query\": [\"cancel\"]})"}]}})
 
                     db/db-list-iterations-attachments-meta
                     (fn [& _]
@@ -386,8 +390,13 @@
 
         (let [result (#'lp/previous-turn-context env "current")]
           (expect (= ["visible" "unfinished"] @reads))
+          ;; ONLY the cancelled turn's iterations: an answered turn's recap still
+          ;; costs nothing but its stored-iteration line.
+          (expect (= ["c"] @body-reads))
           (expect (= [2 3] (mapv :turn result)))
           (expect (= [{:scope "t2/i1" :src "t2/i1 (stored iteration)"}] (:results (first result))))
+          (expect (= [{:scope "t3/i1" :src "grep({\"query\": [\"cancel\"]})"}]
+                     (:results (second result))))
           (expect (true? (:cancelled? (second result)))))))))
 
 (defdescribe

@@ -2231,12 +2231,19 @@
             history (provider-history-metadata d (map :id turns))
             iterations-by-turn (:iterations history)
             turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
-            recordings-by-turn
-            (group-by (comp str :turn-soul-id)
-                      (filter #(and (nil? (:iteration-id %))
-                                    (attachments/audio-media-type? (:media-type %))
-                                    (not (str/blank? (:transcription %))))
-                              (persistance/db-list-session-attachments-meta d session-id)))
+            turn-attachments (filter #(nil? (:iteration-id %))
+                                     (persistance/db-list-session-attachments-meta d session-id))
+            recordings-by-turn (group-by (comp str :turn-soul-id)
+                                         (filter #(and (attachments/audio-media-type? (:media-type
+                                                                                        %))
+                                                       (not (str/blank? (:transcription %))))
+                                                 turn-attachments))
+            ;; Everything else the human attached to a PRIOR turn (screenshots,
+            ;; documents). Naming the id in the recap is what lets the next turn
+            ;; open it directly instead of re-listing the session's attachments.
+            files-by-turn (group-by (comp str :turn-soul-id)
+                                    (remove #(attachments/audio-media-type? (:media-type %))
+                                      turn-attachments))
             turn-metadata
             (mapv (fn [turn]
                     (let [iterations (filter #(= :done (:status %))
@@ -2257,6 +2264,22 @@
                                                    (> (long (get % "issued_turn")) (long turn)))
                                              resolved)))
             folded-scopes (into #{} (mapcat #(get % "scopes")) resolved)
+            ;; Iteration bodies of UNFINISHED turns only, in ONE query. A cancelled
+            ;; turn used to reach the next request as `tN/iM (stored iteration)`:
+            ;; its outputs replayed, the code that produced them did not, so the
+            ;; agent re-discovered the repository instead of continuing its own
+            ;; work. An answered turn keeps the cheap placeholder — its recap
+            ;; already carries the answer that settled it.
+            unfinished-bodies (persistance/db-list-iterations
+                                d
+                                (for [{:keys [status iterations iter-scopes] :as metadata}
+                                      turn-metadata
+                                      :when (and (terminal-incomplete-turn-status? status)
+                                                 (not (covering-summary metadata)))
+                                      [iteration scope] (map vector iterations iter-scopes)
+                                      :when (not (contains? folded-scopes scope))]
+
+                                  (:id iteration)))
             turn-data
             (into
               []
@@ -2268,40 +2291,72 @@
                     (dissoc metadata :iterations)
                     (let [turn (persistance/db-read-session-turn d session-id (:id metadata))
                           unfinished? (terminal-incomplete-turn-status? (:status turn))
-                          answer (when-not unfinished? (answer-markdown (:content turn)))
+                          ;; An unfinished turn still holds the sticky best-answer it
+                          ;; produced before the cancel. That is not a final answer, so it
+                          ;; rides beside the cancellation boundary as the partial one
+                          ;; instead of being dropped.
+                          answer-md (answer-markdown (:content turn))
+                          answer (when-not unfinished? answer-md)
+                          ;; An ERROR turn files the failure itself as its content. That
+                          ;; is not prose the model offered the user, so it never counts
+                          ;; as a partial answer.
+                          partial-answer (when (and unfinished?
+                                                    (not-any? #(= "error" (get % "type"))
+                                                              (:content turn)))
+                                           (not-empty (str/trim (str answer-md))))
                           visible-ids (keep (fn [[iteration scope]]
                                               (when-not (contains? folded-scopes scope)
                                                 (:id iteration)))
                                             (map vector iterations iter-scopes))
                           artifacts (persistance/db-list-iterations-attachments-meta d visible-ids)
-                          forms
-                          (into []
-                                (mapcat (fn [[iteration scope]]
-                                          (cons {:scope scope
-                                                 :stdout ""
-                                                 :src (str scope " (stored iteration)")}
-                                                (for [att (get artifacts (str (:id iteration)))
-                                                      :when (model-live-record? att)]
+                          ;; What the iteration actually RAN, one line per form. A slash
+                          ;; iteration stays local-only and an unread body keeps the bare
+                          ;; stored-iteration location.
+                          iteration-sources
+                          (fn [iteration scope]
+                            (let [body (get unfinished-bodies (str (:id iteration)))]
+                              (or (when-not (user-slash-iteration? body)
+                                    (seq (keep #(not-empty (str/trim (str (:src %))))
+                                               (:forms body))))
+                                  [(str scope " (stored iteration)")])))
+                          forms (into []
+                                      (mapcat (fn [[iteration scope]]
+                                                (concat
+                                                  (for [src (iteration-sources iteration scope)]
+                                                    {:scope scope :stdout "" :src src})
+                                                  (for [att (get artifacts (str (:id iteration)))
+                                                        :when (model-live-record? att)]
 
-                                                  {:scope scope
-                                                   :live-record (live-record-context-line att)}))))
-                                (map vector iterations iter-scopes))]
+                                                    {:scope scope
+                                                     :live-record (live-record-context-line
+                                                                    att)}))))
+                                      (map vector iterations iter-scopes))]
 
                       (when (or unfinished? (not (str/blank? answer)))
-                        {:turn (:turn metadata)
-                         :user-request
-                         (str (:user-request turn)
-                              (apply str
-                                (for [recording (get recordings-by-turn (str (:id turn)))]
-                                  (str "\n\nAttached recording: " (:filename recording)
-                                       " (attachment id: " (:id recording)
-                                       ")" (prompt/recording-transcript (:transcription recording)
-                                                                        nil)))))
-                         :answer answer
-                         :interrupted? (interrupted-turn-status? (:status turn))
-                         :cancelled? (= :cancelled (:status turn))
-                         :forms forms
-                         :iter-scopes iter-scopes})))))
+                        (cond-> {:turn (:turn metadata)
+                                 :user-request
+                                 (str (:user-request turn)
+                                      (apply str
+                                        (for [recording (get recordings-by-turn (str (:id turn)))]
+                                          (str "\n\nAttached recording: " (:filename recording)
+                                               " (attachment id: " (:id recording)
+                                               ")" (prompt/recording-transcript (:transcription
+                                                                                  recording)
+                                                                                nil))))
+                                      (apply str
+                                        (for [att (get files-by-turn (str (:id turn)))]
+                                          (str "\n\nAttached file: "
+                                               (:filename att)
+                                               " (attachment id: "
+                                               (:id att)
+                                               ")"))))
+                                 :answer answer
+                                 :interrupted? (interrupted-turn-status? (:status turn))
+                                 :cancelled? (= :cancelled (:status turn))
+                                 :forms forms
+                                 :iter-scopes iter-scopes}
+                          partial-answer
+                          (assoc :partial-answer partial-answer)))))))
               turn-metadata)
             ;; Blockether/vis#174: user requests can be dense code, not prose.
             ;; Price the rendered recap in the same tokenizer units as iteration weights.
@@ -2326,7 +2381,8 @@
         (some->>
           (reduce
             (fn [out
-                 {:keys [turn user-request answer interrupted? cancelled? forms iter-scopes]
+                 {:keys [turn user-request answer partial-answer interrupted? cancelled? forms
+                         iter-scopes]
                   :as td}]
               (if-let [summary (covering-summary td)]
                 (if (seq iter-scopes)
@@ -2360,6 +2416,9 @@
                                :answer answer
                                :interrupted? interrupted?
                                :results (vec (take 40 (prior-turn-scope-index forms resolved)))}
+                        partial-answer
+                        (assoc :partial-answer partial-answer)
+
                         cancelled?
                         (assoc :cancelled? true)))))
             []
@@ -3589,7 +3648,10 @@
    block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
    by `:svar/tool-call-id`), because one reply may carry several
    `python_execution` calls.
-   Falls back to a plain text user message when no tool calls are recorded."
+   Falls back to a plain text user message when no tool calls are recorded.
+   `:echo-source?` on the record also prefixes each form's output with the source
+   that produced it, for the degraded replays where the assistant message
+   carrying that source never reaches the wire."
   [iter-record]
   (let [;; ONE scope source: the `forms-vec` (each carrying stdout/error facts).
         ;; Falls back to scoped `:blocks` forms.
@@ -3649,6 +3711,20 @@
                                err))
                 :else (stdout-wire f)))
 
+        ;; Output alone is unattributable once the assistant message that carried
+        ;; the code is gone (a cancelled turn's cross-turn seed, a dropped
+        ;; thinking replay). `:echo-source?` puts each form's own source back in
+        ;; front of its output, so the next request continues the work instead of
+        ;; re-running it to find out what it already did.
+        form-line
+        (fn [f]
+          (let [out (form-output f)]
+            (if-let [src (and (:echo-source? iter-record)
+                              (not (:summary? f))
+                              (not-empty (str/trim (str (:src f)))))]
+              (str "```python\n" src "\n```" (when out (str "\n" out)))
+              out)))
+
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
         ctx-diff
@@ -3691,7 +3767,7 @@
                         live-records)
 
                 lines
-                (concat (keep form-output own) (map live-record-context-line records))
+                (concat (keep form-line own) (map live-record-context-line records))
 
                 iscope
                 (some #(iter-of-scope (:scope %)) own)
@@ -3710,7 +3786,7 @@
         ;; Text-only iteration with no tool calls: join its forms.
         fallback-content
         (let [lines
-              (concat (keep form-output forms) (map live-record-context-line live-records))
+              (concat (keep form-line forms) (map live-record-context-line live-records))
 
               iscope
               (some #(iter-of-scope (:scope %)) forms)
@@ -4107,7 +4183,9 @@
                ;; continue to emit only any previously-unwired image artifacts.
                (false? (:preserved-thinking/replay? iter-rec))
                (if (terminal-incomplete-turn-status? (:cross-turn/turn-status iter-rec))
-                 (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                 (if-let [textual (iteration-results-message (-> iter-rec
+                                                                 (dissoc :tool-calls)
+                                                                 (assoc :echo-source? true)))]
                    (+img [textual])
                    (vec img))
                  (vec img))
@@ -4128,7 +4206,9 @@
                        ;; No assistant message (errored before one landed) or
                        ;; nothing but thinking: no tool_use to answer — degrade
                        ;; the results to plain text.
-                       (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                       (if-let [textual (iteration-results-message (-> iter-rec
+                                                                       (dissoc :tool-calls)
+                                                                       (assoc :echo-source? true)))]
                          (+img [textual])
                          [])))))]
 

@@ -3833,7 +3833,38 @@
                        :cancelled? true
                        :results [{:scope "t1/i1" :src "t1/i1 (stored iteration)"}]}]
                      (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                                            "t2")))))))
+                                            "t2"))))))
+  ;; Reported from the app: a cancelled turn reached the next request as
+  ;; `t1/i1 (stored iteration)`, so the agent read its own output without the
+  ;; code behind it and started the investigation over. An unfinished turn now
+  ;; names what it ran and keeps the answer it had already produced; an
+  ;; answered turn stays on the cheap stored-iteration line.
+  (it "names the code an unfinished turn ran and keeps its partial answer"
+      (with-history-fixture
+        [{:id "t1"
+          :status :cancelled
+          :position 1
+          :user-request "fix the web chat"
+          :content [(content/prose "I patched ChatContent.tsx")]}
+         {:id "t2" :status :done :position 2 :user-request "q" :content [(content/prose "a")]}
+         {:id "t3" :status :running :position 3}]
+        {"t1" [{:id "i1"
+                :status :done
+                :position 1
+                :forms [{:scope "t1/i1" :src "patch(\"ChatContent.tsx\", edits)"}]}]
+         "t2" [{:id "i2"
+                :status :done
+                :position 1
+                :forms [{:scope "t2/i1" :src "grep({\"query\": [\"chat\"]})"}]}]}
+        (fn []
+          (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                           "t3")]
+            (expect (= [{:scope "t1/i1" :src "patch(\"ChatContent.tsx\", edits)"}]
+                       (:results (first out))))
+            (expect (= "I patched ChatContent.tsx" (:partial-answer (first out))))
+            (expect (nil? (:answer (first out))))
+            (expect (= [{:scope "t2/i1" :src "t2/i1 (stored iteration)"}] (:results (second out))))
+            (expect (nil? (:partial-answer (second out)))))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"
@@ -4537,6 +4568,7 @@
     :tool-calls [{:id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
+                 :src "print(json.dumps(inventory))"
                  :stdout "{\"item_count\":2,\"paths\":[\"a.clj\",\"b.clj\"]}"}]}])
 
 (defdescribe
@@ -4662,7 +4694,12 @@
       (expect (str/includes? (:content (first messages)) "<turn_cancelled>"))
       (expect (str/includes? (:content (second messages)) "continue"))
       (expect (string? (:content (last messages))))
-      (expect (str/includes? (:content (last messages)) "item_count")))))
+      (expect (str/includes? (:content (last messages)) "item_count"))
+      ;; The code that produced that output rides WITH it: the cancelled turn's
+      ;; assistant message (and its tool_use) never reaches the next request, so
+      ;; without this the model reads output it cannot attribute and re-runs the
+      ;; work to find out what it already did.
+      (expect (str/includes? (:content (last messages)) "print(json.dumps(inventory))")))))
 
 ;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
 ;; SEND time, so a placeholder payload is (correctly) refused and never reaches

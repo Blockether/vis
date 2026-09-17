@@ -1462,7 +1462,29 @@
         (expect (str/includes? block "cat(src)"))
         (expect (str/includes? block "<turn_cancelled>"))
         (expect (str/includes? block "persisted results remain valid; do not repeat settled work"))
-        (expect (not (str/includes? block "INTERRUPTED before it finished"))))))
+        (expect (not (str/includes? block "INTERRUPTED before it finished")))))
+  ;; Reported from the app: cancelling a turn also dropped the prose the model
+  ;; had already sent, so the next turn resumed as if it had said nothing.
+  (it "keeps the partial answer a cancelled turn had already produced"
+      (let [block (prompt/previous-turn-context-block
+                    [{:turn 1
+                      :user-request "inspect and fix"
+                      :cancelled? true
+                      :partial-answer "I patched ChatContent.tsx and was checking the TUI"
+                      :results [{:scope "t1/i1" :src "patch(\"ChatContent.tsx\", edits)"}]}])]
+        (expect (str/includes? block "you answered so far"))
+        (expect (str/includes? block "I patched ChatContent.tsx and was checking the TUI"))
+        (expect (str/includes? block "<turn_cancelled>"))))
+  (it "tells an interrupted turn its answer is partial, not absent"
+      (let [block (prompt/previous-turn-context-block [{:turn 1
+                                                        :user-request "inspect and fix"
+                                                        :interrupted? true
+                                                        :partial-answer
+                                                        "found the cause in loop.clj"
+                                                        :results []}])]
+        (expect (str/includes? block "found the cause in loop.clj"))
+        (expect (str/includes? block "the answer above is only what you had said by then"))
+        (expect (not (str/includes? block "you produced NO answer"))))))
 
 (defdescribe core-prompt-routes-text-edits-to-patch-test
              ;; The verbs exist only if the prompt spends them. Before this, the core
