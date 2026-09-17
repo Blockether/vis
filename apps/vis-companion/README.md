@@ -89,6 +89,14 @@ restate source text imported with `?raw`. Both break on every styling
 change and assert nothing a user can perceive. How a control paints is
 reviewed in Storybook, not unit-pinned.
 
+The suite runs as three vitest projects. `unit` covers everything under `src`,
+`scripts` covers the tests that drive the real toolchain (a production Vite
+build, a Playwright launch), and `storybook` runs the gallery in Chromium.
+`unit` uses the `vmThreads` pool: each file still gets its own module registry
+and its own jsdom, but inside a VM context instead of a fresh worker process,
+which cut the local run from 51s to 24s. `scripts` keeps real processes,
+because a native bundler refuses the objects a VM realm hands it.
+
 ## Native builds
 
 Capacitor's generated `android/` and `ios/` projects are gitignored; create them

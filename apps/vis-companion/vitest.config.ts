@@ -28,13 +28,31 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: 'unit',
           // Pure logic modules only. Anything needing a DOM says so per file
           // with a `@vitest-environment` docblock rather than slowing every run.
           environment: 'node',
-          include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
+          include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
           // Testing Library's matchers and its unmount-between-tests. The setup
           // no-ops under node, so pure logic pays nothing for it.
           setupFiles: ['./src/test-setup.ts'],
+          // A VM context per FILE, not a worker per file: the same isolation (fresh
+          // module registry, fresh jsdom) without spawning a process and building a
+          // DOM 179 times. Measured on this suite: 51s -> 24s, `environment` 218s -> 10s.
+          pool: 'vmThreads',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'scripts',
+          environment: 'node',
+          include: ['scripts/**/*.test.mjs'],
+          setupFiles: ['./src/test-setup.ts'],
+          // These drive the real toolchain: a production Vite build, a Playwright
+          // browser. Rolldown's native binding refuses objects handed to it from a
+          // `node:vm` realm, so the toolchain tests keep a real process.
+          pool: 'forks',
         },
       },
       {
