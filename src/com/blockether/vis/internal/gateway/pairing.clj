@@ -44,22 +44,32 @@
 
 (defn candidate-hosts
   "Reachable hostnames/IPs worth showing in a pairing QR, in preference order.
-  Tailscale addresses come first because they keep working off-LAN; then LAN;
-  then the server's bind host when concrete."
+
+  A concrete bind host is the ONLY candidate: the socket answers there and
+  nowhere else, so offering the machine's other interfaces hands the phone URLs
+  that time out. It also decides WHICH address leads, which is what a network
+  that allows exactly one of them needs — the allowed address has to be `url=`,
+  not an `alt=` behind a tailnet address that network drops.
+
+  A wildcard bind really does serve every interface, so there Tailscale
+  addresses come first because they keep working off-LAN, then LAN, then the
+  rest."
   [bind-host]
-  (let [ips
-        (iface-addresses)
+  (let [host
+        (str bind-host)
 
         concrete
-        (when-not (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} (str bind-host)) (str bind-host))]
+        (when-not (or (str/blank? host) (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} host)) host)]
 
-    (->> (concat (filter tailscale-ip? ips)
-                 (filter site-local-ip? ips)
-                 (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips)
-                 [concrete])
-         (remove str/blank?)
-         distinct
-         vec)))
+    (if concrete
+      [concrete]
+      (let [ips (iface-addresses)]
+        (->> (concat (filter tailscale-ip? ips)
+                     (filter site-local-ip? ips)
+                     (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips))
+             (remove str/blank?)
+             distinct
+             vec)))))
 
 (defn tailscale-hosts
   "Tailscale (100.64/10) IPv4 addresses currently bound to a live interface, in
@@ -87,9 +97,10 @@
 (defn pairing-url
   "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and
   `alt=` carries the remaining routable hosts so a phone that cannot reach the
-  first one (no Tailscale, different LAN) falls back instead of failing. IPv4
-  link-local (169.254/16) is dropped from the alternates: no phone can route it,
-  and every extra host makes the QR denser."
+  first one (no Tailscale, different LAN) falls back instead of failing. A
+  concrete bind has a single candidate, so its link carries no `alt=` at all.
+  IPv4 link-local (169.254/16) is dropped from the alternates: no phone can
+  route it, and every extra host makes the QR denser."
   [{:keys [host port token]}]
   (let [hosts
         (let [c (candidate-hosts host)]

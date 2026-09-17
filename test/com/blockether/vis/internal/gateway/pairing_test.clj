@@ -44,6 +44,22 @@
         (is (str/includes? (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
                            "url=http%3A%2F%2F100.109.18.77%3A7890"))))))
 
+(deftest concrete-bind-advertises-only-the-bound-address
+  (testing
+    "a specific --host answers on that address and nowhere else, so the link
+            leads with it and offers no fallback the socket cannot serve: a
+            network that allows one address only must not get a tailnet `url=`"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["100.109.18.77" "192.168.0.116"])}
+      (fn []
+        (is (= ["192.168.0.116"] (pairing/candidate-hosts "192.168.0.116")))
+        (let [url (pairing/pairing-url {:host "192.168.0.116" :port 7890 :token "tok"})]
+          (is (str/includes? url "url=http%3A%2F%2F192.168.0.116%3A7890"))
+          (is (not (str/includes? url "alt=")) "nothing listens on the other interfaces")
+          (is (not (str/includes? url "100.109.18.77")) "the tailnet address is not bound"))
+        (is (= ["100.109.18.77" "192.168.0.116"] (pairing/candidate-hosts "0.0.0.0"))
+            "a wildcard bind still offers every interface")))))
+
 (deftest tailscale-hosts-selects-only-tailnet-ips
   (testing "only 100.64/10 addresses are returned, in discovery order"
     (with-redefs-fn {#'pairing/iface-addresses (fn []

@@ -227,8 +227,11 @@ gateway away from the local network. Listen on the computer's Tailscale address,
 then pair the app. The pairing QR prefers the machine's `100.x` Tailscale address.
 
 You can use `--host 0.0.0.0` to listen on all IPv4 interfaces, but that includes
-public interfaces if present. Bind to a specific private address when you only
-need private access. A bearer token controls access; it does not encrypt HTTP.
+public interfaces if present. The pairing link then carries the machine's other
+addresses as fallbacks, so the app can move between networks without a new QR
+code. Bind to a specific private address when you only need private access: the
+link offers that address alone, because it is the only one the gateway answers
+on. A bearer token controls access; it does not encrypt HTTP.
 
 ## First session
 
