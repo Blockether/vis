@@ -95,6 +95,32 @@
                                    (str "<script type=\"module\" src=\""
                                         prefix
                                         "search-init.js\"></script>")))))))
+  (it "grows the header search across the row, with no spacer to strand it"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            page
+            (first pages)]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site page mode)
+
+                      header
+                      (second (re-find #"(?s)<header class=\"top\">(.*?)</header>" html))
+
+                      search
+                      (second (re-find #"(?s)\.top \.search\s*\{([^}]+)\}"
+                                       (rendered-theme html mode)))]]
+
+          ;; A growing spacer beside the box takes half the free width and strands the
+          ;; search next to the brand; only the catalog header, without a box, keeps one.
+          (expect (str/includes? header "<search class=\"search\""))
+          (expect (not (str/includes? header "class=\"spacer\"")))
+          (expect (str/includes? search "flex: 1 1 auto"))
+          (expect (not (str/includes? search "max-width"))))))
   (it "copies the search modules with the other static assets"
       (doseq [name ["search.js" "search-init.js"]]
         (expect (= (str "assets/" name) (get @#'docs/asset-files (str "vis-docs/assets/" name))))))

@@ -419,7 +419,6 @@
       " aria-label=\"Search the documentation\" autocomplete=\"off\" spellcheck=\"false\">"
       "<div class=\"search-results\" hidden></div>"
       "</search>"
-      "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
         (str
           "<a class=\"gh\" href=\"" (esc r)

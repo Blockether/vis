@@ -722,13 +722,13 @@ button.primary:hover {
 .scrim {
   display: none;
 }
-/* Header search over the manual's build-time index (assets/search.js). */
+/* Header search over the manual's build-time index (assets/search.js). It grows into
+   the whole header row, so nothing follows it until the header icons. */
 .top .search {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1 1 9rem;
-  max-width: 24rem;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .top .search input {
@@ -891,7 +891,6 @@ button.primary:hover {
   .top .search {
     position: static;
     flex: 1 1 4.5rem;
-    max-width: none;
   }
   .search-results {
     left: max(1rem, env(safe-area-inset-left));
