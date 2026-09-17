@@ -199,6 +199,34 @@
         (is (pos? index))
         (when (pos? index) (is (= "" (nth rows (dec index)))))))))
 
+(deftest disclosed-rows-sit-under-their-heading
+  ;; The chevron owns the left margin, so the rows an open section discloses have
+  ;; to start under its label instead of hanging two columns to its left.
+  (let [capture
+        (cap/capture! {:cols 100
+                       :rows 80
+                       :keys [\b \f :esc]
+                       :paint! #(dlg/run-modal! (:screen %) (review-component))})
+
+        painted
+        (str/split-lines (cap/frame-text capture))
+
+        column
+        (fn [needle]
+          (some #(str/index-of % needle) painted))
+
+        margin
+        (column "Session health")]
+
+    (is (nil? (:error capture)))
+    (is (some? margin))
+    (doseq [heading ["▾ Context breakdown" "▾ Linked filesystems" "Session totals"]]
+      (is (= margin (column heading)) heading))
+    (doseq [nested ["Logical request · not measured usage" "Local estimate" "/workspace/AGENTS.md"
+                    "4 available · 1 with guidance estimates" "/workspace/project"
+                    "No AGENTS.md or CLAUDE.md" "Disk estimates do not add"]]
+      (is (= (+ 2 margin) (column nested)) nested))))
+
 (deftest missing-empty-error-and-pressure
   (doseq [[snapshot expected] [[{:phase :loading} "Reading session metrics"]
                                [{:phase :error} "reopen to retry"]

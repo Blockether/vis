@@ -1114,6 +1114,10 @@
             :label label
             :value value))
 
+        nested
+        (fn [rows]
+          (map #(assoc % :indent 2) rows))
+
         health
         (get usage "health")
 
@@ -1223,55 +1227,59 @@
                 (if (some? estimate)
                   (concat [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
                             :tone :heading
-                            :toggle :parts?}
-                           (hint (str (if prepared? "Prepared request" "Logical request")
-                                      " · not measured usage"))]
-                          (when parts?
-                            (concat [(stat "Local estimate" (metric-tokens estimate))
-                                     (stat "Provider-reported input" (metric-tokens input))
-                                     (stat "Estimate − reported"
-                                           (or (metric-token-difference health) "—")) (row "")]
-                                    (mapcat (fn [part]
-                                              (cond-> [(stat (get part "label")
-                                                             (str "≈"
-                                                                  (metric-count (get part
-                                                                                     "tokens"))))]
-                                                (get part "path")
-                                                (conj (hint (get part "path")))))
-                                            breakdown))))
+                            :toggle :parts?}]
+                          (nested
+                            (concat [(hint (str (if prepared? "Prepared request" "Logical request")
+                                                " · not measured usage"))]
+                                    (when parts?
+                                      (concat
+                                        [(stat "Local estimate" (metric-tokens estimate))
+                                         (stat "Provider-reported input" (metric-tokens input))
+                                         (stat "Estimate − reported"
+                                               (or (metric-token-difference health) "—")) (row "")]
+                                        (mapcat (fn [part]
+                                                  (cond-> [(stat (get part "label")
+                                                                 (str "≈"
+                                                                      (metric-count
+                                                                        (get part "tokens"))))]
+                                                    (get part "path")
+                                                    (conj (hint (get part "path")))))
+                                                breakdown))))))
                   [(hint "Prompt breakdown unavailable")])
                 [(row "")]
                 (if (some? roots)
                   (concat
                     [{:text (str (if roots? "▾" "▸") " Linked filesystems [f]")
                       :tone :heading
-                      :toggle :roots?}
-                     (hint (str (metric-count (get health "root_count"))
-                                " available · "
-                                (metric-count (get health "estimated_root_count"))
-                                " with guidance estimates"))]
-                    (when roots?
+                      :toggle :roots?}]
+                    (nested
                       (concat
-                        (mapcat (fn [item]
-                                  (let [guidance (get item "guidance")]
-                                    [(row "") (row (get item "path"))
-                                     (hint (case (get guidance "status")
-                                             "available"
-                                             (str (get guidance "path")
-                                                  " · ≈"
-                                                  (metric-count (get guidance "tokens"))
-                                                  " tokens on disk")
+                        [(hint (str (metric-count (get health "root_count"))
+                                    " available · "
+                                    (metric-count (get health "estimated_root_count"))
+                                    " with guidance estimates"))]
+                        (when roots?
+                          (concat
+                            (mapcat (fn [item]
+                                      (let [guidance (get item "guidance")]
+                                        [(row "") (row (get item "path"))
+                                         (hint (case (get guidance "status")
+                                                 "available"
+                                                 (str (get guidance "path")
+                                                      " · ≈"
+                                                      (metric-count (get guidance "tokens"))
+                                                      " tokens on disk")
 
-                                             "missing"
-                                             "No AGENTS.md or CLAUDE.md"
+                                                 "missing"
+                                                 "No AGENTS.md or CLAUDE.md"
 
-                                             "error"
-                                             "Could not read guidance · check file access"
+                                                 "error"
+                                                 "Could not read guidance · check file access"
 
-                                             "Guidance estimate unavailable"))]))
-                                roots)
-                        [(hint
-                           "Disk estimates do not add to context usage or imply that the agent loaded the file. Main workspace guidance is listed above.")])))
+                                                 "Guidance estimate unavailable"))]))
+                                    roots)
+                            [(hint
+                               "Disk estimates do not add to context usage or imply that the agent loaded the file. Main workspace guidance is listed above.")])))))
                   [(hint "Linked filesystem details unavailable")])))
             [(row "") (head "Session totals")
              (hint "Across all calls, including repeated context.")]
@@ -1331,23 +1339,23 @@
            lines
            (vec
              (mapcat
-               (fn [{:keys [text meter label value] :as row}]
-                 (cond (some? meter)
-                       [(assoc row
-                          :text (str (apply str (repeat (long (* (double meter) text-w)) "━"))
-                                     (apply str
-                                       (repeat (- text-w (long (* (double meter) text-w))) "─"))))]
-                       (and label (<= (+ (p/display-width label) 2 (p/display-width value)) text-w))
-                       [(assoc row
-                          :value-col (- text-w (p/display-width value))
-                          :text (str label
-                                     (apply str
-                                       (repeat
-                                         (- text-w (p/display-width label) (p/display-width value))
-                                         " "))
-                                     value))]
-                       :else (map #(assoc row :text %)
-                                  (if (str/blank? text) [""] (render/wrap-text text text-w)))))
+               (fn [{:keys [text meter label value indent] :as row}]
+                 (let [w (long (max 1 (- (long text-w) (long (or indent 0)))))]
+                   (cond (some? meter)
+                         [(assoc row
+                            :text (str (apply str (repeat (long (* (double meter) w)) "━"))
+                                       (apply str (repeat (- w (long (* (double meter) w))) "─"))))]
+                         (and label (<= (+ (p/display-width label) 2 (p/display-width value)) w))
+                         [(assoc row
+                            :value-col (- w (p/display-width value))
+                            :text (str label
+                                       (apply str
+                                         (repeat
+                                           (- w (p/display-width label) (p/display-width value))
+                                           " "))
+                                       value))]
+                         :else (map #(assoc row :text %)
+                                    (if (str/blank? text) [""] (render/wrap-text text w))))))
                (session-metric-rows session state)))
 
            content-h
@@ -1376,9 +1384,12 @@
                 lines]}]
      (let [{:keys [left inner-w]} bounds]
        (draw-dialog-chrome! g cols rows "Session metrics · C-x u" content-w content-h-req)
-       (doseq [[i {:keys [text tone toggle label value value-col]}]
+       (doseq [[i {:keys [text tone toggle label value value-col indent]}]
                (map-indexed vector (take content-h (drop scroll lines)))]
-         (let [y (+ (long content-top) (long i))]
+         (let [y (+ (long content-top) (long i))
+               x (+ (long left) 2 (long (or indent 0)))
+               w (long (max 1 (- (long text-w) (long (or indent 0)))))]
+
            (when toggle (draw-toggle-row! g left y (dec (long inner-w)) false text))
            (p/set-colors! g
                           (case tone
@@ -1398,11 +1409,11 @@
                           t/dialog-bg)
            (when value-col (p/set-fg! g t/dialog-hint))
            (if (or label (= :heading tone))
-             (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
-             (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
+             (p/styled g [p/BOLD] (p/put-str! g x y (ellipsize text w)))
+             (p/put-str! g x y (ellipsize text w)))
            (when value-col
              (p/set-fg! g t/dialog-fg)
-             (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2 (long value-col)) y value)))))
+             (p/styled g [p/BOLD] (p/put-str! g (+ x (long value-col)) y value)))))
        (ScrollBar/draw g
                        Direction/VERTICAL
                        (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))
