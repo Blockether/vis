@@ -347,6 +347,12 @@ it('pages grouped invocations through tail failures and cancellations', async ()
       expect(screen.getByRole('button', { name: 'Show earlier operations' })).not.toBeDisabled(),
     );
   }
+  // A page that ended badly keeps its own children until the reader opens that step.
+  fireEvent.click(
+    document.querySelector<HTMLElement>(
+      '[data-activity-row="0:group-128"] [data-disclosure-toggle]',
+    )!,
+  );
   expect(screen.getByText('Operation 159')).toBeVisible();
   expect(screen.getByText('Operation 160')).toBeVisible();
   expect(screen.queryByText('Operation 1')).toBeNull();

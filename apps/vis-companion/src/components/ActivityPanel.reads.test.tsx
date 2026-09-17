@@ -94,8 +94,15 @@ it.each([
   if (reason === 'custom') row.presentation!.headline = 'Inspect file';
   openReads(activity);
   expect(document.querySelectorAll('[data-activity-depth="0"]')).toHaveLength(2);
-  if (reason === 'failed')
+  if (reason === 'failed') {
+    expect(screen.queryByText('Permission denied')).toBeNull();
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:read-2"] [data-disclosure-toggle]',
+      )!,
+    );
     expect(screen.getAllByText('Permission denied').length).toBeGreaterThan(0);
+  }
 });
 
 it('retains overlapping snapshots, empty results and truncation without inventing durations', () => {

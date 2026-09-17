@@ -267,6 +267,12 @@ export const RepeatedArguments: Story = {
     await expect(canvasElement).not.toHaveTextContent('Search directory unavailable');
     repeated.focus();
     await userEvent.keyboard('{Enter}');
+    await expect(canvasElement).not.toHaveTextContent('Search directory unavailable');
+    await userEvent.click(
+      canvasElement.querySelector<HTMLElement>(
+        '[data-activity-row="0:search-3"] [data-disclosure-toggle]',
+      )!,
+    );
     await expect(canvas.getByText(/Search directory unavailable/)).toBeVisible();
     const first = within(
       canvasElement.querySelector<HTMLElement>('[data-activity-row="0:search-1"]')!,
@@ -373,6 +379,12 @@ export const InterleavedOperations: Story = {
     );
     await expect(canvasElement).not.toHaveTextContent('Assertion failed');
     await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
+    await expect(canvasElement).not.toHaveTextContent('Assertion failed');
+    await userEvent.click(
+      canvasElement.querySelector<HTMLElement>(
+        '[data-activity-row="0:test-4"] [data-disclosure-toggle]',
+      )!,
+    );
     await expect(canvasElement).toHaveTextContent('Assertion failed');
     await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
     const reads = canvas.getByRole('button', { name: /Read ×10/ });
@@ -604,6 +616,12 @@ export const ExtensionGroups: Story = {
     await expect(canvas.getByText(/Waiting for deployment · running/)).toBeVisible();
     await expect(canvasElement).not.toHaveTextContent('Review service unavailable');
     await userEvent.click(canvas.getByRole('button', { name: /Search reviews ×3/ }));
+    await expect(canvasElement).not.toHaveTextContent('Review service unavailable');
+    await userEvent.click(
+      canvasElement.querySelector<HTMLElement>(
+        '[data-activity-row="0:search-2"] [data-disclosure-toggle]',
+      )!,
+    );
     await expect(canvasElement).toHaveTextContent('Review service unavailable');
     await userEvent.click(canvas.getByRole('button', { name: /Changes: 0 ×2/ }));
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(3);

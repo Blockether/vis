@@ -34,6 +34,13 @@ it('labels extension groups and preserves disclosures, arguments and live failur
   expect(document.body.textContent).not.toContain('reviews.deployment_status');
 
   fireEvent.click(screen.getByRole('button', { name: /Search reviews ×3/ }));
+  // The opened group lists the failed call; the reason itself waits inside that step.
+  expect(document.body.textContent).not.toContain('Review service unavailable');
+  fireEvent.click(
+    document.querySelector<HTMLElement>(
+      '[data-activity-row="0:search-2"] [data-disclosure-toggle]',
+    )!,
+  );
   expect(document.body.textContent).toContain('Review service unavailable');
   const group = screen.getByRole('list', {
     name: 'Search reviews ×3 operations',

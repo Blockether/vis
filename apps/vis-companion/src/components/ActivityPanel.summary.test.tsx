@@ -99,8 +99,12 @@ describe('Activity presentation summary links', () => {
     projection.rows[0].error_summary = `Error ${issue}`;
     projection.rows[0].presentation!.sections = [];
     paint(projection);
-    expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.getAllByText(`Error ${issue}`).length).toBeGreaterThan(0);
+    // The head keeps the extension's authored summary, links and all. The engine's own line
+    // waits inside the step and arrives literal, never as Markdown.
+    expect(screen.queryByText(`Error ${issue}`)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Find issues/ }));
+    expect(screen.getByText(`Error ${issue}`).querySelector('a')).toBeNull();
+    expect(screen.getAllByRole('link')).toHaveLength(1);
   });
 
   it('does not create unsafe links, media, HTML or block markup', () => {

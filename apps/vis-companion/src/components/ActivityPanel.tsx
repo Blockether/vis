@@ -675,22 +675,33 @@ function ActivitySectionView({
   );
 }
 
-function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) {
+function ActivityStep({
+  row,
+  depth = 0,
+  onToggle,
+}: {
+  row: ActivityRow;
+  depth?: number;
+  onToggle?: (open: boolean) => void;
+}) {
   const nested = depth > 0;
   const failed = row.state === 'failed';
   const running = row.state === 'running';
-  // List details always need an explicit choice; other running/failed steps start open.
+  // A step opens shut. Only work still in flight shows itself, because it is still
+  // changing and has nowhere else to say so; a settled step — a failed one included —
+  // waits for a reader who pressed it, and folds itself away again once it settles.
   const listing = row.operation === 'ls';
   const [toggled, setToggled] = useState<boolean | null>(null);
-  const open = toggled ?? (!listing && (running || failed));
+  const open = toggled ?? (!listing && running);
   const presentation = row.presentation;
   const lead = presentation?.headline ?? activityStepLead(row);
   const content = presentation?.content;
   const sections = presentation?.sections ?? [];
   const summary = presentation ? '' : activityStepObject(row);
-  const caption = presentation ? (row.error_summary ?? presentation.summary) : '';
-  const linkedSummary =
-    Boolean(caption) && row.error_summary == null && presentation?.summary_format === 'markdown';
+  // The head says WHAT the step was about — the authored summary, failed or not. WHY it
+  // failed belongs to the body, said once, under the head, to a reader who opened it.
+  const caption = presentation?.summary ?? '';
+  const linkedSummary = Boolean(caption) && presentation?.summary_format === 'markdown';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
@@ -805,7 +816,10 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
               tone="execution"
               density="compact"
               className={linkedSummary ? 'min-w-0 w-auto! max-w-[45%]' : 'min-w-0 max-w-full'}
-              onClick={() => setToggled(!open)}
+              onClick={() => {
+                setToggled(!open);
+                onToggle?.(!open);
+              }}
             >
               {label}
             </Disclosure>
@@ -1005,11 +1019,27 @@ function mergePatchRows(rows: readonly ActivityRow[]): ActivityRow[] {
   });
 }
 
-function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
+function ActivityGroup({
+  group,
+  repeated = false,
+  onStepToggle,
+}: {
+  group: OperationGroup;
+  repeated?: boolean;
+  onStepToggle?: (open: boolean) => void;
+}) {
   const singleton = group.rows.length === 1;
-  // List groups stay concise when a singleton grows; other operations retain
-  // their visible row tree and disclosure state across the same transition.
-  const [open, setOpen] = useState(singleton && group.rows[0].operation !== 'ls');
+  // EVERY GROUP OPENS SHUT. A panel that opens half unfolded — these rows showing, their
+  // neighbours counted — hands the reader a shape nobody chose; it is only the order the rows
+  // happened to arrive in. A lone row has no head of its own to press, so it carries the press
+  // it did get into the head it grows: what someone chose to read never folds away under them.
+  const [open, setOpen] = useState(false);
+  const remember = singleton
+    ? (value: boolean) => {
+        setOpen(value);
+        onStepToggle?.(value);
+      }
+    : undefined;
   const expanded = singleton || open;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
@@ -1052,7 +1082,7 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
           aria-label={singleton ? undefined : `${title} operations`}
         >
           {repeated
-            ? group.rows.map((row) => <ActivityStep key={row.id} row={row} />)
+            ? group.rows.map((row) => <ActivityStep key={row.id} row={row} onToggle={remember} />)
             : argumentGroups(mergePatchRows(mergeReadRows(group.rows))).map((argumentsGroup) => (
                 <ActivityGroup
                   key={argumentsGroup.id}
@@ -1060,6 +1090,7 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
                     ...argumentsGroup,
                     label: activityStepObject(argumentsGroup.rows[0]) || group.label,
                   }}
+                  onStepToggle={remember}
                   repeated
                 />
               ))}

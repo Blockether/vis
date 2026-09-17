@@ -264,6 +264,13 @@ describe('joined Activity operation groups', () => {
     }
     expect(screen.queryByText(/Search directory unavailable/)).toBeNull();
     fireEvent.click(repeat);
+    // The opened group lists the failed call; the reason itself waits inside that step.
+    expect(screen.queryByText(/Search directory unavailable/)).toBeNull();
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:search-3"] [data-disclosure-toggle]',
+      )!,
+    );
     expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
     fireEvent.click(
       document.querySelector<HTMLElement>(
@@ -425,6 +432,10 @@ describe('joined Activity operation groups', () => {
     expect(screen.getByRole('button', { name: /Read ×3/ }).textContent).toContain('1 cancelled');
     expect(screen.queryByText(/Permission denied/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Read ×3/ }));
+    expect(screen.queryByText(/Permission denied/)).toBeNull();
+    fireEvent.click(
+      document.querySelector<HTMLElement>('[data-activity-row="0:b"] [data-disclosure-toggle]')!,
+    );
     expect(screen.getByText(/Permission denied/)).toBeTruthy();
     expect(screen.getByText('Cancelled')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Collapse Activity/ }));
@@ -588,7 +599,7 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByText('2 files')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Listed src/ })).toBeNull();
   });
-  it('keeps the engine failure visible when custom content is collapsed', () => {
+  it('keeps a presented failure inside the step until the reader opens it', () => {
     const base = activityProjection();
     paintActivity({
       activity: {
@@ -609,10 +620,13 @@ describe("one form's Activity on the phone", () => {
         ],
       },
     });
-    fireEvent.click(screen.getByRole('button', { name: /List src/ }));
-    expect(screen.getByText('Permission denied')).toBeTruthy();
-    expect(screen.queryByText('Preparing listing')).toBeNull();
+    expect(screen.queryByText('Permission denied')).toBeNull();
     expect(screen.queryByText('Listing details')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /List src/ }));
+    // Opened, the step says what it was doing, what it produced and why it ended, once each.
+    expect(screen.getByText('Preparing listing')).toBeTruthy();
+    expect(screen.getByText('Listing details')).toBeTruthy();
+    expect(screen.getByText('Permission denied')).toBeTruthy();
   });
   it('draws the chronology without being asked, in engine sequence', () => {
     paintActivity();
@@ -765,6 +779,11 @@ describe('a run reads as one thread', () => {
           ],
         }}
       />,
+    );
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:failed"] [data-disclosure-toggle]',
+      )!,
     );
     expect(screen.getByText('Read refused')).toBeTruthy();
     expect(screen.getByText('Cancelled')).toBeTruthy();
@@ -935,9 +954,9 @@ describe('a run reads as one thread', () => {
   });
 });
 
-// An error is the one thing on the axis nobody should have to go looking for,
-// and also the one thing that can be forty lines long. It opens itself, and it
-// opens CLAMPED — the whole of it lives in the raw result the invocation opens.
+// An error is the one thing on the axis that can be forty lines long, so when a reader
+// opens the step it arrives UNCLAMPED — the whole of it, where the invocation is. A panel
+// nobody opened stays quiet: a failure paints nothing over a reader who is not reading it.
 describe('a step that ended badly', () => {
   function paintFailure(text: string) {
     const projection = activityProjection();
@@ -960,8 +979,19 @@ describe('a step that ended badly', () => {
     });
   }
 
-  it('says how it failed on its own line and opens itself', () => {
+  function openFailure() {
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:call-1"] [data-disclosure-toggle]',
+      )!,
+    );
+  }
+
+  it('says how it failed on its own line, once the step is opened', () => {
     paintFailure('patch refused: no anchor matched');
+
+    expect(screen.queryByText('patch refused: no anchor matched')).toBeNull();
+    openFailure();
 
     // The machine's own text IS the reason. The row stamps no word on top of it:
     // the filled mark is the whole of the colour a failure gets.
@@ -975,6 +1005,7 @@ describe('a step that ended badly', () => {
   // rule, so the reader had to leave the axis to learn why the patch was refused.
   it('says the whole of what the machine said, however many lines', () => {
     paintFailure(['one', 'two', 'three', 'four', 'five'].join('\n'));
+    openFailure();
 
     expect(screen.getByText('one')).toBeTruthy();
     expect(screen.getByText('three')).toBeTruthy();
@@ -1029,6 +1060,11 @@ describe('the axis says a thing once', () => {
       error_summary: 'the provider closed the stream before the first token',
       evidence: [],
     });
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:call-1"] [data-disclosure-toggle]',
+      )!,
+    );
 
     const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
     expect(chronology).not.toContain('FAILED');
