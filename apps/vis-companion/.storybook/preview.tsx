@@ -1,9 +1,16 @@
 import type { Decorator, Preview } from '@storybook/react-vite';
-import { expect } from 'storybook/test';
+import { configure, expect } from 'storybook/test';
 import { useLayoutEffect, type ReactNode } from 'react';
 import { applyTheme, resolveTheme } from '../src/lib/theme';
 import { DEFAULT_THEME, THEMES } from '../src/lib/themes.generated';
 import '../src/index.css';
+
+// A play function starts as soon as its story is queued, and a whole screen can
+// need longer than Testing Library's one-second default to reach its first frame
+// on a busy machine: the query then reads Storybook's own loading shell and the
+// run fails for a reason that has nothing to do with the screen. Every `findBy*`
+// in this gallery waits five seconds before it gives up.
+configure({ asyncUtilTimeout: 5000 });
 
 /**
  * The palette is the APP's, applied the app's own way: `applyTheme` stamps
