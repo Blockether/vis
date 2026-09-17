@@ -711,23 +711,33 @@
                 (lv/band-rows cols 36 [p] 1 3)
 
                 title-row
-                (inc (long from))
+                (+ (long from) 2)
 
                 controls
-                (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))]]
+                (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))
+
+                {:keys [col width]}
+                (:bounds (first controls))
+
+                rail
+                (str/index-of (nth lines from) "┐")]]
 
     (is (nil? error))
     (is (str/includes? (nth lines from) "┌"))
     (is (not (str/includes? (nth lines from) "Release checks")))
+    (is (str/blank? (str/replace (nth lines (inc (long from))) "│" ""))
+        "one empty row stands between the top rule and the heading")
     (is (= 4 (str/index-of (nth lines title-row) "LIVE"))
-        "the heading starts one row below the border, with the body's horizontal inset")
+        "the heading starts one blank row below the border, with the body's inset")
     (is (str/includes? (nth lines title-row) "Release checks"))
     (is (str/includes? (nth lines (inc title-row)) "Three jobs"))
     (is (str/blank? (str/replace (nth lines (+ title-row 2)) "│" ""))
         "one empty row separates the description from the first node")
     (is (str/includes? (nth lines (+ title-row 3)) "Watching"))
     (is (= [title-row] (mapv #(get-in % [:bounds :row]) controls))
-        "the minimize hit target follows the title")))
+        "the minimize hit target follows the title")
+    (is (< (+ (long col) (long width)) (long rail))
+        "the control keeps one clear column before the band's right edge")))
 
 (deftest live-view-description-separator-test
   ;; #220: a description is a section, not padding before or inside the first node.
@@ -1203,7 +1213,7 @@
 
       (is (str/includes? (nth lines from) "┌")
           "the first row it claims is the band's opening border")
-      (is (str/includes? (nth lines (inc (long from))) "CI · fix(loop): move the session pick")
+      (is (str/includes? (nth lines (+ (long from) 2)) "CI · fix(loop): move the session pick")
           "the padded heading remains inside the wheel's band")
       (is (str/includes? (nth lines to) "└") "the last is the rule that closes it")
       (is (every? str/blank? (take from lines))

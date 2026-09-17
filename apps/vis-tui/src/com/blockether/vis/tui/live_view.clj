@@ -1895,8 +1895,10 @@
           width
           (long (p/display-width label))
 
+          ;; Inset ONE column from the interior's right edge: the control keeps a
+          ;; margin from the band's corner instead of sitting on the scrollbar lane.
           col
-          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))
+          (max (inc (long left)) (- (+ (long left) (long inner-w)) width))
 
           target
           {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
@@ -2051,12 +2053,14 @@
                visible (max 1 (dec (long visible)))
                ;; Keep the description directly below the expanded title (#220).
                ;; Without a description, retain the title's blank separator row.
+               ;; The heading's LEADING blank row is its top margin: the title and
+               ;; the close control stand off the band's own top rule.
                search (:log-search front)
                heading-h (if (and (not is-minimized)
                                   (>= (- visible (count collapsed) (if stop 2 0)) (if search 6 4)))
-                           (if (str/blank? (get-in front [:view :description])) 2 1)
+                           (if (str/blank? (get-in front [:view :description])) 3 2)
                            0)
-               title-row (if (pos? heading-h) (long body-top) (long sep-row))
+               title-row (if (pos? heading-h) (inc (long body-top)) (long sep-row))
                body-top (+ (long body-top) heading-h)
                visible (- visible heading-h)
                search-top body-top
@@ -2173,7 +2177,7 @@
                                                    "Literal text (empty shows all)")))))))))))
 
 (defn paint!
-  "Paint the newest expanded Live View with its heading directly below the top rule.
+  "Paint the newest expanded Live View with one empty row above its heading.
    Minimized views and short terminals keep a compact titled rule."
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
