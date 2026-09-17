@@ -1820,3 +1820,8 @@
                                                           :test)))
              (expect (= before (slurp (io/file store-dir "state.yml")))))
            (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!))))))
+
+(defdescribe gateway-advertise-runtime-config-test
+             (it "keywordizes the gateway pairing address off the YAML surface"
+                 (expect (= {:gateway {:advertise "10.0.0.5"}}
+                            (config/runtime-config {"gateway" {"advertise" "10.0.0.5"}})))))

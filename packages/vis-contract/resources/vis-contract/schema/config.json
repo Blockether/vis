@@ -674,6 +674,15 @@
         }
       ]
     },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "advertise": {
+          "$ref": "#/$defs/nonBlankString"
+        }
+      },
+      "additionalProperties": false
+    },
     "grep": {
       "type": "object",
       "properties": {
@@ -1254,6 +1263,9 @@
         },
         "db_spec": {
           "$ref": "#/$defs/db"
+        },
+        "gateway": {
+          "$ref": "#/$defs/gateway"
         },
         "grep": {
           "$ref": "#/$defs/grep"

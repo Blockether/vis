@@ -8,6 +8,12 @@
   (is (not (document/valid? "config" {"titling" {"mode" "unknown"}})))
   (is (not (document/valid? "config" {"api_style_values" ["openai"]}))))
 
+(deftest schema-root-validates-the-gateway-pairing-address
+  (is (document/valid? "config" {"gateway" {"advertise" "10.0.0.5"}}))
+  (is (document/valid? "config" {"gateway" {"advertise" "https://gateway.example.com"}}))
+  (is (not (document/valid? "config" {"gateway" {"advertise" "   "}})))
+  (is (not (document/valid? "config" {"gateway" {"url" "http://10.0.0.5"}}))))
+
 (deftest api-style-validation-and-normalization-share-the-schema
   (is (= ["anthropic" "openai" "openai-responses" "gemini"] config/api-style-values))
   (doseq [[runtime aliases]

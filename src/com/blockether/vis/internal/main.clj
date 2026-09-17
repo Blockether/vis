@@ -2661,17 +2661,24 @@
   (shutdown-agents))
 
 (defn- advertise-option
-  "The address the pairing link must lead with: `--advertise` when the command
-   carries it, else `VIS_GATEWAY_ADVERTISE` from the environment.
+  "The address the pairing link must lead with, in precedence order: `--advertise`
+   on the command, `VIS_GATEWAY_ADVERTISE` in the environment, then
+   `gateway: advertise:` in the Vis config.
 
    A machine reachable on one route only needs that answer on EVERY pair, not
-   just on the command somebody remembered to decorate. It stays per machine
-   because the address that works here - a LAN IP, a forwarded router port, a
-   hostname - names a stranger's box elsewhere, so no built-in default is safe."
-  ([parsed] (advertise-option parsed (System/getenv "VIS_GATEWAY_ADVERTISE")))
-  ([parsed from-env]
-   (or (not-empty (str/trim (str (get parsed "advertise"))))
-       (not-empty (str/trim (str from-env))))))
+   just on the command somebody remembered to decorate. The config tier is the
+   one a service-managed daemon can still read, because a launchd/systemd unit
+   sources no shell profile; it comes off the RAW merged config, like the
+   database path, so a gateway on a machine with no providers saved still gets
+   it. All three stay per machine: the address that works here - a LAN IP, a
+   forwarded router port, a hostname - names a stranger's box on the next
+   network, so no built-in default is safe."
+  ([parsed]
+   (advertise-option parsed
+                     (System/getenv "VIS_GATEWAY_ADVERTISE")
+                     (get-in (config/load-config-raw) ["gateway" "advertise"])))
+  ([parsed from-env from-config]
+   (some #(not-empty (str/trim (str %))) [(get parsed "advertise") from-env from-config])))
 
 (defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
@@ -3589,7 +3596,7 @@
        :kind :flag
        :type :string
        :doc
-       "Address the pairing link should carry instead of the detected one, as HOST, HOST:PORT or a full URL. Use it when the client must dial a port forward, a proxy, or the single address your network allows. Set VIS_GATEWAY_ADVERTISE to apply the same address to every start on this machine."}]
+       "Address the pairing link should carry instead of the detected one, as HOST, HOST:PORT or a full URL. Use it when the client must dial a port forward, a proxy, or the single address your network allows. Set VIS_GATEWAY_ADVERTISE, or `gateway: advertise:` in the Vis config, to apply the same address to every start on this machine."}]
      :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --jvm"
                     "vis-agent gateway start --port 8080" "vis-agent gateway start --pair"
                     "vis-agent gateway start --host 0.0.0.0 --require-token --pair"]
@@ -3638,7 +3645,7 @@
        :kind :flag
        :type :string
        :doc
-       "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL). Defaults to VIS_GATEWAY_ADVERTISE when that is set."}]
+       "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL). Defaults to VIS_GATEWAY_ADVERTISE, then to `gateway: advertise:` in the Vis config."}]
      :cmd/run-fn cli-gateway-pair!}
     {:cmd/name "mcp"
      :cmd/parent ["gateway"]

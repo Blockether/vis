@@ -581,6 +581,26 @@ titling:
   model: glm-4.7
 ```
 
+## Gateway pairing address
+
+The pairing link for the companion app carries an address Vis detects on this
+computer. When your network needs a different one — a port forward, a proxy, or
+the single address the network allows — name it here and every pairing link
+leads with it:
+
+```yaml
+gateway:
+  advertise: 10.0.0.5
+```
+
+The value is a host, `host:port` or a full URL, and the detected addresses still
+follow in the same link as fallbacks. `--advertise` on `vis-agent gateway start`
+or `vis-agent gateway pair` wins over this key, and `VIS_GATEWAY_ADVERTISE` sits
+between the two; the config file is the source a gateway started by launchd or
+systemd can read, because a service unit starts without your shell profile.
+Setting it changes what the link says, not what the gateway listens on, so the
+address still has to reach this computer.
+
 ## Database
 
 Sessions are stored in SQLite. Resolution order: `--db` flag, `VIS_DB_PATH`,

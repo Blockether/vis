@@ -127,6 +127,12 @@ loop. Run `vis-agent gateway status` as the service account to inspect the same
 local gateway. Avoid exporting `VIS_GATEWAY_URL` or `VIS_GATEWAY_TOKEN` into the
 service: those select a remote target for clients, not the listener's address.
 
+To give every pairing link from the service the same address, set
+`gateway: advertise:` in the configuration file the service account reads: a
+service unit starts without your shell profile, so a `VIS_GATEWAY_ADVERTISE`
+exported in a login shell never reaches it. See
+[gateway pairing address](configuration.md#gateway-pairing-address).
+
 Keep the complete native bundle together. Its launcher sets up the Python
 sidecar; copying only `vis-agent-native` can leave a process that starts but
 cannot run Python tools. A custom launcher must preserve the bundle layout and

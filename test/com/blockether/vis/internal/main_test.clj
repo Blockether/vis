@@ -862,13 +862,41 @@
                      (expect (not (str/includes? text "Auth state")))
                      (expect (not (str/includes? text "Is loading")))))))
 
-(defdescribe gateway-advertise-option-test
-             (it
-               "prefers the flag, falls back to VIS_GATEWAY_ADVERTISE, and ignores blank values"
-               (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "10.0.0.5"} nil)))
-               (expect (= "10.0.0.5"
-                          (#'main/advertise-option {"advertise" "10.0.0.5"} "gateway.example.com")))
-               (expect (= "gateway.example.com" (#'main/advertise-option {} "gateway.example.com")))
-               (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "   "} " 10.0.0.5 ")))
-               (expect (nil? (#'main/advertise-option {} nil)))
-               (expect (nil? (#'main/advertise-option {"advertise" ""} "   ")))))
+(defdescribe
+  gateway-advertise-option-test
+  (it "prefers the flag, then VIS_GATEWAY_ADVERTISE, then config, ignoring blanks"
+      (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "10.0.0.5"} nil nil)))
+      (expect
+        (= "10.0.0.5"
+           (#'main/advertise-option {"advertise" "10.0.0.5"} "gateway.example.com" "192.0.2.7")))
+      (expect (= "gateway.example.com"
+                 (#'main/advertise-option {} "gateway.example.com" "192.0.2.7")))
+      (expect (= "192.0.2.7" (#'main/advertise-option {} nil "192.0.2.7")))
+      (expect (= "192.0.2.7" (#'main/advertise-option {"advertise" "   "} "" "192.0.2.7")))
+      (expect (= "10.0.0.5" (#'main/advertise-option {} " 10.0.0.5 " nil)))
+      (expect (nil? (#'main/advertise-option {} nil nil)))
+      (expect (nil? (#'main/advertise-option {"advertise" ""} "   " nil)))))
+
+(defdescribe
+  gateway-advertise-config-file-test
+  (it "takes `gateway: advertise:` off the config file when nothing else names an address"
+      (let [dir
+            (java.io.File. (System/getProperty "java.io.tmpdir")
+                           (str "vis-advertise-" (System/nanoTime)))
+
+            store
+            (java.io.File. dir ".vis")
+
+            old-home
+            (System/getProperty "user.home")]
+
+        (try (.mkdirs store)
+             (spit (java.io.File. store "config.yml") "gateway:\n  advertise: 10.0.0.5\n")
+             (System/setProperty "user.home" (.getPath dir))
+             (config/invalidate-config-cache!)
+             ;; Read from the RAW merged config, never `current-config`: a machine with no
+             ;; saved providers still has to pair against the address its network allows.
+             (expect (= (or (not-empty (str (System/getenv "VIS_GATEWAY_ADVERTISE"))) "10.0.0.5")
+                        (#'main/advertise-option {})))
+             (finally (System/setProperty "user.home" old-home)
+                      (config/invalidate-config-cache!))))))
