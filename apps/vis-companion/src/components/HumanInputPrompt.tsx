@@ -253,6 +253,11 @@ export function HumanInputSheet({
   return (
     <Modal
       size="fit"
+      // AND IT STANDS IN THE SESSION THAT ASKED IT. Reported from a wide window: the
+      // form covered and dimmed the session list and the header beside the transcript,
+      // so the whole application read as blocked while a single session waited. The
+      // sheet stands in that session's own pane instead, where an opened run stands.
+      within="session"
       // A pause with no way out is not dismissed by tapping the glass either: the
       // scrim answers exactly what the header's X and Esc answer, and for an
       // uncancellable request all three do nothing.

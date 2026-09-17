@@ -389,3 +389,60 @@ describe('the engine’s whole node vocabulary', () => {
     );
   });
 });
+
+// A PAUSE STANDS IN THE SESSION THAT ASKED IT
+
+// Regression, user report: on a wide window the form covered and dimmed the whole
+// application — session list, header and transcript — while a single session waited.
+// An opened run already stands in the session's own pane (`Modal within="session"`),
+// and the question that parks a run belongs in exactly the same place.
+describe('a pause stands in the session that asked it', () => {
+  const openSheet = () => {
+    cleanup();
+    const request = HUMAN_INPUT_REQUESTS.otp;
+    render(
+      <HumanInputSheet
+        request={request}
+        values={initialHumanInputValues(request)}
+        onChange={noop}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    return screen.getByRole('dialog');
+  };
+
+  it('mounts in the session pane, leaving the desk beside it uncovered', () => {
+    const shell = document.createElement('div');
+    shell.setAttribute('data-viewport-shell', '');
+    const pane = document.createElement('div');
+    pane.setAttribute('data-session-surface', '');
+    document.body.append(shell, pane);
+    try {
+      const dialog = openSheet();
+      expect(pane.contains(dialog)).toBe(true);
+      expect(shell.contains(dialog)).toBe(false);
+      // Scrim and box alike: the pane is the bound, so nothing outside it is dimmed.
+      expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
+      expect(pane.firstElementChild).not.toHaveClass('fixed');
+    } finally {
+      shell.remove();
+      pane.remove();
+    }
+  });
+
+  // No session on screen is no pane to stand in, and a question may not disappear
+  // with it: the app shell keeps the keyboard behaviour every layer mounts for.
+  it('falls back to the app shell when no session pane is on screen', () => {
+    const shell = document.createElement('div');
+    shell.setAttribute('data-viewport-shell', '');
+    document.body.append(shell);
+    try {
+      const dialog = openSheet();
+      expect(shell.contains(dialog)).toBe(true);
+      expect(shell.firstElementChild).toHaveClass('absolute', 'inset-0');
+    } finally {
+      shell.remove();
+    }
+  });
+});

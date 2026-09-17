@@ -4507,8 +4507,8 @@ export function SessionScreen({
           className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
         >
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
-           is answered. The prompt portals its own overlay, so it sits here purely
-           to be mounted for this session — the TUI shows the same form. */}
+           is answered. Its overlay stands in THIS pane, so a waiting question
+           never covers the desk beside it — the TUI shows the same form. */}
           <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
           <SessionHeader
             model={headerModel}
