@@ -282,6 +282,26 @@
       (expect (true? (get view "is_jailed")))
       (expect (not (contains? view "sandboxed")))
       (expect (re-matches #"sha256:[0-9a-f]{64}" (get view "generation")))))
+  (it "leaves the jail disabled when configuration omits `jail.enabled`"
+      ;; Regression: the shipped default omits the key, so the access view must not
+      ;; report confinement that configuration never asked the process jail to install.
+      (let [home
+            (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                          "vis-policy-default"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))))
+
+            base
+            (.getPath (doto (java.io.File. home "vis") .mkdirs))
+
+            snapshot
+            (policy/snapshot {} {:base-dir base :home (.getPath home)})
+
+            view
+            (policy/access-view snapshot [base])]
+
+        (expect (true? (get-in snapshot [:process-jail :disabled?])))
+        (expect (false? (:jail-enabled snapshot)))
+        (expect (false? (get view "is_jailed")))))
   (it
     "grants unrestricted explicit filesystem access when the jail is disabled"
     (let [home

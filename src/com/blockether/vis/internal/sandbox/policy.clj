@@ -285,7 +285,7 @@
                (config-validation/workspace-draft-policies config))
 
          policy
-         {:jail-enabled (not= false (get-in config ["jail" "enabled"]))
+         {:jail-enabled (true? (get-in config ["jail" "enabled"]))
           :network network
           :process-jail jail
           :draft-policies draft-policies

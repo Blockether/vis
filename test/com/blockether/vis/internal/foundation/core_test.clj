@@ -124,7 +124,7 @@
 
             removed-ctx
             ((:ext/ctx-fn foundation/vis-extension)
-              (assoc env :security-policy (policy/snapshot {})))
+              (assoc env :security-policy (policy/snapshot {"jail" {"enabled" true}})))
 
             removed
             (renderer/ctx-static-map {:ctx removed-ctx})
