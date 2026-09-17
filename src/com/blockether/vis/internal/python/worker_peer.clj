@@ -23,6 +23,7 @@
                                                  StandardCharsets/UTF_8))
    :pending (atom {})
    :serving (atom {})
+   :rpc-state (atom {})
    :seq (AtomicLong. 0)
    :workers (Executors/newCachedThreadPool
               (reify
@@ -40,6 +41,55 @@
       (.write writer "\n")
       (.flush writer))))
 
+(defn- begin-rpc!
+  [peer direction message]
+  (let [thread
+        (Thread/currentThread)
+
+        record
+        {:id (get message "id")
+         :op (get message "op")
+         :session (get message "session")
+         :tool (get message "tool")
+         :started-ms (util/now-ms)
+         :thread-id (.threadId thread)
+         :thread thread}]
+
+    (swap! (:rpc-state peer) assoc-in [direction :active (:id record)] record)))
+
+(defn- finish-rpc!
+  [peer direction id status]
+  (swap! (:rpc-state peer) (fn [state]
+                             (if-let [record (get-in state [direction :active id])]
+                               (-> state
+                                   (update-in [direction :active] dissoc id)
+                                   (assoc-in [direction :last-completed]
+                                             (-> record
+                                                 (dissoc :thread)
+                                                 (assoc :status status
+                                                        :finished-ms (util/now-ms)))))
+                               state))))
+
+(defn rpc-snapshot
+  "Payload-free last completions and active calls in both directions, including
+   active caller stacks (also virtual threads). At most 64 calls and frames per direction.
+   Cancellation does not remove a request still owed a real guest reply."
+  [peer]
+  (let [now (util/now-ms)]
+    (into {}
+          (for [[direction {:keys [active last-completed]}] @(:rpc-state peer)]
+            [direction
+             {:last-completed last-completed
+              :active-count (count active)
+              :active (mapv (fn [record]
+                              (let [^Thread thread (:thread record)]
+                                (-> record
+                                    (dissoc :thread)
+                                    (assoc :elapsed-ms (- now (long (:started-ms record)))
+                                           :thread-state (str (.getState thread))
+                                           :stack (mapv str (take 64 (.getStackTrace thread)))))))
+                            (take 64 (sort-by :id (vals active))))}]))))
+
 (defn request!
   "Ask the peer `message` and answer its reply value; its error throws here.
    `timeout-ms` bounds CONTROL messages only; ordinary work waits for its real
@@ -53,10 +103,12 @@
          waiting
          (promise)]
 
+     (begin-rpc! peer :outbound (assoc message "id" id))
      (swap! (:pending peer) assoc id waiting)
      (try (send-line! peer (assoc message "id" id))
           (catch Throwable error
             (swap! (:pending peer) dissoc id)
+            (finish-rpc! peer :outbound id :send-failed)
             (deliver waiting {"error" (ex-message error)})
             (throw error)))
      (let [reply (if timeout-ms (deref waiting (long timeout-ms) ::timed-out) @waiting)]
@@ -84,16 +136,26 @@
            (when-not (str/blank? line)
              (let [message (json/read-json line :key-fn identity)]
                (if (contains? message "op")
-                 (.submit ^ExecutorService (:workers peer) ^Runnable #(serve peer message))
+                 (.submit ^ExecutorService (:workers peer)
+                          ^Runnable
+                          (fn []
+                            (begin-rpc! peer :inbound message)
+                            (try (serve peer message)
+                                 (finish-rpc! peer :inbound (get message "id") :ok)
+                                 (catch Throwable error
+                                   (finish-rpc! peer :inbound (get message "id") :failed)
+                                   (throw error)))))
                  (let [id (get message "id")
                        [pending _] (swap-vals! (:pending peer) dissoc id)]
 
+                   (finish-rpc! peer :outbound id (if (contains? message "error") :failed :ok))
                    (some-> (get pending id)
                            (deliver message))))))
            (recur)))
        (catch Throwable _ nil)
        (finally (let [[pending _] (reset-vals! (:pending peer) {})]
-                  (doseq [[_ waiting] pending]
+                  (doseq [[id waiting] pending]
+                    (finish-rpc! peer :outbound id :closed)
                     (deliver waiting {"error" (reason)})))
                 (.shutdownNow ^ExecutorService (:workers peer)))))
 

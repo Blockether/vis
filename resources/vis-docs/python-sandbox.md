@@ -279,6 +279,27 @@ certificate trust and hostname checks remain enabled. Configure it in user or
 project YAML. See [TLS validation](configuration.md#python-tls-validation) for
 security trade-offs, scope and worker reload requirements.
 
+## Diagnosing an unresponsive worker
+
+If Vis has to retire an unresponsive Python worker, it first tries to save local
+hang evidence under `~/.vis/logs/YYYY-MM-DD/pyext-*/`, using the worker
+start date in UTC. See [Logs and diagnostics](logging.md) for locations and
+retention. The warning in the gateway log gives the
+path to `hang.edn`, which records the worker PID, active and last completed RPCs,
+and capped JVM stacks. When the runtime supports it, `python-stacks.log` contains
+Python frames even if native code holds the GIL. The report records whether that
+capture succeeded, failed or timed out.
+
+Collection adds at most 500 ms to retirement. A failed diagnostic does not prevent
+Vis from stopping the worker. Healthy readiness checks and ordinary session
+cleanup do not dump stacks.
+
+Both files are private to your OS account. They omit Python source, arguments,
+return values and local variables, but stack frames can contain file paths and
+function names. Review and redact them before sharing a bug report; do not upload
+them automatically. Python frame locations show the function's definition line
+and bytecode offset, not a decoded current source line.
+
 ## See also
 
 - [How Vis manages context](token-optimization.md) — batching tool calls and storing results in Python.

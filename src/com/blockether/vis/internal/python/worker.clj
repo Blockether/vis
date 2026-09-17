@@ -12,7 +12,8 @@
 
    The wire is ONE line of JSON per message over a unix socket, both ways. The
    parent asks (`install-runtime`, `install-tool`, `exec`, `run`, `run-block`,
-   `eval`, `confine`, `network`, `stdin`, `interrupt`, `close`); the child asks
+   `eval`, `confine`, `network`, `stdin`, `interrupt`, `stack-diagnostics`,
+   `dump-stacks`, `close`); the child asks
    back with `host`, because the registry that knows what a name may call, the
    persistence handle and the caller's dynamic binding frame all live in the
    parent (`python-host/dispatch`). stdout is NOT the wire: Python that prints,
@@ -333,6 +334,38 @@
       (throw (ex-info "python.tls_strict must be a boolean" {:type ::invalid-tls-strict})))
     strict))
 
+(def ^:private STACK_CONTROL_MS
+  "Maximum wait for a stack-control exchange, including a blocked socket write."
+  200)
+
+(defn- stack-control!
+  [peer message]
+  (let [control (cancellation/worker-future "vis-python-stack-control"
+                                            #(child/request! peer message)
+                                            {:platform? true})]
+    (try (let [reply (deref control STACK_CONTROL_MS ::timed-out)]
+           (if (= ::timed-out reply)
+             {:status :timed-out}
+             (case (get reply "status")
+               "ready"
+               {:status :ready}
+
+               "written"
+               {:status :written}
+
+               "unavailable"
+               {:status :unavailable}
+
+               "busy"
+               {:status :busy}
+
+               "failed"
+               {:status :failed}
+
+               {:status :failed :reason :invalid-reply})))
+         (catch ExecutionException _ {:status :failed :reason :control-failed})
+         (finally (future-cancel control)))))
+
 (defn- start!
   "Start `k` behind its live session policy and answer it connected. The parent
    binds first; the run directory is the worker's only host-owned writable grant."
@@ -437,7 +470,15 @@
                                ")\nsys.path[:] = __vis_runtime_roots__ + [p for p in sys.path"
                                " if p not in __vis_runtime_roots__]\n")})
                 (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
-                state
+                ;; The runtime retains a private sink before interpreter confinement.
+                ;; No trace is emitted until retirement requests one for this process.
+                (let [path (.getAbsolutePath (io/file dir "python-stacks.log"))
+                      setup (stack-control! peer {"op" "stack-diagnostics" "code" path})]
+
+                  (assoc state
+                    :python-stacks (cond-> setup
+                                     (= :ready (:status setup))
+                                     (assoc :path path))))
                 (catch Throwable error (.destroy process) (throw error))))))
         (finally (Files/deleteIfExists (.toPath socket)) (Files/deleteIfExists control-dir))))))
 
@@ -650,12 +691,120 @@
                (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))))))
   nil)
 
+(def ^:private HANG_DIAGNOSTIC_MS
+  "Maximum added retirement delay for best-effort local hang evidence."
+  500)
+
+(defn- python-stack-diagnostic!
+  [state]
+  (let [setup (:python-stacks state)]
+    (if (= :ready (:status setup))
+      (let [result (stack-control! (:peer state) {"op" "dump-stacks"})]
+        (cond-> result
+          (= :written (:status result))
+          (assoc :path (:path setup))))
+      (or setup {:status :unavailable :reason :not-configured}))))
+
+(defn- write-hang-diagnostic!
+  [k state reason]
+  (let [^File log
+        (:log state)
+
+        ^Process process
+        (:process state)
+
+        file
+        (io/file (.getParent log) "hang.edn")
+
+        jvm-stacks
+        (Thread/getAllStackTraces)
+
+        ;; Capture the stalled operation before diagnostic control changes last-RPC metadata.
+        rpc
+        (child/rpc-snapshot (:peer state))
+
+        python-stacks
+        (python-stack-diagnostic! state)
+
+        report
+        {:worker (str k)
+         :pid (.pid process)
+         :recorded-ms (util/now-ms)
+         :jvm-thread-count (count jvm-stacks)
+         :reason (str reason)
+         :rpc rpc
+         :python-stacks python-stacks
+         :jvm-threads (mapv (fn [[^Thread thread stack]]
+                              {:id (.threadId thread)
+                               :name (.getName thread)
+                               :state (str (.getState thread))
+                               :stack (mapv str (take 64 stack))})
+                            (take 128
+                                  (sort-by (fn [[^Thread thread _]]
+                                             (.threadId thread))
+                                           jvm-stacks)))}
+
+        staged
+        (Files/createTempFile (.toPath (.getParentFile file))
+                              ".hang-"
+                              ".edn"
+                              (into-array FileAttribute
+                                          [(PosixFilePermissions/asFileAttribute
+                                             (PosixFilePermissions/fromString "rw-------"))]))]
+
+    (try (spit (.toFile staged) (str (pr-str report) "\n"))
+         (Files/move staged
+                     (.toPath file)
+                     (into-array CopyOption
+                                 [StandardCopyOption/ATOMIC_MOVE
+                                  StandardCopyOption/REPLACE_EXISTING]))
+         (.getAbsolutePath file)
+         (finally (Files/deleteIfExists staged)))))
+
+(defn- capture-hang-diagnostic!
+  "Capture before socket close or process kill. Failure, cancellation or slow disk
+   must not prevent retirement. No guest code, arguments, replies or exception text
+   enter the report; local stack frames can still contain file and function names."
+  [k state reason]
+  (let [interrupted?
+        (Thread/interrupted)
+
+        capture
+        (cancellation/worker-future "vis-python-hang-diagnostic"
+                                    #(write-hang-diagnostic! k state reason)
+                                    {:platform? true})]
+
+    (try (let [path (deref capture HANG_DIAGNOSTIC_MS ::timed-out)]
+           (tel/log! {:level :warn
+                      :id ::hang-diagnostic
+                      :data (cond-> {:worker (str k)
+                                     :pid (.pid ^Process (:process state))
+                                     :status (if (= ::timed-out path) :timed-out :written)}
+                              (string? path)
+                              (assoc :path path))}
+                     (if (= ::timed-out path)
+                       "Python worker hang evidence timed out; retirement will continue"
+                       "Python worker hang evidence collected before retirement")))
+         (catch Throwable error
+           (when (instance? InterruptedException error) (.interrupt (Thread/currentThread)))
+           (tel/log! {:level :warn
+                      :id ::hang-diagnostic
+                      :data {:worker (str k) :status :failed :error-type (str (class error))}}
+                     "Could not collect Python worker hang evidence; retirement will continue"))
+         (finally (future-cancel capture)
+                  (when interrupted? (.interrupt (Thread/currentThread)))))))
+
 (defn retire-worker!
-  "Stop `k`'s worker after its control plane stopped answering and refuse to
-   start another under this key until the session is rebuilt or disposed."
+  "Record bounded local RPC/JVM evidence and request Python stacks, then stop `k`
+   and refuse to restart until rebuilt or disposed. Ordinary disposal does not dump stacks."
   [k reason]
-  (swap! retired-workers assoc k (str reason))
-  (stop-worker! k))
+  (with-worker-lock k
+                    false
+                    (fn []
+                      (swap! retired-workers assoc k (str reason))
+                      (when-let [state (get @workers k)]
+                        (capture-hang-diagnostic! k state reason))
+                      (stop-worker! k))))
 
 (defn retired?
   "True when `k` was retired and not yet rebuilt or disposed."

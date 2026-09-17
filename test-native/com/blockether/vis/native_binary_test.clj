@@ -31,7 +31,8 @@
    which both the JVM and the native image read from the operating system's
    passwd entry — setting HOME moves nothing (measured on macOS: HOME=/tmp/…
    still resolves user.home to the real account)."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [charred.api :as json]
             [com.blockether.vis.contract.gateway :as gateway-contract]
@@ -48,7 +49,7 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
            (java.io File)
-           (java.lang ProcessBuilder$Redirect)
+           (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.net InetSocketAddress)
            (java.nio.charset StandardCharsets)
            (java.nio.file Files)
@@ -1011,6 +1012,97 @@
                         (expect (str/includes? output "NATIVE_INTERRUPT_COMPLETE") output))
                       (finally (.stop server 0))))))
            (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-python-hang-evidence-test
+  (it
+    "saves Python and JVM evidence before retiring a GIL-stuck native worker and finishes the turn"
+    (let [dir
+          (temp-dir "vis-native-hang")
+
+          pid-file
+          (io/file dir "fixture-worker.pid")
+
+          original-stream
+          @#'stream-body
+
+          original-whole
+          @#'whole-body
+
+          calls
+          (atom 0)
+
+          fixture
+          (str "import os\nfrom pathlib import Path\n" "def native_hang_fixture():\n"
+               "    private_value = 'native-hang-private-payload'\n"
+               "    Path('fixture-worker.pid').write_text(str(os.getpid()))\n"
+               "    sum(range(1000000000000000000))\n" "native_hang_fixture()")
+
+          reply
+          (fn [stream? text]
+            (if (= 1 (swap! calls inc))
+              (python-tool-body fixture 1 stream?)
+              ((if stream? original-stream original-whole) text)))]
+
+      (try
+        (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+          (fn []
+            (let [{:keys [server port]} (start-stub-provider! "NATIVE_HANG_UNEXPECTED_REPLAY")]
+              (try
+                (overlay! dir port)
+                ;; Exercise the production five-minute block timeout and failed interrupt.
+                ;; A JVM-only test cannot prove the linked host and worker share this ABI.
+                (let [{:keys [finished? exit output]}
+                      (run-binary dir
+                                  [(.getAbsolutePath (require-binary))
+                                   (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                   (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                   "Run the supplied Python fixture and finish after its timeout."]
+                                  420)
+                      reports (->> (file-seq (io/file dir ".vis/run"))
+                                   (filter #(= "hang.edn" (.getName ^File %))))]
+
+                  (expect finished? "A GIL-held worker must not wedge the linked agent")
+                  (expect (= 1 exit) output)
+                  (expect (.isFile pid-file) "The fixture must enter its native GIL-holding call")
+                  (expect (str/includes? output "Python environment was retired") output)
+                  (expect (= 1 @calls) "A retired interpreter must not replay or continue the turn")
+                  (expect (= 1 (count reports)) "Retirement must preserve one diagnostic report")
+                  (when-let [^File report-file (first reports)]
+                    (let [report (edn/read-string (slurp report-file))
+                          stacks (:python-stacks report)
+                          stack-file (when (string? (:path stacks)) (io/file (:path stacks)))
+                          worker-pid (when (.isFile pid-file) (parse-long (slurp pid-file)))]
+
+                      (expect (= worker-pid (:pid report)))
+                      (expect (seq (:jvm-threads report)))
+                      (expect (seq (get-in report [:rpc :outbound :active])))
+                      (expect (not (str/includes? (slurp report-file)
+                                                  "native-hang-private-payload")))
+                      (expect (= :written (:status stacks)))
+                      (expect (some? stack-file))
+                      (when stack-file
+                        (expect (= (.getCanonicalFile (.getParentFile report-file))
+                                   (.getCanonicalFile (.getParentFile ^File stack-file))))
+                        (expect (.isFile ^File stack-file))
+                        (when (.isFile ^File stack-file)
+                          (expect (str/includes? (slurp stack-file) "native_hang_fixture"))
+                          (expect (not (str/includes? (slurp stack-file)
+                                                      "native-hang-private-payload")))))
+                      (doseq [^File artifact (remove nil? [report-file stack-file])]
+                        (when (.isFile artifact)
+                          (expect (= (java.nio.file.attribute.PosixFilePermissions/fromString
+                                       "rw-------")
+                                     (Files/getPosixFilePermissions
+                                       (.toPath artifact)
+                                       (make-array java.nio.file.LinkOption 0))))))
+                      (when worker-pid
+                        (expect (not (some-> (ProcessHandle/of worker-pid)
+                                             (.orElse nil)
+                                             .isAlive))
+                                "The diagnosed worker must be retired before the turn finishes")))))
+                (finally (.stop server 0))))))
+        (finally (delete-tree! dir))))))
 
 ;; Regression, this branch: the interpreter reaches CPython through the JDK Foreign
 ;; Function & Memory API, and an image links no downcall stub it was not told about.

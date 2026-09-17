@@ -1428,7 +1428,7 @@
    either — that one would carry the runtime but none of the session's tools."
   [session]
   (when-let [k (worker-of session)]
-    (pyext/retire-worker! k "its control plane stopped answering an interrupt")
+    (pyext/retire-worker! k "its interpreter or control plane stopped answering")
     (when-let [close-extensions
                (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil))))

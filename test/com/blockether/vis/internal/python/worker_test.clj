@@ -2,6 +2,7 @@
   "The session-worker process boundary: control messages are bounded and a
    retired interpreter can never be entered again."
   (:require [charred.api :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.python.env :as env]
@@ -14,7 +15,8 @@
             [com.blockether.vis.internal.sandbox.jail]
             [com.blockether.vis.internal.util]
             [com.blockether.vis-python-runtime]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel])
   (:import (java.util.concurrent.atomic AtomicLong)))
 
 (defn- with-worker-context
@@ -759,34 +761,41 @@ print(worker_value)"))))
 
 (defdescribe
   worker-reply-lifetime-test
-  (it "keeps a cancelled caller's completion until the actual reply or peer close"
-      (doseq [reply-line ["{\"id\":1,\"value\":42}\n" ""]]
-        (let [sent (promise)
-              finished (promise)
-              peer {:pending (atom {})
-                    :seq (AtomicLong. 0)
-                    :reader (java.io.BufferedReader. (java.io.StringReader. reply-line))
-                    :workers (java.util.concurrent.Executors/newSingleThreadExecutor)}]
+  (it
+    "keeps a cancelled caller's completion until the actual reply or peer close"
+    (doseq [reply-line ["{\"id\":1,\"value\":42}\n" ""]]
+      (let [sent (promise)
+            finished (promise)
+            peer {:pending (atom {})
+                  :rpc-state (atom {})
+                  :seq (AtomicLong. 0)
+                  :reader (java.io.BufferedReader. (java.io.StringReader. reply-line))
+                  :workers (java.util.concurrent.Executors/newSingleThreadExecutor)}]
 
-          (try (with-redefs [worker-peer/send-line! (fn [_ _]
-                                                      (deliver sent true))]
-                 (let [call (future (try (worker-peer/request! peer {"op" "run"})
-                                         (finally (deliver finished true))))]
-                   (try (expect (true? (deref sent 1000 false)))
-                        (let [waiting (get @(:pending peer) 1)]
-                          (future-cancel call)
-                          (expect (true? (deref finished 1000 false)))
-                          (expect (identical? waiting (get @(:pending peer) 1)))
-                          (expect (not (realized? waiting)))
-                          (worker-peer/pump! peer
-                                             (fn [_ _])
-                                             (constantly "closed"))
-                          (expect (= (if (empty? reply-line) {"error" "closed"} {"id" 1 "value" 42})
-                                     (deref waiting 1000 ::pending)))
-                          (expect (empty? @(:pending peer))))
-                        (finally (future-cancel call)))))
-               (finally (.close ^java.io.BufferedReader (:reader peer))
-                        (.shutdownNow ^java.util.concurrent.ExecutorService (:workers peer))))))))
+        (try (with-redefs [worker-peer/send-line! (fn [_ _]
+                                                    (deliver sent true))]
+               (let [call (future (try (worker-peer/request! peer {"op" "run"})
+                                       (finally (deliver finished true))))]
+                 (try (expect (true? (deref sent 1000 false)))
+                      (expect (= "run" (get-in @(:rpc-state peer) [:outbound :active 1 :op])))
+                      (let [waiting (get @(:pending peer) 1)]
+                        (future-cancel call)
+                        (expect (true? (deref finished 1000 false)))
+                        (expect (identical? waiting (get @(:pending peer) 1)))
+                        (expect (not (realized? waiting)))
+                        (worker-peer/pump! peer
+                                           (fn [_ _])
+                                           (constantly "closed"))
+                        (expect (= (if (empty? reply-line) {"error" "closed"} {"id" 1 "value" 42})
+                                   (deref waiting 1000 ::pending)))
+                        (expect (empty? @(:pending peer)))
+                        (expect (empty? (get-in @(:rpc-state peer) [:outbound :active])))
+                        (expect (= (if (empty? reply-line) :closed :ok)
+                                   (get-in @(:rpc-state peer)
+                                           [:outbound :last-completed :status]))))
+                      (finally (future-cancel call)))))
+             (finally (.close ^java.io.BufferedReader (:reader peer))
+                      (.shutdownNow ^java.util.concurrent.ExecutorService (:workers peer))))))))
 
 (defn- expect-stalled-interrupt-timeout
   [blocked-op]
@@ -804,6 +813,7 @@ print(worker_value)"))))
 
         peer
         {:pending (atom {})
+         :rpc-state (atom {})
          :serving (atom (if blocked-op {} {"host-call" (Thread.)}))
          :seq (AtomicLong. 0)}]
 
@@ -929,7 +939,7 @@ print(worker_value)"))))
             (atom {})
 
             peer
-            {:pending pending :serving (atom {}) :seq (AtomicLong. 0)}]
+            {:pending pending :rpc-state (atom {}) :serving (atom {}) :seq (AtomicLong. 0)}]
 
         (swap! @#'worker/workers assoc "session" {:peer peer})
         (with-redefs-fn {#'worker/alive? (fn [state]
@@ -1312,3 +1322,207 @@ print(worker_value)"))))
                  (expect (not (worker/worker-live? session)))
                  (expect (not (contains? @(var-get #'worker/worker-locks) session)))
                  (finally (.join thread 2000) (expect (not (.isAlive thread))))))))))
+
+(defdescribe
+  worker-rpc-evidence-test
+  (it
+    "records both sides of a live host callback without code, arguments or results"
+    (with-worker-context
+      (fn [session]
+        (let [peer
+              (:peer (get @@#'worker/workers session))
+
+              dispatch
+              python-host/dispatch
+
+              entered
+              (promise)
+
+              release
+              (promise)]
+
+          (with-redefs [python-host/dispatch (fn [& args]
+                                               (deliver entered true)
+                                               @release
+                                               (apply dispatch args))]
+            (let [call (future (env/run-python-block
+                                 session
+                                 "print(await worker_echo('rpc-payload-fixture'))"))]
+              (try (expect (true? (deref entered 2000 false)))
+                   (let [snapshot (worker-peer/rpc-snapshot peer)]
+                     (expect (= "run-block" (:op (first (get-in snapshot [:outbound :active])))))
+                     (expect (= "host" (:op (first (get-in snapshot [:inbound :active])))))
+                     (expect (seq (:stack (first (get-in snapshot [:inbound :active])))))
+                     (expect (not (str/includes? (pr-str snapshot) "rpc-payload-fixture"))))
+                   (deliver release true)
+                   (expect (= "rpc-payload-fixture\n" (:stdout (deref call 2000 {}))))
+                   (let [snapshot (worker-peer/rpc-snapshot peer)]
+                     (expect (empty? (get-in snapshot [:outbound :active])))
+                     (expect (not (str/includes? (pr-str snapshot) "rpc-payload-fixture"))))
+                   (finally (deliver release true) (future-cancel call)))))))))
+  (it "keeps only the last completion and caps active snapshots"
+      (let [peer {:rpc-state (atom {})}]
+        (dotimes [id 100]
+          (#'worker-peer/begin-rpc! peer :outbound {"id" id "op" "eval" "code" "private"}))
+        (let [snapshot (worker-peer/rpc-snapshot peer)]
+          (expect (= 100 (get-in snapshot [:outbound :active-count])))
+          (expect (= 64 (count (get-in snapshot [:outbound :active]))))
+          (expect (not (str/includes? (pr-str snapshot) "private"))))
+        (dotimes [id 100]
+          (#'worker-peer/finish-rpc! peer :outbound id :ok))
+        (let [snapshot (worker-peer/rpc-snapshot peer)]
+          (expect (zero? (get-in snapshot [:outbound :active-count])))
+          (expect (= 99 (get-in snapshot [:outbound :last-completed :id])))
+          (expect (not (contains? (get-in snapshot [:outbound :last-completed]) :thread)))))))
+
+(defdescribe
+  worker-hang-evidence-test
+  (it
+    "writes private local evidence before stopping, and nothing for a healthy probe"
+    (with-worker-context
+      (fn [session]
+        (let [state
+              (get @@#'worker/workers session)
+
+              file
+              (io/file (.getParentFile ^java.io.File (:log state)) "hang.edn")
+
+              python-file
+              (io/file (.getParentFile ^java.io.File (:log state)) "python-stacks.log")
+
+              stop
+              worker/stop-worker!]
+
+          (expect (worker/worker-ready? session session))
+          (expect (not (.exists file)))
+          (expect (zero? (.length python-file)))
+          (with-redefs [worker/stop-worker! (fn [key]
+                                              (expect (.isAlive ^Process (:process state)))
+                                              (expect (.isFile file))
+                                              (expect (pos? (.length python-file)))
+                                              (stop key))]
+            (worker/retire-worker! session "diagnostic fixture"))
+          (let [report (edn/read-string (slurp file))]
+            (expect (= session (:worker report)))
+            (expect (= "eval" (get-in report [:rpc :outbound :last-completed :op])))
+            (expect (seq (:jvm-threads report)))
+            (expect (= {:status :written :path (.getAbsolutePath python-file)}
+                       (:python-stacks report)))
+            (expect (= (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------")
+                       (java.nio.file.Files/getPosixFilePermissions
+                         (.toPath python-file)
+                         (make-array java.nio.file.LinkOption 0))))
+            (expect (= (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------")
+                       (java.nio.file.Files/getPosixFilePermissions
+                         (.toPath file)
+                         (make-array java.nio.file.LinkOption 0)))))
+          (let [before (slurp file)]
+            (worker/retire-worker! session "already retired")
+            (expect (= before (slurp file))))))))
+  (it "still retires after a failed capture without logging exception payloads"
+      (with-worker-context
+        (fn [session]
+          (let [{:keys [signals]} (tel/with-signals
+                                    (with-redefs-fn {#'worker/write-hang-diagnostic!
+                                                     (fn [& _]
+                                                       (throw (java.io.IOException.
+                                                                "private-error-fixture")))}
+                                      #(worker/retire-worker! session "capture failure")))]
+            (expect (not (worker/worker-live? session)))
+            (expect (= [:failed]
+                       (mapv #(get-in % [:data :status])
+                             (filter #(= ::worker/hang-diagnostic (:id %)) signals))))
+            (expect (not (str/includes? (pr-str signals) "private-error-fixture")))))))
+  (it "bounds slow collection, cancels its helper and then retires"
+      (with-worker-context
+        (fn [session]
+          (let [entered
+                (promise)
+
+                exited
+                (promise)
+
+                release
+                (promise)
+
+                started
+                (System/nanoTime)]
+
+            (try (with-redefs-fn {#'worker/HANG_DIAGNOSTIC_MS 50
+                                  #'worker/write-hang-diagnostic!
+                                  (fn [& _]
+                                    (deliver entered true)
+                                    (try @release (finally (deliver exited true))))}
+                   #(worker/retire-worker! session "slow capture"))
+                 (expect (true? (deref entered 1000 false)))
+                 (expect (true? (deref exited 1000 false)))
+                 (expect (< (- (System/nanoTime) started) 1000000000))
+                 (expect (not (worker/worker-live? session)))
+                 (finally (deliver release true))))))))
+
+(defdescribe
+  worker-stack-control-test
+  (it "keeps only known statuses, never a control reply or exception payload"
+      (doseq [status ["ready" "written" "unavailable" "busy" "failed"]]
+        (with-redefs [worker-peer/request! (fn [_ _]
+                                             {"status" status "detail" "private-control-fixture"})]
+          (expect (= {:status (keyword status)}
+                     (#'worker/stack-control! {} {"op" "dump-stacks"})))))
+      (with-redefs [worker-peer/request! (fn [_ _]
+                                           {"status" "private-control-fixture"})]
+        (expect (= {:status :failed :reason :invalid-reply}
+                   (#'worker/stack-control! {} {"op" "dump-stacks"})))))
+  (it "bounds the whole exchange even when its socket write stalls"
+      (let [entered
+            (promise)
+
+            exited
+            (promise)
+
+            release
+            (promise)
+
+            peer
+            {:pending (atom {}) :rpc-state (atom {}) :seq (AtomicLong. 0)}]
+
+        (try (with-redefs-fn {#'worker/STACK_CONTROL_MS 50
+                              #'worker-peer/send-line!
+                              (fn [_ _]
+                                (deliver entered (not (.isVirtual (Thread/currentThread))))
+                                (try @release (finally (deliver exited true))))}
+               #(expect (= {:status :timed-out}
+                           (#'worker/stack-control! peer {"op" "dump-stacks"}))))
+             (expect (true? (deref entered 1000 false)))
+             (expect (true? (deref exited 1000 false)))
+             (finally (deliver release true)))))
+  (it "does not request a dump without this worker's successful setup"
+      (with-redefs [worker-peer/request! (fn [& _]
+                                           (throw (AssertionError. "unexpected dump request")))]
+        (doseq [status [:failed :unavailable :timed-out]]
+          (expect (= {:status status}
+                     (#'worker/python-stack-diagnostic! {:python-stacks {:status status}}))))))
+  (it "preserves RPC and JVM evidence and retires after a failed or stalled Python dump"
+      (doseq [mode [:failed :timed-out]]
+        (with-worker-context
+          (fn [session]
+            (let [state (get @@#'worker/workers session)
+                  file (io/file (.getParentFile ^java.io.File (:log state)) "hang.edn")
+                  release (promise)]
+
+              (expect (= "True" (worker/eval-str session session "True")))
+              (swap! @#'worker/workers assoc-in [session :python-stacks] {:status :ready})
+              (try (with-redefs-fn {#'worker/STACK_CONTROL_MS 50
+                                    #'worker-peer/request!
+                                    (fn [_ message]
+                                      (expect (= "dump-stacks" (get message "op")))
+                                      (if (= :failed mode)
+                                        (throw (java.io.IOException. "private-control-fixture"))
+                                        @release))}
+                     #(worker/retire-worker! session "stack control fixture"))
+                   (expect (not (worker/worker-live? session)))
+                   (let [report (edn/read-string (slurp file))]
+                     (expect (= mode (get-in report [:python-stacks :status])))
+                     (expect (seq (:jvm-threads report)))
+                     (expect (= "eval" (get-in report [:rpc :outbound :last-completed :op])))
+                     (expect (not (str/includes? (pr-str report) "private-control-fixture"))))
+                   (finally (deliver release true)))))))))
