@@ -50,11 +50,16 @@ const client = new Proxy(baseClient, {
   },
 });
 
-// Borders span the conversation pane, not its padded reading column or the window.
-async function expectFullWidth(panel: Element, viewport: HTMLElement) {
-  const bounds = viewport.getBoundingClientRect();
-  const left = bounds.left + viewport.clientLeft;
-  const right = left + viewport.clientWidth;
+// Rules span the reading column, not the window: a phone column fills the pane, so a run
+// embedded in a message card meets the screen edges, while a wide desktop pane keeps the run
+// inside the column. A standalone run stays at the column's text width.
+async function expectColumnRules(panel: Element, column: HTMLElement) {
+  const bounds = column.getBoundingClientRect();
+  const columnStyle = getComputedStyle(column);
+  const bleeds = panel.hasAttribute('data-execution-run');
+  const inner = bounds.left + column.clientLeft;
+  const left = inner + (bleeds ? 0 : parseFloat(columnStyle.paddingLeft));
+  const right = inner + column.clientWidth - (bleeds ? 0 : parseFloat(columnStyle.paddingRight));
   const style = getComputedStyle(panel);
   await expect(style.borderLeftWidth).toBe('0px');
   await expect(style.borderRightWidth).toBe('0px');
@@ -68,7 +73,7 @@ async function expectFullWidth(panel: Element, viewport: HTMLElement) {
   const header = panel.querySelector('header')!;
   await expect(parseFloat(getComputedStyle(header).paddingLeft)).toBeGreaterThanOrEqual(12);
   await expect(parseFloat(getComputedStyle(header).paddingRight)).toBeGreaterThanOrEqual(12);
-  await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
+  await expect(column.scrollWidth).toBe(column.clientWidth);
 }
 
 const meta = {
@@ -87,14 +92,16 @@ const meta = {
     const title = await canvas.findByText(view.title);
     await document.fonts.ready;
     const viewport = canvas.getByRole('region', { name: 'Transcript' });
+    const column = viewport.firstElementChild as HTMLElement;
     const panel = title.closest('section')!;
-    await expectFullWidth(panel, viewport);
+    await expectColumnRules(panel, column);
+    await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     const launch = canvas.queryByRole('button', { name: `Open run ${view.title}` });
     if (launch) {
       await userEvent.click(launch);
       const page = within(document.body);
       const expanded = page.getAllByText(view.title).at(-1)!.closest('section')!;
-      await expectFullWidth(expanded, expanded.parentElement!);
+      await expectColumnRules(expanded, expanded.parentElement!);
       await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
       await expect(title).toBeVisible();
     }
@@ -106,6 +113,14 @@ type Story = StoryObj<typeof meta>;
 
 export const Phone: Story = {
   globals: { viewport: { value: 'phone', isRotated: false } },
+  play: async (context) => {
+    await meta.play(context);
+    const viewport = context.canvas.getByRole('region', { name: 'Transcript' });
+    // A phone reading column fills the pane, so the run rules reach the screen edges.
+    await expect((viewport.firstElementChild as HTMLElement).clientWidth).toBe(
+      viewport.clientWidth,
+    );
+  },
 };
 
 export const Landscape: Story = {
@@ -123,7 +138,8 @@ export const Landscape: Story = {
     ]) {
       column.style.setProperty('--transcript-inset-left', left);
       column.style.setProperty('--transcript-inset-right', right);
-      await expectFullWidth(panel, viewport);
+      await expectColumnRules(panel, column);
+      await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     }
     await expect(getComputedStyle(panel.querySelector('header')!).paddingLeft).toBe('59px');
     const select = context.canvas.getAllByRole('button', { name: /^Select / })[0];
@@ -138,10 +154,18 @@ export const Tablet: Story = {
 
 export const Desktop: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async (context) => {
+    await meta.play(context);
+    const viewport = context.canvas.getByRole('region', { name: 'Transcript' });
+    // A pane wider than the reading column must not stretch the run across the window.
+    await expect((viewport.firstElementChild as HTMLElement).clientWidth).toBeLessThan(
+      viewport.clientWidth,
+    );
+  },
 };
 
 export const SplitPane: Story = {
-  ...Desktop,
+  globals: Desktop.globals,
   decorators: [
     (Story) => (
       <div className="ml-auto flex h-full w-2/3 flex-col">
