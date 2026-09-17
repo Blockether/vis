@@ -1199,6 +1199,88 @@ readers. Existing unrelated checkout edits remain outside this work.
    change separately on main; preserve concurrent code and plan edits. No release,
    deployment or live-service restart belongs to this work.
 
+# Plan records: spec, tasks and evidence in the session
+
+Make every plan a host-owned session record with one coherent view for the model and the person, and retire attachment-based plans.
+
+## Context
+
+Owners are `internal/session/goals.clj` (one user-owned goal per session; `set-goal!` overwrites; `update_goal` mutates), `internal/context/renderer.clj` (line 63 projects the goal into `session["goal"]` regardless of status; `render-ctx-delta` emits `session[...]` deltas per iteration from `loop.clj`), `internal/context/prompt.clj` (`planning-rules`, toggle `plans`, off in the CLI, keeps plan state in a `PLAN-<feature>.md` attachment), `packages/vis-contract/resources/vis-contract/schema/`, `resources/vis-shims/`, `extension/core.clj`, `gateway/wire.clj`, `apps/vis-tui/` and `apps/vis-companion/` (goal badge). Per-turn ctx snapshots persist in `session_turn_state.ctx` for resume, but `read_session` does not expose them and iteration-level deltas are not stored.
+
+Problem: two continuities follow opposite rules. A terminal goal stays in the cached prefix until a new `/goal` replaces it; live plan state is invisible to the host and the UI and disappears on fold. Vocabularies differ (`complete` and `done`) and nothing links the goal, the plan and the changes.
+
+Decisions from the design conversation (session `d33a97e8-b72c-4199-a2e8-ec9631e953f6`):
+
+- A plan always exists, human-managed (a person accepts and comments) or machine-managed (auto-accepted). The minimal form is one spec item, one task and one diff, so trivial work pays nothing.
+- A plan is three layers with different owners: spec (what and why; the person owns it), tasks (how; the model proposes, the person accepts; every task covers spec items), evidence (what changed; observed from patches, test runs and commits, written by nobody).
+- The goal is part of the spec: its one-line intent and acceptance criteria. It is the compact projection kept in the prefix to guard execution against drift. One goal per plan; further intents are spec constraints or separate plans.
+- The record is host-owned and lives in the session store, projected into `session["plan"]` (compact) and `session["goal"]`. The model changes it only through sandbox functions; acceptance and comments are human actions from the CLI or UI that reach the model as `session[...]` deltas. Because the ctx is part of the transcript, plan history becomes walkable turn by turn.
+- Attachments remain a file primitive (a pasted spec can be a source reference) and never carry plan state.
+- Status is derived from recorded transitions and evidence, never declared bare: `done(task, evidence)`; the goal completes when every acceptance criterion has evidence and, in human mode, the person confirms.
+
+Rejected alternatives: parsing `PLAN-<feature>.md` attachments into `session["plan"]`; a tracked repository file or an external tracker as the source of truth (export only; `to-tickets` covers tracker export); one flat goal-plus-plan object; a list of goals in the prompt; automatic coupling of `update_goal complete` and `Status: done`.
+
+## 1. Terminal goal leaves the prefix
+
+- Rationale: the smallest safe change and the lifecycle rule every continuity follows: active is compact in the prefix, a terminal transition is one delta in its turn, from the next user turn the key is deleted, history comes from lookup.
+- Data: `renderer.clj:63`, `goals.clj`, the goal badge in the TUI and companion.
+- Acceptance criteria: the renderer omits a terminal goal from the next user turn; `/goal` without arguments shows the last goal including a terminal state; regression tests in the mirrored `context/renderer_test` and `session/goals_test`; formatting, lint and reflection clean.
+- Unknowns: whether the UI badge drops at the same boundary (default: yes, same rule).
+
+## 2. Plan record contract
+
+- Rationale: vocabulary and bounds derive from the schema, never from paired catalogs.
+- Data: the goal record shape, `vis-contract` schemas, Skjema validation.
+- Acceptance criteria: a JSON Schema for the plan record: `spec` (`goal` with `phrase` and `acceptance`, `requirements`, `constraints`, source references), `tasks` (`id`, `title`, non-empty `covers`, `status`, `evidence`), one status vocabulary shared by goal, plan and task, `mode` (`human` or `machine`), acceptance state and a transition log stamped with turn and iteration; schema tests.
+- Unknowns: none once the degenerate plan is one spec item and one task.
+
+## 3. Host record, storage and projection
+
+- Rationale: `session` is a projection, not storage.
+- Data: goal storage in `goals.clj`, renderer ambient keys, `render-ctx-delta`, `session_turn_state.ctx` snapshots.
+- Acceptance criteria: the record persists in the session store linked to the workspace; `session["plan"]` carries feature, status, current task, next task and done/total; `session["goal"]` derives from `spec.goal`; every transition emits a delta; terminal records leave the prefix from the next user turn; `read_session` exposes the per-turn ctx snapshot or its delta so plan history is walkable by turn; tests.
+- Unknowns: size cap of the compact projection and cache cost of frequent task changes (measure).
+
+## 4. Sandbox functions
+
+- Rationale: the model writes through narrow verbs so the host validates every transition and attributes evidence.
+- Data: the `update_goal` binding, `resources/vis-shims/`, `extension/core.clj`, Activity presentation rules.
+- Acceptance criteria: `plan.propose(spec, tasks)`, `plan.current(task_id)`, `plan.done(task_id, evidence)`, `plan.block(task_id, reason)` and `plan.show()`; the host rejects a task without `covers`; machine mode auto-accepts `propose`; activities between `current` changes attach to that task as evidence; each binding has an Activity presentation with running, success, failure and empty states; docstrings regenerate the apropos resources; tests.
+- Unknowns: the evidence shape (patch anchors, test-run identity, commit SHAs), derived from existing activity records.
+
+## 5. Human surface
+
+- Rationale: the same record, a second projection.
+- Data: the `/goal` command, gateway routes, TUI badge, companion goal view.
+- Acceptance criteria: `/plan` lists, shows, accepts and comments in the CLI; gateway routes use snake_case wire keys; TUI and companion show spec, tasks and evidence with accept and comment; comments reach the model as deltas; tests.
+- Unknowns: comment granularity (plan or task).
+
+## 6. Prompt, documentation and retirement
+
+- Rationale: no compatibility layers for the attachment path.
+- Data: `planning-rules`, `resources/vis-docs/`, `docs.edn`, `site.edn`, the AGENTS.md plan rule.
+- Acceptance criteria: `planning-rules` rewritten around the record and the functions; the `PLAN-<feature>.md` attachment path removed; user and extension docs updated; the AGENTS.md rule points at the record; the `plans` toggle means "require human acceptance before coding"; docs checks.
+- Unknowns: none.
+
+## 7. Cross-session continuity
+
+- Rationale: long work outlives one session.
+- Data: workspace root in session records, `list_sessions`, Council delegation.
+- Acceptance criteria: a new session in the same workspace lists open plans and adopts one; delegation passes task ids, not plan copies; tests.
+- Unknowns: concurrent sessions on one plan (proposal: one owning session, others read-only).
+
+## Plan state
+
+Status: draft. Design settled in conversation; no code changed. The umbrella stays `plan`; the goal lives inside the spec.
+
+1. Not started.
+2. Not started.
+3. Not started.
+4. Not started.
+5. Not started.
+6. Not started.
+7. Not started.
+
 # Reliable, faster verification and delivery
 
 Phrase: Remove wasted work without removing useful release guarantees.
