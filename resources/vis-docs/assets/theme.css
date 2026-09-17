@@ -749,6 +749,33 @@ button.primary:hover {
   cursor: not-allowed;
   opacity: 1;
 }
+/* Phones collapse the box behind this magnifier; the checkbox holds the open row
+   (see the 820px block), so the control keeps working without JavaScript. */
+.searchtoggle {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.search-open {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  color: var(--fg-soft);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.search-open svg {
+  display: block;
+}
+.search-open:hover {
+  color: var(--link-hover);
+}
+.searchtoggle:focus-visible ~ .search-open {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
 .search-results {
   position: absolute;
   top: calc(100% + 0.45rem);
@@ -846,7 +873,8 @@ button.primary:hover {
     min-height: 2.75rem;
   }
   .top .gh,
-  .top .center-link {
+  .top .center-link,
+  .search-open {
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
@@ -886,17 +914,39 @@ button.primary:hover {
     padding-left: max(1rem, env(safe-area-inset-left));
     padding-right: max(1rem, env(safe-area-inset-right));
   }
-  /* The header is the positioning context that spans the viewport, so the
-     dropdown becomes a full-width sheet instead of overflowing the narrow box. */
+  /* One header row on a phone: the magnifier pushes to the icons on the right and
+     opens the box as a full-width row under the header. That row is the
+     positioning context, so the results drop below it as a full-width sheet. */
+  .search-open {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .searchtoggle:checked ~ .search-open {
+    color: var(--link);
+  }
   .top .search {
-    position: static;
-    flex: 1 1 4.5rem;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    display: none;
+    padding: 0.5rem max(1rem, env(safe-area-inset-right)) 0.5rem max(1rem, env(safe-area-inset-left));
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .searchtoggle:checked ~ .search {
+    display: flex;
+  }
+  /* The drawer paints over the header, so it takes the row's place instead. */
+  .navtoggle:checked ~ .top .search {
+    display: none;
   }
   .search-results {
     left: max(1rem, env(safe-area-inset-left));
     right: max(1rem, env(safe-area-inset-right));
     width: auto;
     min-width: 0;
+    max-height: min(26rem, calc(100dvh - 11rem - env(safe-area-inset-top)));
   }
   .main {
     padding: 1.6rem max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));

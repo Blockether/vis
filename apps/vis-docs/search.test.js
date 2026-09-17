@@ -53,6 +53,8 @@ let dispose;
 function setup(fetchImpl) {
   document.body.innerHTML = `
     <header class="top">
+      <input type="checkbox" id="searchtoggle" class="searchtoggle" aria-label="Toggle search">
+      <label for="searchtoggle" class="search-open" title="Search" aria-label="Search"><svg></svg></label>
       <search class="search" data-index="assets/search.json">
         <input type="search" placeholder="Search docs" aria-label="Search the documentation"
                autocomplete="off" spellcheck="false">
@@ -158,6 +160,42 @@ test('closes on Escape and an outside press, and `/` focuses the box outside fie
   field.focus();
   expect(key('/', field).defaultPrevented).toBe(false);
   expect(document.activeElement).toBe(field);
+});
+
+test('follows the header magnifier: opening focuses the box, Escape and an outside press put the row away', async () => {
+  setup();
+  const toggle = () => $('.searchtoggle');
+  const open = () => {
+    toggle().checked = true;
+    toggle().dispatchEvent(new window.Event('change', { bubbles: true }));
+  };
+  const press = (node) => node.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+
+  open();
+  expect(document.activeElement).toBe(input());
+  await tick();
+  type('router');
+  key('Escape');
+  expect(results().hidden).toBe(true);
+  expect(toggle().checked).toBe(false);
+  // The row is gone, so focus goes back to the control that reopens it.
+  expect(document.activeElement).toBe(toggle());
+
+  open();
+  press(document.body);
+  expect(toggle().checked).toBe(false);
+
+  // The magnifier's own press must not put away the row its click is opening.
+  open();
+  press($('.search-open'));
+  expect(toggle().checked).toBe(true);
+
+  // `/` opens a collapsed row before it moves the caret into the box.
+  toggle().checked = false;
+  toggle().dispatchEvent(new window.Event('change', { bubbles: true }));
+  key('/', document.body);
+  expect(toggle().checked).toBe(true);
+  expect(document.activeElement).toBe(input());
 });
 
 test('disables the box when the index cannot load', async () => {

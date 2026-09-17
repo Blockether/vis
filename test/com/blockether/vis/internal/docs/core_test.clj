@@ -121,6 +121,46 @@
           (expect (not (str/includes? header "class=\"spacer\"")))
           (expect (str/includes? search "flex: 1 1 auto"))
           (expect (not (str/includes? search "max-width"))))))
+  (it
+    "collapses the phone header to a magnifier that opens the box as the row below"
+    (let [{:keys [pages] :as site}
+          (docs/collect)
+
+          page
+          (first pages)]
+
+      (doseq [mode
+              [:static :live]
+
+              :let [html
+                    (docs/page-html site page mode)
+
+                    header
+                    (second (re-find #"(?s)<header class=\"top\">(.*?)</header>" html))
+
+                    css
+                    (rendered-theme html mode)
+
+                    mobile
+                    (second (re-find
+                              #"(?s)@media\s*\(max-width: 820px\).*?\.top \.search\s*\{([^}]+)\}"
+                              css))]]
+
+        ;; The checkbox has to precede the box it reveals, and its label is the only
+        ;; search control the header shows while the box is collapsed.
+        (expect (< (str/index-of header "id=\"searchtoggle\"")
+                   (str/index-of header "class=\"search-open\"")
+                   (str/index-of header "<search class=\"search\"")))
+        (expect (str/includes? header "<label for=\"searchtoggle\""))
+        (expect (str/includes? header "aria-label=\"Search\""))
+        ;; Wide screens keep the plain box: the magnifier is a phone-only control.
+        (expect (str/includes? css ".search-open {\n  display: none;"))
+        (expect (re-find #"\.search-open\s*\{\s*display: inline-flex;\s*margin-left: auto;" css))
+        ;; The revealed row spans the header from edge to edge, under its own row.
+        (expect (str/includes? mobile "position: absolute"))
+        (expect (str/includes? mobile "top: 100%"))
+        (expect (str/includes? mobile "display: none"))
+        (expect (re-find #"\.searchtoggle:checked ~ \.search\s*\{\s*display: flex;" css)))))
   (it "copies the search modules with the other static assets"
       (doseq [name ["search.js" "search-init.js"]]
         (expect (= (str "assets/" name) (get @#'docs/asset-files (str "vis-docs/assets/" name))))))

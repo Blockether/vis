@@ -26,6 +26,10 @@ function enhance(box, document) {
   const results = box.querySelector('.search-results');
   if (!input || !results) return () => {};
   const window = document.defaultView;
+  // Phones collapse the box behind a header magnifier (see theme.css). The
+  // checkbox owns that row, so revealing it is a checkbox write, not a class.
+  const toggle = box.parentElement?.querySelector('.searchtoggle');
+  const opener = box.parentElement?.querySelector('.search-open');
   let entries; // null until the index loads; the box stays inert before that
   let loading = false;
   let failed = false;
@@ -195,6 +199,23 @@ function enhance(box, document) {
     input.removeAttribute('aria-activedescendant');
   }
 
+  function collapse(restoreFocus) {
+    if (!toggle?.checked) return;
+    toggle.checked = false;
+    // The row is display:none once unchecked, so a focused input would drop
+    // focus to the body; the checkbox is the control that reopens it.
+    if (restoreFocus && document.activeElement === input) toggle.focus();
+  }
+
+  function reveal() {
+    if (toggle && !toggle.checked) toggle.checked = true;
+  }
+
+  function toggled() {
+    if (toggle.checked) input.focus();
+    else close();
+  }
+
   function keys(event) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -218,6 +239,7 @@ function enhance(box, document) {
       }
     } else if (event.key === 'Escape') {
       close();
+      collapse(true);
     }
   }
 
@@ -226,12 +248,15 @@ function enhance(box, document) {
     if (event.key !== '/' || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target?.closest?.('input, textarea, select, [contenteditable]')) return;
     event.preventDefault();
+    reveal();
     input.focus();
     input.select();
   }
 
   function outsidePress(event) {
-    if (!box.contains(event.target)) close();
+    if (box.contains(event.target) || opener?.contains(event.target)) return;
+    close();
+    collapse(false);
   }
   function refocus() {
     window.clearTimeout(closing);
@@ -241,6 +266,7 @@ function enhance(box, document) {
   input.addEventListener('focus', load);
   input.addEventListener('input', render);
   input.addEventListener('keydown', keys);
+  toggle?.addEventListener('change', toggled);
   // A result click must survive the focusout that precedes it on browsers that
   // do not focus links on click, so closing is deferred a beat, not instant.
   box.addEventListener('mousedown', refocus);
@@ -252,6 +278,7 @@ function enhance(box, document) {
 
   return () => {
     document.removeEventListener('mousedown', outsidePress);
+    toggle?.removeEventListener('change', toggled);
     document.removeEventListener('keydown', slash);
     window.clearTimeout(closing);
     close();
