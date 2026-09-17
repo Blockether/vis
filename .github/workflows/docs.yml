@@ -114,9 +114,14 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" && test -n "$CLOUDFLARE_ACCOUNT_ID"
-          npx --no-install wrangler secret list --config .deployment.json | node --input-type=module -e '
+          secrets="$(npx --no-install wrangler secret list --config .deployment.json)" ||
+            { echo "::error::wrangler could not read the vis-docs secrets; check CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the docs environment"; exit 1; }
+          printf '%s' "$secrets" | node --input-type=module -e '
             import {readFileSync} from "node:fs";
-            const keys=JSON.parse(readFileSync(0,"utf8"));
+            const listing=readFileSync(0,"utf8");
+            const start=listing.search(/^\[/m);
+            if(start<0) throw new Error("wrangler did not list the vis-docs secrets: "+listing.trim());
+            const keys=JSON.parse(listing.slice(start));
             if(!keys.some(key=>key.name==="TURNSTILE_SECRET_KEY")) throw new Error("Configure the vis-docs TURNSTILE_SECRET_KEY before deployment");'
           npx --no-install wrangler d1 execute vis-extension-center --remote --config .deployment.json --file schema.sql --yes
           npx --no-install wrangler deploy --config .deployment.json
