@@ -28,7 +28,7 @@ not change the policy for other managed processes.
 |---|---|
 | `shell(...)` and its child processes | OS process jail plus gateway egress policy |
 | REPLs started by `repl_start` and project test runners | same session policy as `shell(...)` |
-| `python_execution` | CPython filesystem and socket guards; HTTP uses the gateway policy while the jail is enabled |
+| `python_execution` | CPython filesystem, process and socket guards while the jail is enabled; HTTP then uses the gateway policy |
 | `repl_connect` | not confined; it attaches to a process Vis did not start |
 | Python extension code and its ordinary `subprocess` calls | trusted host code, outside the session jail |
 

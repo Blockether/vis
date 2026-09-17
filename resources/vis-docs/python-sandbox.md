@@ -108,8 +108,9 @@ shows one compact row per symbol; attributes, indexing and `doc(row)` still work
 Extension tools answer with records built from their public fields, not with the
 extension's own Python objects: a `PageList` result has `r.results` or `r["results"]`
 and `r.total`, but none of the original methods. A name that is not a field raises
-`KeyError` (`r["methods"]`) or `AttributeError` (`r.methods`) listing the fields the
-record does have; use one of those instead of guessing another name. `doc(tool)` shows
+`KeyError` (`r["methods"]`), whose message lists the fields the record does have, or
+`AttributeError` (`r.methods`), which reports only the missing name. Use a listed field
+instead of guessing another one. `doc(tool)` shows
 the same fields under **Model schemas**. Only records whose extension declares a
 [backing field](extension-api.md#field-backed-sequences) iterate; read other records
 through their list field.
@@ -121,26 +122,32 @@ finds other saved sessions.
 
 ## What the sandbox may do
 
-A CPython audit hook checks filesystem, process and network operations,
-including operations made through imported libraries.
+These limits come from the process jail, which is off by default. Until you turn it on,
+sandbox code reaches the same files and hosts your own account can, and
+`session["access"]["is_jailed"]` is `false`. With the jail enabled, a CPython audit hook
+checks filesystem, process and network operations, including operations made through
+imported libraries.
 
-| Capability | Policy |
+| Capability | Policy with the jail enabled |
 | --- | --- |
-| Filesystem IO | confined to allowed workspace roots when the jail is enabled |
+| Filesystem IO | confined to allowed workspace roots |
 | Spawning a process (`subprocess`, `os.system`, `os.popen`) | refused; use `shell(...)`, which applies the process policy |
 | `ctypes` and foreign libraries | refused |
 | HTTP clients | routed through the gateway policy and network filters |
 | Raw sockets | guarded at the socket level |
-| Threads | capped per process; exhaustion raises `RuntimeError` |
-| Wall-clock time | every block has a timeout, lifted while a live view is open |
+| Threads | capped per process; exhaustion raises `RuntimeError` (also without the jail) |
+| Wall-clock time | every block has a timeout, lifted while a live view is open (also without the jail) |
 
-Host functions exposed from Clojure apply their own permission checks. See
-[Process jail and network policy](jail.md) for the complete policy.
+Host functions exposed from Clojure apply their own permission checks either way:
+`sdk.fs.read(...)` raises `PermissionError` in `python_execution` whether or not the
+jail is enabled. See [Process jail and network policy](jail.md) to turn the jail on and
+for the complete policy.
 
 ## Packages
 
 `python_execution` imports explicitly installed shared packages from
-**`~/.vis/python/packages`**, which is read-only to sandbox code. Extensions without
+**`~/.vis/python/packages`**. Install them with the CLI below rather than from a block.
+Extensions without
 a project environment also use that directory, even if they declare a uv project or
 have a `pyproject.toml`. Startup and plain `/reload` do not create a missing `.venv`.
 Extensions with an existing uv environment use its dependencies in separate trusted
