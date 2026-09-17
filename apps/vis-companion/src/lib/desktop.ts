@@ -1,15 +1,16 @@
 /**
  * Link handling for the desktop app, which is this same bundle inside a Pake (Tauri) window.
  */
-type ShellInvoke = (command: string, payload: { path: string }) => Promise<unknown>;
-type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: ShellInvoke } } };
+type HostInvoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
+type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: HostInvoke } } };
 
 /**
- * Pake grants the page one command channel, `shell:allow-open`, and it is the only route from
- * this window to the system browser. Its presence is also how the bundle recognizes that it is
- * running as the desktop app: the browser build and the tests never see it.
+ * Pake grants the page a command channel: `shell:allow-open` for the system browser and the
+ * notification plugin for system alerts, and they are the only routes from this window to the
+ * machine around it. Its presence is also how the bundle recognizes that it is running as the
+ * desktop app: the browser build and the tests never see it.
  */
-export function desktopShell(): ShellInvoke | undefined {
+export function desktopInvoke(): HostInvoke | undefined {
   if (typeof window === 'undefined') return;
   const invoke = (window as DesktopHost).__TAURI__?.core?.invoke;
   return typeof invoke === 'function' ? invoke : undefined;
@@ -20,9 +21,9 @@ export function desktopShell(): ShellInvoke | undefined {
  * `window.open` is Pake's own rewrite rather than a browser, so the shell channel carries it.
  */
 export const openExternalUrl = (url: string): void => {
-  const shell = desktopShell();
+  const invoke = desktopInvoke();
   // A refused open leaves the screen as it was, with its instructions and manual return.
-  if (shell) void shell('plugin:shell|open', { path: url }).catch(() => {});
+  if (invoke) void invoke('plugin:shell|open', { path: url }).catch(() => {});
   else window.open(url, '_blank', 'noopener,noreferrer');
 };
 
@@ -30,7 +31,7 @@ let claimed = false;
 
 function claimExternalLink(event: MouseEvent): void {
   // Read per click rather than at install: on the web this listener stays inert.
-  if (!desktopShell()) return;
+  if (!desktopInvoke()) return;
   if (event.defaultPrevented || event.button !== 0) return;
   const anchor = event.target instanceof Element ? event.target.closest('a') : null;
   const href = anchor?.getAttribute('href');

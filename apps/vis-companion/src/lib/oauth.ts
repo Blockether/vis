@@ -7,7 +7,7 @@
 import type { AuthVerdict, SignInFlow } from './types';
 import { Capacitor } from '@capacitor/core';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
-import { desktopShell, openExternalUrl } from './desktop';
+import { desktopInvoke, openExternalUrl } from './desktop';
 /** A browser tab claimed inside the user's tap, navigated once the gateway has issued the URL. */
 export interface AuthTab {
   navigate(url: string): void;
@@ -20,7 +20,7 @@ export interface AuthTab {
  * to reserve: an empty `window.open` there reloads the app instead of opening a tab.
  */
 export function reserveAuthTab(): AuthTab | undefined {
-  if (typeof window === 'undefined' || Capacitor.isNativePlatform() || desktopShell()) return;
+  if (typeof window === 'undefined' || Capacitor.isNativePlatform() || desktopInvoke()) return;
   let tab: Window | null = null;
   try {
     tab = window.open('', '_blank');

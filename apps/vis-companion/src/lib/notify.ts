@@ -186,7 +186,7 @@ export async function applyGatewayNotify(
   await assert();
 }
 
-/** Store the web tab's per-gateway switch without contacting the native push API. */
-export async function applyWebGatewayNotify(url: string, on: boolean): Promise<void> {
+/** Store this app's own per-gateway switch without contacting the native push API. */
+export async function applyLocalGatewayNotify(url: string, on: boolean): Promise<void> {
   await setGatewayNotify(url, on);
 }

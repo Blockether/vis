@@ -25,7 +25,12 @@ import {
   webPushApplicationServerKey,
   webPushPermission,
 } from '../../lib/web-push';
-import { applyGatewayNotify, applyWebGatewayNotify } from '../../lib/notify';
+import {
+  desktopNotificationPermission,
+  isDesktopNotificationsPlatform,
+  requestDesktopNotificationPermission,
+} from '../../lib/desktop-notify';
+import { applyGatewayNotify, applyLocalGatewayNotify } from '../../lib/notify';
 import {
   cachedNotifyVerdict,
   isHeldBy,
@@ -57,6 +62,7 @@ export function NotificationsPanel({
   client: GatewayClient;
   gateway: GatewayConn;
 }) {
+  if (isDesktopNotificationsPlatform()) return <DesktopNotificationsPanel gateway={gateway} />;
   if (isWebNotificationsPlatform()) return <WebNotificationsPanel gateway={gateway} />;
   return <NativeNotificationsPanel client={client} gateway={gateway} />;
 }
@@ -107,7 +113,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
         webPushApplicationServerKey(status),
       );
       await registerWebPushForGateway(gateway, next);
-      await applyWebGatewayNotify(gateway.url, true);
+      await applyLocalGatewayNotify(gateway.url, true);
       setSubscription(next);
       setNotify(true);
     } catch (cause) {
@@ -123,7 +129,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     try {
       const current = subscription ?? (await getExistingWebPushSubscription(gateway.url));
       if (current) await unregisterWebPushForGateway(gateway, current);
-      await applyWebGatewayNotify(gateway.url, false);
+      await applyLocalGatewayNotify(gateway.url, false);
       setNotify(false);
     } catch (cause) {
       setErr(cause instanceof Error ? cause.message : String(cause));
@@ -178,6 +184,115 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
             <Banner kind="warn">
               Notifications are blocked in this browser — allow them in browser settings and this
               device can connect again.
+            </Banner>
+          )}
+        </div>
+      )}
+    </SettingsPanel>
+  );
+}
+
+/**
+ * Desktop alerts ON THIS GATEWAY. The Pake window cannot be reached by push, so this switch is
+ * local: it tells the sessions list to raise a system alert when this machine answers or asks a
+ * question, and it only means anything while the app is open.
+ */
+export function DesktopNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
+  const [perm, setPerm] = useState<PushPermission>('prompt');
+  const [notify, setNotify] = useState(false);
+  // Nothing may be reported until the host has answered: "Not connected" rendered before the
+  // first read is a verdict about a question not yet asked.
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState<'enable' | 'disable' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      getGatewayNotify(gateway.url),
+      desktopNotificationPermission(),
+    ]).then(([wanted, permission]) => {
+      if (cancelled) return;
+      setNotify(wanted);
+      setPerm(permission);
+      setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [gateway.url]);
+
+  const enable = useCallback(async () => {
+    setBusy('enable');
+    setErr(null);
+    try {
+      const permission = await requestDesktopNotificationPermission();
+      setPerm(permission);
+      if (permission === 'unsupported') throw new Error('This window cannot raise system alerts.');
+      await applyLocalGatewayNotify(gateway.url, true);
+      setNotify(true);
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }, [gateway.url]);
+
+  const disable = useCallback(async () => {
+    setBusy('disable');
+    setErr(null);
+    try {
+      await applyLocalGatewayNotify(gateway.url, false);
+      setNotify(false);
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }, [gateway.url]);
+
+  const blocked = perm === 'denied';
+  const notifying = notify && !blocked && perm !== 'unsupported';
+  const machine = gateway.label ?? gatewayHost(gateway.url);
+  // Same rule as the other panels: the verdict this window settled on last time is the honest
+  // first frame, so reopening Settings does not flash `Checking…`.
+  const live = loaded ? notifying : null;
+  const remembered = useMemo(() => cachedNotifyVerdict(gateway.url), [gateway.url]);
+  useEffect(() => {
+    if (live !== null) rememberNotifyVerdict(gateway.url, live);
+  }, [live, gateway.url]);
+  const shown = live ?? remembered;
+  const hasBanner = Boolean(err) || blocked || shown === true;
+
+  return (
+    <SettingsPanel
+      title="Notifications"
+      action={
+        <NotifyConnectionSwitch
+          machine={machine}
+          isOn={shown ?? false}
+          isBusy={busy !== null}
+          isChecking={shown === null}
+          disabled={blocked || shown === null || busy !== null}
+          onClick={() => void (shown ? disable() : enable())}
+        />
+      }
+    >
+      {hasBanner && (
+        <div className="space-y-2 p-3">
+          {err && <Banner kind="err">{err}</Banner>}
+
+          {blocked && (
+            <Banner kind="warn">
+              macOS is not delivering alerts from Vis — allow them in System Settings, under
+              Notifications, and this machine can connect again.
+            </Banner>
+          )}
+
+          {shown === true && !blocked && (
+            <Banner kind="neutral">
+              Alerts arrive while the desktop app is open. Keep notifications on your phone or in a
+              browser tab to hear about a session while it is closed.
             </Banner>
           )}
         </div>

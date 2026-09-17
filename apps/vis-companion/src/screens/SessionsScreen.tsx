@@ -29,6 +29,7 @@ import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
+import { notifyDesktopFleet } from '../lib/desktop-notify';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition } from '../lib/anchored-menu';
 import {
@@ -445,6 +446,13 @@ export function SessionsScreen({
     void syncBadge(machines);
   }, [machines, readMarks]);
   useEffect(() => onWake(() => void reassertBadge()), []);
+
+  // The desktop window receives no push at all, so it raises its own alerts from the fleet it is
+  // already polling: a new answer or a new question while the app is open, and nothing on the
+  // first pass, because opening the app is not news.
+  useEffect(() => {
+    void notifyDesktopFleet(machines);
+  }, [machines]);
 
   // Anchor the top visible row around every asynchronous fleet mutation so staggered
   // machine responses cannot move content under the reader.

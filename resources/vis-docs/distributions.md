@@ -182,6 +182,17 @@ For a local WSL2 gateway, enable localhost forwarding. The
 addresses and remote pairing. [Isolated drafts](drafts.md) have additional
 filesystem requirements.
 
+### Notifications on the desktop
+
+The desktop app raises a system alert when a session on a connected machine answers you or asks
+you a question. Turn it on for each machine in Settings, under Notifications: pick the machine and
+switch its notifications on. macOS asks for permission the first time, and System Settings, under
+Notifications, controls how those alerts appear.
+
+Alerts arrive while the desktop app is open. It cannot receive push, so nothing reaches it after
+you quit. Keep the Companion app on your phone, or a browser tab, connected to that machine to
+hear about a session while the desktop app is closed.
+
 ### macOS and Linux launcher
 
 Open the desktop Companion for your selected release track:
