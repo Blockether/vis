@@ -2673,6 +2673,7 @@
      :token-file (get parsed "token-file")
      :require-token? (boolean (get parsed "require-token"))
      :pair? (boolean (get parsed "pair"))
+     :advertise (get parsed "advertise")
      :managed? (= "1" (System/getenv "VIS_GATEWAY_MANAGED"))
      :db (config/resolve-db-spec (when-let [db (get parsed "db")]
                                    (if (= db ":memory") :memory {:backend :sqlite :path db})))}))
@@ -2779,34 +2780,45 @@
 (defn- cli-gateway-pair!
   "Print a companion pairing QR for the gateway ALREADY running for this DB, so
    you can pair without stopping/restarting it. Refuses a loopback-bound daemon
-   (a phone can never reach 127.0.0.1) with a copy-paste fix."
+   (a phone can never reach 127.0.0.1) with a copy-paste fix, unless --advertise
+   names the route that does reach it."
   [parsed _residual]
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
   (let [{:keys [running? host port token loopback?]}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
-    (cond
-      (not running?)
-      (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
-                           "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")
-                      {:vis/user-error true}))
-      loopback?
-      (throw
-        (ex-info
-          (let [ts (first ((requiring-resolve
-                             'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
-            (str "the running gateway is bound to " host
-                 " (loopback) \u2014 a phone cannot reach it.\n" "Restart it on a reachable host:\n"
-                 "  vis-agent gateway stop\n"
-                 (if ts
-                   (str "  vis-agent gateway start --host " ts
-                        " --require-token --pair"
-                        "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
-                   "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")))
-          {:vis/user-error true}))
-      :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
-              {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))
+
+        advertise
+        (get parsed "advertise")]
+
+    (cond (not running?)
+          (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
+                               "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")
+                          {:vis/user-error true}))
+          (and loopback? (empty? (str advertise)))
+          (throw
+            (ex-info
+              (let [ts (first ((requiring-resolve
+                                 'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
+                (str "the running gateway is bound to " host
+                     " (loopback) \u2014 a phone cannot reach it.\n"
+                     "Restart it on a reachable host:\n"
+                     "  vis-agent gateway stop\n"
+                     (if ts
+                       (str
+                         "  vis-agent gateway start --host " ts
+                         " --require-token --pair"
+                         "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
+                       "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")))
+              {:vis/user-error true}))
+          :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
+                  {:host host
+                   :port port
+                   :token token
+                   :require-token? (boolean token)
+                   :advertise advertise
+                   :emit stdout!}))))
 
 (defn- gateway-stop-if-idle!
   "`--if-idle`: release the daemon only when releasing it is free, and say why when
@@ -3534,7 +3546,7 @@
      :cmd/doc
      "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine. Use --jvm to run it on the JVM without changing the installed track."
      :cmd/usage
-     "vis-agent gateway start [--jvm] [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
+     "vis-agent gateway start [--jvm] [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair] [--advertise URL]"
      :cmd/args
      [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
       {:name "host"
@@ -3559,7 +3571,12 @@
        :kind :flag
        :type :boolean
        :doc
-       "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}]
+       "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}
+      {:name "advertise"
+       :kind :flag
+       :type :string
+       :doc
+       "Address the pairing link should carry instead of the detected one, as HOST, HOST:PORT or a full URL. Use it when the client must dial a port forward, a proxy, or the single address your network allows."}]
      :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --jvm"
                     "vis-agent gateway start --port 8080" "vis-agent gateway start --pair"
                     "vis-agent gateway start --host 0.0.0.0 --require-token --pair"]
@@ -3596,13 +3613,19 @@
      :cmd/parent ["gateway"]
      :cmd/doc
      "Print a companion pairing QR for the gateway already running for this DB, or for the --gateway target."
-     :cmd/usage "vis-agent gateway pair [--db PATH]"
+     :cmd/usage "vis-agent gateway pair [--db PATH] [--advertise URL]"
      :cmd/examples ["vis-agent gateway pair"
                     "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway pair"]
-     :cmd/args [{:name "db"
-                 :kind :flag
-                 :type :string
-                 :doc "SQLite DB path whose running gateway should be paired."}]
+     :cmd/args
+     [{:name "db"
+       :kind :flag
+       :type :string
+       :doc "SQLite DB path whose running gateway should be paired."}
+      {:name "advertise"
+       :kind :flag
+       :type :string
+       :doc
+       "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL)."}]
      :cmd/run-fn cli-gateway-pair!}
     {:cmd/name "mcp"
      :cmd/parent ["gateway"]

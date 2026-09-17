@@ -3780,7 +3780,8 @@
 
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
-   LAN — see [[pairing/candidate-hosts]]).
+   LAN — see [[pairing/candidate-hosts]]), led by the operator's `--advertise`
+   address when one was given.
 
    A pairing QR carries the same list, but only ONCE: a phone paired at home
    picks the LAN address, keeps it, and is stranded the moment it leaves the
@@ -3789,7 +3790,7 @@
    second QR. The port/scheme come from the request when the bind is unknown, so
    a tunnel sees itself correctly."
   [request]
-  (let [{:keys [host port]}
+  (let [{:keys [host port advertise]}
         @server-state
 
         port
@@ -3801,6 +3802,8 @@
     (->> (pairing/candidate-hosts (or host "0.0.0.0"))
          (remove str/blank?)
          (map #(str scheme "://" % ":" port))
+         (cons (pairing/advertised-url advertise port))
+         (remove str/blank?)
          distinct
          vec)))
 
@@ -4985,7 +4988,7 @@
    Safe to call from any host process - the daemon (`vis-agent gateway start`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
-  ([{:keys [port host token-file require-token? db managed?]}]
+  ([{:keys [port host token-file require-token? db managed? advertise]}]
    (when @server-state (throw (ex-info "gateway already running" {:type :gateway/already-running})))
    (let [port
          (int (or port DEFAULT_PORT))
@@ -5107,24 +5110,26 @@
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
-     (reset! server-state {:server server
-                           :port port
-                           :host host
-                           :token token
-                           :token-path (str path)
-                           :db db
-                           :clients {}
-                           :sse-clients {}
-                           :client-registrations-total 0
-                           :client-releases-total 0
-                           :client-replacements-total 0
-                           :client-leases-reaped-total 0
-                           :client-dead-reaped-total 0
-                           :client-duplicates-reaped-total 0
-                           :require-token? require-token?
-                           :managed? (boolean managed?)
-                           :started-at-ms (util/now-ms)
-                           :saw-client? false})
+     (reset! server-state
+       {:server server
+        :port port
+        :host host
+        :advertise advertise
+        :token token
+        :token-path (str path)
+        :db db
+        :clients {}
+        :sse-clients {}
+        :client-registrations-total 0
+        :client-releases-total 0
+        :client-replacements-total 0
+        :client-leases-reaped-total 0
+        :client-dead-reaped-total 0
+        :client-duplicates-reaped-total 0
+        :require-token? require-token?
+        :managed? (boolean managed?)
+        :started-at-ms (util/now-ms)
+        :saw-client? false})
      ;; The gateway's own control-plane port is reserved so a jailed child can NEVER reach
      ;; it through the proxy, even though loopback egress is allowed by default (SSRF floor).
      (try (gateway-sandbox/set-reserved-ports! [port]) (catch Throwable _ nil))
@@ -5352,7 +5357,7 @@
 (defn serve-main!
   "Blocking entry for the `vis-agent gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
-  [{:keys [port host token-file require-token? db managed? pair?]}]
+  [{:keys [port host token-file require-token? db managed? pair? advertise]}]
   ;; Profile the daemon into its own JFR file when VIS_JFR is inherited from the
   ;; client that spawned us (idempotent with the -main call for direct callers).
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
@@ -5375,7 +5380,8 @@
                  :token-file token-file
                  :require-token? require-token?
                  :db db
-                 :managed? managed?})
+                 :managed? managed?
+                 :advertise advertise})
 
         ;; `config/init-cli!` has already redirected System/out AND `*out*` into
         ;; the gateway's role-labelled file under ~/.vis/logs/, so a plain
@@ -5405,6 +5411,7 @@
                                               slurp
                                               str/trim)
                                :require-token? require-token?
+                               :advertise advertise
                                :emit emit!}))
     ;; Forensics BEFORE the hook: a signal-driven death and an explicit
     ;; /v1/admin/stop both surface as "gateway: draining before stop", so name

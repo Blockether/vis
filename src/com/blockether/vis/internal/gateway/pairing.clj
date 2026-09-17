@@ -18,6 +18,12 @@
 
 (defn- url-encode [s] (URLEncoder/encode (str s) StandardCharsets/UTF_8))
 
+(def ^:private LOOPBACK_HOSTS
+  "Addresses that only this machine can dial. A bind on one of them serves
+  nothing else, so neither the pairing link nor its `alt=` list may offer the
+  scanned interfaces alongside it."
+  #{"127.0.0.1" "localhost" "::1" "[::1]" "0:0:0:0:0:0:0:1"})
+
 (defn- iface-addresses
   []
   (->> (enumeration-seq (NetworkInterface/getNetworkInterfaces))
@@ -94,14 +100,36 @@
   []
   "0.0.0.0")
 
+(defn advertised-url
+  "Normalize an operator-supplied address into the base URL clients should dial,
+  or nil when there is nothing to advertise.
+
+  The interface scan only sees the addresses this machine HOLDS, and a network
+  can insist on one it does not: a port forward, a proxy, or a policy that drops
+  every address but one. `--advertise` is that claim, so it takes the link's
+  `url=` while the scanned addresses ride along as `alt=`.
+
+  A bare host or `host:port` is completed with `http://` and the gateway's own
+  port; anything carrying a scheme is taken verbatim, because only the operator
+  knows the scheme and port on the other side of that route."
+  [advertise port]
+  (let [value (str/trim (str advertise))]
+    (cond (str/blank? value) nil
+          (str/includes? value "://") (str/replace value #"/+$" "")
+          (re-matches #"[^:/]+:\d+" value) (str "http://" value)
+          :else (str "http://" value ":" port))))
+
 (defn pairing-url
   "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and
   `alt=` carries the remaining routable hosts so a phone that cannot reach the
   first one (no Tailscale, different LAN) falls back instead of failing. A
   concrete bind has a single candidate, so its link carries no `alt=` at all.
   IPv4 link-local (169.254/16) is dropped from the alternates: no phone can
-  route it, and every extra host makes the QR denser."
-  [{:keys [host port token]}]
+  route it, and every extra host makes the QR denser.
+
+  `:advertise` pins `url=` to an address the scan cannot know and demotes every
+  scanned host to `alt=`."
+  [{:keys [host port token advertise]}]
   (let [hosts
         (let [c (candidate-hosts host)]
           (if (seq c) c [host]))
@@ -110,28 +138,33 @@
         (fn [h]
           (str "http://" h ":" port))
 
+        pinned
+        (advertised-url advertise port)
+
+        primary
+        (or pinned (->url (first hosts)))
+
         alts
-        (into [] (comp (remove #(str/starts-with? (str %) "169.254.")) (map ->url)) (rest hosts))]
+        (into
+          []
+          (comp (remove #(str/starts-with? (str %) "169.254.")) (map ->url) (remove #(= primary %)))
+          (cond (contains? LOOPBACK_HOSTS (str host)) []
+                pinned hosts
+                :else (rest hosts)))]
 
     (str "vis://gateway?url="
-         (url-encode (->url (first hosts)))
+         (url-encode primary)
          (when (seq alts) (str "&alt=" (url-encode (str/join "," alts))))
          (when-not (str/blank? (str token)) (str "&token=" (url-encode token))))))
 
 (defn pairing-json
-  [{:keys [host port token require-token?] :as opts}]
-  (let [host
-        (or (first (candidate-hosts host)) host)
-
-        url
-        (str "http://" host ":" port)]
-
-    (wire/json-str (cond-> {:type "vis-gateway-pairing"
-                            :version 1
-                            :url url
-                            :hosts (candidate-hosts (:host opts))}
-                     require-token?
-                     (assoc :token token)))))
+  [{:keys [host port token require-token? advertise]}]
+  (let [url (or (advertised-url advertise port)
+                (str "http://" (or (first (candidate-hosts host)) host) ":" port))]
+    (wire/json-str
+      (cond-> {:type "vis-gateway-pairing" :version 1 :url url :hosts (candidate-hosts host)}
+        require-token?
+        (assoc :token token)))))
 
 (defn terminal-qr
   "Render `text` as a terminal QR code using Unicode half-blocks. Returns a string
@@ -184,7 +217,7 @@
    open such a URL, so pairing against it is meaningless no matter how good the
    QR is."
   [host]
-  (contains? #{"127.0.0.1" "localhost" "::1" "[::1]" "0:0:0:0:0:0:0:1"} (str host)))
+  (contains? LOOPBACK_HOSTS (str host)))
 
 (defn print-pairing!
   "Emit the companion pairing block (title, reachable hosts, `vis://` URL, and a
@@ -196,9 +229,11 @@
    finds Tailscale/LAN addresses, but the listener is not on them, so a QR built
    from those would encode a URL that times out — the failure landing on the
    phone, minutes later, looking like a broken app. Refuse and print the restart
-   command instead; returns nil."
-  [{:keys [require-token? emit host] :or {emit println} :as opts}]
-  (if (loopback-bind? host)
+   command instead; returns nil. An `:advertise` address overrides that refusal:
+   the operator has named a route Vis cannot see, such as a proxy in front of
+   the loopback port."
+  [{:keys [require-token? emit host port advertise] :or {emit println} :as opts}]
+  (if (and (loopback-bind? host) (str/blank? (str advertise)))
     (let [ts (first (tailscale-hosts))]
       (emit "")
       (emit "VIS companion pairing")
@@ -217,13 +252,17 @@
                          (not require-token?)
                          (dissoc :token)))
 
+          pinned
+          (advertised-url advertise port)
+
           hosts
-          (candidate-hosts host)]
+          (if (loopback-bind? host) [] (candidate-hosts host))]
 
       (emit "")
       (emit "VIS companion pairing")
       (emit
         "in the companion app open Machines → Add a machine, then scan this or paste the link below")
+      (when pinned (emit (str "advertising: " pinned)))
       (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
       (emit payload)
       (emit (terminal-qr payload))

@@ -959,6 +959,24 @@
     (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 b 8 4)
     (java.io.ByteArrayInputStream. b)))
 
+(deftest reachable-addresses-lead-with-the-advertised-route
+  (testing
+    "--advertise names the route a client must dial, so the live address list
+             a paired app re-reads leads with it and the scanned interfaces follow"
+    (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'iface-addresses)
+                     (fn []
+                       ["100.109.18.77"])}
+      (fn []
+        (with-server-state! {:host "0.0.0.0" :port 7890 :advertise "192.168.0.1"}
+                            (fn []
+                              (is (= ["http://192.168.0.1:7890" "http://100.109.18.77:7890"]
+                                     ((rv 'reachable-addresses) {:scheme :http})))))
+        (with-server-state!
+          {:host "0.0.0.0" :port 7890}
+          (fn []
+            (is (= ["http://100.109.18.77:7890"] ((rv 'reachable-addresses) {:scheme :http}))
+                "without --advertise only the scanned interfaces are offered")))))))
+
 (deftest capabilities-advertise-gateway-voice-and-attachment-contract
   (testing "a gateway without any voice engine reports it honestly"
     (with-only-engine!

@@ -216,6 +216,19 @@ If that gateway is bound to `127.0.0.1`, the command asks you to restart with a
 reachable address. Check that other clients and sessions can be interrupted
 before stopping it; see [Starting the gateway](#starting-the-gateway).
 
+If your network needs a different address than the one Vis detects — a port
+forward, a proxy in front of the gateway, or a network that allows only one
+address — name it with `--advertise`. The pairing link then leads with that
+address, and the detected ones follow as fallbacks:
+
+```bash
+vis-agent gateway start --host 0.0.0.0 --require-token --pair --advertise 10.0.0.5
+vis-agent gateway pair --advertise https://gateway.example.com
+```
+
+`--advertise` accepts a host, `host:port` or a full URL. It changes what the
+link says, not what the gateway listens on, so the address still has to reach
+this computer.
 You can also type a reachable address and supply the token from
 `~/.vis/gateway.token` on the gateway's computer. Each saved machine shows its
 connection state: green online, red offline, amber wrong or missing token.

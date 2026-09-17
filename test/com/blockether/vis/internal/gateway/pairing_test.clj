@@ -60,6 +60,57 @@
         (is (= ["100.109.18.77" "192.168.0.116"] (pairing/candidate-hosts "0.0.0.0"))
             "a wildcard bind still offers every interface")))))
 
+(deftest advertised-url-completes-an-operator-address
+  (testing "a bare host, a host:port and a full URL all become one base URL"
+    (is (= "http://192.168.0.1:7890" (pairing/advertised-url "192.168.0.1" 7890)))
+    (is (= "http://192.168.0.1:8080" (pairing/advertised-url "192.168.0.1:8080" 7890)))
+    (is (= "http://192.168.0.1" (pairing/advertised-url "http://192.168.0.1/" 7890))
+        "a scheme the operator typed wins: only they know the port behind it")
+    (is (= "https://gateway.example.com"
+           (pairing/advertised-url "https://gateway.example.com" 7890))))
+  (testing "nothing to advertise"
+    (is (nil? (pairing/advertised-url nil 7890)))
+    (is (nil? (pairing/advertised-url "  " 7890)))))
+
+(deftest advertise-pins-the-link-to-the-route-that-works
+  (testing
+    "a network can insist on an address this machine cannot see, so --advertise
+            takes `url=` and every scanned address falls back to `alt=`"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["100.109.18.77" "192.168.0.116"])}
+      (fn []
+        (let [url
+              (pairing/pairing-url
+                {:host "0.0.0.0" :port 7890 :token "tok" :advertise "192.168.0.1"})
+
+              alt
+              (some-> (re-find #"[?&]alt=([^&]+)" url)
+                      second
+                      (java.net.URLDecoder/decode "UTF-8"))]
+
+          (is (str/includes? url "url=http%3A%2F%2F192.168.0.1%3A7890"))
+          (is (= ["http://100.109.18.77:7890" "http://192.168.0.116:7890"]
+                 (some-> alt
+                         (str/split #","))))))))
+  (testing
+    "a loopback bind plus an advertised route still prints a QR: the operator
+            named a path Vis cannot see, and nothing else on this machine listens"
+    (with-redefs [pairing/iface-addresses (fn []
+                                            ["192.168.0.116"])]
+      (let [lines (atom [])
+            out (pairing/print-pairing! {:host "127.0.0.1"
+                                         :port 7890
+                                         :token "tok"
+                                         :require-token? true
+                                         :advertise "http://192.168.0.1"
+                                         :emit #(swap! lines conj (str %))})
+            text (str/join "\n" @lines)]
+
+        (is (str/includes? (str out) "url=http%3A%2F%2F192.168.0.1"))
+        (is (not (str/includes? (str out) "alt=")) "the loopback bind serves nothing else")
+        (is (str/includes? text "advertising: http://192.168.0.1"))
+        (is (str/includes? text "█") "the QR is printed")))))
+
 (deftest tailscale-hosts-selects-only-tailnet-ips
   (testing "only 100.64/10 addresses are returned, in discovery order"
     (with-redefs-fn {#'pairing/iface-addresses (fn []
