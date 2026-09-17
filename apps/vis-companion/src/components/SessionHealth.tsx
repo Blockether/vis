@@ -117,7 +117,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthData }) {
               </span>
             </Disclosure>
             {partsOpen && (
-              <div id={`${id}-parts`} className="pb-3">
+              <div id={`${id}-parts`} className="pb-3 pl-4.5">
                 <dl className="mb-4 space-y-2 text-ui">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                     <dt className="text-dialog-hint">Local estimate</dt>
@@ -195,7 +195,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthData }) {
               </span>
             </Disclosure>
             {rootsOpen && (
-              <div id={`${id}-roots`} className="pb-3">
+              <div id={`${id}-roots`} className="pb-3 pl-4.5">
                 <ul className="space-y-3 text-ui">
                   {roots.map((item) => (
                     <li key={item.path}>
