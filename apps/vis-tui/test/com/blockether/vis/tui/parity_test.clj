@@ -153,3 +153,63 @@
 
             (expect (= durations (mapv :duration-ms (:forms live))))
             (expect (= durations (mapv :duration-ms (:forms resumed)))))))))
+
+(defdescribe formatted-source-parity-test
+             ;; Regression #269: `block.started` carries the cached ruff rendering as
+             ;; `display_code`; `block.output` repeats only canonical facts. Rebuilding the
+             ;; form record from the result frame alone dropped that rendering, so a settled
+             ;; block fell back to the raw source the model wrote — two `;`-separated
+             ;; statements on one line instead of two.
+             (it
+               "keeps the formatted display source when the result frame carries none"
+               (let [raw
+                     "print(cat(\"a.py\")); print(grep({\"query\": [\"x\"]}))"
+
+                     formatted
+                     "print(cat(\"a.py\"))\nprint(grep({\"query\": [\"x\"]}))"
+
+                     tracker
+                     (progress/make-progress-tracker)]
+
+                 ((:on-chunk tracker)
+                   (#'chat/gateway-event->chunk
+                    {"type" "block.started"
+                     "iteration" 1
+                     "form_index" 0
+                     "code" raw
+                     "display_code" formatted
+                     "display_language" "python"}))
+                 ((:on-chunk tracker)
+                   (#'chat/gateway-event->chunk
+                    {"type" "block.output" "iteration" 1 "form_index" 0 "code" raw "stdout" "ok"}))
+                 (let [form (first (:forms (first ((:get-timeline tracker)))))]
+                   (expect (= formatted (:display-code form)))
+                   (expect (= "python" (:display-language form)))
+                   (expect (= raw (:code form))))))
+             (it "a display field the result frame authors itself still wins"
+                 (let [invocation
+                       "await shell({\"command\": \"ls\"})"
+
+                       tracker
+                       (progress/make-progress-tracker)]
+
+                   ((:on-chunk tracker)
+                     (#'chat/gateway-event->chunk
+                      {"type" "block.started"
+                       "iteration" 1
+                       "form_index" 0
+                       "code" invocation
+                       "display_code" "ls"
+                       "display_language" "bash"}))
+                   ((:on-chunk tracker)
+                     (#'chat/gateway-event->chunk
+                      {"type" "block.output"
+                       "iteration" 1
+                       "form_index" 0
+                       "code" invocation
+                       "display_code" "ls -l"
+                       "display_language" "bash"
+                       "stdout" "ok"}))
+                   (let [form (first (:forms (first ((:get-timeline tracker)))))]
+                     (expect (= "ls -l" (:display-code form)))
+                     (expect (= "bash" (:display-language form)))))))

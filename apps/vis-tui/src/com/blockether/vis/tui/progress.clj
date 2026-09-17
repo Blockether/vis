@@ -185,25 +185,33 @@
 
 (defn- chunk->form-result
   "Build the completed `:forms` entry for a `:form-result` chunk. Canonical
-   `:stdout` and `:error` facts survive; renderers derive presentation locally."
+   `:stdout` and `:error` facts survive; renderers derive presentation locally.
+   The display projections the RUNNING form already carried survive as well,
+   unless the result frame authors its own."
   [prev-form chunk]
   (let [errored? (some? (:error chunk))]
-    (merge (form/->display chunk)
-           {:code (:code chunk)
-            :comment (:comment chunk)
-            :render-segments (:render-segments chunk)
-            :scope (or (:scope chunk) (:scope prev-form))
-            :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
-            :duration-ms (or (:duration-ms chunk) (form/envelope-duration-ms (:envelope chunk)))
-            :stdout (:stdout chunk)
-            :result-kind (form-result-kind chunk)
-            :result-detail (form-result-detail chunk)
-            :error (:error chunk)
-            ;; Activity has its own lifecycle frame. Preserve the latest replacement
-            ;; when the execution output fills in the rest of this form.
-            :activity (:activity prev-form)
-            :success? (not errored?)
-            :silent? (and (not errored?) (silent-chunk? chunk))})))
+    (merge
+      ;; The gateway attaches the cached ruff rendering — `:display-code` and the
+      ;; language beside it — to the START frame, and the result frame repeats
+      ;; only canonical facts. Rebuilding this record from the chunk alone dropped
+      ;; that rendering, so a settled block fell back to the model's raw source.
+      (form/->display prev-form)
+      (form/->display chunk)
+      {:code (:code chunk)
+       :comment (:comment chunk)
+       :render-segments (:render-segments chunk)
+       :scope (or (:scope chunk) (:scope prev-form))
+       :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
+       :duration-ms (or (:duration-ms chunk) (form/envelope-duration-ms (:envelope chunk)))
+       :stdout (:stdout chunk)
+       :result-kind (form-result-kind chunk)
+       :result-detail (form-result-detail chunk)
+       :error (:error chunk)
+       ;; Activity has its own lifecycle frame. Preserve the latest replacement
+       ;; when the execution output fills in the rest of this form.
+       :activity (:activity prev-form)
+       :success? (not errored?)
+       :silent? (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
   [entry ^long display-idx form]
