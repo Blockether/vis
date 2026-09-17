@@ -92,10 +92,12 @@ reviewed in Storybook, not unit-pinned.
 The suite runs as three vitest projects. `unit` covers everything under `src`,
 `scripts` covers the tests that drive the real toolchain (a production Vite
 build, a Playwright launch), and `storybook` runs the gallery in Chromium.
-`unit` uses the `vmThreads` pool: each file still gets its own module registry
-and its own jsdom, but inside a VM context instead of a fresh worker process,
-which cut the local run from 51s to 24s. `scripts` keeps real processes,
-because a native bundler refuses the objects a VM realm hands it.
+`unit` uses the `vmForks` pool: each file still gets its own module registry
+and its own jsdom, but in a VM context inside a pooled process instead of a
+worker started for that one file. Building a DOM for each of them cost 190s of
+CPU and now costs 20s, which halves the `src` run; on a two-core machine — what
+CI gets — it went from 124s to 46s. `scripts` keeps real processes, because a
+native bundler refuses the objects a VM realm hands it.
 
 ## Native builds
 

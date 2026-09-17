@@ -37,9 +37,12 @@ export default defineConfig({
           // no-ops under node, so pure logic pays nothing for it.
           setupFiles: ['./src/test-setup.ts'],
           // A VM context per FILE, not a worker per file: the same isolation (fresh
-          // module registry, fresh jsdom) without spawning a process and building a
-          // DOM 179 times. Measured on this suite: 51s -> 24s, `environment` 218s -> 10s.
-          pool: 'vmThreads',
+          // module registry, fresh jsdom) without starting a worker and building a
+          // DOM for every one of them. On a two-core box — what CI gets — this suite
+          // goes 124s -> 46s. `vmThreads` is a second faster on a laptop but keeps
+          // every context in ONE heap (9GB against 0.8GB here), which is how a run
+          // dies on a runner instead of finishing.
+          pool: 'vmForks',
         },
       },
       {
