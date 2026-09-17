@@ -137,9 +137,11 @@ exists. On Linux, bubblewrap works with mount points rather than patterns: a chi
 kept out of the files the pattern matched when the session started, and Vis' own tools
 keep refusing every path the rule covers.
 
-Deny rules require `jail.enabled: true`, because only the OS jail can keep a confined
-child out of a single file. With the jail off, Vis reports the configuration as invalid
-instead of accepting rules it cannot enforce.
+`jail.enabled` turns the OS sandbox on and off; the deny rules are separate
+configuration and stay valid either way. With the jail off, Vis' own tools keep refusing
+every path a rule covers, but nothing confines the commands and code Vis starts: a shell
+child or `python_execution` can still open the file. Keep the jail on when a rule has to
+hold against code Vis does not run itself.
 
 ## Environment filtering
 

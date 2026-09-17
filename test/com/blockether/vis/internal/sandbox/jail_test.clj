@@ -562,6 +562,34 @@
     (testing "no policy in the environment, no refusal"
       (is (nil? (pj/deny-refusal {} "file-read" "/ws/.env"))))))
 
+(deftest deny-rules-survive-a-disabled-jail
+  ;; `jail.enabled` is the OS toggle; the #263 deny rules are configuration of their
+  ;; own. A disabled jail keeps them — the host file tools still refuse — instead of
+  ;; making the whole vis.yml invalid.
+  (let [root
+        (.getCanonicalPath (doto (io/file (System/getProperty "java.io.tmpdir")
+                                          (str "visdeny-off-" (System/nanoTime)))
+                             (.mkdirs)))
+
+        snapshot
+        (security-policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                   "jail" {"enabled" false
+                                           "filesystem" {"deny_read" [".env" "**/.env"]
+                                                         "deny_write" ["vendor"]}}}
+                                  {:base-dir root})
+
+        env
+        {:security-policy snapshot}]
+
+    (try (is (false? (:jail-enabled snapshot)))
+         (is (true? (:disabled? (:process-jail snapshot))))
+         (is (str/includes? (pj/deny-refusal env "file-read" (str root "/.env"))
+                            "jail.filesystem.deny_read"))
+         (is (some? (pj/deny-refusal env "file-read" (str root "/service/.env"))))
+         (is (some? (pj/deny-refusal env "file-write" (str root "/vendor/lib.js"))))
+         (is (nil? (pj/deny-refusal env "file-read" (str root "/README.md"))))
+         (finally (io/delete-file (io/file root) true)))))
+
 (deftest configured-deny-read-reaches-every-child
   ;; #263: `cat` is not the only reader. The rule has to reach the shell child,
   ;; the language REPL and the Python worker, or it protects only the built-in

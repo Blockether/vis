@@ -539,7 +539,13 @@
 (defn process-jail-config
   "Derive process-jail policy from schema-validated configuration.
    A disabled jail admits the full applicable workspace catalog; an enabled jail
-   admits only named roots. The session-state root is always included."
+   admits only named roots. The session-state root is always included.
+
+   `jail.enabled` is the OS confinement toggle, not a switch for the rest of the
+   block: `jail.filesystem` deny rules are configuration of their own and stay in
+   the policy while the jail is off, where the host file tools keep refusing every
+   path they cover (`sandbox.jail/deny-refusal`). Only the kernel-enforced half —
+   child processes and sandbox Python — goes away with the toggle."
   ([config] (process-jail-config config (mount-env)))
   ([config env]
    (let [jail
@@ -567,14 +573,6 @@
          deny-write
          (deny-rules (get-in jail ["filesystem" "deny_write"]))]
 
-     (when (and (not (true? (get jail "enabled"))) (or (seq deny-read) (seq deny-write)))
-       (throw (ex-info "jail.filesystem deny rules require jail.enabled: true"
-                       {:type :vis/invalid-config
-                        :problems
-                        [(str "jail.filesystem.deny_read and deny_write are enforced by the OS"
-                              " sandbox. While jail.enabled is false, Python file IO and child"
-                              " processes still read those paths, so Vis refuses a deny rule it"
-                              " cannot enforce: enable the jail or remove the rule.")]})))
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
         :inherit-host-env? (= "inherit" (get jail "environment"))

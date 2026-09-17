@@ -318,8 +318,9 @@ and through the gateway's egress proxy. Unsupported hosts return an error.
 Declare directories in `workspace.filesystem`, then allow them by id in
 `jail.filesystem.allow`. The jail does not expose unlisted roots. To keep specific
 files out of every grant, list patterns under `jail.filesystem.deny_read` or
-`jail.filesystem.deny_write`; those rules require `jail.enabled: true` and are
-described in [Deny specific files](jail.md#deny-specific-files).
+`jail.filesystem.deny_write`. Vis' own file tools honor those rules whether or
+not the jail is on; child processes are kept out only with `jail.enabled: true`.
+See [Deny specific files](jail.md#deny-specific-files).
 
 | Key | Meaning |
 |---|---|

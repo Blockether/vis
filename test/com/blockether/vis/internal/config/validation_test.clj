@@ -518,15 +518,20 @@
                    ;; policy snapshot; config validation must not guess a path here.
                    (expect (= [".env" "**/.env" "~/secrets/prod.env"] (:deny-read policy)))
                    (expect (= ["vendor"] (:deny-write policy)))))
-             (it "refuses a deny rule that nothing would enforce"
-                 (let [error (try (config-validation/process-jail-config
-                                    (-> full-config
-                                        (assoc-in ["jail" "enabled"] false)
-                                        (assoc-in ["jail" "filesystem" "deny_read"] [".env"])))
-                                  nil
-                                  (catch clojure.lang.ExceptionInfo e e))]
-                   ;; Without the OS sandbox the rule would cover `cat` and nothing else, so
-                   ;; Vis fails closed rather than implying a boundary it cannot hold.
-                   (expect (some? error))
-                   (expect (= :vis/invalid-config (:type (ex-data error))))
-                   (expect (str/includes? (ex-message error) "jail.enabled: true")))))
+             (it "keeps deny rules while jail.enabled is false"
+                 ;; `jail.enabled` toggles the OS sandbox; the #263 deny rules are configuration of
+                 ;; their own. The pair is valid, and the policy keeps every rule so the host file
+                 ;; tools that match them live still refuse.
+                 (let [config
+                       (-> full-config
+                           (assoc-in ["jail" "enabled"] false)
+                           (assoc-in ["jail" "filesystem" "deny_read"] [".env"])
+                           (assoc-in ["jail" "filesystem" "deny_write"] ["vendor"]))
+
+                       policy
+                       (config-validation/process-jail-config config)]
+
+                   (expect (config-validation/valid? config))
+                   (expect (true? (:disabled? policy)))
+                   (expect (= [".env"] (:deny-read policy)))
+                   (expect (= ["vendor"] (:deny-write policy))))))
