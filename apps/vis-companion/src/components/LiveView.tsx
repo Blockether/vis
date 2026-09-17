@@ -683,22 +683,13 @@ function TableRows({
       if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
     return counts;
   }, [rows]);
-  const selectedGroups = useMemo(
-    () =>
-      new Set(
-        rows.filter((row) => selected.has(row.id) && row.branch).map((row) => row.branch as string),
-      ),
-    [rows, selected],
-  );
-  const selectedGroupKey = JSON.stringify([...selectedGroups].sort());
-  const [openGroups, setOpenGroups] = useState<Set<string>>(() => selectedGroups);
-  useEffect(() => {
-    if (selectedGroups.size === 0) return;
-    setOpenGroups((was) => {
-      if ([...selectedGroups].every((group) => was.has(group))) return was;
-      return new Set([...was, ...selectedGroups]);
-    });
-  }, [selectedGroupKey]);
+  /**
+   * A branch stays SHUT until the reader opens it. Opening the branches that held
+   * the live selection sounded helpful and was not: `watch` selects every running
+   * job, so a matrix in flight stood open on the first paint and sprang back open
+   * on the next poll, seconds after the reader had closed it.
+   */
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
 
   const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
   const seen = new Set<string>();

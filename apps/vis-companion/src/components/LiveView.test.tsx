@@ -251,9 +251,8 @@ describe('selecting a table row', () => {
     fireEvent.click(spelled[spelled.length - 1]);
     expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
   });
-  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: matrix jobs repeated
-  // their whole parent name as flat peers, making the run hard to scan on a phone.
-  it('nests matrix jobs under a collapsible parent', () => {
+  /** One matrix parent with two variants, beside a job that stands alone. */
+  const matrixView = (selectedIds: string[]): LiveView => {
     const view = selectableView();
     const hosts = view.nodes
       .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
@@ -274,18 +273,43 @@ describe('selecting a table row', () => {
       },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
     ];
-    hosts.selected_ids = ['android'];
-    paint({ view, onSelect: vi.fn() });
+    hosts.selected_ids = selectedIds;
+    return view;
+  };
+
+  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: matrix jobs repeated
+  // their whole parent name as flat peers, making the run hard to scan on a phone.
+  it('nests matrix jobs under a parent that starts collapsed', () => {
+    paint({ view: matrixView(['android']), onSelect: vi.fn() });
 
     const parent = screen.getByRole('button', { name: 'Release apps' });
-    expect(parent.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeTruthy();
-    expect(screen.getByText('Android')).toBeTruthy();
-
-    fireEvent.click(parent);
     expect(parent.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeTruthy();
+
+    fireEvent.click(parent);
+    expect(parent.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeTruthy();
+    expect(screen.getByText('Android')).toBeTruthy();
+  });
+  // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: every poll re-sent the
+  // running jobs as the selection, which sprang open the branch the reader had closed.
+  it('keeps a branch closed until the reader opens it, poll after poll', () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(
+      <LiveViewPanel view={matrixView(['android'])} onSelect={onSelect} />,
+    );
+
+    const parent = screen.getByRole('button', { name: 'Release apps' });
+    fireEvent.click(parent);
+    expect(parent.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(parent);
+
+    rerender(<LiveViewPanel view={matrixView(['ios'])} onSelect={onSelect} />);
+    expect(screen.getByRole('button', { name: 'Release apps' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
   // tinted its first cell, so the table looked like a cell picker instead of a row picker.
