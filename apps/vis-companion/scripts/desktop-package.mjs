@@ -80,6 +80,11 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
     '1280',
     '--height',
     '800',
+    // macOS signs the app with the hardened runtime, which denies capture unless the
+    // build carries the matching entitlement. These flags make Pake write an
+    // entitlements.plist for the microphone and the camera; other hosts ignore them.
+    '--microphone',
+    '--camera',
     '--targets',
     target.targets,
     ...(target.targets === 'universal' ? ['--multi-arch'] : []),

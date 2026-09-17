@@ -193,6 +193,15 @@ Alerts arrive while the desktop app is open. It cannot receive push, so nothing 
 you quit. Keep the Companion app on your phone, or a browser tab, connected to that machine to
 hear about a session while the desktop app is closed.
 
+### Microphone and camera on the desktop
+
+Dictation uses the microphone and pairing by QR code uses the camera, so macOS asks for permission
+the first time you use each one. Allow it once and the desktop app keeps that access. To change it
+later, open System Settings, under Privacy & Security, and look at Microphone and Camera.
+
+Earlier desktop builds could not ask at all and refused dictation with a message about the request
+not being allowed by the user agent. Update to the current release if you still see that.
+
 ### macOS and Linux launcher
 
 Open the desktop Companion for your selected release track:

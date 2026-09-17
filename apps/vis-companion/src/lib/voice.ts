@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { desktopInvoke } from './desktop';
 import type { VoiceProgress } from './types';
 
 interface AndroidAudioRoutePlugin {
@@ -171,6 +172,25 @@ function claimAudioSession(type: AudioSessionType): boolean {
   }
 }
 
+/**
+ * Actionable copy for a refused microphone. WebKit reports a blocked capture as "The request is
+ * not allowed by the user agent", which says nothing about where the permission lives, and in the
+ * desktop app it lives in macOS privacy settings rather than in a prompt the page can raise.
+ */
+function microphoneAccessError(cause: unknown): Error {
+  const name = (cause as { name?: unknown } | null | undefined)?.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    const where = desktopInvoke()
+      ? 'Allow Vis in System Settings, under Privacy & Security.'
+      : 'Allow microphone access for this site and try again.';
+    return new Error(`Microphone permission denied. ${where}`, { cause });
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    return new Error('No microphone is available on this device', { cause });
+  }
+  return cause instanceof Error ? cause : new Error(String(cause));
+}
+
 export async function startWavRecording(options: WavRecordingOptions = {}): Promise<WavRecording> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone recording is unavailable on this device');
@@ -206,7 +226,7 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
   } catch (cause) {
     await releaseAndroidRoute();
     releaseAudioSession();
-    throw cause;
+    throw microphoneAccessError(cause);
   }
   const context = new AudioContext({ latencyHint: 'interactive' });
   const source = context.createMediaStreamSource(stream);

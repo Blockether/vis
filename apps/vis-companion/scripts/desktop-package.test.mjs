@@ -82,6 +82,10 @@ describe('desktop package', () => {
     expect(args[0]).toBe('/tmp/dist');
     expect(args).toContain('--use-local-file');
     expect(args).toContain('--multi-arch');
+    // Without these the hardened-runtime app ships empty entitlements, so macOS refuses
+    // the microphone as "The request is not allowed by the user agent" and never prompts.
+    expect(args).toContain('--microphone');
+    expect(args).toContain('--camera');
     expect(args).not.toContain('--hide-title-bar');
     expect(args.slice(args.indexOf('--app-version'), args.indexOf('--app-version') + 2)).toEqual([
       '--app-version',
