@@ -1044,6 +1044,16 @@ describe('Modal and DialogFrame as a phone sheet', () => {
     expect(source).toContain("size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'");
   });
 
+  // Regression, user report (paraphrased: an opened live run should fill the space of the
+  // session it belongs to rather than come up as a tiny window): the desktop question box —
+  // 36rem by 38rem — was applied inside the session pane the layer already stands in. The
+  // geometry itself is pinned in `SessionScreen.liveView.stories.tsx`.
+  it('lets a dialog that stands in one session fill that pane', () => {
+    expect(source).toContain("const fillsPane = within === 'session' && !stopsAtContent;");
+    expect(source).toContain("? 'sm:h-full'");
+    expect(source).toContain("const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;");
+  });
+
   it('slides the frame in from below by its own height, and only tips in on desktop', () => {
     const html = renderToStaticMarkup(<DialogFrame title="Manage projects">body</DialogFrame>);
     // Full-bleed on the phone, it owns BOTH safe areas itself.

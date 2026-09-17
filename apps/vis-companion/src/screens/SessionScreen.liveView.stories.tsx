@@ -65,8 +65,11 @@ async function expectRunBox(panel: Element, column: HTMLElement) {
   await expect(style.borderTopWidth).toBe('1px');
   await expect(style.borderBottomWidth).toBe('1px');
   const box = panel.getBoundingClientRect();
-  await expect(box.left).toBeGreaterThanOrEqual(left);
-  await expect(box.right).toBeLessThanOrEqual(right);
+  // `clientWidth` is a rounded integer, so a column of fractional width — a dialog filling
+  // two thirds of a desk — puts its true content edge up to a pixel from the one measured
+  // here. Sub-pixel slack, not the multi-pixel overhang this guards.
+  await expect(box.left).toBeGreaterThanOrEqual(left - 1);
+  await expect(box.right).toBeLessThanOrEqual(right + 1);
   for (const element of panel.querySelectorAll(':scope > ul > li, hr, table')) {
     const row = element.getBoundingClientRect();
     await expect(row.left).toBeCloseTo(box.left + 1, 0);
@@ -86,6 +89,16 @@ async function expectRunBox(panel: Element, column: HTMLElement) {
   await expect(parseFloat(getComputedStyle(header).paddingLeft)).toBeGreaterThanOrEqual(12);
   await expect(parseFloat(getComputedStyle(header).paddingRight)).toBeGreaterThanOrEqual(12);
   await expect(column.scrollWidth).toBe(column.clientWidth);
+}
+
+// Regression, user report (paraphrased: an opened run should fill the session it belongs to
+// instead of standing as a small window in the middle of it): the dialog takes the whole pane
+// it is portalled into, inset only by the scrim's own margin.
+async function expectFillsPane(dialog: Element) {
+  const box = dialog.parentElement!.getBoundingClientRect();
+  const layer = dialog.parentElement!.parentElement!.getBoundingClientRect();
+  await expect(box.width).toBeGreaterThan(layer.width - 40);
+  await expect(box.height).toBeGreaterThan(layer.height - 40);
 }
 
 const meta = {
@@ -114,6 +127,7 @@ const meta = {
       const page = within(document.body);
       const expanded = page.getAllByText(view.title).at(-1)!.closest('section')!;
       await expectRunBox(expanded, expanded.parentElement!);
+      await expectFillsPane(page.getByRole('dialog', { name: view.title }));
       await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
       await expect(title).toBeVisible();
     }
@@ -204,6 +218,7 @@ export const SplitPane: Story = {
     await expect(scrim.top).toBeGreaterThanOrEqual(paneBox.top);
     await expect(scrim.bottom).toBeLessThanOrEqual(paneBox.bottom);
     await expect(dialog.getBoundingClientRect().left).toBeGreaterThanOrEqual(paneBox.left);
+    await expectFillsPane(dialog);
     await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
   },
 };

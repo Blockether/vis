@@ -1240,8 +1240,9 @@ export function LiveViewPanel({
  * click papered the session list, the transcript and the composer with a single
  * view. It opens in the app's ONE dialog instead (`Modal` + `DialogFrame`), and that
  * dialog belongs to the session it came from (`within="session"`): the whole glass on
- * a phone, a box over the chat pane on a desk, with the list beside it neither dimmed
- * nor covered.
+ * a phone, the whole chat pane on a desk, with the list beside it neither dimmed nor
+ * covered. It FILLS that pane: held to the desktop question box it opened as a small
+ * window in the middle of the session it reports on.
  *
  * The run keeps its own border in here, so the box the transcript shows is the box
  * the dialog shows.

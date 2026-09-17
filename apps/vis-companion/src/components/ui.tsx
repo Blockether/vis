@@ -2173,7 +2173,8 @@ export function Modal({
    *
    * `session` is a dialog about ONE session, and it stands in that session's pane
    * instead. On a desk that is a list and a transcript side by side, an opened run
-   * has no business dimming the list beside it.
+   * has no business dimming the list beside it. Inside that pane it takes every pixel:
+   * the pane is already the bound the desktop box exists to impose.
    */
   within?: 'app' | 'session';
   children: ReactNode;
@@ -2185,9 +2186,18 @@ export function Modal({
   // last row was blank panel. A sheet that stops at its content rises from the bottom
   // edge instead, and its ceiling is the glass minus the notch it never stands under.
   const stopsAtContent = size !== 'full';
+  // A DIALOG THAT BELONGS TO ONE SESSION TAKES THAT SESSION WHOLE. The desktop box keeps a
+  // question from papering the window, but a session layer is already bounded by the pane it
+  // stands in, so the same cap left an opened run as a small window in the middle of a pane it
+  // could have had. Reported: opening a live run should fill the session it belongs to.
+  const fillsPane = within === 'session' && !stopsAtContent;
   const boxHeight = stopsAtContent
     ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
-    : DIALOG_DESKTOP_HEIGHT;
+    : fillsPane
+      ? 'sm:h-full'
+      : DIALOG_DESKTOP_HEIGHT;
+  const desktopWidth = size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl';
+  const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
 
   return createPortal(
     <div
@@ -2218,16 +2228,18 @@ export function Modal({
           `wide` is the other, and it is a LAYOUT rather than a mood: settings stands
           two columns wide, and 36rem split in half is two columns of nothing. It stops
           at its content on the phone as well, where a short fleet left the glass below
-          the last row as blank paper.
+           the last row as blank paper.
+
+           A dialog that stands in ONE SESSION is the third, and it is a PLACE rather than
+           a size: its layer is the session pane, not the window, so the box takes all of
+           it. The question rectangle inside a pane is a small window in the middle of one.
 
           The scrim is settings' own — ink at 85% under a 2px blur, faded
           in rather than snapped on. That dialog was hand-rolled beside this one and
           was the better looking of the two, so its glass moved IN HERE and the copy
           moved out; `sm:max-w-xl` is its width, for the same reason. */}
       <div
-        className={`flex w-full flex-col ${
-          size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'
-        } ${boxHeight}`}
+        className={`flex w-full flex-col ${boxWidth} ${boxHeight}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
