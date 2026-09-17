@@ -293,6 +293,67 @@ export const ThinkingAndCode: Story = {
   },
 };
 
+/**
+ * User report (screenshot): a numbered list inside a THINKING band hung further left than
+ * the bulleted list beside it. Reasoning runs through the same markdown renderer as an
+ * answer, so both lists hang off one marker column here too — in the band's italic face,
+ * and with the loose items reasoning normalization produces.
+ */
+export const ThinkingLists: Story = {
+  args: {
+    ...ThinkingAndCode.args,
+    iterations: [
+      {
+        ...STORY_THINKING_AND_CODE[0],
+        thinking: [
+          'So I could:',
+          '1. Start a command that streams output.',
+          '2. Poll its logs in a bounded loop.',
+          '3. Show the live progress.',
+          'Then:',
+          '- Read the last lines.',
+          '- Stop the command before answering.',
+        ].join('\n'),
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole('button', { name: /^THINKING/ }));
+    const intro = canvas.getByText('So I could:');
+    const band = intro.closest('section')!;
+    const lists = [...band.querySelectorAll('ol[role="list"], ul[role="list"]')];
+    await expect(lists).toHaveLength(2);
+
+    // One `ch` in the band's own italic face: the unit the marker columns are written in.
+    const probe = document.createElement('span');
+    probe.textContent = '0'.repeat(100);
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+    lists[0].appendChild(probe);
+    const ch = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+
+    // A marker sits on the left edge of its item's padding box; the list box itself keeps
+    // the reasoning text edge.
+    const markerEdge = (list: Element) =>
+      list.getBoundingClientRect().left + parseFloat(getComputedStyle(list).paddingLeft);
+    await expect(Math.abs(markerEdge(lists[0]) - markerEdge(lists[1]))).toBeLessThan(0.5);
+    await expect(markerEdge(lists[0]) - intro.getBoundingClientRect().left).toBeCloseTo(2 * ch, 0);
+
+    for (const list of lists) {
+      const item = list.querySelector('li')!;
+      await expect(getComputedStyle(item).listStyleType).toBe('none');
+      await expect(getComputedStyle(item, '::before').position).toBe('absolute');
+      // Reasoning normalization spaces the items out, so each one carries a paragraph:
+      // the marker still shares that paragraph's first line.
+      await expect(item.querySelector('p')!.getBoundingClientRect().top).toBeCloseTo(
+        item.getBoundingClientRect().top,
+        0,
+      );
+    }
+  },
+};
+
 /** The Thinking chevron stays beside its label, not at the far edge of the transcript. */
 export const ThinkingDisclosure: Story = {
   args: {

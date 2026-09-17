@@ -381,6 +381,35 @@ describe('Markdown list columns', () => {
     expect(ordered).toHaveAttribute('start', '8');
     expect(ordered).toHaveClass('markdown-list-wide');
   });
+
+  // User report (screenshot): the same trace inside a THINKING band still drew its numbered
+  // lines further left than its bulleted ones. Reasoning normalization splits a run of
+  // sentences into separate blocks, so a numbered line can reach the renderer on its own.
+  it('keeps a thinking trace on those columns', () => {
+    const trace = [
+      'So I could:',
+      '1. Start a command that streams output.',
+      '2. Poll its logs in a bounded loop.',
+      '3. Show the live progress.',
+      'Then:',
+      '- Read the last lines.',
+      '- Stop the command.',
+    ].join('\n');
+    const view = render(<ThinkingBand>{trace}</ThinkingBand>);
+    const ordered = [...view.container.querySelectorAll('ol')];
+    const bulleted = [...view.container.querySelectorAll('ul')];
+    expect(ordered.length).toBeGreaterThan(0);
+    expect(bulleted.length).toBeGreaterThan(0);
+    for (const list of [...ordered, ...bulleted]) {
+      expect(list).toHaveClass('markdown-list', 'pl-[2ch]');
+      expect(list).toHaveAttribute('role', 'list');
+    }
+    // A number left inside a paragraph is the report itself: it paints on the prose edge
+    // instead of the marker column.
+    for (const paragraph of view.container.querySelectorAll('p')) {
+      expect(paragraph.textContent ?? '').not.toMatch(/^\s*\d+\.\s/);
+    }
+  });
 });
 
 // User report: a Markdown attachment preview looked like a link but tapping it
