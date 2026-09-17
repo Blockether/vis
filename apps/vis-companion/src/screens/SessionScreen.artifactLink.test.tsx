@@ -48,7 +48,7 @@ describe('an attachment link in an answer', () => {
       },
     });
 
-    await userEvent.click(await screen.findByRole('link', { name: 'Zobacz podgląd mobilny' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Zobacz podgląd mobilny' }));
 
     expect(
       screen.getByRole('region', { name: 'Artifacts produced by the model' }),
@@ -92,7 +92,7 @@ describe('an attachment link in an answer', () => {
           }),
       },
     });
-    await userEvent.click(await screen.findByRole('link', { name: 'Report' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Report' }));
     await waitFor(() => {
       const preview = screen.getByRole('dialog', { name: 'report.md' });
       expect(within(preview).getByText('Available after the host file moves.')).toBeInTheDocument();

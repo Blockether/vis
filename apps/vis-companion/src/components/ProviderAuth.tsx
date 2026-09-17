@@ -9,7 +9,8 @@ import type {
   RouterProvider,
 } from '../lib/types';
 import { ProviderLimitReset } from './ProviderLimitReset';
-import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
+import { clientAuthFlow, watchAuth, type AuthWatch } from '../lib/oauth';
+import { openExternalUrl } from '../lib/desktop';
 import {
   Banner,
   Button,
@@ -66,7 +67,7 @@ export function preferredModelFirst(models: string[], preferred?: string | null)
 
 /** Request an external browser window; native hosts own their platform URL handling. */
 export function openProviderUrl(url: string): void {
-  openAuthUrl(url);
+  openExternalUrl(url);
 }
 /**
  * THE VERDICT AS A SHAPE. Four states used to leave here as one dot in four inks

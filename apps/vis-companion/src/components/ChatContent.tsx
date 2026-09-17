@@ -555,18 +555,19 @@ export const Markdown = memo(function Markdown({
               if (!onOpenAttachment) {
                 return <span className={MARKDOWN_LINK}>{label}</span>;
               }
+              // An artifact opens a surface INSIDE the app, so this is a button wearing the ink
+              // of a link. As an anchor it was dead in the desktop window: that window reads
+              // every anchor click through a capture listener of its own, hands the scheme it
+              // does not know to the shell, which refuses it, and stops the event before React.
               return (
-                <a
-                  href={href}
+                <button
+                  type="button"
                   title={title}
-                  className={MARKDOWN_LINK}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpenAttachment(attachmentId);
-                  }}
+                  className={`${MARKDOWN_LINK} inline text-left`}
+                  onClick={() => onOpenAttachment(attachmentId)}
                 >
                   {label}
-                </a>
+                </button>
               );
             }
             if (!href) return <span>{label}</span>;

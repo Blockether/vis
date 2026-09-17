@@ -435,8 +435,9 @@ describe('Markdown attachment links', () => {
       />,
     );
 
-    const preview = view.getByRole('link', { name: 'Open preview' });
-    expect(preview.getAttribute('target')).toBeNull();
+    // A BUTTON: as an anchor, the desktop window's click capture took the click first.
+    const preview = view.getByRole('button', { name: 'Open preview' });
+    expect(view.queryByRole('link', { name: 'Open preview' })).toBeNull();
     fireEvent.click(preview);
     expect(opened).toHaveBeenCalledOnce();
     expect(opened).toHaveBeenCalledWith('8e3a587d-232c-497d-a290-7d16cfcf0e02');

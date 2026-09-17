@@ -7,25 +7,7 @@
 import type { AuthVerdict, SignInFlow } from './types';
 import { Capacitor } from '@capacitor/core';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
-/**
- * The desktop app is this same bundle inside a Pake (Tauri) window, where `window.open` is
- * not a browser: Pake replaces it, recognizes an authorization URL and navigates the CURRENT
- * window, so a provider's sign-in page takes over Vis. Pake grants the page `shell:allow-open`
- * — the channel its own external links use — and that one reaches the system browser.
- */
-type ShellInvoke = (command: string, payload: { path: string }) => Promise<unknown>;
-type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: ShellInvoke } } };
-function desktopShell(): ShellInvoke | undefined {
-  if (typeof window === 'undefined') return;
-  const invoke = (window as DesktopHost).__TAURI__?.core?.invoke;
-  return typeof invoke === 'function' ? invoke : undefined;
-}
-export const openAuthUrl = (url: string): void => {
-  const shell = desktopShell();
-  // A refused open leaves the flow on screen with its instructions and manual return.
-  if (shell) void shell('plugin:shell|open', { path: url }).catch(() => {});
-  else window.open(url, '_blank', 'noopener,noreferrer');
-};
+import { desktopShell, openExternalUrl } from './desktop';
 /** A browser tab claimed inside the user's tap, navigated once the gateway has issued the URL. */
 export interface AuthTab {
   navigate(url: string): void;
@@ -56,7 +38,7 @@ export function reserveAuthTab(): AuthTab | undefined {
       try {
         tab.location.href = url;
       } catch {
-        openAuthUrl(url);
+        openExternalUrl(url);
       }
     },
     close: () => {
@@ -257,7 +239,7 @@ export function watchAuth(
       void local
         .reopen({ flowId: flow.flow_id })
         .catch(() => fail('Cannot reopen sign-in. Start sign-in again.'));
-    else openAuthUrl(url);
+    else openExternalUrl(url);
   };
   const start = async () => {
     try {
@@ -308,7 +290,7 @@ export function watchAuth(
       }
       if (url) {
         if (tab) tab.navigate(url);
-        else openAuthUrl(url);
+        else openExternalUrl(url);
       } else tab?.close();
       schedule();
     } catch {

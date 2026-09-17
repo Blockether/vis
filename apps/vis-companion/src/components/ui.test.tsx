@@ -2315,9 +2315,14 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
 // it is a class list, so these screens may not spell one out again.
 describe('every screen uses the second vocabulary too', () => {
   it('leaves no hand-rolled button in the transcript, the sheet, the router, the form', () => {
-    for (const source of [chatSource, humanInputSource, providerAuthSource, routerSource]) {
+    for (const source of [humanInputSource, providerAuthSource, routerSource]) {
       expect(source).not.toContain('<button');
     }
+    // The transcript spells out exactly ONE, and it is prose rather than a control the
+    // vocabulary owns: an `attachment://` link opens a surface inside this app, and the
+    // desktop window claims every anchor click before React is reached, so the thing that
+    // opens an artifact has to be a button wearing the ink of a link.
+    expect((chatSource.match(/<button/g) ?? []).length).toBe(1);
     // The transcript's `Copy` chips and its three expanders are the shared ones.
     expect(chatSource).toContain('<CopyChip');
     expect(chatSource).toContain('<Disclosure');
