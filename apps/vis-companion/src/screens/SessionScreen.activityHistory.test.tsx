@@ -46,13 +46,13 @@ it.each([false, true])('loads grouped history without bulk controls (failure: %s
       }),
     },
   });
-  fireEvent.click(await screen.findByRole('button', { name: 'Expand Activity' }));
+  const expand = await screen.findByRole('button', { name: 'Expand Activity' });
   expect(activityPage).not.toHaveBeenCalled();
+  fireEvent.click(expand);
   expect(screen.queryByRole('searchbox', { name: 'Search all operations' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Export all activity' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: /Read ×6/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
+  expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
   await waitFor(() =>
     expect(activityPage).toHaveBeenCalledExactlyOnceWith(
       expect.any(String),
@@ -64,12 +64,13 @@ it.each([false, true])('loads grouped history without bulk controls (failure: %s
   );
   if (fails) {
     expect(await screen.findByRole('alert')).toHaveTextContent('Later history unavailable');
+    fireEvent.click(screen.getByRole('button', { name: /Read ×6/ }));
     expect(screen.getByText('review-1-1.clj')).toBeVisible();
     expect(screen.getByText('review-2-1.clj')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Reload operations' })).toBeVisible();
   } else {
+    fireEvent.click(await screen.findByRole('button', { name: /Read ×7/ }));
     expect(await screen.findByText('review-3-3.clj')).toBeVisible();
-    expect(screen.queryByText('review-1-1.clj')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
+    expect(screen.getByText('review-1-1.clj')).toBeVisible();
   }
 });

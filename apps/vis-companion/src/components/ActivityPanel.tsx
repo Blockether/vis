@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
 import { BandLabel, BandTally, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
@@ -1157,87 +1157,93 @@ function operationCount(activity: ActivityProjection): number {
   );
 }
 
-/** One bounded page per source; continuation belongs at the list's edges, not in a toolbar. */
-function ActivityHistoryWindow({
+/** One source, read whole: the band holds every retained operation, never a page of them. */
+function ActivityHistoryThread({
   activities,
   historyKey,
+  isOpen,
 }: {
   activities: ActivityProjection[];
   historyKey: string;
+  isOpen: boolean;
 }) {
   const source = useContext(ActivityHistoryContext);
   const [loaded, setLoaded] = useState<Array<ActivityProjection | undefined>>([]);
-  const [later, setLater] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const pending = useRef<AbortController | null>(null);
-  // Invalidate stale pages and requests, not the mounted operation tree (#233).
-  const [seenHistoryKey, setSeenHistoryKey] = useState(historyKey);
-  if (seenHistoryKey !== historyKey) {
-    setSeenHistoryKey(historyKey);
+  const [attempt, setAttempt] = useState(0);
+  // A retained history only ever grows, so a live revision re-reads the tail rather than
+  // blanking the operations already on screen; another source does invalidate them (#233).
+  const sourceKey = activities.map((activity) => activity.history?.id ?? 'inline').join(':');
+  const [seenSourceKey, setSeenSourceKey] = useState(sourceKey);
+  if (seenSourceKey !== sourceKey) {
+    setSeenSourceKey(sourceKey);
     setLoaded([]);
-    setLater(false);
     setBusy(false);
     setError('');
   }
-  useEffect(() => () => pending.current?.abort(), [historyKey]);
-  const pages = activities.map((activity, index) => {
-    if (activity.history) return loaded[index] ?? activity;
-    return later ? { ...activity, rows: [], omitted: { rows: 0, by_classification: {} } } : activity;
-  });
+  const pages = activities.map((activity, index) => loaded[index] ?? activity);
   const page = mergeActivity(pages);
-  const hasMore = pages.some((page) => page.history?.next_after != null);
-  const load = async (next: boolean) => {
-    if (!source) return;
-    pending.current?.abort();
+  // What the source still holds back, and what this screen is still short of.
+  const incomplete = activities.some(
+    (activity) =>
+      activity.history && (activity.history.after > 0 || activity.history.next_after !== null),
+  );
+  const pending = pages.some((page) => page.history?.next_after != null);
+  const read = async (index: number, signal: AbortSignal) => {
+    const start = activities[index].history;
+    if (!source || !start || (start.after === 0 && start.next_after === null)) return;
+    // A receipt that already starts at the head keeps its rows; any other window is re-read.
+    let rows: ActivityProjection['rows'] = start.after === 0 ? activities[index].rows : [];
+    let after = start.after === 0 ? start.next_after : 0;
+    let history = start;
+    while (after !== null) {
+      const result = await source.load(start.id, after, '', signal);
+      if (signal.aborted) return;
+      const next = result.history;
+      if (
+        next?.id !== start.id ||
+        next.after !== after ||
+        (next.next_after !== null && next.next_after <= after)
+      ) {
+        throw new Error('Activity changed. Reload operations to view its latest history.');
+      }
+      rows = [...rows, ...result.rows];
+      history = next;
+      after = next.next_after;
+    }
+    // One commit for the whole walk: a live re-read must never shorten what is on screen.
+    const complete = { ...activities[index], rows, history: { ...history, after: 0 } };
+    setLoaded((current) => {
+      const merged = [...current];
+      merged[index] = complete;
+      return merged;
+    });
+  };
+  useEffect(() => {
+    if (!isOpen || !source || !incomplete) return;
     const controller = new AbortController();
-    pending.current = controller;
     setBusy(true);
     setError('');
-    try {
-      const results = await Promise.all(
-        pages.map(async (page) => {
-          const history = page.history;
-          if (!history) return undefined;
-          const after = next ? history.next_after : 0;
-          if (after === null) return { ...page, rows: [] };
-          const result = await source.load(history.id, after, '', controller.signal);
-          if (
-            result.history?.id !== history.id ||
-            result.history.after !== after ||
-            (after > 0 && result.history.revision !== history.revision) ||
-            (result.history.next_after !== null && result.history.next_after <= after)
-          ) {
-            throw new Error('Activity changed. Reload operations to view its latest history.');
-          }
-          return result;
-        }),
-      );
-      if (controller.signal.aborted) return;
-      setLoaded(results);
-      setLater(next);
-    } catch (cause) {
-      if (!controller.signal.aborted)
-        setError(cause instanceof Error ? cause.message : 'Activity could not be loaded.');
-    } finally {
-      if (pending.current === controller) {
-        pending.current = null;
-        setBusy(false);
+    void (async () => {
+      try {
+        await Promise.all(activities.map((_, index) => read(index, controller.signal)));
+      } catch (cause) {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : 'Activity could not be loaded.');
+      } finally {
+        if (!controller.signal.aborted) setBusy(false);
       }
-    }
-  };
+    })();
+    return () => controller.abort();
+  }, [attempt, historyKey, incomplete, isOpen, source]);
   return (
     <div className="min-w-0" aria-busy={busy}>
-      {later && source && !error && (
-        <LoadMore label="Show earlier operations" disabled={busy} onClick={() => void load(false)}>
-          Show earlier operations
-        </LoadMore>
-      )}
       <ActivityThread activity={page} />
-      {page.rows.length === 0 && (
+      {page.rows.length === 0 && !busy && (
         <p className="pb-2 text-ui text-dialog-hint">No operations available.</p>
       )}
-      {busy && (
+      {busy && pending && (
         <p role="status" className="pb-2 text-ui text-dialog-hint">
           Loading operations…
         </p>
@@ -1247,19 +1253,14 @@ function ActivityHistoryWindow({
           <p role="alert" className="pb-2 text-ui text-err-ink">
             {error}
           </p>
-          <LoadMore label="Reload operations" onClick={() => void load(false)}>
+          <LoadMore label="Reload operations" onClick={() => setAttempt((count) => count + 1)}>
             Reload operations
           </LoadMore>
         </>
       )}
-      {hasMore &&
-        (source ? (
-          <LoadMore label="Show more operations" disabled={busy} onClick={() => void load(true)}>
-            Show more operations
-          </LoadMore>
-        ) : (
-          <p className="pb-2 text-ui text-dialog-hint">Reconnect to load more operations.</p>
-        ))}
+      {incomplete && !source && (
+        <p className="pb-2 text-ui text-dialog-hint">Reconnect to load every operation.</p>
+      )}
     </div>
   );
 }
@@ -1344,7 +1345,7 @@ export function ActivityPanel({
       )}
       <div hidden={!open}>
         {hasHistory ? (
-          <ActivityHistoryWindow historyKey={historyKey} activities={activities} />
+          <ActivityHistoryThread historyKey={historyKey} activities={activities} isOpen={open} />
         ) : (
           <ActivityThread activity={activity} />
         )}

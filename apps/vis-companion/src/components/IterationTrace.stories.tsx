@@ -838,13 +838,9 @@ export const GroupedActivityHistories: Story = {
     toggle.focus();
     await userEvent.keyboard('{Enter}');
     await expect(canvas.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
-    await userEvent.click(canvas.getByRole('button', { name: /Read ×6/ }));
-    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(6);
-    await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
-    await expect(await canvas.findByText('review-3-3.clj')).toBeVisible();
-    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
-    await userEvent.click(canvas.getByRole('button', { name: 'Show earlier operations' }));
-    await canvas.findByRole('button', { name: /Read ×6/ });
+    await userEvent.click(await canvas.findByRole('button', { name: /Read ×7/ }));
+    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(7);
+    await expect(canvas.getByText('review-3-3.clj')).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   },

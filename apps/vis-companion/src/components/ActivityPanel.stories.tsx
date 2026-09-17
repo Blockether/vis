@@ -670,18 +670,11 @@ export const RetainedHistory: Story = {
     await expect(canvas.queryByRole('searchbox')).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Export all activity' })).toBeNull();
-    for (let i = 0; i < 4; i++) {
-      await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
-      await expect(await canvas.findByText(`Operation ${(i + 2) * 32}`)).toBeVisible();
-    }
-    await expect(canvas.queryByText('Operation 1')).toBeNull();
+    await expect(await canvas.findByText('Operation 160')).toBeVisible();
+    await expect(canvas.getByText('Operation 1')).toBeVisible();
     await expect(canvas.getByText('Operation 159')).toBeVisible();
     await expect(canvas.queryByRole('button', { name: 'Show more operations' })).toBeNull();
-    const earlier = canvas.getByRole('button', { name: 'Show earlier operations' });
-    earlier.focus();
-    await userEvent.keyboard('{Enter}');
-    await expect(await canvas.findByText('Operation 1')).toBeVisible();
-    await expect(canvas.queryByText('Operation 160')).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Show earlier operations' })).toBeNull();
   },
 };
 
@@ -695,7 +688,7 @@ export const RetainedHistoryOffline: Story = {
     await expect(canvas.getByRole('button', { name: 'Copy failed. Try again.' })).toBeEnabled();
     await user.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await expect(canvas.getByText('Operation 1')).toBeVisible();
-    await expect(canvas.getByText('Reconnect to load more operations.')).toBeVisible();
+    await expect(canvas.getByText('Reconnect to load every operation.')).toBeVisible();
     await expect(canvas.queryByRole('searchbox')).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Show more operations' })).toBeNull();
   },
@@ -719,7 +712,6 @@ export const RetainedHistoryUnavailable: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
     await expect(await canvas.findByRole('alert')).toHaveTextContent('Operations could not be loaded');
     await expect(canvas.getByText('Operation 1')).toBeVisible();
     await expect(canvas.getByRole('button', { name: 'Reload operations' })).toBeVisible();

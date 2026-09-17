@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// #212: complete durable history stays reachable through bounded visible pages.
+// #212: complete durable history stays reachable; the band reads it whole, never in pages.
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ActivityHistoryContext, ActivityPanel } from './ActivityPanel';
@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('copies all retained operations while collapsed without changing the visible page', async () => {
+it('copies all retained operations while collapsed, then opens the whole history', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
   const load = vi.fn(async (_id: string, after: number) => page(after));
@@ -37,8 +37,8 @@ it('copies all retained operations while collapsed without changing the visible 
     'false',
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  expect(await screen.findByText('Operation 160')).toBeVisible();
   expect(screen.getByText('Operation 1')).toBeVisible();
-  expect(screen.queryByText('Operation 160')).toBeNull();
 });
 
 it('keeps offline Copy available and explains how to retry incomplete history', async () => {
@@ -106,12 +106,12 @@ it('opens retained operations without a search or bulk-action toolbar', () => {
   expect(screen.queryByRole('searchbox')).toBeNull();
   expect(
     screen.queryByRole('button', {
-      name: /^(Search activity|First operations|Next operations|Copy all activity|Export all activity)$/,
+      name: /^(Search activity|First operations|Next operations|Show more operations|Show earlier operations|Copy all activity|Export all activity)$/,
     }),
   ).toBeNull();
 });
 
-it.each([false, true])('pages grouped histories without a toolbar (mixed: %s)', async (mixed) => {
+it.each([false, true])('reads grouped histories whole without a toolbar (mixed: %s)', async (mixed) => {
   const activities = ids.map((id) => groupPage(id));
   if (mixed) delete activities[1].history;
   const original = JSON.stringify(activities);
@@ -127,28 +127,18 @@ it.each([false, true])('pages grouped histories without a toolbar (mixed: %s)', 
   expect(screen.queryByRole('searchbox')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Export all activity' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Show earlier operations' })).toBeNull();
-  expect(screen.queryByRole('status')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: /Read ×6/ }));
-  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(6);
-  const more = screen.getByRole('button', { name: 'Show more operations' });
-  const chronology = screen.getByRole('list', { name: 'Operation groups' });
-  expect(chronology.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  fireEvent.click(more);
-  await screen.findByText('review-3-3.clj');
-  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
-  expect(screen.queryByText('review-1-1.clj')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Show earlier operations' })).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: /Read ×7/ }));
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(7);
+  expect(screen.getByText('review-1-1.clj')).toBeVisible();
+  expect(screen.getByText('review-3-3.clj')).toBeVisible();
+  expect(screen.queryByRole('status')).toBeNull();
   expect(source.load).toHaveBeenCalledExactlyOnceWith(ids[2], 2, '', expect.any(AbortSignal));
-  fireEvent.click(screen.getByRole('button', { name: 'Show earlier operations' }));
-  await screen.findByRole('button', { name: /Read ×6/ });
-  expect(source.load.mock.calls.slice(1).map(([id, after]) => [id, after])).toEqual(
-    activities.filter((activity) => activity.history).map((activity) => [activity.history!.id, 0]),
-  );
   expect(JSON.stringify(activities)).toBe(original);
 });
 
-it('keeps grouped pages and disclosures on a failed load, then retries', async () => {
+it('keeps grouped rows and disclosures on a failed read, then retries', async () => {
   const load = vi.fn(async (id, after, q) => groupPage(id, after, q));
   load.mockRejectedValueOnce(new Error('History unavailable'));
   render(
@@ -157,14 +147,13 @@ it('keeps grouped pages and disclosures on a failed load, then retries', async (
     </ActivityHistoryContext.Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  fireEvent.click(screen.getByRole('button', { name: /Read ×6/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('History unavailable');
+  fireEvent.click(screen.getByRole('button', { name: /Read ×6/ }));
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(6);
-  expect(screen.getByRole('button', { name: /Read ×6/ })).toHaveAttribute('aria-expanded', 'true');
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Reload operations' }));
   expect(await screen.findByText('review-3-3.clj')).toBeVisible();
   expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('button', { name: /Read ×7/ })).toHaveAttribute('aria-expanded', 'true');
 });
 
 it('keeps one band open and aborts stale grouped work when a live history settles', async () => {
@@ -186,9 +175,7 @@ it('keeps one band open and aborts stale grouped work when a live history settle
   const view = render(paint(activities));
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent('1 running');
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
-  expect(screen.getByRole('status')).toHaveTextContent('Loading operations');
-  expect(screen.getByRole('button', { name: 'Show more operations' })).toBeDisabled();
+  expect(await screen.findByRole('status')).toHaveTextContent('Loading operations');
   const settled = structuredClone(activities);
   settled[2].history!.revision = 2;
   settled[2].state = 'failed';
@@ -197,16 +184,17 @@ it('keeps one band open and aborts stale grouped work when a live history settle
   settled[2].rows[1].state = 'cancelled';
   view.rerender(paint(settled));
   expect(load.mock.calls[0][3].aborted).toBe(true);
+  expect(load).toHaveBeenCalledTimes(2);
   complete(groupPage(ids[2], 2));
   await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent(
     '7 operations · 1 failed · 1 cancelled',
   );
   expect(screen.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
-  expect(screen.queryByText('review-3-3.clj')).toBeNull();
+  expect(screen.getByRole('button', { name: /Read ×7/ })).toBeVisible();
 });
 
-it('reaches the tail without accumulating prior rows and returns to earlier operations', async () => {
+it('reads every retained page to the tail with no control to press', async () => {
   const load = vi.fn(async (_id: string, after: number) => page(after));
   render(
     <ActivityHistoryContext.Provider value={{ load }}>
@@ -214,39 +202,24 @@ it('reaches the tail without accumulating prior rows and returns to earlier oper
     </ActivityHistoryContext.Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  // #212: query the named paging control, not every row's accessible button name.
-  // Keep role, visibility and enabled checks on the actual control we click.
-  const clickPage = (name: string) => {
-    const button = screen.getByLabelText(name);
-    expect(button).toHaveRole('button');
-    expect(button).toBeVisible();
-    expect(button).toBeEnabled();
-    fireEvent.click(button);
-  };
-  for (let i = 0; i < 4; i++) {
-    clickPage('Show more operations');
-    await screen.findByText(`Operation ${(i + 2) * 32}`);
-    expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(32);
-    expect(screen.queryByText(`Operation ${i * 32 + 1}`)).toBeNull();
-  }
+  expect(await screen.findByText('Operation 160')).toBeVisible();
+  expect(screen.getByText('Operation 1')).toBeVisible();
   expect(screen.getByText('Operation 159')).toBeVisible();
-  expect(screen.getByText('Operation 160')).toBeVisible();
-  expect(screen.queryByText('Operation 1')).toBeNull();
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(160);
+  expect(load.mock.calls.map(([, after]) => after)).toEqual([32, 64, 96, 128]);
   expect(screen.queryByLabelText('Show more operations')).toBeNull();
-  clickPage('Show earlier operations');
-  expect(await screen.findByText('Operation 1')).toBeVisible();
-  expect(screen.queryByText('Operation 160')).toBeNull();
-  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(32);
-  expect(load.mock.calls.map(([, after]) => after)).toEqual([32, 64, 96, 128, 0]);
+  expect(screen.queryByLabelText('Show earlier operations')).toBeNull();
+  expect(screen.queryByRole('status')).toBeNull();
 });
 
-it.each(['revision', 'cursor', 'id', 'after'])(
+it.each(['cursor', 'id', 'after'])(
   'rejects a changed %s without dropping current rows and offers a reload',
   async (field) => {
+    let broken = true;
     const load = vi.fn(async (_id: string, after: number) => {
       const result = page(after);
-      if (after) {
-        if (field === 'revision') result.history!.revision = 2;
+      if (after === 32 && broken) {
+        broken = false;
         if (field === 'cursor') result.history!.next_after = after;
         if (field === 'id') result.history!.id = ids[0];
         if (field === 'after') result.history!.after = 0;
@@ -259,17 +232,33 @@ it.each(['revision', 'cursor', 'id', 'after'])(
       </ActivityHistoryContext.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Activity changed');
     expect(screen.getByText('Operation 1')).toBeVisible();
     expect(screen.queryByText('Operation 64')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Reload operations' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(load).toHaveBeenLastCalledWith(page().history!.id, 0, '', expect.any(AbortSignal));
+    expect(await screen.findByText('Operation 160')).toBeVisible();
+    expect(screen.queryByRole('alert')).toBeNull();
   },
 );
 
-it('aborts a pending load when unmounted', () => {
+// A run that grows while its tail is read is not a changed history: pages are keyset ranges.
+it('reads a live history whose revision moves while the tail loads', async () => {
+  const load = vi.fn(async (_id: string, after: number) => {
+    const result = page(after);
+    result.history!.revision += after / 32;
+    return result;
+  });
+  render(
+    <ActivityHistoryContext.Provider value={{ load }}>
+      <ActivityPanel activity={page()} />
+    </ActivityHistoryContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  expect(await screen.findByText('Operation 160')).toBeVisible();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('aborts a pending read when unmounted', () => {
   const load = vi.fn(
     (_id: string, _after: number, _q: string, _signal: AbortSignal) =>
       new Promise<ReturnType<typeof page>>(() => {}),
@@ -280,7 +269,6 @@ it('aborts a pending load when unmounted', () => {
     </ActivityHistoryContext.Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
   view.unmount();
   expect(load.mock.calls[0][3].aborted).toBe(true);
 });
@@ -289,17 +277,18 @@ it('keeps retained rows readable offline and explains an empty history', () => {
   const view = render(<ActivityPanel activity={page()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   expect(screen.getByText('Operation 1')).toBeVisible();
-  expect(screen.getByText('Reconnect to load more operations.')).toBeVisible();
+  expect(screen.getByText('Reconnect to load every operation.')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
   const empty = page();
   empty.rows = [];
   empty.history!.next_after = null;
   view.rerender(<ActivityPanel activity={empty} />);
   expect(screen.getByText('No operations available.')).toBeVisible();
-  expect(screen.queryByText('Reconnect to load more operations.')).toBeNull();
+  expect(screen.queryByText('Reconnect to load every operation.')).toBeNull();
 });
 
-it('keeps the band open but discards stale pages on a live revision', async () => {
+// The band keeps what it has read; a live revision re-reads the tail behind those rows.
+it('keeps every loaded operation while a live revision re-reads the tail', async () => {
   const source = { load: vi.fn(async (_id: string, after: number) => page(after)) };
   const paint = (activity: ReturnType<typeof page>) => (
     <ActivityHistoryContext.Provider value={source}>
@@ -308,24 +297,26 @@ it('keeps the band open but discards stale pages on a live revision', async () =
   );
   const view = render(paint(page()));
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
-  await screen.findByText('Operation 64');
+  expect(await screen.findByText('Operation 160')).toBeVisible();
   const updated = page();
   updated.history!.revision = 2;
   view.rerender(paint(updated));
   expect(screen.getByText('Operation 1')).toBeVisible();
-  expect(screen.queryByText('Operation 64')).toBeNull();
+  expect(screen.getByText('Operation 160')).toBeVisible();
+  expect(screen.queryByRole('status')).toBeNull();
+  await waitFor(() => expect(source.load).toHaveBeenCalledTimes(8));
+  expect(screen.getByText('Operation 160')).toBeVisible();
 });
 
 // #212: grouping is presentation, not another retained invocation or a lost outcome.
-it('pages grouped invocations through tail failures and cancellations', async () => {
+it('reads grouped invocations through tail failures and cancellations', async () => {
   const grouped = (after = 0) => {
     const result = page(after);
     result.rows = [
       {
         ...result.rows[0],
         id: `group-${after}`,
-        operation: 'shell',
+        operation: `shell-${after}`,
         presentation: undefined,
         state: after === 128 ? 'failed' : 'succeeded',
         children: result.rows,
@@ -340,13 +331,7 @@ it('pages grouped invocations through tail failures and cancellations', async ()
     </ActivityHistoryContext.Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  for (let i = 0; i < 4; i++) {
-    fireEvent.click(screen.getByRole('button', { name: 'Show more operations' }));
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(i + 1));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Show earlier operations' })).not.toBeDisabled(),
-    );
-  }
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(4));
   // A page that ended badly keeps its own children until the reader opens that step.
   fireEvent.click(
     document.querySelector<HTMLElement>(
