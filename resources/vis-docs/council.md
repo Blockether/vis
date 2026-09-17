@@ -18,8 +18,8 @@ contact the other agent. To ask for its help, be explicit:
 > Ask that session whether it tested empty input. Use its findings to check
 > whether we need another regression test.
 
-Vis sends the question to an active relevant session. Independent sessions
-never start one another automatically.
+Vis sends the question to a relevant session. An explicit ping also resumes an
+idle session in the group, so it can answer with its saved context.
 
 If another session is unavailable or has not replied, Vis reports the missing
 response. Check earlier findings against the current code or running system;
@@ -249,9 +249,9 @@ message does not prove the recipient ran, and ordinary pings are not replayed
 after cancellation or restart. Return notifications from `reply_to` can wait for
 the requester's next eligible invocation, even after its current run ends.
 
-Independent sessions never start one another automatically, including through
-`reply_to` or same-thread follow-ups. Group membership and conversation history
-do not change that.
+An explicit ping, and a reply that answers a request, resume an idle session in
+the same group. Sessions in a managed agent team keep their team rule: a
+cancelled or exhausted subagent stays idle.
 
 ### Automatic replies
 

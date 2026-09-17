@@ -91,7 +91,8 @@
     (is (agents/wake-allowed? db child leader))
     (is (agents/wake-allowed? db child child))
     (is (not (agents/wake-allowed? db other child)))
-    (is (not (agents/wake-allowed? db leader other)))
+    (is (agents/wake-allowed? db leader other))
+    (is (not (agents/wake-allowed? db child other)))
     (is (= [{:role :user :content "Full current context"} {:role :user :content "Delegated task"}]
            (:messages (agents/inherited-base env 2 [{:role :user :content "Delegated task"}] []))))
     (is (nil? (agents/inherited-base env 3 [] [])))

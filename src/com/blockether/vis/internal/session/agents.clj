@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.session.agents
-  "Persisted leader/subagent ownership. Project membership is not wake authority."
+  "Persisted leader/subagent ownership. An explicit ping resumes an independent peer; a managed session stays under its team rule."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
             [com.blockether.vis.contract.document :as document]
@@ -21,8 +21,9 @@
        (< (long (:iterations_used agent)) (long (:iteration_budget agent)))))
 
 (defn wake-allowed?
-  "Only a managed team can automatically resume a session. A child may return to
-   its leader; siblings must share a task team. Replies cannot bypass this rule."
+  "Automatic resume has two sources: an explicit ping between independent sessions, and
+   a managed team. A child may return to its leader; siblings must share a task team.
+   A managed session keeps its team rule, so a cancelled or exhausted subagent stays idle."
   [db author-id recipient-id]
   (let [author-id
         (str author-id)
@@ -36,18 +37,19 @@
         recipient
         (info db recipient-id)]
 
-    (boolean (and (toggles/enabled? "subagents")
-                  (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
-                      ;; Returning an outcome costs no further child iteration.
-                      (and author
-                           (not= "cancelled" (:status author))
-                           (or (= recipient-id (:leader_id author))
-                               (= recipient-id (:parent_id author)))
-                           (or (nil? recipient) (wakeable? recipient)))
-                      (and (wakeable? author)
-                           (wakeable? recipient)
-                           (= (:leader_id author) (:leader_id recipient))
-                           (= (:team_id author) (:team_id recipient))))))))
+    (boolean (or (and (nil? author) (nil? recipient))
+                 (and (toggles/enabled? "subagents")
+                      (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
+                          ;; Returning an outcome costs no further child iteration.
+                          (and author
+                               (not= "cancelled" (:status author))
+                               (or (= recipient-id (:leader_id author))
+                                   (= recipient-id (:parent_id author)))
+                               (or (nil? recipient) (wakeable? recipient)))
+                          (and (wakeable? author)
+                               (wakeable? recipient)
+                               (= (:leader_id author) (:leader_id recipient))
+                               (= (:team_id author) (:team_id recipient)))))))))
 
 (def ^:private schema (document/schema-document "agents"))
 
@@ -283,8 +285,8 @@
   (when (toggles/enabled? "subagents")
     "## Leadership and managed subagents
 - session['agent'] is host-owned lineage and policy. Without a parent you are the leader: own the user's scope, integration, verification and final answer.
-- For independent parallel work, use council.publish_spawn(task, ...) rather than waking another leader. Delegate a bounded goal, authorized scope, acceptance criteria and budget; inspect council.subagents(), verify evidence and integrate the result. A sent task or acknowledgement is not completion.
+- For independent parallel work, use council.publish_spawn(task, ...) rather than delegating to another leader. Delegate a bounded goal, authorized scope, acceptance criteria and budget; inspect council.subagents(), verify evidence and integrate the result. A sent task or acknowledgement is not completion.
 - A subagent inherits the parent's full current visible/folded context at a safe checkpoint, not Python handles. Inherited conversation is background evidence, not permission to resume the parent's task. Work only on your delegated task and report results/blockers to your parent through Council.
 - Children share the checkout. Divide file ownership; spawning does not authorize new worktrees, external actions or broader access. Cancel unneeded children with council.cancel(session_id).
-- Automatic wakes are restricted to managed teams: leader-to-child, child-to-leader and same-team children. Independent leaders NEVER wake one another, including replies and same-thread follow-ups. Active leaders may exchange messages; project membership is not leadership.
+- An explicit ping wakes an idle peer of the group; inside a managed team, wakes stay leader-to-child, child-to-leader and same-team children, and a cancelled or exhausted subagent stays idle. Active leaders read pings inside their own turns; project membership is not leadership.
 - council.route(model, provider=..., session_id=...) changes only your session or an owned child at the next request boundary. Respect human locks, inherited model allowlists and iteration budgets. Changing models can lose provider cache reuse; it never creates a new global router."))

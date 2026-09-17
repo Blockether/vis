@@ -180,7 +180,7 @@ class Council:
             thread_id: Existing thread to continue; omit to start a new thread.
             title: Optional readable title for the message.
             ping: Session IDs, `"all"` for active peers, or no recipients. Explicit
-                IDs wake only eligible managed teammates, not independent leaders.
+                IDs wake an idle peer of the group or an eligible managed teammate.
             idempotency_key: Reuse this key when retrying uncertain IO. The same
                 publication is returned without notifying recipients twice.
             reply_required: Track an answer obligation for each addressed recipient.

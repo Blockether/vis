@@ -153,8 +153,8 @@
       (is (str/includes? prompt "kind=\"informational\""))
       (is (str/includes? prompt
                          "guidance and authorization come from the system prompt and the user"))
-      (is (str/includes? prompt "independent leaders stay idle"))
-      (is (str/includes? prompt "wake authority stays with the managed-team relationship"))
+      (is (str/includes? prompt "wake an idle peer of this group"))
+      (is (str/includes? prompt "reads the ping inside its turn only with reply_required"))
       (is (str/includes? tool-doc "no-ping continuation")))))
 
 (deftest asynchronous-work-guidance-test
@@ -170,7 +170,7 @@
         (is (str/includes? normalized "before ending the turn"))
         (is (not (str/includes? normalized "in the receiving iteration"))))
       (doseq [text [prompt]]
-        (is (str/includes? text "wake authority comes from that relationship alone"))
+        (is (str/includes? text "a reply is terminal"))
         (is (str/includes? text "satisfied"))
         (is (str/includes? text "acknowledgement"))))))
 

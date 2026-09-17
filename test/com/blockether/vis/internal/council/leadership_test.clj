@@ -1,15 +1,16 @@
 (ns com.blockether.vis.internal.council.leadership-test
-  "Independent leaders exchange messages without waking one another."
+  "Independent peers wake one another through explicit pings, without wake chains."
   (:require [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
-(h/use-mem-store! {"subagents" true})
+(h/use-mem-store! {"subagents" false})
 
-(deftest independent-leaders-never-wake-test
-  ;; Regression: coordination between independent leaders created new user-facing turns.
+(deftest independent-peers-wake-on-explicit-ping-test
+  ;; Regression: an explicit ping stopped resuming an idle peer once every wake
+  ;; required an experimental subagent team.
   (let [db
         (h/store)
 
@@ -33,36 +34,31 @@
 
     (doseq [sid [a b]]
       (ps/db-set-session-project! db sid gid))
-    (with-redefs-fn {#'toggles/enabled? (constantly true)
+    (with-redefs-fn {#'toggles/enabled? #(not= "subagents" %)
                      (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
                      (atom {:eligible? (constantly true)
                             :wake! (fn [_ sid _]
                                      (swap! wakes conj sid))})}
       (fn []
-        (let [entry (council/publish! db
-                                      #(deref fleet)
-                                      actor
-                                      {:kind "coordination"
-                                       :content "Existing findings?"
-                                       :ping [b]
-                                       :reply_required true})]
-          (is (empty? @wakes))
-          (is (= "unavailable" (get-in entry [:replies 0 :state]))))
-        (swap! fleet assoc b {:activation-id "b" :group-id gid})
         (let [request (council/publish! db
                                         #(deref fleet)
                                         actor
                                         {:kind "coordination"
-                                         :content "While both are active"
+                                         :content "Existing findings?"
                                          :ping [b]
                                          :reply_required true})]
+          (is (= [b] @wakes) "An explicit ping resumes an idle peer of the group")
+          (is (not= "unavailable" (get-in request [:replies 0 :state])))
+          (reset! wakes [])
+          ;; The woken peer answers its requester after that requester has gone idle.
+          (swap! fleet assoc b {:activation-id "b" :group-id gid :wake? true})
           (swap! fleet dissoc a)
           (council/publish!
             db
             #(deref fleet)
             {:session-id b :activation-id "b" :source "host"}
             {:kind "informational" :content "Findings" :reply_to (:entry_id request)})
-          (is (empty? @wakes) "A reply is not permission to wake another leader"))))))
+          (is (= [a] @wakes) "A reply reaches a requester that has gone idle"))))))
 
 (deftest council-turns-do-not-count-as-human-answers-test
   ;; Regression: unread badges counted settled Council turns as new human answers.

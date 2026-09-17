@@ -1410,7 +1410,7 @@
             (finally (run! drop! ids))))))))
 
 (deftest explicit-idle-ping-wakes-once-test
-  ;; Explicit child IDs may start a turn; independent leaders and retries may not.
+  ;; Explicit child IDs may start a turn; wake chains and retries may not.
   (with-council
     (let [{:keys [db ids gid]}
           (team-world)
