@@ -49,7 +49,7 @@ async function pasteImage() {
   );
 }
 
-it("inserts an owned image reference at the caret and removes its shelf item with the last token", async () => {
+it("inserts an owned image reference at the caret and detaches its shelf item when the token is typed away", async () => {
   renderSessionScreen();
   fireEvent.input(editor(), { target: { value: "Compare  please" } });
   editor().setSelectionRange(8, 8);
@@ -58,8 +58,49 @@ it("inserts an owned image reference at the caret and removes its shelf item wit
   expect(screen.getByText("[IMAGE #1]")).toBeInTheDocument();
   fireEvent.input(editor(), { target: { value: "Compare  please" } });
   expect(
-    screen.queryByRole("button", { name: "Remove photo-1.png" }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Remove photo-1.png" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("[IMAGE #1]")).not.toBeInTheDocument();
+});
+
+// A dictated message replaces the whole field, which used to destroy the pending
+// image bytes before the turn was ever submitted.
+it("keeps and sends the payload when dictation replaces the composer text", async () => {
+  const submitTurn = vi.fn(async () => ({
+    turn_id: "dictated",
+    status: "running",
+  }));
+  renderSessionScreen({ client: { submitTurn } });
+  await pasteImage();
+  fireEvent.input(editor(), { target: { value: "see this screenshot" } });
+  expect(
+    screen.getByRole("button", { name: "Remove photo-1.png" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(submitTurn).toHaveBeenCalledWith(
+    "s1",
+    "see this screenshot",
+    expect.objectContaining({
+      attachments: [
+        expect.objectContaining({
+          filename: "photo-1.png",
+          base64: photo().base64,
+        }),
+      ],
+    }),
+  );
+});
+
+it("keeps the payload when a slash command rewrites the composer", async () => {
+  renderSessionScreen();
+  fireEvent.input(editor(), { target: { value: "/help" } });
+  await pasteImage();
+  expect(editor().value).toBe("/help [IMAGE #1]");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(editor().value).toBe("/");
+  expect(
+    screen.getByRole("button", { name: "Remove photo-1.png" }),
+  ).toBeInTheDocument();
 });
 
 it("keeps duplicate tokens backed until the final one is deleted, then restarts numbering", async () => {
@@ -104,6 +145,9 @@ it.each(["Backspace", "Delete"])(
     const caret = key === "Backspace" ? editor().value.length : 0;
     editor().setSelectionRange(caret, caret);
     fireEvent.keyDown(editor(), { key });
+    expect(
+      screen.queryByRole("button", { name: "Remove photo-1.png" }),
+    ).not.toBeInTheDocument();
     expect(editor().value).toBe("");
     await pasteImage();
     expect(editor().value).toBe("[IMAGE #1]");

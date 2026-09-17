@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detachLostReferences,
   insertImageReferences,
   referencedAttachments,
   restoreImageReferences,
@@ -41,6 +42,31 @@ describe("composer image references", () => {
         audio,
       ]),
     ).toEqual([audio]);
+  });
+
+  it("detaches only the lost owned tokens and keeps their bytes", () => {
+    const audio = { ...image, id: "audio", media_type: "audio/wav" };
+    const detached = detachLostReferences("[IMAGE #2] [IMAGE #10]", [
+      { ...image, reference: "[IMAGE #1]" },
+      { ...image, id: "kept", reference: "[IMAGE #2]" },
+      audio,
+    ]);
+    expect(detached.map((item) => item.reference)).toEqual([
+      undefined,
+      "[IMAGE #2]",
+      undefined,
+    ]);
+    expect(detached.map((item) => item.base64)).toEqual(["abc", "abc", "abc"]);
+  });
+
+  it("keeps the array identical while every owned token survives", () => {
+    const attachments = [
+      { ...image, reference: "[IMAGE #1]" },
+      { ...image, id: "audio", media_type: "audio/wav" },
+    ];
+    expect(detachLostReferences("[IMAGE #1]", attachments)).toBe(attachments);
+    const detached = detachLostReferences("", attachments);
+    expect(detachLostReferences("", detached)).toBe(detached);
   });
 
   it("does not allocate references or alter text for a rejected batch", () => {

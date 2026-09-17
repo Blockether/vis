@@ -70,6 +70,7 @@ import {
   type PickAttachmentResult,
 } from '../lib/attachments';
 import {
+  detachLostReferences,
   insertImageReferences,
   referencedAttachments,
   restoreImageReferences,
@@ -618,11 +619,15 @@ export function SessionScreen({
       // Application edits are immediate, even if the rendering snapshot is behind
       // (including an empty snapshot while sending a newly typed message).
       if (textarea && textarea.value !== next) textarea.value = next;
-      const remaining = referencedAttachments(next, attachmentsRef.current);
-      if (remaining.length !== attachmentsRef.current.length) {
-        attachmentsRef.current = remaining;
-        setAttachmentsSnapshot(remaining);
-        if (!remaining.some((attachment) => attachment.reference)) imageCounterRef.current = 0;
+      // Programmatic rewrites land here too: dictation, slash handling, restores.
+      // A lost token DETACHES its payload instead of destroying bytes the human
+      // may not be able to pick again; `removeAttachment` and deleting the marker
+      // itself stay the only deletions.
+      const detached = detachLostReferences(next, attachmentsRef.current);
+      if (detached !== attachmentsRef.current) {
+        attachmentsRef.current = detached;
+        setAttachmentsSnapshot(detached);
+        if (!detached.some((attachment) => attachment.reference)) imageCounterRef.current = 0;
       }
       setPromptSnapshot(next);
     },
@@ -4816,10 +4821,10 @@ export function SessionScreen({
                   onChange={(event) => {
                     const text = event.currentTarget.value;
                     const position = event.currentTarget.selectionStart ?? text.length;
-                    const remaining = referencedAttachments(text, attachmentsRef.current);
-                    if (remaining.length !== attachmentsRef.current.length) {
-                      setAttachments(remaining);
-                      if (!remaining.some((attachment) => attachment.reference))
+                    const detached = detachLostReferences(text, attachmentsRef.current);
+                    if (detached !== attachmentsRef.current) {
+                      setAttachments(detached);
+                      if (!detached.some((attachment) => attachment.reference))
                         imageCounterRef.current = 0;
                     }
                     recordComposerDraft(text);
@@ -4856,7 +4861,13 @@ export function SessionScreen({
                               editor.value.slice(0, start) +
                               editor.value.slice(start + token.length);
                             setPrompt(text);
-                            setAttachments(referencedAttachments(text, attachmentsRef.current));
+                            // Deleting the marker keystroke by keystroke IS the
+                            // gesture: drop the payload, unless a duplicate token
+                            // elsewhere still backs it.
+                            if (!text.includes(token))
+                              setAttachments((current) =>
+                                current.filter((item) => item.id !== attachment.id),
+                              );
                             editor.setSelectionRange(start, start);
                             recordComposerDraft(text);
                             return;

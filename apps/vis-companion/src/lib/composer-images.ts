@@ -11,6 +11,21 @@ export function referencedAttachments(
   );
 }
 
+/** Text edits detach; only explicit gestures delete. A detached payload ships without a marker. */
+export function detachLostReferences(
+  text: string,
+  attachments: PendingAttachment[],
+): PendingAttachment[] {
+  const next = attachments.map((attachment) =>
+    attachment.reference && !text.includes(attachment.reference)
+      ? { ...attachment, reference: undefined }
+      : attachment,
+  );
+  return next.some((item, index) => item !== attachments[index])
+    ? next
+    : attachments;
+}
+
 /** Allocate beyond both previously issued and authored numbers: literals never acquire bytes. */
 export function insertImageReferences(
   text: string,
