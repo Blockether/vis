@@ -70,19 +70,29 @@ export const LongLabels: Story = {
     await expect(rows).toHaveLength(ACTIVITY_LONG_LABELS.rows.length);
     for (const row of rows) {
       const toggle = within(row).getByRole('button');
-      const label = toggle.firstElementChild!;
-      const summary = label.querySelector<HTMLElement>('.flex-1[title]')!;
+      const name = toggle.firstElementChild!;
+      const chevron = toggle.querySelector('svg')!;
+      const detail = toggle.lastElementChild!;
+      const summary = detail.querySelector<HTMLElement>('.flex-1[title]')!;
       const duration = within(row).getByLabelText(/^Duration /);
-      const chevron = toggle.lastElementChild!;
       // A row can fit its container while visible text still spills across siblings.
       await expect(getComputedStyle(summary).overflowX).toBe('hidden');
       await expect(getComputedStyle(summary).textOverflow).toBe('ellipsis');
       await expect(getComputedStyle(summary).whiteSpace).toBe('nowrap');
+      // User report: the mark that opens a step hung at the far edge, past its duration.
+      // It stands beside the step's own name, the way CODE, RESULT and ACTIVITY wear it,
+      // and everything the step reports follows it.
+      await expect(
+        chevron.getBoundingClientRect().left - name.getBoundingClientRect().right,
+      ).toBeCloseTo(6, 0);
+      await expect(summary.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+        chevron.getBoundingClientRect().right,
+      );
       await expect(summary.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
         duration.getBoundingClientRect().left + 1,
       );
-      await expect(duration.getBoundingClientRect().right + 6).toBeLessThanOrEqual(
-        chevron.getBoundingClientRect().left + 1,
+      await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
+        toggle.getBoundingClientRect().right + 1,
       );
       await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
       await expect(toggle.getBoundingClientRect().height).toBe(24);

@@ -268,11 +268,12 @@
             (is (not (re-find #"Thread id|Is pass" text)))
             (when (= "run_tests" (name (:operation row)))
               ;; Issue #260: the finished row names what the call selected, and a
-              ;; clean run leaves the runner transcript out of the disclosure.
-              (is (str/includes? text
-                                 (if (= cols 40)
-                                   "Ran tests · test/"
-                                   "test/activity_test.clj · 12 tests · 0 failed")))
+              ;; clean run leaves the runner transcript out of the disclosure. The mark
+              ;; that opens the row rides with that name, not at the end of the line.
+              (is (re-find (if (= cols 40)
+                             #"Ran tests [▸▾] · test/"
+                             #"test/activity_test\.clj · 12 tests · 0 failed")
+                           text))
               (is (not (str/includes? text "12 tests passed.")))
               (is (not (re-find #"Metric|Result|Field|Value" text))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))

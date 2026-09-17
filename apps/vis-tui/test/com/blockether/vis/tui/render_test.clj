@@ -7214,8 +7214,8 @@ h = 8"
 
     (it "keeps a settled step to one line when the reader explicitly folds it"
         (let [shut (lines [group bare] {"sh-1" false})]
-          (expect (re-find #"^Ran git push origin main.*▸" (line-with shut "Ran"))
-                  "the operation starts at the text edge and its disclosure trails")
+          (expect (re-find #"^Ran ▸ git push origin main" (line-with shut "Ran"))
+                  "the operation starts at the text edge and its mark stands beside its name")
           (expect (= 1 (count (filter #(str/includes? % "Ran") shut)))
                   "the grouped calls wait behind the group")
           (expect (not-any? #(str/includes? % "\"keys\"") shut) "and so does every outcome")
@@ -7231,12 +7231,12 @@ h = 8"
               (lines [group] {"sh-1" true "sh-2" false "wait-1" false "logs-1" false})
 
               head
-              (line-with open "Ran git push origin main")
+              (line-with open "git push origin main")
 
               wait
               (line-with open "_shell-wait")]
 
-          (expect (re-find #"^Ran git push origin main.*▾" head))
+          (expect (re-find #"^Ran ▾ git push origin main" head))
           (expect (= 3 (count (filter #(str/includes? % "▸") open)))
                   "three calls, three closed chevrons, and none of their outcomes")
           (expect (re-find #"^  _shell-wait.*▸" wait)
@@ -7269,9 +7269,9 @@ h = 8"
             open
             (lines [running failed] {})]
 
-        (expect (re-find #"^Running git push origin main.*▾" (line-with open "Running")))
+        (expect (re-find #"^Running ▾ git push origin main" (line-with open "Running")))
         (expect (some #(str/includes? % "_shell-wait") open) "the running group shows its calls")
-        (expect (re-find #"^Search failed needle.*▾" (line-with open "Search failed")))
+        (expect (re-find #"^Search failed ▾ needle" (line-with open "Search failed")))
         (expect (some #(str/includes? % "no matches in 3 paths") open) "and the failure says why")
         (expect (some #(str/includes? % "no matches") (lines [failed] {"grep-2" false}))
                 "a manual fold never hides the failure reason")))))
@@ -8525,7 +8525,7 @@ h = 8"
 (defdescribe
   activity-inline-disclosure-spacing-test
   (it
-    "keeps disclosures inline and spaces only the Activity header from compact operations"
+    "keeps a step's disclosure beside its name and spaces the Activity header from operations"
     (doseq [width
             [40 80 160]
 
@@ -8562,10 +8562,14 @@ h = 8"
         (expect (<= 2 (count heads)))
         (expect (= 2 (ffirst heads)))
         (expect (nil? (:meta (second entries))))
+        ;; The mark that opens a step stands beside the step's own name — `Read ▸ …` — and
+        ;; not at the far edge of the line, where the reader had to cross the whole row and
+        ;; its duration to reach the only part of it that presses.
         (doseq [[_ entry] (filter #(contains? #{"one" "two"} (get-in (second %) [:meta :item-id]))
                                   heads)]
           (expect (not (re-find #"[▸▾]" (get-in entry [:meta :right-suffix]))))
-          (expect (re-find #" ▸\s+42ms" (:line entry))))
+          (expect (str/includes? (:line entry) (str (get-in entry [:meta :operation-label]) " ▸")))
+          (expect (not (re-find #"▸\s+42ms" (:line entry)))))
         (doseq [[[a _] [b _]] (partition 2 1 heads)]
           (expect (= 1 (- b a))))))))
 

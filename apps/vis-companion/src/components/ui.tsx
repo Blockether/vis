@@ -783,8 +783,11 @@ export function ExecutionAction({
  * a field. A framed transport is the loud thing on that row, so its own name steps
  * off the frame instead of competing inside it.
  *
- * Execution and Thinking rows keep the chevron after the text, never in a reserved
- * leading column. Execution bands are 44px on touch, 28px with a pointer.
+ * Execution and Thinking rows keep the chevron immediately after the NAME, never in a
+ * reserved leading column and never at a row edge: what the row adds to that name — a
+ * count, a summary, an elapsed time — follows the chevron in `tally`, so the mark that
+ * opens the row stands where its words begin. Execution bands are 44px on touch, 28px
+ * with a pointer.
  * Compact operation rows use a 24px face with invisible reach to those targets.
  * Place compact rows in an isolated container: the reach stays behind visible
  * controls and content, so adjacent rows never intercept each other's faces.
@@ -853,10 +856,7 @@ export function Disclosure({
       )}
       {children}
       {(inlineChevron || tone === 'execution' || tone === 'thinking') && (
-        <ChevronIcon
-          open={isOpen}
-          className={`${inlineChevron ? '' : 'ml-auto'} size-3 shrink-0`}
-        />
+        <ChevronIcon open={isOpen} className="size-3 shrink-0" />
       )}
       {tally}
     </button>

@@ -648,6 +648,7 @@ function ActivitySectionView({
             isOpen={open}
             tone="execution"
             density="compact"
+            inlineChevron
             className="min-w-0 max-w-full"
             onClick={() => setOpen(!open)}
           >
@@ -782,11 +783,18 @@ function ActivityStep({
       )}
     </>
   );
+  // THE CHEVRON STANDS BESIDE THE NAME, the way CODE, RESULT and ACTIVITY wear theirs:
+  // the word that says what opens, then the mark that opens it. What the row reports about
+  // that call — its object, its caption, its counts, how long it took — rides after the
+  // chevron in the disclosure's own tally. Held at the trailing edge instead, past the
+  // duration, the one part of the row that presses sat where nothing else on it begins.
   const label = (
+    <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
+      {lead}
+    </span>
+  );
+  const detail = (
     <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
-      <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
-        {lead}
-      </span>
       {object ? ' ' : null}
       {object && (
         <span className="min-w-0 flex-1 truncate font-normal text-dialog-hint" title={object}>
@@ -815,7 +823,9 @@ function ActivityStep({
               isOpen={open}
               tone="execution"
               density="compact"
+              inlineChevron
               className={linkedSummary ? 'min-w-0 w-auto! max-w-[45%]' : 'min-w-0 max-w-full'}
+              tally={detail}
               onClick={() => {
                 setToggled(!open);
                 onToggle?.(!open);
@@ -824,8 +834,11 @@ function ActivityStep({
               {label}
             </Disclosure>
           ) : (
-            <div className={`flex min-h-6 items-center ${linkedSummary ? 'min-w-0 max-w-[45%]' : ''}`}>
+            <div
+              className={`flex min-h-6 items-center gap-x-2 ${linkedSummary ? 'min-w-0 max-w-[45%]' : ''}`}
+            >
               {label}
+              {detail}
             </div>
           )}
           {linkedSummary && captionLabel}
@@ -1043,6 +1056,13 @@ function ActivityGroup({
   const expanded = singleton || open;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
+  // The counts ride in the disclosure's tally, after the chevron, so the mark that opens
+  // this group stands beside the group's own name and keeps its secondary ink.
+  const factsTally = facts && (
+    <span className="ml-auto min-w-0 break-words text-right text-meta text-dialog-hint">
+      {facts}
+    </span>
+  );
   // A CLOSED GROUP PRINTS NO FAILURE. Its head already counts them — `3 failed` — and
   // the machine's own words wait in the step that produced them, read once, by a reader
   // who opened the group to read them. Printing them out here spells the same failure a
@@ -1061,13 +1081,12 @@ function ActivityGroup({
         <Disclosure
           tone="execution"
           density="compact"
+          inlineChevron
           isOpen={open}
+          tally={factsTally}
           onClick={() => setOpen((value) => !value)}
         >
-          <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <span className="min-w-0 break-words font-semibold">{title}</span>
-            {facts && <span className="text-meta text-dialog-hint">{facts}</span>}
-          </span>
+          <span className="min-w-0 break-words font-semibold">{title}</span>
         </Disclosure>
       )}
       {!expanded &&

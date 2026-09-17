@@ -6447,20 +6447,25 @@
                                                            text))
 
                                                        prefix
+                                                       ;; The mark that opens a row belongs to the
+                                                       ;; operation's NAME — `Ran ▸ …`, the way the
+                                                       ;; CODE and ACTIVITY bands wear theirs — not
+                                                       ;; to the end of a line the reader has to
+                                                       ;; cross to find the only part that presses.
                                                        (str (activity-lead col)
                                                             lead-word
+                                                            mark
                                                             (when subject
                                                               (str (if caption " · " " ") subject))
                                                             delta)
 
                                                        line
                                                        (first (with-right-suffix
-                                                                [(inline-disclosure-prefix
-                                                                   prefix
-                                                                   mark
-                                                                   (- (long width)
-                                                                      (p/display-width suffix)
-                                                                      2))]
+                                                                [(p/ellipsize prefix
+                                                                              (- (long width)
+                                                                                 (p/display-width
+                                                                                   suffix)
+                                                                                 2))]
                                                                 suffix
                                                                 width))
 
@@ -6480,20 +6485,19 @@
                                                                {:kind :activity-row
                                                                 :headline-prefix prefix
                                                                 :summary-prefix prefix
-                                                                :summary-width
-                                                                (- (long width)
-                                                                   (p/display-width suffix)
-                                                                   (p/display-width (or mark ""))
-                                                                   2)
+                                                                :summary-width (- (long width)
+                                                                                  (p/display-width
+                                                                                    suffix)
+                                                                                  2)
                                                                 :links (activity-summary-links
                                                                          summary-entry
                                                                          (p/display-width
                                                                            (str (activity-lead col)
                                                                                 lead-word
+                                                                                mark
                                                                                 " · ")))
                                                                 :right-suffix suffix
                                                                 :right-inset 2
-                                                                :inline-disclosure mark
                                                                 :item-id id
                                                                 :node-id (when openable?
                                                                            (str node-id ":" id))
