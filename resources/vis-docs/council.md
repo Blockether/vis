@@ -251,7 +251,7 @@ the requester's next eligible invocation, even after its current run ends.
 
 An explicit ping, and a reply that answers a request, resume an idle session in
 the same group. Sessions in a managed agent team keep their team rule: a
-cancelled or exhausted subagent stays idle.
+cancelled or exhausted team member stays idle.
 
 ### Automatic replies
 
