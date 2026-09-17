@@ -1789,13 +1789,13 @@
         (#'lp/run-normal-turn! env "finish" {:hooks {:claim-terminal! (constantly false)}})
         (expect (nil? (get-in @history [[:zai-coding-plan "model"] :completed-turn])))))))
 
-(defdescribe
-  copilot-action-service-headers-test
-  (it "marks Copilot Enterprise requests with X-Initiator for the action service"
-      (expect (= {"X-Initiator" "agent"}
-                 (#'lp/copilot-llm-headers {:provider :github-copilot-enterprise} "agent"))))
-  (it "does not add action-service headers for non-Copilot providers"
-      (expect (nil? (#'lp/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
+(defdescribe copilot-action-service-headers-test
+             (it "marks Copilot requests with X-Initiator for the action service"
+                 (expect (= {"X-Initiator" "agent"}
+                            (#'lp/copilot-llm-headers {:provider :github-copilot} "agent"))))
+             (it "does not add action-service headers for non-Copilot providers"
+                 (expect (nil?
+                           (#'lp/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
 
 ;; Provider-specific request identity enters through the extension lifecycle; the
 ;; engine only applies the generic provider/header contribution it receives.
@@ -6150,8 +6150,7 @@
     (let [;; both providers expose "gpt-5.4" — the tie `router-for-model` cannot break
           router
           {:providers [{:id :openai-codex :models [{:name "gpt-5.4"} {:name "gpt-5.5"}]}
-                       {:id :github-copilot-individual
-                        :models [{:name "gpt-5.4"} {:name "claude-opus-5"}]}]}
+                       {:id :github-copilot :models [{:name "gpt-5.4"} {:name "claude-opus-5"}]}]}
 
           hoist
           #'lp/router-for-pinned-provider
@@ -6165,27 +6164,26 @@
                                                                                  "gpt-5.4"))))))
       (it "hoisting the PINNED provider makes root provider+model match the forced routing"
           (let [pinned
-                (hoist (lp/router-for-model router "gpt-5.4") :github-copilot-individual)
+                (hoist (lp/router-for-model router "gpt-5.4") :github-copilot)
 
                 root
                 (lp/resolve-effective-model pinned)]
 
-            (expect (= :github-copilot-individual (:provider root)))
+            (expect (= :github-copilot (:provider root)))
             (expect (= "gpt-5.4" (:name root)))
-            (expect (= {:provider :github-copilot-individual :model "gpt-5.4"}
-                       (forced router "github-copilot-individual" "gpt-5.4")))))
+            (expect (= {:provider :github-copilot :model "gpt-5.4"}
+                       (forced router "github-copilot" "gpt-5.4")))))
       (it "the pinned provider leads the FALLBACK order and no provider is dropped"
-          (let [pinned (hoist router :github-copilot-individual)]
-            (expect (= [:github-copilot-individual :openai-codex] (mapv :id (:providers pinned))))))
+          (let [pinned (hoist router :github-copilot)]
+            (expect (= [:github-copilot :openai-codex] (mapv :id (:providers pinned))))))
       (it "a string id works (that is how the DB pref stores it)"
-          (expect (= :github-copilot-individual
-                     (:id (first (:providers (hoist router "github-copilot-individual")))))))
+          (expect (= :github-copilot (:id (first (:providers (hoist router "github-copilot")))))))
       (it "an unknown / nil provider leaves the router untouched"
           (expect (= router (hoist router :not-configured)))
           (expect (= router (hoist router nil)))))))
 
 ;; Regression: a session pinned to openai-codex/gpt-5.6-sol RAN on
-;; github-copilot-individual. The pinned provider was missing from the router (its
+;; github-copilot. The pinned provider was missing from the router (its
 ;; credential failed to build), so the pin degraded to model-only routing and the
 ;; other vendor advertising the same model NAME took the conversation — then 400d.
 (defdescribe
@@ -6196,7 +6194,7 @@
           ;; advertises the very same `gpt-5.6-*` names.
           router
           {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-5"}]}
-                       {:id :github-copilot-individual
+                       {:id :github-copilot
                         :models [{:name "gpt-5.6-sol"} {:name "claude-opus-5"}]}]}
 
           forced
@@ -10685,14 +10683,12 @@
 ;; SHALLOWER than Anthropic's own default effort, which is how a `:deep` turn
 ;; came back with two-word thinking summaries.
 (defdescribe copilot-claude-reasoning-level-test
-             (it "sends the requested depth on EVERY Copilot plan"
-                 (doseq [provider [:github-copilot :github-copilot-individual
-                                   :github-copilot-business :github-copilot-enterprise]]
-                   (expect (= :deep
-                              (#'lp/copilot-claude-reasoning-level
-                               {:provider provider :name "claude-opus-5"}
-                               "please refactor the loop"
-                               :deep)))))
+             (it "sends the requested depth for Copilot Claude"
+                 (expect (= :deep
+                            (#'lp/copilot-claude-reasoning-level
+                             {:provider :github-copilot :name "claude-opus-5"}
+                             "please refactor the loop"
+                             :deep))))
              (it "leaves non-Copilot providers at the requested level"
                  (expect (= :deep
                             (#'lp/copilot-claude-reasoning-level
@@ -10701,47 +10697,46 @@
                              :deep))))
              (it "names no depth for casual Copilot chat, leaving it to adaptive thinking"
                  (expect (nil? (#'lp/copilot-claude-reasoning-level
-                                {:provider :github-copilot-individual :name "claude-opus-5"}
+                                {:provider :github-copilot :name "claude-opus-5"}
                                 "hey"
                                 :deep)))))
 
 ;; Regression, issue #112: the `:provider-call` lifecycle marker carried only the iteration
 ;; and a start timestamp, so a stalled stream had nothing to name — the gateway failed the
 ;; turn without ever telling the human which provider and model went silent.
-(defdescribe provider-call-chunk-test
-             (it "names the provider and model the call is dispatched to"
-                 (expect (= {:phase :provider-call
-                             :iteration 3
-                             :reason :tool-result
-                             :started-at-ms 42
-                             :provider "github-copilot-enterprise"
-                             :model "claude-opus-5"}
-                            (#'lp/provider-call-chunk
-                             3
-                             {:provider :github-copilot-enterprise :name "claude-opus-5"}
-                             42))))
-             (it "leaves out what the router could not resolve"
-                 (expect (= {:phase :provider-call
-                             :iteration 0
-                             :reason :user-submit
-                             :started-at-ms 1
-                             :provider nil
-                             :model nil}
-                            (#'lp/provider-call-chunk 0 {} 1))))
-             (it "carries the provider's bounded pre-output envelope to the gateway"
-                 (expect (= {:first-output-timeout-ms 800000 :stall-timeout-ms 600000}
-                            (#'lp/provider-watchdog-timeouts
-                             {:timeout-ms 1800000
-                              :first-byte-timeout-ms 600000
-                              :idle-timeout-ms 600000
-                              :semantic-timeout-ms 600000})))
-                 (expect (= {:first-output-timeout-ms 700 :stall-timeout-ms 600}
-                            (select-keys (#'lp/provider-call-chunk
-                                          1
-                                          {:provider :lmstudio :name "dense"}
-                                          42
-                                          {:first-output-timeout-ms 700 :stall-timeout-ms 600})
-                                         [:first-output-timeout-ms :stall-timeout-ms])))))
+(defdescribe
+  provider-call-chunk-test
+  (it "names the provider and model the call is dispatched to"
+      (expect
+        (= {:phase :provider-call
+            :iteration 3
+            :reason :tool-result
+            :started-at-ms 42
+            :provider "github-copilot"
+            :model "claude-opus-5"}
+           (#'lp/provider-call-chunk 3 {:provider :github-copilot :name "claude-opus-5"} 42))))
+  (it "leaves out what the router could not resolve"
+      (expect (= {:phase :provider-call
+                  :iteration 0
+                  :reason :user-submit
+                  :started-at-ms 1
+                  :provider nil
+                  :model nil}
+                 (#'lp/provider-call-chunk 0 {} 1))))
+  (it "carries the provider's bounded pre-output envelope to the gateway"
+      (expect (= {:first-output-timeout-ms 800000 :stall-timeout-ms 600000}
+                 (#'lp/provider-watchdog-timeouts
+                  {:timeout-ms 1800000
+                   :first-byte-timeout-ms 600000
+                   :idle-timeout-ms 600000
+                   :semantic-timeout-ms 600000})))
+      (expect (= {:first-output-timeout-ms 700 :stall-timeout-ms 600}
+                 (select-keys (#'lp/provider-call-chunk
+                               1
+                               {:provider :lmstudio :name "dense"}
+                               42
+                               {:first-output-timeout-ms 700 :stall-timeout-ms 600})
+                              [:first-output-timeout-ms :stall-timeout-ms])))))
 
 (defdescribe providers-router-rebuild-hook-wiring-test
              ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,

@@ -2419,7 +2419,7 @@
   (let [all (registry/registered-providers)]
     (if (seq all)
       ;; Width tracks the LONGEST provider id + a 2-space gutter so ids like
-      ;; `github-copilot-individual` (25 chars) never run into their label.
+      ;; `anthropic-coding-plan` (21 chars) never run into their label.
       (let [w (+ 2 (long (reduce max 0 (map #(count (name (:provider/id %))) all))))]
         (stdout! "Available providers:")
         (doseq [p (sort-by :provider/id all)]
@@ -3826,50 +3826,46 @@
 
 ;;; ── `vis-agent providers` subcommands ─────────────────────────────────────────
 
-(doseq [spec [{:cmd/name "list"
-               :cmd/parent ["providers"]
-               :cmd/doc "List registered providers with auth state, static limits, and base URLs."
-               :cmd/usage "vis-agent providers list"
-               :cmd/run-fn cli-providers-list!}
-              {:cmd/name "status"
-               :cmd/parent ["providers"]
-               :cmd/doc "Show provider authentication status together with static/dynamic limits."
-               :cmd/usage "vis-agent providers status [provider]"
-               :cmd/examples ["vis-agent providers status"
-                              "vis-agent providers status github-copilot-business"
-                              "vis-agent providers status openai-codex"]
-               :cmd/run-fn cli-providers-status!}
-              {:cmd/name "limits"
-               :cmd/parent ["providers"]
-               :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
-               :cmd/usage "vis-agent providers limits [provider]"
-               :cmd/examples ["vis-agent providers limits" "vis-agent providers limits openai-codex"
-                              "vis-agent providers limits ollama"]
-               :cmd/run-fn cli-providers-limits!}
-              {:cmd/name "auth"
-               :cmd/parent ["providers"]
-               :cmd/doc "Run a provider's interactive authentication flow."
-               :cmd/usage "vis-agent providers auth <provider>"
-               :cmd/args
-               [{:name "provider"
-                 :kind :positional
-                 :type :string
-                 :doc
-                 "Registered provider id (for example: github-copilot-business or openai-codex)."}]
-               :cmd/examples ["vis-agent providers auth github-copilot-business"
-                              "vis-agent providers auth github-copilot-individual"
-                              "vis-agent providers auth openai-codex"]
-               :cmd/run-fn cli-providers-auth!}
-              {:cmd/name "logout"
-               :cmd/parent ["providers"]
-               :cmd/doc "Clear saved credentials for a provider."
-               :cmd/usage "vis-agent providers logout <provider>"
-               :cmd/args
-               [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
-               :cmd/examples ["vis-agent providers logout github-copilot-business"
-                              "vis-agent providers logout github-copilot-individual"
-                              "vis-agent providers logout openai-codex"]
-               :cmd/run-fn cli-providers-logout!}]]
+(doseq [spec
+        [{:cmd/name "list"
+          :cmd/parent ["providers"]
+          :cmd/doc "List registered providers with auth state, static limits, and base URLs."
+          :cmd/usage "vis-agent providers list"
+          :cmd/run-fn cli-providers-list!}
+         {:cmd/name "status"
+          :cmd/parent ["providers"]
+          :cmd/doc "Show provider authentication status together with static/dynamic limits."
+          :cmd/usage "vis-agent providers status [provider]"
+          :cmd/examples ["vis-agent providers status" "vis-agent providers status github-copilot"
+                         "vis-agent providers status openai-codex"]
+          :cmd/run-fn cli-providers-status!}
+         {:cmd/name "limits"
+          :cmd/parent ["providers"]
+          :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
+          :cmd/usage "vis-agent providers limits [provider]"
+          :cmd/examples ["vis-agent providers limits" "vis-agent providers limits openai-codex"
+                         "vis-agent providers limits ollama"]
+          :cmd/run-fn cli-providers-limits!}
+         {:cmd/name "auth"
+          :cmd/parent ["providers"]
+          :cmd/doc "Run a provider's interactive authentication flow."
+          :cmd/usage "vis-agent providers auth <provider>"
+          :cmd/args [{:name "provider"
+                      :kind :positional
+                      :type :string
+                      :doc "Registered provider id (for example: github-copilot or openai-codex)."}]
+          :cmd/examples ["vis-agent providers auth github-copilot"
+                         "vis-agent providers auth openai-codex"]
+          :cmd/run-fn cli-providers-auth!}
+         {:cmd/name "logout"
+          :cmd/parent ["providers"]
+          :cmd/doc "Clear saved credentials for a provider."
+          :cmd/usage "vis-agent providers logout <provider>"
+          :cmd/args
+          [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
+          :cmd/examples ["vis-agent providers logout github-copilot"
+                         "vis-agent providers logout openai-codex"]
+          :cmd/run-fn cli-providers-logout!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis-agent sessions` subcommands ──────────────────────────────────────────

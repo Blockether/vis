@@ -2820,7 +2820,7 @@
 (defn- stall-failure-text
   "The stall failure a human reads. `Provider stream stalled: no output for
    362142ms in phase :provider-call` named the symptom and nothing else, so the
-   card could not say that it was github-copilot-enterprise / claude-opus-5 whose
+   card could not say that it was github-copilot / claude-opus-5 whose
    connection died — the log knew, the turn did not.
 
    A turn that never reached a provider must not blame one either: a turn parked

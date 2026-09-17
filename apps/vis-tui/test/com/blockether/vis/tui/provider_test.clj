@@ -200,8 +200,8 @@
                     (fn [& _]
                       (throw (ex-info "removal opened a dialog" {})))]
 
-        (expect (= true (provider/remove-provider! nil nil nil {:id :github-copilot-individual})))
-        (expect (= :github-copilot-individual @removed))
+        (expect (= true (provider/remove-provider! nil nil nil {:id :github-copilot})))
+        (expect (= :github-copilot @removed))
         ;; The band says what saying yes COSTS, the way the companion's
         ;; confirm row does - `Yes` alone never says what it agrees to.
         (expect (str/includes? (str (:question @asked)) "Remove"))
@@ -401,7 +401,7 @@
           (expect (= true
                      (@#'provider/gateway-device-login!
                       (band-stub {} log)
-                      :github-copilot-individual
+                      :github-copilot
                       "GitHub Copilot")))
           (expect (= false @start-called?)))))
   (it
@@ -435,7 +435,7 @@
         (expect (= true
                    (@#'provider/gateway-device-login!
                     (band-stub {} log)
-                    :github-copilot-individual
+                    :github-copilot
                     "GitHub Copilot")))
         (expect (= "https://github.com/login/device" @opened))
         (expect (= 1 @polled))
@@ -468,7 +468,7 @@
                          (assoc (band-stub {} log)
                            :wait! (fn [& _]
                                     false))
-                         :github-copilot-individual
+                         :github-copilot
                          "GitHub Copilot"
                          true)))
           (expect (= "flow-1" @cancelled)))))
@@ -483,7 +483,7 @@
 
           (expect (nil? (@#'provider/gateway-device-login!
                          (band-stub {} log)
-                         :github-copilot-individual
+                         :github-copilot
                          "GitHub Copilot")))
           (expect (str/includes? (str (notes log)) "Approval denied")))))
   (it "uses the gateway expiry instead of waiting indefinitely"
@@ -511,7 +511,7 @@
 
           (expect (nil? (@#'provider/gateway-device-login!
                          (band-stub {} log)
-                         :github-copilot-individual
+                         :github-copilot
                          "GitHub Copilot")))
           (expect (= 1 @cancelled))
           (expect (str/includes? (str (notes log)) "timed out"))))))
@@ -759,7 +759,7 @@
           (expect (= true
                      (@#'provider/gateway-device-login!
                       (band-stub {"GitHub Copilot" {:action :wait}} log)
-                      :github-copilot-individual
+                      :github-copilot
                       "GitHub Copilot")))
           (expect (empty? (notes log))))))
   (it "codex success closes the band silently"

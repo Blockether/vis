@@ -325,7 +325,7 @@ describe('composer response controls', () => {
     ['/v1/router', 'session switch'],
   ])('recovers %s on %s through the real gateway client', async (failedPath, recovery) => {
     const user = userEvent.setup();
-    const pref = { provider: 'github-copilot-enterprise', model: 'gpt-6-astra' };
+    const pref = { provider: 'github-copilot', model: 'gpt-6-astra' };
     const fleet = [routerProvider(pref.provider)];
     let verbosity = toggle('verbosity', 'Verbosity', 'low', ['low', 'medium', 'high']);
     let offline = true;

@@ -34,17 +34,11 @@
   "Local OpenAI-compatible providers that need no credentials."
   #{:ollama :lmstudio})
 
-(def github-copilot-account-types
-  "GitHub Copilot preset id -> device-flow account type."
-  {:github-copilot-individual :individual
-   :github-copilot-business :business
-   :github-copilot-enterprise :enterprise})
-
 (def oauth-provider-ids
   "Providers whose credentials come from an interactive OAuth flow and
    live OUTSIDE config.edn (keychain / token files owned by the
    provider extension)."
-  (into #{:openai-codex :anthropic-coding-plan} (keys github-copilot-account-types)))
+  #{:openai-codex :anthropic-coding-plan :github-copilot})
 
 (defn command-minted?
   "True when the credential is minted BY THE MACHINE: config carries an

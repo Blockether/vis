@@ -71,12 +71,7 @@
 
 ;;; ── Provider OAuth — every flow runs through the gateway ─────────────
 
-(def ^:private github-copilot-account-types
-  {:github-copilot-individual :individual
-   :github-copilot-business :business
-   :github-copilot-enterprise :enterprise})
-
-(defn- github-copilot-provider? [provider-id] (contains? github-copilot-account-types provider-id))
+(defn- github-copilot-provider? [provider-id] (= :github-copilot provider-id))
 
 (defn- gateway-authenticated?
   "Ask the DAEMON whether `provider-id` already holds usable credentials.

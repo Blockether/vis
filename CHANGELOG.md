@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Sign in to GitHub Copilot through a single provider entry. The individual, business and enterprise
+  choices are gone; Vis reads your seat plan from GitHub after you sign in.
+
 ## [v0.2.8] - 2026-09-16
 
 ### Fixed

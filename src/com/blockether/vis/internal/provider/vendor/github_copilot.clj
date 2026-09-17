@@ -51,21 +51,15 @@
 
 (def ^:private COPILOT_ACCOUNT_TYPES #{:individual :business :enterprise})
 
-(def ^:private COPILOT_PROVIDER_IDS
-  {:individual :github-copilot-individual
-   :business :github-copilot-business
-   :enterprise :github-copilot-enterprise})
+(def ^:private COPILOT_PROVIDER_ID
+  "The ONE registered Copilot provider. A seat tier (individual / business /
+   enterprise) is something the signed-in account REPORTS - never a question put
+   to a human who has no credential yet."
+  :github-copilot)
 
-(def ^:private COPILOT_PROVIDER_LABELS
-  {:individual "GitHub Copilot (Individual)"
-   :business "GitHub Copilot (Business)"
-   :enterprise "GitHub Copilot (Enterprise)"})
+(def ^:private COPILOT_PROVIDER_LABEL "GitHub Copilot")
 
 (def ^:private COPILOT_STATIC_LIMITS {:rpm 500 :tpm 2000000})
-
-(defn- account-provider-id [account-type] (get COPILOT_PROVIDER_IDS account-type))
-
-(defn- account-provider-label [account-type] (get COPILOT_PROVIDER_LABELS account-type))
 
 (def ^:private COPILOT_HEADERS
   "Required headers for Copilot API calls."
@@ -178,21 +172,22 @@
 (defn- auth-account-type [] (normalize-account-type (:account-type (load-auth-file))))
 
 (defn- credential-account-type
-  "The tier the credential ON THIS MACHINE belongs to: forced by env, else the
-   tier the device flow recorded in the auth file, else `:individual` for a bare
-   token (env var / Copilot CLI keychain) that names none.
+  "Seat tier of the credential ON THIS MACHINE: forced by env, else the tier
+   recorded for the token once the account reported it, else `:individual` for a
+   bare token (env var / Copilot CLI keychain) that names none.
 
-   All three tier providers share ONE OAuth token file, so THIS - never the tier
-   a call happens to be about - decides which single Copilot provider is signed
-   in. Every authentication verdict reads it."
+   Display and host-fallback only. The tier is NOT an identity: one OAuth token
+   file holds one Copilot account and it drives one provider."
   []
   (or (env-account-type) (auth-account-type) :individual))
 
-(defn- configured-account-type
-  "The tier a call is ABOUT: the caller's explicit `:account-type`, else whichever
-   tier the machine's credential belongs to."
-  [opts]
-  (or (normalize-account-type (:account-type opts)) (credential-account-type)))
+(defn- remember-account-type!
+  "Persist an OBSERVED seat tier so status can name it without a network call.
+   Writes only when the recorded tier actually changed."
+  [account-type]
+  (when-let [auth (load-auth-file)]
+    (when (and account-type (not= account-type (normalize-account-type (:account-type auth))))
+      (save-auth-file! (assoc auth :account-type (name account-type))))))
 
 (defn- delete-auth-file!
   "Remove persisted auth state."
@@ -281,9 +276,9 @@
    `expires-in`  - max wait in seconds"
   ([device-code interval] (poll-for-token! device-code interval 900 nil))
   ([device-code interval expires-in] (poll-for-token! device-code interval expires-in nil))
-  ([device-code interval expires-in {:keys [enterprise-domain] :as opts}]
+  ([device-code interval expires-in {:keys [enterprise-domain]}]
    (let [account-type
-         (configured-account-type opts)
+         (credential-account-type)
 
          url
          (if enterprise-domain
@@ -354,22 +349,20 @@
 
 (defn- copilot-api-base-url
   "ROOT Copilot API host for the account (no `/v1`). Source of truth is the
-   token-exchange `endpoints.api` — the account-type host map and
+   token-exchange `endpoints.api` - the seat-tier host map and
    `COPILOT_API_FALLBACK_URL` are only fallbacks for when the token response
-   carries no endpoints. NEVER guess the host from account-type when the token
-   tells us: a Business seat on a `:github-copilot-enterprise` provider still
-   reports `endpoints.api = api.business.githubcopilot.com`, and
-   `api.enterprise.githubcopilot.com` does not exist (→ 404). Used for the
+   carries no endpoints. NEVER guess the host from the recorded tier when the
+   token tells us: an Enterprise Cloud seat still reports
+   `endpoints.api = api.business.githubcopilot.com`, and
+   `api.enterprise.githubcopilot.com` does not exist (-> 404). Used for the
    model-policy endpoint (root) and as the base for `copilot-llm-base-url`."
-  ([token response enterprise-domain] (copilot-api-base-url token response enterprise-domain nil))
-  ([_token response enterprise-domain opts]
-   (let [account-type (configured-account-type opts)]
-     ;; Token `proxy-ep` is NES/inline-completion traffic. Chat models use
-     ;; account API host; `/messages` and proxy chat return 404/model-missing.
-     (or (endpoint-api-url response)
-         (when-not (str/blank? enterprise-domain) (str "https://copilot-api." enterprise-domain))
-         (get COPILOT_ACCOUNT_BASE_URLS account-type)
-         COPILOT_API_FALLBACK_URL))))
+  [_token response enterprise-domain]
+  ;; Token `proxy-ep` is NES/inline-completion traffic. Chat models use
+  ;; account API host; `/messages` and proxy chat return 404/model-missing.
+  (or (endpoint-api-url response)
+      (when-not (str/blank? enterprise-domain) (str "https://copilot-api." enterprise-domain))
+      (get COPILOT_ACCOUNT_BASE_URLS (credential-account-type))
+      COPILOT_API_FALLBACK_URL))
 
 (defn- ensure-api-version
   "Copilot serves Claude at `/v1/messages` and GPT at `/v1/responses`, so the
@@ -383,10 +376,10 @@
       (if (str/ends-with? trimmed "/v1") trimmed (str trimmed "/v1")))))
 
 (defn- copilot-llm-base-url
-  "Account API host WITH the `/v1` API-version segment — the base svar uses to
+  "Account API host WITH the `/v1` API-version segment - the base svar uses to
    reach `/v1/messages` (Claude) and `/v1/responses` (GPT)."
-  [token response enterprise-domain opts]
-  (ensure-api-version (copilot-api-base-url token response enterprise-domain opts)))
+  [token response enterprise-domain]
+  (ensure-api-version (copilot-api-base-url token response enterprise-domain)))
 
 (defn- enable-copilot-model!
   [token api-url model-id]
@@ -411,39 +404,32 @@
 (defonce ^:private token-cache (atom nil))
 
 (defn- cached-token-usable?
-  "True when a cached Copilot token map may still be SERVED for `account-type`:
-   it carries a token, matches the account, its hard expiry is still in the
-   future, and we are BEFORE its proactive-refresh deadline.
+  "True when a cached Copilot token map may still be SERVED: it carries a token,
+   its hard expiry is still in the future, and we are BEFORE its
+   proactive-refresh deadline.
 
-   `:refresh-at-ms` honors GitHub's `refresh_in` (refresh after N seconds) — the
-   AUTHORITATIVE refresh signal — instead of holding the token until `expires_at`.
+   `:refresh-at-ms` honors GitHub's `refresh_in` (refresh after N seconds) - the
+   AUTHORITATIVE refresh signal - instead of holding the token until `expires_at`.
    Accounts whose `refresh_in` is far shorter than `expires_at - now` otherwise
    keep a token the LLM proxy already rejects (`IDE token expired`), and the 401
    recovery loop, trusting `expires_at`, re-serves/re-mints it forever without
    converging. Falls back to `expires_at - REFRESH_MARGIN_MS` for caches minted
    before `:refresh-at-ms` existed."
-  [cached account-type ^long now]
+  [cached ^long now]
   (let [hard
         (long (or (:expires-at-ms cached) 0))
 
         refresh-at
         (long (or (:refresh-at-ms cached) (- hard (long REFRESH_MARGIN_MS))))]
 
-    (boolean (and cached
-                  (:token cached)
-                  (= account-type (or (normalize-account-type (:account-type cached)) :individual))
-                  (> hard now)
-                  (< now refresh-at)))))
+    (boolean (and cached (:token cached) (> hard now) (< now refresh-at)))))
 
 (defn- exchange-for-copilot-token!
   "Exchange an OAuth token for a short-lived Copilot API token.
    Returns {:token str :expires-at-ms long :api-url str}. `:api-url` is the LLM
    base WITH `/v1` (`{host}/v1`), derived from the token's `endpoints.api`."
-  [oauth-token & [{:keys [enterprise-domain] :as opts}]]
-  (let [account-type
-        (configured-account-type opts)
-
-        url
+  [oauth-token & [{:keys [enterprise-domain]}]]
+  (let [url
         (if enterprise-domain
           (str "https://api." enterprise-domain "/copilot_internal/v2/token")
           COPILOT_TOKEN_URL)
@@ -478,8 +464,8 @@
        ;; deadline — matching the margin the anthropic/openai-codex providers keep.
        :refresh-at-ms (- (if refresh-in (min hard-ms (+ now (* (long refresh-in) 1000))) hard-ms)
                          (long REFRESH_MARGIN_MS))
-       :api-url (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
-       :account-type account-type
+       :api-url (copilot-llm-base-url token resp enterprise-domain)
+       :account-type (credential-account-type)
        :sku (or (response-field resp :sku) (response-field resp :access_type_sku))
        :oauth-token oauth-token})))
 
@@ -492,16 +478,13 @@
      :enterprise-domain - for GHE (e.g. \"github.mycompany.com\")"
   ([] (get-copilot-token! nil))
   ([opts]
-   (let [account-type
-         (configured-account-type opts)
-
-         cached
+   (let [cached
          @token-cache
 
          now
          (util/now-ms)]
 
-     (if (cached-token-usable? cached account-type now)
+     (if (cached-token-usable? cached now)
        ;; Cached token is still valid. Reuse the LLM base captured at exchange
        ;; (the token's authoritative `endpoints.api` + `/v1`). Only re-derive
        ;; when an older cache lacks it — and even then via `copilot-llm-base-url`
@@ -509,8 +492,8 @@
        ;; and stale `proxy-ep` traffic is not re-introduced.
        {:token (:token cached)
         :api-url (or (ensure-api-version (:api-url cached))
-                     (copilot-llm-base-url (:token cached) {} nil {:account-type account-type}))
-        :account-type account-type
+                     (copilot-llm-base-url (:token cached) {} nil))
+        :account-type (credential-account-type)
         :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
        (let [oauth-token
@@ -518,25 +501,23 @@
                  (:oauth-token (detect-oauth-token))
                  (throw (ex-info
                           (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
-                               (name (account-provider-id account-type))
+                               (name COPILOT_PROVIDER_ID)
                                "` to authenticate.")
                           {:type :vis/copilot-not-authenticated})))
 
              fresh
-             (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
+             (exchange-for-copilot-token! oauth-token opts)]
 
-         (reset! token-cache (assoc fresh
-                               :oauth-token oauth-token
-                               :account-type account-type))
+         (reset! token-cache (assoc fresh :oauth-token oauth-token))
          (tel/log! {:level :info
                     :id ::copilot-token-refreshed
                     :data {:expires-in-ms (- (long (:expires-at-ms fresh)) now)
                            :api-url (:api-url fresh)
-                           :account-type account-type}
+                           :account-type (:account-type fresh)}
                     :msg "Copilot API token refreshed"})
          {:token (:token fresh)
           :api-url (:api-url fresh)
-          :account-type account-type
+          :account-type (:account-type fresh)
           :llm-headers COPILOT_HEADERS})))))
 
 ;; CLI helpers
@@ -551,48 +532,31 @@
    {:is-authenticated bool :source keyword :oauth-token-preview str
     :account-type keyword :copilot-token-valid? bool :expires-in-ms long}
 
-   Tier-aware, like `make-detect-fn`: one token file holds ONE Copilot account, so
-   a credential authenticates the tier it was minted for and no other. Any other
-   tier reports `:is-authenticated false` and names the live one in
-   `:active-account-type` instead of claiming a sign-in it does not own."
-  ([] (status nil))
-  ([opts]
-   (let [account-type
-         (configured-account-type opts)
+   `:account-type` REPORTS the seat tier of the account that signed in; it is
+   never asked for up front. One token file holds ONE Copilot account, so there
+   is one sign-in to describe."
+  []
+  (let [detected
+        (detect-oauth-token)
 
-         active
-         (credential-account-type)
+        cached
+        @token-cache
 
-         credential
-         (detect-oauth-token)
+        now
+        (util/now-ms)]
 
-         detected
-         (when (= account-type active) credential)
+    (cond-> {:is-authenticated (some? detected) :account-type (credential-account-type)}
+      detected
+      (assoc :source
+        (:source detected) :oauth-token-preview
+        (let [t (:oauth-token detected)]
+          (str (subs t 0 (min 8 (count t))) "...")))
 
-         cached
-         @token-cache
-
-         now
-         (util/now-ms)]
-
-     (cond-> {:is-authenticated (some? detected) :account-type account-type}
-       (and credential (not= account-type active))
-       (assoc :active-account-type active)
-
-       detected
-       (assoc :source
-         (:source detected) :oauth-token-preview
-         (let [t (:oauth-token detected)]
-           (str (subs t 0 (min 8 (count t))) "...")))
-
-       (and detected
-            cached
-            (:token cached)
-            (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
-       (assoc :copilot-token-valid?
-         (> (long (:expires-at-ms cached)) now) :expires-in-ms
-         (- (long (:expires-at-ms cached)) now) :api-url
-         (:api-url cached))))))
+      (and detected cached (:token cached))
+      (assoc :copilot-token-valid?
+        (> (long (:expires-at-ms cached)) now) :expires-in-ms
+        (- (long (:expires-at-ms cached)) now) :api-url
+        (:api-url cached)))))
 
 (defn logout!
   "Clear all cached and persisted tokens."
@@ -761,36 +725,27 @@
                                 "unknown"))}})
     UNAUTHENTICATED_LIMITS))
 
-(defn- make-status-fn
-  [account-type]
-  (fn []
-    (status {:account-type account-type})))
+(defn- observe-account-type!
+  "Record the seat tier the ACCOUNT reports, so nobody has to tell Vis which
+   Copilot they bought. Best-effort: an unreachable endpoint, or a plan name
+   outside `COPILOT_ACCOUNT_TYPES`, leaves the recorded tier alone."
+  []
+  (try (when-let [{:keys [oauth-token]} (detect-oauth-token)]
+         (let [usage (fetch-user-usage! oauth-token)]
+           (remember-account-type! (normalize-account-type
+                                     (or (response-field usage :copilot_plan)
+                                         (response-field usage :access_type_sku))))))
+       (catch Exception e (cancellation/preserve-interrupt! e) nil)))
 
-(defn- make-detect-fn
-  "Detect credentials for THIS Copilot tier only. All three tier providers
-   (individual/business/enterprise) share a single OAuth token file, so a raw
-   `detect-oauth-token` would report every tier authenticated and surface all
-   three in the picker/router at once (issue #48). Report authenticated only
-   for the tier the credential was minted for (or the one env forces), leaving
-   exactly one Copilot provider live."
-  [account-type]
-  (fn []
-    (when (= account-type (credential-account-type)) (detect-oauth-token))))
-
-(defn- make-get-token-fn
-  [account-type]
-  (fn []
-    (get-copilot-token! {:account-type account-type})))
-
-(defn- make-force-refresh-fn
-  "Build the runtime 401-recovery hook for `account-type`.
+(defn- force-refresh-fn
+  "Build the runtime 401-recovery hook.
 
    `get-copilot-token!` only re-exchanges when the cached Copilot API token
    is locally expired, so a token that is locally-valid but rejected
    server-side (revoked/rotated by another client) would never be replaced.
    This hook drops the in-process cache and forces a fresh OAuth-token ->
    Copilot-API-token exchange. Throws when no OAuth token is on file."
-  [account-type]
+  []
   ;; Copilot's GitHub OAuth token is STABLE (no rotation, so no
   ;; invalid_grant), but a 401 storm would still stampede the
   ;; OAuth->Copilot exchange. `oauth/refresher` owns a per-account lock and
@@ -810,27 +765,25 @@
             now
             (util/now-ms)]
 
-        (when (and (cached-token-usable? cached account-type now) (not= rejected (:token cached)))
-          (get-copilot-token! {:account-type account-type}))))
+        (when (and (cached-token-usable? cached now) (not= rejected (:token cached)))
+          (get-copilot-token!))))
     ;; REFRESH: drop the cache and force one fresh exchange.
     (fn []
       (reset! token-cache nil)
-      (let [fresh (get-copilot-token! {:account-type account-type})]
+      (let [fresh (get-copilot-token!)]
         (tel/log! {:level :info
                    :id ::copilot-token-force-refreshed
-                   :data {:account-type account-type}
+                   :data {:account-type (:account-type fresh)}
                    :msg "Copilot API token force-refreshed (401 recovery)"})
         fresh))))
 
-(defn- make-limits-fn
-  "Quota for THIS tier only. The tiers share one OAuth token, so a tier that does
-   not hold it must not report the signed-in account's quota as its own — a row
-   reading `not signed in` next to someone else's premium balance."
-  [account-type]
-  (fn []
-    (assoc (if (= account-type (credential-account-type)) (dynamic-limits!) UNAUTHENTICATED_LIMITS)
-      :provider-id (account-provider-id account-type)
-      :static COPILOT_STATIC_LIMITS)))
+(defn- limits!
+  "Quota for the signed-in Copilot account. `dynamic-limits!` already reports
+   `:unauthenticated` when no credential is on file."
+  []
+  (assoc (dynamic-limits!)
+    :provider-id COPILOT_PROVIDER_ID
+    :static COPILOT_STATIC_LIMITS))
 
 ;; Provider registration
 ;;
@@ -848,55 +801,36 @@
   "Wrap the multi-step device flow into one fn the CLI / TUI can
    call uniformly. `printer-fn` is invoked for every status line so
    the caller controls the output channel (stdout, TUI dialog, ...).
-   Opts may include `:account-type` = :individual, :business, or :enterprise.
 
-   Only a credential minted for the SAME tier short-circuits the flow. One token
-   file holds one Copilot account, so signing into another tier must really run
-   the device flow: that is the only thing that records the new tier, and without
-   it the machine keeps answering for the old one while both tiers claim to be
-   signed in."
+   Nothing is asked about the account: the device flow signs in, then the
+   account itself tells us which seat tier it is."
   ([printer-fn] (interactive-auth! printer-fn nil))
   ([printer-fn opts]
    (let [print!
          (or printer-fn (constantly nil))
 
-         account-type
-         (configured-account-type opts)
-
-         opts
-         (assoc opts :account-type account-type)
-
          credential
-         (detect-oauth-token)
+         (detect-oauth-token)]
 
-         active
-         (credential-account-type)]
-
-     (if (and credential (= account-type active))
+     (if credential
        (do (print! "  Already authenticated with GitHub Copilot.")
-           (print! (str "  Account type: " (name account-type)))
-           (print! (str "  Run `vis-agent providers status "
-                        (name (account-provider-id account-type))
-                        "` for details."))
-           (print! (str "  Run `vis-agent providers logout "
-                        (name (account-provider-id account-type))
-                        "` first to re-authenticate."))
+           (print! (str "  Account type: " (name (credential-account-type))))
+           (print! "  Run `vis-agent providers status github-copilot` for details.")
+           (print! "  Run `vis-agent providers logout github-copilot` first to re-authenticate.")
            :already-authenticated)
        (let [{:keys [user-code verification-uri device-code interval expires-in]}
              (start-device-flow! opts)]
          (print! "")
-         (print! (str "  Account type: " (name account-type)))
-         (when credential
-           (print!
-             (str "  Replaces the " (name active) " sign-in - one Copilot account per machine.")))
          (print! (str "  1. Open: " verification-uri))
          (print! (str "  2. Enter code: " user-code))
          (print! "")
          (print! "  Waiting for authorization...")
          (poll-for-token! device-code interval expires-in opts)
+         (observe-account-type!)
+         (print! (str "  Account type: " (name (credential-account-type))))
          (let [{:keys [token api-url]} (get-copilot-token! opts)
-               ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
-               ;; not under `/v1` — strip the LLM-base version segment.
+               ;; Model-policy lives at the ROOT host (`{host}/models/.../policy`),
+               ;; not under `/v1` - strip the LLM-base version segment.
                policy-root (str/replace (or api-url "") #"/v1/?$" "")
                {:keys [attempted enabled]} (enable-known-copilot-models! token policy-root)]
 
@@ -904,26 +838,17 @@
          (print! "  ✓ Authenticated! GitHub Copilot is ready.")
          :ok)))))
 
-(defn- make-auth-fn
-  [account-type]
-  (fn [printer-fn]
-    (interactive-auth! printer-fn {:account-type account-type})))
-
 (defn- auth-start
-  "Headless leg 1 of GitHub Copilot device-flow OAuth — the wire-drivable twin
+  "Headless leg 1 of GitHub Copilot device-flow OAuth - the wire-drivable twin
    of `interactive-auth!`. Starts the device flow and returns the fields a
    remote client SHOWS the user (`:user-code`, `:verification-uri`) plus the
    OPAQUE `:flow` the daemon hands back to `auth-await`.
 
    Device flow is the best remote UX of the three OAuth providers: nothing has
    to be pasted back, so a phone can complete it unaided."
-  [account-type]
-  (let [opts
-        {:account-type account-type}
-
-        {:keys [user-code verification-uri device-code interval expires-in]}
-        (start-device-flow! opts)]
-
+  []
+  (let [{:keys [user-code verification-uri device-code interval expires-in]} (start-device-flow!
+                                                                               nil)]
     {:kind :device
      :url verification-uri
      :user-code user-code
@@ -931,18 +856,19 @@
      :interval-ms (* 1000 (long (or interval 5)))
      :expires-in-ms (* 1000 (long (or expires-in 900)))
      :instructions ["Open the verification URL." "Enter the code shown above."
-                    "This finishes on its own — nothing to paste back."]
-     :flow {:device-code device-code :interval interval :expires-in expires-in :opts opts}}))
+                    "This finishes on its own - nothing to paste back."]
+     :flow {:device-code device-code :interval interval :expires-in expires-in}}))
 
 (defn- auth-await
   "Headless leg 2: BLOCK until GitHub confirms the device authorization, then
    persist credentials and enable the known Copilot model policies — exactly
    what `interactive-auth!` does, minus the printing. Callers that must not
    block (the gateway) run this on their own thread."
-  [{:keys [device-code interval expires-in opts]}]
-  (poll-for-token! device-code interval expires-in opts)
+  [{:keys [device-code interval expires-in]}]
+  (poll-for-token! device-code interval expires-in)
+  (observe-account-type!)
   (let [{:keys [token api-url]}
-        (get-copilot-token! opts)
+        (get-copilot-token!)
 
         policy-root
         (str/replace (or api-url "") #"/v1/?$" "")]
@@ -950,7 +876,7 @@
     (enable-known-copilot-models! token policy-root))
   {:status :ok})
 
-;; ONE transparent provider per Copilot account, one OAuth login. Copilot
+;; ONE transparent provider for the Copilot account, one OAuth login. Copilot
 ;; serves two cacheable wires behind that single token, BOTH under `/v1`:
 ;;   - Claude      -> native Anthropic `/v1/messages` (signed thinking + cache_control)
 ;;   - GPT / Codex -> OpenAI `/v1/responses`           (reasoning-item persistence + caching)
@@ -959,70 +885,56 @@
 ;; provider with base-url `…/v1` routes Claude to `/v1/messages` and GPT to
 ;; `/v1/responses` off the same root. svar's `:github-copilot` KNOWN overlay
 ;; supplies each model's wire (Claude→:anthropic, GPT→:openai-compatible-responses),
-;; inherited by the account id via `:provider-model-source`.
+;; read straight off that single catalog entry.
 ;;
 ;; Gemini / Grok are intentionally dropped: their only Copilot surface is the
 ;; ROOT `/chat/completions` (404 under /v1), which does NOT cache the prompt
 ;; prefix — agent loops there re-read context every turn and repeat work.
 ;; default-models now come from svar (single source) via provider-default-models.
 
-(defn- provider-entries
-  "ONE provider per Copilot account (e.g. `:github-copilot-individual`),
-   carrying both cacheable wires under a single `…/v1` base-url and a single
-   token/auth/status/limits set. Claude models resolve to the Anthropic wire
-   (`/v1/messages`) and GPT/Codex to the Responses wire (`/v1/responses`) via
-   svar's per-model api-style overlay; `:responses-path` is provider-scoped
-   but harmless to the Anthropic path (which appends `/messages` itself)."
-  [account-type]
-  (let [pid
-        (account-provider-id account-type)
-
-        label
-        (account-provider-label account-type)
-
-        base
-        (get COPILOT_ACCOUNT_BASE_URLS account-type)
-
-        shared
-        {:provider/status-fn (make-status-fn account-type)
-         :provider/logout-fn #'logout!
-         :provider/detect-fn (make-detect-fn account-type)
-         :provider/auth-fn (make-auth-fn account-type)
-         :provider/auth-start-fn (fn copilot-auth-start []
-                                   (auth-start account-type))
-         :provider/auth-await-fn #'auth-await
-         :provider/get-token-fn (make-get-token-fn account-type)
-         :provider/refresh-token-fn (make-force-refresh-fn account-type)
-         :provider/limits-fn (make-limits-fn account-type)}]
-
-    [(merge shared
-            {:provider/id pid
-             :provider/label label
-             :provider/preset {;; base-url is OAuth-host-derived per account; the
-                               ;; model list comes from svar (single source), keyed
-                               ;; by the tier provider id `pid`.
-                               :base-url (str base "/v1")
-                               :api-style :anthropic
-                               :responses-path "/responses"
-                               ;; sol may legitimately spend several minutes reasoning before its
-                               ;; first byte. Keep the gateway backstop outside that measured
-                               ;; prefill envelope; project config can still override every value.
-                               :network {:timeout-ms 900000
-                                         :ttft-timeout-ms 240000
-                                         :first-byte-timeout-ms 240000
-                                         :idle-timeout-ms 120000
-                                         :semantic-timeout-ms 300000}
-                               :default-models (svar/provider-default-models pid)}})]))
+(defn- provider-entry
+  "The ONE Copilot provider: both cacheable wires under a single `.../v1`
+   base-url and a single token/auth/status/limits set. Claude models resolve to
+   the Anthropic wire (`/v1/messages`) and GPT/Codex to the Responses wire
+   (`/v1/responses`) via svar's per-model api-style overlay; `:responses-path`
+   is provider-scoped but harmless to the Anthropic path (which appends
+   `/messages` itself)."
+  []
+  {:provider/id COPILOT_PROVIDER_ID
+   :provider/label COPILOT_PROVIDER_LABEL
+   :provider/status-fn #'status
+   :provider/logout-fn #'logout!
+   :provider/detect-fn #'detect-oauth-token
+   :provider/auth-fn #'interactive-auth!
+   :provider/auth-start-fn #'auth-start
+   :provider/auth-await-fn #'auth-await
+   :provider/get-token-fn #'get-copilot-token!
+   :provider/refresh-token-fn (force-refresh-fn)
+   :provider/limits-fn #'limits!
+   :provider/preset {;; Bootstrap host only: every call re-derives the base from
+                     ;; the token's own `endpoints.api`, so a business or
+                     ;; enterprise seat is never pinned to this default.
+                     :base-url (str COPILOT_API_FALLBACK_URL "/v1")
+                     :api-style :anthropic
+                     :responses-path "/responses"
+                     ;; sol may legitimately spend several minutes reasoning before its
+                     ;; first byte. Keep the gateway backstop outside that measured
+                     ;; prefill envelope; project config can still override every value.
+                     :network {:timeout-ms 900000
+                               :ttft-timeout-ms 240000
+                               :first-byte-timeout-ms 240000
+                               :idle-timeout-ms 120000
+                               :semantic-timeout-ms 300000}
+                     :default-models (svar/provider-default-models COPILOT_PROVIDER_ID)}})
 
 (defn register!
   []
   (vis/register-extension!
-    (vis/extension
-      {:ext/name "provider-github-copilot"
-       :ext/description
-       "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
-       :ext/version "0.4.1"
-       :ext/author "Blockether"
-       :ext/owner "vis"
-       :ext/license "Apache-2.0"
-       :ext/providers (into [] (mapcat provider-entries) [:individual :business :enterprise])})))
+    (vis/extension {:ext/name "provider-github-copilot"
+                    :ext/description
+                    "GitHub Copilot OAuth/token-exchange provider (device flow, any seat tier)."
+                    :ext/version "0.4.1"
+                    :ext/author "Blockether"
+                    :ext/owner "vis"
+                    :ext/license "Apache-2.0"
+                    :ext/providers [(provider-entry)]})))

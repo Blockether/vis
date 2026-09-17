@@ -5264,7 +5264,7 @@
 ;; Regression, issue #112: a GitHub-Copilot stream went silent and the turn failed with
 ;; "Provider stream stalled: no output for 362142ms in phase :provider-call" — the error
 ;; block never said WHICH provider or model had gone quiet, so the TUI could only paint a
-;; bare failed card while the log knew it was github-copilot-enterprise / claude-opus-5.
+;; bare failed card while the log knew it was github-copilot / claude-opus-5.
 (defdescribe
   stalled-turn-names-its-provider-test
   (let [advance
@@ -5279,7 +5279,7 @@
                        {:phase :provider-call
                         :iteration 0
                         :started-at-ms 1
-                        :provider "github-copilot-enterprise"
+                        :provider "github-copilot"
                         :model "claude-opus-5"}
                        100)
 
@@ -5287,16 +5287,16 @@
               streaming
               (advance dispatched {:phase :content :delta "hi"} 200)]
 
-          (expect (= "github-copilot-enterprise" (:provider dispatched)))
+          (expect (= "github-copilot" (:provider dispatched)))
           (expect (= "claude-opus-5" (:model dispatched)))
-          (expect (= "github-copilot-enterprise" (:provider streaming)))
+          (expect (= "github-copilot" (:provider streaming)))
           (expect (= "claude-opus-5" (:model streaming)))))
     (it "names them in the failure a human reads"
-        (expect (= (str "Provider stream stalled (github-copilot-enterprise / claude-opus-5): "
+        (expect (= (str "Provider stream stalled (github-copilot / claude-opus-5): "
                         "no output for 362142ms in phase :provider-call")
                    (failure-text (atom {:stall-detail
                                         "no output for 362142ms in phase :provider-call"
-                                        :provider :github-copilot-enterprise
+                                        :provider :github-copilot
                                         :model "claude-opus-5"})))))
     (it "refuses to blame a provider the turn never reached"
         (expect (= "Turn stalled before reaching the provider: no worker activity for 5ms"

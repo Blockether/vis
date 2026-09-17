@@ -138,17 +138,15 @@
 (defdescribe
   persistent-one-shot-route-test
   (it "forwards explicit provider and model selection to gateway turn submission"
-      (doseq [[opts expected] [[{:provider "github-copilot-individual" :model "gpt-6-astra"}
-                                {:provider :github-copilot-individual :model "gpt-6-astra"}]
-                               [{:provider "github-copilot-individual"}
-                                {:provider :github-copilot-individual}]
+      (doseq [[opts expected] [[{:provider "github-copilot" :model "gpt-6-astra"}
+                                {:provider :github-copilot :model "gpt-6-astra"}]
+                               [{:provider "github-copilot"} {:provider :github-copilot}]
                                [{:model "gpt-6-astra"} {:model "gpt-6-astra"}]
-                               [{:model "github-copilot-individual/gpt-6-astra"}
-                                {:provider :github-copilot-individual :model "gpt-6-astra"}]]]
+                               [{:model "github-copilot/gpt-6-astra"}
+                                {:provider :github-copilot :model "gpt-6-astra"}]]]
         (let [submitted (atom nil)
               config {:providers [{:id :openai-codex :models [{:name "gpt-6-astra"}]}
-                                  {:id :github-copilot-individual
-                                   :models [{:name "gpt-6-astra"}]}]}]
+                                  {:id :github-copilot :models [{:name "gpt-6-astra"}]}]}]
 
           (with-redefs [lp/rebuild-router! (constantly nil)
                         gateway-state/create-session! (constantly {"id" "wire-session"})

@@ -275,14 +275,16 @@
 
 ;;; ── Provider presets ──────────────────────────────────────────────────────
 
-(def ^:private removed-provider-ids #{:blockether :github-models :github-copilot})
+;; Presets withdrawn from Vis: their stale catalog keys must never return as
+;; pickable rows. Copilot needs no entry - svar ships ONE `:github-copilot`
+;; id, and a seat tier is what the signed-in account reports.
+(def ^:private removed-provider-ids #{:blockether :github-models})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
-  [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot-business
-   :github-copilot-individual :github-copilot-enterprise :zai :zai-coding-plan :alibaba-coding-plan
-   :alibaba-token-plan :openrouter :ollama :lmstudio])
+  [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot :zai :zai-coding-plan
+   :alibaba-coding-plan :alibaba-token-plan :openrouter :ollama :lmstudio])
 
 (defn- registered-provider-metadata
   "Provider-owned preset metadata. First-party provider extensions put
@@ -358,8 +360,8 @@
          (remove :is-hidden)
          ;; Drop presets with no human label. A label is only set when a vis
          ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
-         ;; keys with no matching extension (e.g. :github-copilot-enterprise,
-         ;; :zai-coding) would otherwise render as blank, selectable rows after
+         ;; keys with no matching extension (e.g. :zai-coding) would
+         ;; otherwise render as blank, selectable rows after
          ;; the last named preset in the "Add Provider" picker — and the TUI has
          ;; no handling for them anyway.
          (remove #(str/blank? (:label %)))
@@ -402,18 +404,12 @@
         explicit-url explicit-url
         :else api-url))
 
-(defn- github-copilot-provider-id?
-  [provider-id]
-  (contains? #{:github-copilot-individual :github-copilot-business :github-copilot-enterprise}
-             provider-id))
-
 (defn provider-model-visible?
   "True when svar's provider-scoped model filters allow this model id."
   [provider-id model-id]
-  (let [catalog-id (if (github-copilot-provider-id? provider-id) :github-copilot provider-id)]
-    (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
-      (boolean (visible? catalog-id model-id))
-      true)))
+  (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
+    (boolean (visible? provider-id model-id))
+    true))
 
 (defn compatibility-api-style
   "`:api-style` implied by a provider's `compatibility` value, resolved through

@@ -260,8 +260,7 @@
    listed here is appended afterwards so the chain still covers the whole
    fleet. First provider that returns a usable title wins; on failure
    (model unavailable / endpoint rejects) we fall through to the next."
-  [:zai-coding-plan :alibaba-coding-plan :openai-codex :anthropic-coding-plan
-   :github-copilot-individual :github-copilot-business :github-copilot-enterprise])
+  [:zai-coding-plan :alibaba-coding-plan :openai-codex :anthropic-coding-plan :github-copilot])
 
 ;; `titling:` config (Blockether/vis#71)
 ;;

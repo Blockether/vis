@@ -330,23 +330,21 @@
       (is (= [:openai] (mapv :id (providers/picker-fleet))))))
   (providers/invalidate-configured-providers!))
 
-(deftest github-copilot-presets-are-contiguous-in-add-provider-picker
-  ;; Issue #47/#48: the three GitHub Copilot tiers must sit next to each other
-  ;; in the "Add Provider" picker. `:github-copilot-enterprise` was missing from
-  ;; PRESET_ORDER, so it sorted to Long/MAX_VALUE at the end — split from
-  ;; business/individual by zai/mistral (top, middle, then stranded at the
-  ;; bottom). Guard the whole family stays a single contiguous run.
+(deftest github-copilot-is-one-preset-in-add-provider-picker
+  ;; Issues #47/#48 once asked the three GitHub Copilot tiers to sit next to each
+  ;; other in the "Add Provider" picker. The tiers are gone — a seat is what the
+  ;; signed-in account reports, so ONE `:github-copilot` preset covers all of
+  ;; them and the withdrawn per-seat ids must never return as pickable rows.
   (let [order
         @(ns-resolve 'com.blockether.vis.internal.config.core 'PRESET_ORDER)
 
-        idxs
-        (mapv #(.indexOf ^java.util.List order %)
-              [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
+        copilot-presets
+        (filterv #(str/starts-with? (name %) "github-copilot") order)]
 
-    (is (every? nat-int? idxs) "all three Copilot tiers are listed in PRESET_ORDER")
-    (let [sorted (sort idxs)]
-      (is (= sorted (range (first sorted) (inc (last sorted))))
-          "the three Copilot tiers form one contiguous run — no other preset splits them"))))
+    (is (= [:github-copilot] copilot-presets)
+        "exactly one GitHub Copilot preset, not one per seat tier")
+    (doseq [seat [:github-copilot-individual :github-copilot-business :github-copilot-enterprise]]
+      (is (nil? (config/provider-template seat)) (str (name seat) " is not offered as a preset")))))
 
 (deftest configured-provider-catalog-cannot-be-narrowed
   (with-redefs [config/load-config-raw

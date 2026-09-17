@@ -391,16 +391,11 @@
 
 (defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
 
-(defn- copilot-provider?
-  [provider-id]
-  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business
-               :github-copilot-enterprise}
-             provider-id))
+(defn- copilot-provider? [provider-id] (= :github-copilot provider-id))
 
 (defn- github-copilot-claude-model?
-  ;; Every Copilot plan bills Claude the same way, so the premium-interaction
-  ;; policy below must recognise all of them - naming only the individual and
-  ;; business ids let Copilot Enterprise send :deep reasoning uncapped.
+  ;; Every Copilot seat bills Claude the same way, and one provider now covers
+  ;; them all, so the premium-interaction policy below keys off the provider.
   [resolved-model]
   (and (copilot-provider? (:provider resolved-model))
        (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
@@ -10808,7 +10803,7 @@
 
    `router-for-model` alone cannot do this: when two providers expose the SAME
    model name they tie on rank and the stable sort keeps config order. A session
-   pinned to `github-copilot-individual/gpt-5.4` therefore CALLED copilot (the
+    pinned to `github-copilot/gpt-5.4` therefore CALLED copilot (the
    forced `:routing` binds that) while `resolve-effective-model` read the head —
    openai-codex — so the turn card, the cost row and every provider-error card
    named (and PRICED) the wrong provider. Hoisting the pinned provider makes

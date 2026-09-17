@@ -7,7 +7,7 @@
 ;; Regression, issue #169: Copilot shipped without a network envelope, so the gateway's
 ;; fixed 120-second backstop cancelled long-prefill sol calls before svar's watchdog did.
 (defdescribe copilot-network-policy-test
-             (it "ships the measured Copilot network envelope for every account tier"
+             (it "ships the measured Copilot network envelope"
                  (let [expected
                        {:timeout-ms 900000
                         :ttft-timeout-ms 240000
@@ -16,7 +16,7 @@
                         :semantic-timeout-ms 300000}
 
                        providers
-                       (mapcat @#'sut/provider-entries [:individual :business :enterprise])]
+                       [(@#'sut/provider-entry)]]
 
                    (doseq [provider providers]
                      (expect (= expected (get-in provider [:provider/preset :network])))))))
@@ -25,8 +25,7 @@
              (it "uses Luna's 200K input cap through the pinned Svar dependency"
                  ;; Copilot advertises 328K total, including up to 128K output.
                  ;; The old Svar overlay incorrectly allowed 922K input.
-                 (doseq [provider (mapcat @#'sut/provider-entries
-                                          [:individual :business :enterprise])]
+                 (doseq [provider [(@#'sut/provider-entry)]]
                    (let [router (svar/make-router [(assoc (:provider/preset provider)
                                                      :id (:provider/id provider)
                                                      :api-key "test"
@@ -43,50 +42,44 @@
 
 (defdescribe
   provider-registration-test
-  (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
+  (it "registers ONE GitHub Copilot provider, not one per seat tier"
       (sut/register!)
-      (let [business
-            (vis/provider-by-id :github-copilot-business)
-
-            individual
-            (vis/provider-by-id :github-copilot-individual)
-
-            enterprise
-            (vis/provider-by-id :github-copilot-enterprise)
+      (let [copilot
+            (vis/provider-by-id :github-copilot)
 
             ext-nses
             (set (map :ext/name (vis/registered-extensions)))
 
             models
-            (set (get-in individual [:provider/preset :default-models]))]
+            (set (get-in copilot [:provider/preset :default-models]))]
 
-        (expect (= :github-copilot-business (:provider/id business)))
-        (expect (= :github-copilot-individual (:provider/id individual)))
-        (expect (= :github-copilot-enterprise (:provider/id enterprise)))
+        (expect (= :github-copilot (:provider/id copilot)))
+        (expect (= "GitHub Copilot" (:provider/label copilot)))
+        ;; The seat tier was a question asked before any credential existed, and the
+        ;; only thing the answer changed was a base-url the token exchange overrode.
+        (expect (nil? (vis/provider-by-id :github-copilot-individual)))
+        (expect (nil? (vis/provider-by-id :github-copilot-business)))
+        (expect (nil? (vis/provider-by-id :github-copilot-enterprise)))
         (expect (contains? ext-nses "provider-github-copilot"))
-        ;; One entry per account — the old `…-responses` / `…-chat` per-wire
+        ;; One entry for the account - the old `...-responses` / `...-chat` per-wire
         ;; sub-providers are gone; one base-url `/v1` carries both wires.
-        (expect (nil? (vis/provider-by-id :github-copilot-individual-responses)))
-        (expect (nil? (vis/provider-by-id :github-copilot-individual-chat)))
-        (expect (= "https://api.business.githubcopilot.com/v1"
-                   (get-in business [:provider/preset :base-url])))
+        (expect (nil? (vis/provider-by-id :github-copilot-responses)))
+        (expect (nil? (vis/provider-by-id :github-copilot-chat)))
+        ;; Bootstrap host only: the token's own `endpoints.api` decides at call time.
         (expect (= "https://api.individual.githubcopilot.com/v1"
-                   (get-in individual [:provider/preset :base-url])))
-        (expect (= "https://api.business.githubcopilot.com/v1"
-                   (get-in enterprise [:provider/preset :base-url])))
-        (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
+                   (get-in copilot [:provider/preset :base-url])))
+        (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
         ;; The curated defaults intentionally contain only the current cacheable fleets.
         (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra" "gpt-5.6-luna"
                      "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
-        (expect (= models (set (get-in enterprise [:provider/preset :default-models]))))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
-        (expect (ifn? (:provider/status-fn business)))
-        (expect (ifn? (:provider/logout-fn business)))
-        (expect (ifn? (:provider/detect-fn business)))
-        (expect (ifn? (:provider/auth-fn business)))
-        (expect (ifn? (:provider/get-token-fn business)))
-        (expect (ifn? (:provider/limits-fn business)))))
+        (expect (ifn? (:provider/status-fn copilot)))
+        (expect (ifn? (:provider/logout-fn copilot)))
+        (expect (ifn? (:provider/detect-fn copilot)))
+        (expect (ifn? (:provider/auth-fn copilot)))
+        (expect (ifn? (:provider/get-token-fn copilot)))
+        (expect (ifn? (:provider/limits-fn copilot)))))
   (it "requests Copilot policy access for Claude Fable 5.1"
       (let [requested (atom #{})]
         (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
@@ -95,26 +88,23 @@
           (fn []
             (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
             (expect (contains? @requested "claude-fable-5.1"))))))
-  (describe "active-tier-detect"
-            (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
+  (describe "credential-detect"
+            (it "detects the one Copilot credential whatever tier minted it"
                 (sut/register!)
-                (let [detect? (fn [pid]
-                                (boolean ((:provider/detect-fn (vis/provider-by-id pid)))))]
-                  ;; The three tiers share ONE OAuth token file. Even with a token present
-                  ;; only the tier recorded as active detects — the other two report nil,
-                  ;; so the picker/router surfaces exactly one Copilot provider.
-                  (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
-                                   #'sut/credential-account-type (constantly :business)}
+                (let [detect? (fn []
+                                (boolean ((:provider/detect-fn (vis/provider-by-id
+                                                                 :github-copilot)))))]
+                  ;; Issue #48 lit up all three tier rows from ONE token file, and the
+                  ;; fix was per-tier gating. With one provider there is one row, so a
+                  ;; credential minted for ANY seat authenticates it.
+                  (doseq [tier [:individual :business :enterprise]]
+                    (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
+                                     #'sut/credential-account-type (constantly tier)}
+                      (fn []
+                        (expect (detect?)))))
+                  (with-redefs-fn {#'sut/detect-oauth-token (constantly nil)}
                     (fn []
-                      (expect (detect? :github-copilot-business))
-                      (expect (not (detect? :github-copilot-individual)))
-                      (expect (not (detect? :github-copilot-enterprise)))))
-                  (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
-                                   #'sut/credential-account-type (constantly :enterprise)}
-                    (fn []
-                      (expect (detect? :github-copilot-enterprise))
-                      (expect (not (detect? :github-copilot-individual)))
-                      (expect (not (detect? :github-copilot-business))))))))
+                      (expect (not (detect?))))))))
   (it "returns Vis-owned static LLM headers with cached Copilot token"
       (reset! @#'sut/token-cache {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
                                   :expires-at-ms (+ (System/currentTimeMillis) 600000)
@@ -136,57 +126,55 @@
           now
           (System/currentTimeMillis)]
 
-      (expect (false? (usable? {:token "t"
-                                :account-type :individual
-                                :expires-at-ms (+ now 1500000)
-                                :refresh-at-ms (- now 1000)}
-                               :individual
-                               now)))
+      (expect (false? (usable?
+                        {:token "t" :expires-at-ms (+ now 1500000) :refresh-at-ms (- now 1000)}
+                        now)))
       ;; before refresh_in elapses the token is still served (no needless churn)
-      (expect (true? (usable? {:token "t"
-                               :account-type :individual
-                               :expires-at-ms (+ now 1800000)
-                               :refresh-at-ms (+ now 1200000)}
-                              :individual
-                              now)))
+      (expect (true? (usable?
+                       {:token "t" :expires-at-ms (+ now 1800000) :refresh-at-ms (+ now 1200000)}
+                       now)))
       ;; legacy cache with no :refresh-at-ms falls back to expires - margin
-      (expect (true? (usable? {:token "t" :account-type :individual :expires-at-ms (+ now 1800000)}
-                              :individual
-                              now)))))
+      (expect (true? (usable? {:token "t" :expires-at-ms (+ now 1800000)} now)))))
 
-(defdescribe
-  copilot-base-url-test
-  (it "derives API base URL from Copilot token proxy endpoint"
-      (expect (= "https://proxy.individual.githubcopilot.com"
-                 (#'sut/copilot-base-url-from-token
-                  "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"))))
-  (it "ignores token proxy endpoints for chat and uses the account API host"
-      (expect (= "https://api.business.githubcopilot.com"
-                 (#'sut/copilot-api-base-url
-                  "tid=x;exp=1"
-                  {:proxy-ep "proxy.business.githubcopilot.com"}
-                  nil
-                  {:account-type :business}))))
-  (it "falls back to selected business Copilot API when token has no endpoint"
-      (expect (= "https://api.business.githubcopilot.com"
-                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil {:account-type :business}))))
-  (it "falls back to individual Copilot API by default"
-      (expect (= "https://api.individual.githubcopilot.com"
-                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))
-  (it "uses business API fallback for Enterprise Cloud when no token endpoint is present"
-      (expect (= "https://api.business.githubcopilot.com"
-                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil {:account-type :enterprise}))))
-  (it "uses GHE enterprise fallback when an enterprise domain is configured"
-      (expect (= "https://copilot-api.ghe.example.com"
-                 (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com"))))
-  (it "ensure-api-version appends /v1 to a bare host and is idempotent"
-      (expect (= "https://api.business.githubcopilot.com/v1"
-                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com")))
-      (expect (= "https://api.business.githubcopilot.com/v1"
-                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com/v1")))
-      (expect (= "https://api.business.githubcopilot.com/v1"
-                 (#'sut/ensure-api-version "https://api.business.githubcopilot.com/")))
-      (expect (nil? (#'sut/ensure-api-version nil)))))
+(defdescribe copilot-base-url-test
+             (it "derives API base URL from Copilot token proxy endpoint"
+                 (expect (= "https://proxy.individual.githubcopilot.com"
+                            (#'sut/copilot-base-url-from-token
+                             "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"))))
+             (it "ignores token proxy endpoints for chat and uses the account API host"
+                 (with-redefs-fn {#'sut/credential-account-type (constantly :business)}
+                   (fn []
+                     (expect (= "https://api.business.githubcopilot.com"
+                                (#'sut/copilot-api-base-url
+                                 "tid=x;exp=1"
+                                 {:proxy-ep "proxy.business.githubcopilot.com"}
+                                 nil))))))
+             (it "falls back to the recorded seat host when the token carries no endpoint"
+                 (with-redefs-fn {#'sut/credential-account-type (constantly :business)}
+                   (fn []
+                     (expect (= "https://api.business.githubcopilot.com"
+                                (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))))
+             (it "falls back to individual Copilot API by default"
+                 (with-redefs-fn {#'sut/credential-account-type (constantly :individual)}
+                   (fn []
+                     (expect (= "https://api.individual.githubcopilot.com"
+                                (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))))
+             (it "uses business API fallback for Enterprise Cloud when no token endpoint is present"
+                 (with-redefs-fn {#'sut/credential-account-type (constantly :enterprise)}
+                   (fn []
+                     (expect (= "https://api.business.githubcopilot.com"
+                                (#'sut/copilot-api-base-url "tid=x;exp=1" {} nil))))))
+             (it "uses GHE enterprise fallback when an enterprise domain is configured"
+                 (expect (= "https://copilot-api.ghe.example.com"
+                            (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com"))))
+             (it "ensure-api-version appends /v1 to a bare host and is idempotent"
+                 (expect (= "https://api.business.githubcopilot.com/v1"
+                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com")))
+                 (expect (= "https://api.business.githubcopilot.com/v1"
+                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com/v1")))
+                 (expect (= "https://api.business.githubcopilot.com/v1"
+                            (#'sut/ensure-api-version "https://api.business.githubcopilot.com/")))
+                 (expect (nil? (#'sut/ensure-api-version nil)))))
 
 (defdescribe copilot-limits-test
              (it "normalizes Copilot quota snapshots"
@@ -302,37 +290,26 @@
             (expect (< (long refresh-at-ms) (long expires-at-ms))))))))
 
 (defdescribe
-  copilot-tier-sign-in-test
-  ;; Regression (user report, screenshot of Settings -> Providers): signing in to
-  ;; Copilot ENTERPRISE also lit up "GitHub Copilot (Individual) . signed in", and
-  ;; the extra row could not be removed - it was re-derived from the credential on
-  ;; every read. All three tiers share ONE OAuth token file: `status` answered
-  ;; "signed in" for every tier, and the sign-in short-circuited on ANY credential,
-  ;; so the tier the user picked was never recorded in that file.
+  copilot-seat-tier-test
+  ;; Regression (user report, screenshot of Settings -> Providers): the picker
+  ;; offered THREE GitHub Copilot entries, so the user had to know which seat had
+  ;; been bought before signing in - and signing in to one tier lit up another,
+  ;; because all three read the same OAuth token file. There is one provider now;
+  ;; the seat tier is reported BY the account once a credential exists.
   (describe "status"
-            (it "authenticates ONLY the tier the credential was minted for"
+            (it "authenticates the single provider and reports the observed tier"
                 (sut/register!)
                 (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
                                                                        :source :auth-file})
                                  #'sut/env-account-type (constantly nil)
                                  #'sut/auth-account-type (constantly :enterprise)}
                   (fn []
-                    (let [status-of
-                          (fn [pid]
-                            ((:provider/status-fn (vis/provider-by-id pid))))
-
-                          individual
-                          (status-of :github-copilot-individual)]
-
-                      (expect (true? (:is-authenticated (status-of :github-copilot-enterprise))))
-                      (expect (false? (:is-authenticated individual)))
-                      (expect (false? (:is-authenticated (status-of :github-copilot-business))))
-                      ;; a tier that is not the live one says WHERE the credential lives,
-                      ;; and never leaks the other tier's token preview
-                      (expect (= :enterprise (:active-account-type individual)))
-                      (expect (nil? (:oauth-token-preview individual))))))))
+                    (let [status ((:provider/status-fn (vis/provider-by-id :github-copilot)))]
+                      (expect (true? (:is-authenticated status)))
+                      (expect (= :enterprise (:account-type status)))
+                      (expect (= :auth-file (:source status))))))))
   (describe "limits"
-            (it "reports no quota for a tier that does not hold the credential"
+            (it "reports the account quota without being told which tier it is"
                 (sut/register!)
                 (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"})
                                  #'sut/env-account-type (constantly nil)
@@ -343,45 +320,56 @@
                                                                               {:remaining 240
                                                                                :entitlement 300}}})}
                   (fn []
-                    (let [limits-of
-                          (fn [pid]
-                            ((:provider/limits-fn (vis/provider-by-id pid))))
-
-                          individual
-                          (limits-of :github-copilot-individual)]
-
-                      (expect (= :ok (:status (limits-of :github-copilot-enterprise))))
-                      (expect (= :unauthenticated (:status individual)))
-                      (expect (= [] (get-in individual [:dynamic :limits]))))))))
+                    (let [limits ((:provider/limits-fn (vis/provider-by-id :github-copilot)))]
+                      (expect (= :ok (:status limits)))
+                      (expect (= :github-copilot (:provider-id limits)))
+                      (expect (= "Copilot plan: enterprise" (get-in limits [:dynamic :note]))))))))
   (describe
     "sign-in"
-    (it "runs the device flow when the credential belongs to ANOTHER tier"
+    (it "records the tier the ACCOUNT reports instead of asking for one"
         (sut/register!)
-        (let [flows (atom [])]
-          (with-redefs-fn
-            {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test" :source :auth-file})
-             #'sut/env-account-type (constantly nil)
-             #'sut/auth-account-type (constantly :individual)
-             #'sut/start-device-flow! (fn [opts]
-                                        (swap! flows conj (:account-type opts))
-                                        {:user-code "ABCD-1234"
-                                         :verification-uri "https://example.com/device"
-                                         :device-code "dev-code"
-                                         :interval 5
-                                         :expires-in 900})
-             #'sut/poll-for-token! (fn [& _]
-                                     {:oauth-token "ghu_new"})
-             #'sut/get-copilot-token! (fn [& _]
-                                        {:token "tid=x;exp=1"
-                                         :api-url "https://api.business.githubcopilot.com/v1"})
-             #'sut/enable-known-copilot-models! (fn [_ _]
-                                                  {:attempted 6 :enabled 6})}
+        (let [flows
+              (atom [])
+
+              remembered
+              (atom nil)
+
+              signed-in
+              (atom false)]
+
+          (with-redefs-fn {#'sut/detect-oauth-token
+                           (fn []
+                             (when @signed-in {:oauth-token "ghu_new" :source :auth-file}))
+                           #'sut/env-account-type (constantly nil)
+                           #'sut/auth-account-type (constantly nil)
+                           #'sut/start-device-flow! (fn [opts]
+                                                      (swap! flows conj opts)
+                                                      {:user-code "ABCD-1234"
+                                                       :verification-uri
+                                                       "https://example.com/device"
+                                                       :device-code "dev-code"
+                                                       :interval 5
+                                                       :expires-in 900})
+                           #'sut/poll-for-token! (fn [& _]
+                                                   (reset! signed-in true)
+                                                   {:oauth-token "ghu_new"})
+                           #'sut/fetch-user-usage! (fn [_]
+                                                     {:copilot_plan "business"})
+                           #'sut/remember-account-type! (fn [tier]
+                                                          (reset! remembered tier))
+                           #'sut/get-copilot-token! (fn [& _]
+                                                      {:token "tid=x;exp=1"
+                                                       :api-url
+                                                       "https://api.business.githubcopilot.com/v1"})
+                           #'sut/enable-known-copilot-models! (fn [_ _]
+                                                                {:attempted 6 :enabled 6})}
             (fn []
-              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot-enterprise))]
+              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot))]
                 (expect (= :ok (auth! (constantly nil))))
-                ;; the flow ran FOR ENTERPRISE, which is what records that tier
-                (expect (= [:enterprise] @flows)))))))
-    (it "still short-circuits when THIS tier already holds the credential"
+                ;; one device flow, and nothing about a tier was passed into it
+                (expect (= [nil] @flows))
+                (expect (= :business @remembered)))))))
+    (it "short-circuits when the machine already holds the credential"
         (sut/register!)
         (let [flows (atom [])]
           (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
@@ -389,9 +377,9 @@
                            #'sut/env-account-type (constantly nil)
                            #'sut/auth-account-type (constantly :individual)
                            #'sut/start-device-flow! (fn [opts]
-                                                      (swap! flows conj (:account-type opts))
+                                                      (swap! flows conj opts)
                                                       {})}
             (fn []
-              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot-individual))]
+              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot))]
                 (expect (= :already-authenticated (auth! (constantly nil))))
                 (expect (= [] @flows)))))))))
