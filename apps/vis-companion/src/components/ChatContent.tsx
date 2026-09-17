@@ -1587,7 +1587,6 @@ const FormTrace = memo(function FormTrace({
             {ownedAttachments.map((attachment) => (
               <section
                 key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
-                className="pt-3"
                 data-execution-run
               >
                 <LiveRunRow client={client} sid={sid} attachment={attachment} embedded />

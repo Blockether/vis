@@ -1105,7 +1105,7 @@ export function LiveViewPanel({
     <>
       <section
         className={`live-view-panel min-w-0 overflow-hidden border-y ${
-          embedded ? 'mt-3 border-dialog-hint pt-3' : 'border-dialog-edge bg-panel'
+          embedded ? 'border-dialog-hint' : 'border-dialog-edge bg-panel'
         }`}
         data-execution-run={embedded || undefined}
         role={isSettled ? undefined : 'status'}

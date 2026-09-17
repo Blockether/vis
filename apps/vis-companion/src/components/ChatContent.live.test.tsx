@@ -14,6 +14,8 @@ it('separates the embedded live view with horizontal rules on its shared backgro
   const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
   expect(panel).toHaveClass('border-y', 'border-dialog-hint');
   expect(panel).not.toHaveClass('border', 'px-3');
+  // The run band owns no vertical gap: it continues the CODE/ACTIVITY rhythm.
+  expect(panel).not.toHaveClass('mt-3', 'pt-3');
   expect(panel).not.toHaveClass('bg-panel');
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
 });

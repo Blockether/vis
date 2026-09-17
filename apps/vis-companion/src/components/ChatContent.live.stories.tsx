@@ -97,10 +97,12 @@ async function expectLiveFrame(element: Element) {
   await expect(frame).not.toBeNull();
   await expect(frame.contains(activity)).toBe(false);
   await expect(activity.closest('.border')).toBeNull();
-  await expect(frame.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-    activity.getBoundingClientRect().bottom + 12,
-  );
+  // Regression: CODE, ACTIVITY and RUN keep one rhythm down the card — the run band
+  // owns no gap of its own, so its rule is all that sits between it and the activity.
+  await expect(frame.getBoundingClientRect().top).toBe(activity.getBoundingClientRect().bottom);
   const style = getComputedStyle(frame);
+  await expect(style.marginTop).toBe('0px');
+  await expect(style.paddingTop).toBe('0px');
   for (const side of ['top', 'right', 'bottom', 'left']) {
     const width = side === 'top' || side === 'bottom' ? '1px' : '0px';
     await expect(style.getPropertyValue(`border-${side}-width`)).toBe(width);
@@ -192,7 +194,10 @@ export const Settled: Story = {
   },
   play: async ({ canvas }) => {
     const run = canvas.getByRole('button', { name: 'Open run Jenkins build pool' });
-    const group = run.closest('[data-execution-group]');
+    const group = run.closest('[data-execution-group]')!;
+    const band = group.querySelector('[data-execution-activity]')!;
+    // Regression: a settled RUN keeps that same rhythm, with no gap of its own either.
+    await expect(run.getBoundingClientRect().top).toBe(band.getBoundingClientRect().bottom);
     await expect(group).not.toHaveClass('border');
     await expect(run.closest('[data-execution-activity]')).toBeNull();
     await expect(run.closest('.border')).toBeNull();
