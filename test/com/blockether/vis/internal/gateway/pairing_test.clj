@@ -1,7 +1,16 @@
 (ns com.blockether.vis.internal.gateway.pairing-test
   (:require [clojure.string :as str]
+            [lazytest.core :refer [around-each set-ns-context!]]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.pairing :as pairing]))
+
+;; Routing-table discovery is the one candidate that leaves this process. Stub it
+;; off and clear its cache around every test, so each one sees the interfaces it
+;; declares and never the network this machine happens to be plugged into.
+(set-ns-context! [(around-each [run]
+                               (reset! @#'pairing/default-route-cache nil)
+                               (with-redefs-fn {#'pairing/discover-default-route (constantly nil)}
+                                 run))])
 
 (deftest pairing-url-is-a-scannable-vis-url
   (testing "payload carries gateway URL and bearer token"
@@ -250,3 +259,71 @@
     (with-redefs [pairing/iface-addresses (fn []
                                             [])]
       (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))))
+
+(deftest default-route-rides-along-as-the-port-forward-guess
+  (testing
+    "a wildcard bind offers this machine's router last: with a port forward it
+             is the only way in from outside the LAN, and without one the phone
+             just falls through it to the address that answers"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["100.109.18.77" "192.168.0.116"])
+                     #'pairing/discover-default-route (fn []
+                                                        "192.168.0.1")}
+      (fn []
+        (is (= ["100.109.18.77" "192.168.0.116" "192.168.0.1"] (pairing/candidate-hosts "0.0.0.0")))
+        (let [url (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})]
+          (is (str/includes? url "url=http%3A%2F%2F100.109.18.77%3A7890"))
+          (is (str/includes? url "http%3A%2F%2F192.168.0.1%3A7890")
+              "the router is one more alt= to try, never the leading url="))
+        (is (= ["192.168.0.116"] (pairing/candidate-hosts "192.168.0.116"))
+            "a concrete bind still answers on that address alone")))))
+
+(deftest default-route-already-on-an-interface-is-offered-once
+  (testing "the router address is deduplicated against the scanned interfaces"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["192.168.0.1"])
+                     #'pairing/discover-default-route (fn []
+                                                        "192.168.0.1")}
+      (fn []
+        (is (= ["192.168.0.1"] (pairing/candidate-hosts "0.0.0.0")))))))
+
+(deftest public-default-gateway-is-never-offered
+  (testing
+    "a link carries the bearer token, so the router guess stays inside the
+             private ranges instead of pointing a phone at the ISP"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["192.168.0.116"])
+                     #'pairing/discover-default-route (fn []
+                                                        "203.0.113.1")}
+      (fn []
+        (is (= ["192.168.0.116"] (pairing/candidate-hosts "0.0.0.0")))))))
+
+(deftest default-route-reads-the-platform-routing-table
+  (testing "Linux keeps `/proc/net/route` gateways as little-endian hex"
+    (is (= "192.168.0.1"
+           (#'pairing/parse-proc-net-route
+            (str "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+                 "en0\t00000000\t0100A8C0\t0003\t0\t0\t100\t00000000\n"
+                 "en0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\n"))))
+    (is (nil? (#'pairing/parse-proc-net-route
+               (str "Iface\tDestination\tGateway\n" "en0\t0000A8C0\t00000000\n")))
+        "a subnet route is not a default route"))
+  (testing "macOS answers `route -n get default` in prose"
+    (is (= "192.168.0.1"
+           (#'pairing/parse-route-get-default
+            (str "   route to: default\n"
+                 "destination: default\n" "       mask: default\n"
+                 "    gateway: 192.168.0.1\n" "  interface: en0\n"))))
+    (is (nil? (#'pairing/parse-route-get-default "route: writing to routing socket: not in table"))
+        "no default route means no candidate")))
+
+(deftest default-route-is-cached-between-calls
+  (testing "`/v1/capabilities` asks on every request, so discovery cannot run per call"
+    (let [calls (atom 0)]
+      (with-redefs-fn {#'pairing/discover-default-route (fn []
+                                                          (swap! calls inc)
+                                                          "192.168.0.1")}
+        (fn []
+          (is (= "192.168.0.1" (#'pairing/default-route-host)))
+          (is (= "192.168.0.1" (#'pairing/default-route-host)))
+          (is (= 1 @calls)))))))

@@ -12,9 +12,12 @@
             [com.blockether.vis.contract.wire :as wire])
   (:import (com.google.zxing BarcodeFormat EncodeHintType)
            (com.google.zxing.qrcode QRCodeWriter)
+           (java.io File)
+           (java.lang ProcessBuilder$Redirect)
            (java.net Inet4Address NetworkInterface URLEncoder)
            (java.nio.charset StandardCharsets)
-           (java.util EnumMap)))
+           (java.util EnumMap)
+           (java.util.concurrent TimeUnit)))
 
 (defn- url-encode [s] (URLEncoder/encode (str s) StandardCharsets/UTF_8))
 
@@ -48,6 +51,86 @@
       (when-let [[_ b] (re-matches #"172\.(\d+)\..*" ip)]
         (<= 16 (Integer/parseInt b) 31))))
 
+(def ^:private DEFAULT_ROUTE_TTL_MS
+  "How long a discovered router address stays usable. `/v1/capabilities` asks on
+  every request and a laptop changes networks between them, so the answer is
+  cached briefly instead of being rediscovered or frozen for the process."
+  30000)
+
+(def ^:private default-route-cache (atom nil))
+
+(defn- parse-proc-net-route
+  "IPv4 default gateway from a Linux `/proc/net/route` table, or nil. The
+  gateway column is little-endian hex, so `0100A8C0` reads 192.168.0.1."
+  [table]
+  (some (fn [line]
+          (let [[_ destination gateway] (str/split (str/trim (str line)) #"\s+")]
+            (when (and (= "00000000" destination)
+                       (re-matches #"[0-9A-Fa-f]{8}" (str gateway))
+                       (not= "00000000" gateway))
+              (->> (re-seq #".." gateway)
+                   (map #(Integer/parseInt ^String % 16))
+                   reverse
+                   (str/join ".")))))
+        (rest (str/split-lines (str table)))))
+
+(defn- parse-route-get-default
+  "IPv4 default gateway from BSD/macOS `route -n get default` output, or nil."
+  [output]
+  (second (re-find #"(?m)^\s*gateway:\s*(\d+(?:\.\d+){3})\s*$" (str output))))
+
+(defn- command-stdout
+  "stdout of a short-lived command, or nil when it is missing, fails or hangs."
+  [argv]
+  (try (let [^Process proc
+             (.start (doto (ProcessBuilder. ^java.util.List argv)
+                       (.redirectError ProcessBuilder$Redirect/DISCARD)))
+
+             out
+             (slurp (.getInputStream proc))]
+
+         (if (.waitFor proc 2 TimeUnit/SECONDS) out (do (.destroyForcibly proc) nil)))
+       (catch Exception _ nil)))
+
+(defn- discover-default-route
+  "Ask the OS routing table for the router this machine sends off-subnet traffic
+  to. Linux answers from `/proc/net/route` with no subprocess; BSD and macOS
+  need `route`, which a service-launched daemon may not have on its PATH."
+  []
+  (let [proc-table (File. "/proc/net/route")]
+    (if (.canRead proc-table)
+      (parse-proc-net-route (slurp proc-table))
+      (some #(parse-route-get-default (command-stdout %))
+            [["/sbin/route" "-n" "get" "default"] ["route" "-n" "get" "default"]]))))
+
+(defn- default-route-host
+  "This machine's router, when it is a site-local address - otherwise nil.
+
+  It is the one address worth offering that this machine does NOT hold. With a
+  port forward on the router it is the only way in from outside the LAN, and
+  without one it just fails to answer, so it rides along last and never leads.
+  A public default gateway is dropped: a link carrying a bearer token is a LAN
+  guess, never an invitation to the ISP's router."
+  []
+  (let [now
+        (System/currentTimeMillis)
+
+        cached
+        @default-route-cache]
+
+    (if (and cached (< (- now (long (:at cached))) (long DEFAULT_ROUTE_TTL_MS)))
+      (:host cached)
+      (let [found
+            (some-> (discover-default-route)
+                    str/trim
+                    not-empty)
+
+            host
+            (when (and found (site-local-ip? found)) found)]
+
+        (reset! default-route-cache {:at now :host host})
+        host))))
+
 (defn candidate-hosts
   "Reachable hostnames/IPs worth showing in a pairing QR, in preference order.
 
@@ -59,7 +142,10 @@
 
   A wildcard bind really does serve every interface, so there Tailscale
   addresses come first because they keep working off-LAN, then LAN, then the
-  rest."
+  rest, and last the router this machine routes through. Every candidate is a
+  guess the client resolves by trying them in order, so the router costs one
+  entry and answers the case nothing else can: a port forward, where the phone
+  reaches the gateway only through the router's address."
   [bind-host]
   (let [host
         (str bind-host)
@@ -72,7 +158,9 @@
       (let [ips (iface-addresses)]
         (->> (concat (filter tailscale-ip? ips)
                      (filter site-local-ip? ips)
-                     (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips))
+                     (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips)
+                     (when-let [router (default-route-host)]
+                       [router]))
              (remove str/blank?)
              distinct
              vec)))))

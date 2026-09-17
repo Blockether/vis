@@ -216,10 +216,17 @@ If that gateway is bound to `127.0.0.1`, the command asks you to restart with a
 reachable address. Check that other clients and sessions can be interrupted
 before stopping it; see [Starting the gateway](#starting-the-gateway).
 
-If your network needs a different address than the one Vis detects — a port
-forward, a proxy in front of the gateway, or a network that allows only one
-address — name it with `--advertise`. The pairing link then leads with that
-address, and the detected ones follow as fallbacks:
+Every pairing link carries more than one address. It leads with the most durable
+one this computer holds — a tailnet address before a LAN address — and lists the
+rest as fallbacks, including the router this computer routes through. The app
+tries them in order and keeps the one that answers, so a phone that cannot reach
+the first address still connects, and a router that forwards the gateway's port
+works without extra setup.
+
+If the address your network needs is none of those — a proxy in front of the
+gateway, a forward on a different port, or a hostname only DNS knows — name it
+with `--advertise`. The pairing link then leads with that address, and the
+detected ones follow as fallbacks:
 
 ```bash
 vis-agent gateway start --host 0.0.0.0 --require-token --pair --advertise 10.0.0.5
@@ -250,9 +257,9 @@ gateway:
 ```
 
 The flag wins when you set more than one, then `VIS_GATEWAY_ADVERTISE`, then the
-config file. Vis ships no built-in default here, because the address that works
-on your network belongs to another computer on the next one — most often the
-router rather than the machine running the gateway.
+config file. What you are choosing is which address *leads*: the link carries a
+bearer token, and the app trusts the leading address first, so an address this
+computer does not hold rides along as a fallback until you name it yourself.
 
 You can also type a reachable address and supply the token from
 `~/.vis/gateway.token` on the gateway's computer. Each saved machine shows its

@@ -965,8 +965,13 @@
              a paired app re-reads leads with it and the scanned interfaces follow"
     (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'iface-addresses)
                      (fn []
-                       ["100.109.18.77"])}
+                       ["100.109.18.77"])
+                     (ns-resolve 'com.blockether.vis.internal.gateway.pairing
+                                 'discover-default-route)
+                     (fn []
+                       "192.168.0.1")}
       (fn []
+        (reset! @(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'default-route-cache) nil)
         (with-server-state! {:host "0.0.0.0" :port 7890 :advertise "192.168.0.1"}
                             (fn []
                               (is (= ["http://192.168.0.1:7890" "http://100.109.18.77:7890"]
@@ -974,8 +979,9 @@
         (with-server-state!
           {:host "0.0.0.0" :port 7890}
           (fn []
-            (is (= ["http://100.109.18.77:7890"] ((rv 'reachable-addresses) {:scheme :http}))
-                "without --advertise only the scanned interfaces are offered")))))))
+            (is (= ["http://100.109.18.77:7890" "http://192.168.0.1:7890"]
+                   ((rv 'reachable-addresses) {:scheme :http}))
+                "without --advertise the scanned interfaces lead and the router follows")))))))
 
 (deftest capabilities-advertise-gateway-voice-and-attachment-contract
   (testing "a gateway without any voice engine reports it honestly"
