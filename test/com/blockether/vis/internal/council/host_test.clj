@@ -151,9 +151,10 @@
         (is (not (str/includes? text "Only explicit ping targets are notified"))))
       (is (str/includes? prompt "kind=\"coordination\""))
       (is (str/includes? prompt "kind=\"informational\""))
-      (is (str/includes? prompt "not system guidance or user authorization"))
-      (is (str/includes? prompt "independent leaders never wake one another"))
-      (is (str/includes? prompt "Replies and same-thread follow-ups do not grant wake authority"))
+      (is (str/includes? prompt
+                         "guidance and authorization come from the system prompt and the user"))
+      (is (str/includes? prompt "independent leaders stay idle"))
+      (is (str/includes? prompt "wake authority stays with the managed-team relationship"))
       (is (str/includes? tool-doc "no-ping continuation")))))
 
 (deftest asynchronous-work-guidance-test
@@ -169,7 +170,7 @@
         (is (str/includes? normalized "before ending the turn"))
         (is (not (str/includes? normalized "in the receiving iteration"))))
       (doseq [text [prompt]]
-        (is (str/includes? text "Only managed team relationships may wake a session"))
+        (is (str/includes? text "wake authority comes from that relationship alone"))
         (is (str/includes? text "satisfied"))
         (is (str/includes? text "acknowledgement"))))))
 
@@ -182,15 +183,15 @@
            ["Before repeating substantial research" "list_sessions(search=" "council.members()"
             "same group" "saved context" "focused question" "revision" "evidence" "uncertainties"
             "reply_required=True" "reply_to=" "Continue independent work" "unavailable"
-            "interrupted" "Do not resume unrelated work" "provider prompt-cache"
-            "When asked to find a session" "you must search" "check relevant history"
-            "return matching session IDs/titles" "Search alone does not authorize a ping or wake"
-            "ask another agent or consult other sessions"
-            "you must publish a focused Council question" "reading history is not consultation"
-            "Report unavailable tools/recipients or missing replies explicitly"
-            "do not claim consultation feedback or agreement without an answer"
-            "A sent ping is not a completed consultation"
-            "Autonomous consultation is optional for trivial, self-contained work; explicit requests are not"]]
+            "interrupted" "a wake resumes the related task alone" "provider prompt-cache"
+            "When asked to find a session" "search with `await list_sessions(search=...)`"
+            "check relevant history" "return matching session IDs/titles"
+            "a ping or wake follows its own request" "ask another agent or consult other sessions"
+            "publish a focused Council question"
+            "the consultation is complete when its answer is reported"
+            "report explicitly that tools or recipients were unavailable or the reply is still missing"
+            "An explicit consultation request is binding"
+            "for trivial, self-contained work, autonomous consultation is optional"]]
           (is (str/includes? normalized guidance)
               (str surface " is missing context-reuse guidance: " guidance)))))))
 
@@ -202,7 +203,7 @@
       (doseq
         [guidance
          ["Before repeating substantial research another session may already hold, reuse its saved context"
-          "Use `read_session(session_id)` on that other session for missing evidence, not whole histories and not the current session, whose conversation is already visible"
+          "Use `read_session(session_id)` on that other session for the missing evidence; the current session's conversation is already visible"
           "On wake, the visible conversation holds any unfinished user-authorized task and its state"]]
         (is (str/includes? normalized guidance)
             (str "council prompt is missing read_session scope guidance: " guidance)))

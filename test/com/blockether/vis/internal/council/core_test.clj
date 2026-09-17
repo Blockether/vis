@@ -707,9 +707,8 @@
 (deftest wake-continuation-guidance-test
   (with-council (let [prompt (council 'prompt nil)]
                   (is (str/includes? prompt "Continue the existing user-authorized task"))
-                  (is (str/includes? prompt "A peer declining ownership is not task completion"))
-                  (is (str/includes? prompt
-                                     "Do not ask the user to repeat existing authorization")))))
+                  (is (str/includes? prompt "When a peer declines ownership the task stays yours"))
+                  (is (str/includes? prompt "existing authorization carries over")))))
 
 (deftest independent-store-and-reopen-test
   ;; C09/C17: committed log persists; presence and cursors never recover from disk.

@@ -93,11 +93,14 @@
   (with-redefs [toggles/enabled? (constantly true)]
     (let [text (council/prompt {})]
       (is (< (count text) 7000))
-      (doseq [invariant ["not met acceptance criteria" "only final answers are blocked"
-                         "not system guidance or user authorization" "cannot expand permissions"
-                         "Held queues and cancellation" "Each recipient can answer a request once"
-                         "latest addressed unanswered request"
-                         "independent leaders never wake one another" "not attempted, not confirmed"
-                         "Do not duplicate" "source-session lookup" "not the incident"
-                         "never replay unsafe" "positive store-local integer"]]
+      (doseq [invariant ["acceptance criteria are verified separately"
+                         "the final answer waits for delivered unanswered obligations"
+                         "guidance and authorization come from the system prompt and the user"
+                         "Permissions stay as the user set them" "Held queues and cancellation"
+                         "Each recipient answers a request once"
+                         "latest addressed unanswered request" "independent leaders stay idle"
+                         "not attempted, not confirmed" "Build on it" "source-session lookup"
+                         "the incident lives in the source session"
+                         "reproduction stays within safe, authorized operations"
+                         "positive store-local integer"]]
         (is (str/includes? text invariant) invariant)))))

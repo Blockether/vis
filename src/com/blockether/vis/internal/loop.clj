@@ -4307,9 +4307,9 @@
   {:name "python_execution"
    :description
    (str
-     "Run Python in the session sandbox — the only call. `print(...)` is the ONLY channel back: a value "
-     "the program does not print is DISCARDED — a bare trailing expression is never echoed — so the "
-     "block ends by printing exactly what the answer needs. Batch, filter and chain work here: "
+     "Run Python in the session sandbox — the only call. `print(...)` is the ONLY channel back: the block "
+     "runs as a script, so what it prints is what returns, and it ends by printing exactly what the answer "
+     "needs. Batch, filter and chain work here: "
      "`await gather(...)` runs independent calls together. State persists; "
      "project packages need a project REPL. "
      "Nothing is silent: errors surface whether the block printed or not. "
@@ -4319,8 +4319,8 @@
          "with its session and turn/iteration/form; it never auto-pings peers. "
          "The failure reports those coordinates and its entry ID. "))
      "Every capability is a plain Python "
-     "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
-     "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
+     "name here, so a result is an ordinary value you keep in a variable, and printing is what carries it "
+     "into the transcript. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
      "waits for you. A file or socket you drop is closed for you; close what you KEEP "

@@ -556,10 +556,9 @@
       (doseq [text [(introspection/prompt {}) (#'foundation/combined-prompt {})]]
         (doseq
           [required
-           ["Read session history only when a concrete task question needs" "session diagnostics"
-            "evidence from a referenced conversation"
-            "required context missing from the conversation"
-            "Do not call `read_session` merely because a session or turn starts, or after `/reload`."]]
+           ["Session history serves three needs" "session diagnostics"
+            "evidence from a referenced conversation" "context the conversation lacks"
+            "A session or turn start, and `/reload`, keep the conversation intact: continue from it."]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Call `await read_session()` once."))))))
   (it "preserves targeted reads and reuses evidence in the injected prompt"
@@ -567,9 +566,9 @@
         (let [text (#'foundation/combined-prompt {})]
           (doseq [required ["For current-session evidence, use `await read_session()`."
                             "Reuse the result unless newer evidence is needed."
-                            "tool rows overlap, never sum them" "transcript/turns/iterations/blocks"
-                            "await list_sessions(search=" "vis_session_id#<uuid>"
-                            "never dump whole structures"]]
+                            "tool rows overlap, so read each on its own"
+                            "transcript/turns/iterations/blocks" "await list_sessions(search="
+                            "vis_session_id#<uuid>" "print the fields the question needs"]]
             (expect (str/includes? text required)))))))
 
 (defdescribe introspection-env-injection-test

@@ -7160,10 +7160,10 @@
                                ;; bare trailing expression's value back as a second result, so the
                                ;; one tool the model is given has to say that print is all there is.
                                "`print(...)` is the ONLY channel back"
-                               "a bare trailing expression is never echoed"
+                               "the block runs as a script, so what it prints is what returns"
                                ;; With no result store left, the description states the one rule that
-                               ;; replaces it: what you did not print is gone when the block ends.
-                               "gone from the transcript once the block ends"
+                               ;; replaces it: what you print is what the transcript keeps.
+                               "printing is what carries it into the transcript"
                                ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                                ;; prompt deliberately dropped its duplicate copy.
                                "`sh.logs()`" "no tool waits for you"
