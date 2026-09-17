@@ -52,15 +52,21 @@
   (:import (java.nio.file FileSystems Path PathMatcher Paths)
            (java.util HashMap)))
 
-(defn supported?
-  "True when this host can confine a child at all."
-  []
-  (nil? (python-runtime/jail-unsupported-reason)))
-
 (defn unenforceable-reason
-  "Nil when `supported?`, else the runtime's explanation of the platform gap."
+  "Nil when this host can confine a child, else the runtime's explanation of the
+   platform gap.
+
+   The runtime answers from `libvisjail`, which THIS process may not have resolved
+   yet — one that never started an interpreter has not, and a missing library reads
+   exactly like a platform that cannot enforce. So that answer is taken again with
+   the library in place, and a host that does confine is never mistaken for one
+   that cannot (#263)."
   []
-  (python-runtime/jail-unsupported-reason))
+  (when (python-runtime/jail-unsupported-reason)
+    (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
+    (python-runtime/jail-unsupported-reason)))
+
+(defn supported? "True when this host can confine a child at all." [] (nil? (unenforceable-reason)))
 
 (defn- enforcing?
   "True when `policy` will actually confine the child: enabled, and either this
@@ -225,15 +231,20 @@
    exact local control sockets, egress is the session proxy when one is up, otherwise
    open or off with `:net-enabled?`, and inbound is the managed listener port plus
    `:inbound-ports`. Called per spawn, so each child gets the CURRENT live roots
-   without re-reading model-writable config."
+   without re-reading model-writable config.
+
+   Each deny list is sent in both spellings: the concrete paths the snapshot
+   expanded, which also cover the symlinks it resolved, and the configured rules
+   themselves, so a pattern keeps closing files the session creates after the
+   snapshot (#263)."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
-           proxy-port loopback-port keychain? unix-connect]
+           deny-read-rules deny-write-rules proxy-port loopback-port keychain? unix-connect]
     :as policy}]
   (let [session-roots (when roots-fn (try (roots-fn) (catch Throwable _ nil)))]
     {:read-write (vec (concat session-roots allow-read-write))
      :read-only (vec allow-read)
-     :deny-write (vec deny-write)
-     :deny-read (vec deny-read)
+     :deny-write (vec (distinct (concat deny-write deny-write-rules)))
+     :deny-read (vec (distinct (concat deny-read deny-read-rules)))
      :deny-exec (vec deny-exec)
      :unix-connect (vec unix-connect)
      :network (cond proxy-port {:proxy proxy-port}

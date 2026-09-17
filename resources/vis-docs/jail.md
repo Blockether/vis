@@ -123,6 +123,12 @@ The same rules cover host tools (`cat`, `ls`, `grep`, `patch` and the other read
 writers), `python_execution` and every child process Vis starts. A call that touches
 several paths is refused whole: no path in the batch is read or written.
 
+A rule also covers files that appear later. On macOS the pattern itself goes into the
+sandbox profile, so a secret written after the session started is denied as soon as it
+exists. On Linux, bubblewrap works with mount points rather than patterns: a child is
+kept out of the files the pattern matched when the session started, and Vis' own tools
+keep refusing every path the rule covers.
+
 Deny rules require `jail.enabled: true`, because only the OS jail can keep a confined
 child out of a single file. With the jail off, Vis reports the configuration as invalid
 instead of accepting rules it cannot enforce.

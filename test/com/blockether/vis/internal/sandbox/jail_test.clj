@@ -58,6 +58,13 @@
       (is (= ["/ws/secret"] (:deny-read p)))
       (is (= ["/usr/bin/curl"] (:deny-exec p)))
       (is (false? (:keychain? p)))))
+  (testing "deny rules travel beside the paths the snapshot expanded (#263)"
+    (let [p (pj/runtime-policy {:deny-read ["/ws/a/.env"]
+                                :deny-read-rules ["/ws/**/.env"]
+                                :deny-write ["/ws/vendor"]
+                                :deny-write-rules ["/ws/vendor"]})]
+      (is (= ["/ws/a/.env" "/ws/**/.env"] (:deny-read p)))
+      (is (= ["/ws/vendor"] (:deny-write p)))))
   (testing "a failing roots-fn grants nothing rather than everything"
     (is (= [] (:read-write (pj/runtime-policy {:roots-fn #(throw (ex-info "boom" {}))})))))
   (testing "egress: the session proxy when one is up, else open or off"
@@ -505,7 +512,7 @@
                denied
                [(.getPath secret) (.getPath nested)]]
 
-           (testing "every managed child is handed the same expanded deny list"
+           (testing "every managed child is handed the expanded paths and the rules"
              (with-redefs [runtime/jailed?
                            (constantly false)
 
@@ -515,17 +522,32 @@
 
                (doseq [child [policy (pj/language-process-policy policy nil)
                               (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
-                 (is (= denied
-                        (:deny-read (:policy
-                                      (pj/spawn! ["/bin/true"] nil child {:environment {}}))))))))
+                 (let [sent (:deny-read (:policy
+                                          (pj/spawn! ["/bin/true"] nil child {:environment {}})))]
+                   (is (every? (set sent) denied))
+                   ;; #263: the rule travels as written too. Expanding it names only the
+                   ;; files that existed when the snapshot was built.
+                   (is (some #(str/includes? % "**/.env") sent))))))
            (testing "and a host that can enforce stops the child itself"
              (when (sandbox-applicable?)
-               (let [read-file (fn [^java.io.File file]
-                                 (run-process ["/bin/sh" "-c" (str "cat " (.getPath file))]
-                                              (io/file root)
-                                              policy))]
+               (let [read-file
+                     (fn [^java.io.File file]
+                       (run-process ["/bin/sh" "-c" (str "cat " (.getPath file))]
+                                    (io/file root)
+                                    policy))
+
+                     late
+                     (io/file root "late" ".env")]
+
                  (is (not (zero? (:exit (read-file secret)))))
                  (is (not (zero? (:exit (read-file nested)))))
-                 (is (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))))))
+                 (is (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))
+                 ;; #263: this one appears AFTER the policy was built, so only the rule
+                 ;; itself can cover it — reading it here is the leak the issue reported.
+                 (.mkdirs (io/file root "late"))
+                 (spit late "TOKEN=secret")
+                 (let [late-read (read-file late)]
+                   (is (not (zero? (:exit late-read))))
+                   (is (not (str/includes? (:out late-read) "TOKEN=secret"))))))))
          (finally (doseq [file (reverse (file-seq (io/file root)))]
                     (io/delete-file file true))))))
