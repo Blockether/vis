@@ -2204,23 +2204,30 @@
   ;; itself raised a map-indexing KeyError instead of clipping its `out` text.
   ;; Regression, session report e3f70641-623f-433a-81fc-ce532239c89c: adding an awaited
   ;; log page to a report heading raised TypeError instead of using that same text payload.
-  (it "uses a log page directly as its `out` text for slices and concatenation"
+  ;; Regression, session report 5faeb588-accc-4b8d-9c56-20d02e143b8a: `page.find('@@ -325')`
+  ;; raised AttributeError on the same payload the page already slices as text.
+  (it "reads a log page as its `out` text for slices, concatenation and string reads"
       (let [sid
             (str "py-logs-text-" (System/nanoTime))
 
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true true true true true]
-                        (py c
-                            (str
-                              "status_res = __vis_settle__(shell('printf abcdefghij',"
-                              " {'id':'text'}))\n" "status_res.wait(30)\n"
-                              "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
-                              "lines = status_res.logs.splitlines()\n"
-                              "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
-                              " ('STATUS:' + page) == 'STATUS:abcdefghij',"
-                              " (page + ':END') == 'abcdefghij:END', lines == ['abcdefghij']]"))))
+        (try (expect
+               (= [true true true true true true true true true true]
+                  (py c
+                      (str
+                        "status_res = __vis_settle__(shell('printf abcdefghij',"
+                        " {'id':'text'}))\n" "status_res.wait(30)\n"
+                        "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
+                        "lines = status_res.logs.splitlines()\n"
+                        "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
+                        " ('STATUS:' + page) == 'STATUS:abcdefghij',"
+                        " (page + ':END') == 'abcdefghij:END', lines == ['abcdefghij'],"
+                        " page.find('cde') == 2, page.splitlines() == ['abcdefghij'],"
+                        " page.startswith('abc') and page.strip() == 'abcdefghij',"
+                        " status_res.logs.find('ghij') == 6,"
+                        " not hasattr(status_res, 'find') and page.get('out') == page['out']]"))))
              (finally (resources/stop-all! sid)))))
   ;; Session report e3f70641-623f-433a-81fc-ce532239c89c: `.stderr` raised AttributeError even though the PTY's
   ;; merged output from either process channel already lived in `out`.
