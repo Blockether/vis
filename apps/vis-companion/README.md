@@ -58,6 +58,37 @@ npm run build      # type-check + production bundle into dist/ (React Compiler o
 npm run lint       # React Compiler static analysis over every src file (no eslint)
 ```
 
+## Testing
+
+```sh
+npm test                 # the whole suite, the way CI runs it
+npx vitest run <file>    # one file while you work
+npm run typecheck        # tsc over the app and its tests
+npm run test:storybook   # story tests, a static Storybook build, contrast audit
+```
+
+Each test answers one kind of question. Pick the layer by what you want to
+know, and keep a test in a single layer:
+
+- **Behavior** is the default: render the component with Testing Library and
+  ask the accessibility tree — role, accessible name, state.
+  `src/components/ui.test.tsx` is the reference suite. A file that needs a
+  DOM says so with a `// @vitest-environment jsdom` docblock; everything
+  else stays in the fast node environment.
+- **Source conventions** are rules about the code itself — the closed control
+  vocabulary, corner and shadow rungs, named ways out, gallery coverage.
+  They live in `src/components/ui.conventions.test.ts`, which scans source
+  files instead of rendering them. Add a rule there when a behavior test
+  cannot see the thing you want to enforce.
+- **Looks** belong to Storybook: stories are the visual gallery, and the
+  `storybook` vitest project exercises the shipped Tailwind layout in
+  Chromium.
+
+Do not pin rendered markup with `toContain` string matches, and do not
+restate source text imported with `?raw`. Both break on every styling
+change and assert nothing a user can perceive. How a control paints is
+reviewed in Storybook, not unit-pinned.
+
 ## Native builds
 
 Capacitor's generated `android/` and `ios/` projects are gitignored; create them
