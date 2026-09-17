@@ -591,7 +591,7 @@ export function MachineRows({
 
         if (renaming === conn.url)
           return (
-            <div key={conn.url} className="flex min-h-12 items-center px-3 py-2">
+            <div key={conn.url} className="flex min-h-12 items-center px-3 py-2 sm:px-4">
               <Input
                 autoFocus
                 value={draft}
@@ -703,7 +703,7 @@ export function MachineRows({
                   }
                   className={
                     isStatic
-                      ? 'flex min-h-12 min-w-0 items-center gap-3 px-3 py-2'
+                      ? 'flex min-h-12 min-w-0 items-center gap-3 px-3 py-2 sm:px-4'
                       : 'min-w-0 gap-3'
                   }
                   aria-label={

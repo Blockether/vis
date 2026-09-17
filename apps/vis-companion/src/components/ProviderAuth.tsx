@@ -957,8 +957,9 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
-      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The header's shared
-          action slot aligns the bare plus with other section controls. */}
+      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The band's trailing cell ends
+          the bare plus on the dialog's own rail, with the marks above it and the provider
+          rows below it. */}
       <IconButton
         variant="quiet"
         label="Add a provider"
@@ -967,6 +968,8 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
           setIsPicking(true);
           setChosen(null);
         }}
+        edge
+        fullCell
       >
         <PlusIcon className="size-4" />
       </IconButton>

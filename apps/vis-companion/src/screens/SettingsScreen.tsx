@@ -172,12 +172,15 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* A bare add mark in the same header slot as section actions. */
+              /* A bare add mark in the band's trailing cell, so it ends on the rail the
+                 ✕ above it and the machine rows below it end on. */
               <IconButton
                 variant="quiet"
                 label="Add a machine"
                 title="Add a machine"
                 onClick={() => setIsAdding(true)}
+                edge
+                fullCell
               >
                 <PlusIcon className="size-4" />
               </IconButton>

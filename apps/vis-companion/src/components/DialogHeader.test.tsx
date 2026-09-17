@@ -71,6 +71,18 @@ describe('every dialog header is the one dialog header', () => {
     );
   });
 
+  // Regression, user report over the settings dialog on a phone (a screenshot marked on
+  // both edges): the ✕ centred its mark in its own 48px cell, so the way out stood inside
+  // the rail that every band mark and every row chevron under it ends on.
+  it('ends the ✕ on the rail the title starts from', () => {
+    render(<DialogHeader title="Settings" closeLabel="Close Settings" onClose={() => {}} />);
+
+    const close = screen.getByRole('button', { name: 'Close Settings' });
+    expect(close.className).toContain('justify-items-end');
+    expect(close.className).toContain('pr-3');
+    expect(close.className).toContain('sm:pr-4');
+  });
+
   // A `vis.ask` question IS the title, and one clipped to a single line is no longer a
   // question anyone can answer. `HumanInputPrompt.test.tsx` pins the depth.
   it('wraps a question instead of eating it', () => {

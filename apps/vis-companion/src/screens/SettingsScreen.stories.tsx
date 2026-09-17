@@ -328,14 +328,13 @@ export const Populated: Story = {
     }
     const notification = page.getByRole('switch', { name: /^Notifications from/ });
     const notificationBox = notification.getBoundingClientRect();
+    // The trailing mark ends on the dialog's rail whatever shape the control is, and the
+    // box behind it runs on into the gutter, so the target stays the whole band tall.
     for (const name of ['Add a machine', 'Add an MCP server']) {
       const action = page.getByRole('button', { name });
-      const box = action.getBoundingClientRect();
-      await expect(box.left + box.width / 2).toBeCloseTo(
-        notificationBox.left + notificationBox.width / 2,
-        1,
-      );
-      await expect(box.height).toBe(pointer ? 28 : 32);
+      const mark = action.querySelector('svg')!.getBoundingClientRect();
+      await expect(mark.right).toBeCloseTo(notificationBox.right, 1);
+      await expect(action.getBoundingClientRect().height).toBe(pointer ? 40 : 44);
     }
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);

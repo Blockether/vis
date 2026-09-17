@@ -161,7 +161,7 @@ export const HeaderOnlyPanels: Story = {
   },
 };
 
-/** Section actions share a centerline, even when a switch is the entire panel. */
+/** Section actions end on one rail, even when a switch is the entire panel. */
 export const HeaderRhythm: Story = {
   args: { title: 'Machines', children: null },
   render: function Render(args) {
@@ -171,7 +171,7 @@ export const HeaderRhythm: Story = {
       <SettingsColumn
         {...args}
         action={
-          <IconButton variant="quiet" label="Add a machine">
+          <IconButton variant="quiet" label="Add a machine" edge fullCell>
             <PlusIcon className="size-4" />
           </IconButton>
         }
@@ -181,7 +181,7 @@ export const HeaderRhythm: Story = {
           <header>
             <SettingsHeader
               action={
-                <IconButton variant="quiet" label="Add a provider">
+                <IconButton variant="quiet" label="Add a provider" edge fullCell>
                   <PlusIcon className="size-4" />
                 </IconButton>
               }
@@ -207,7 +207,7 @@ export const HeaderRhythm: Story = {
         <SettingsPanel
           title="MCP servers"
           action={
-            <IconButton variant="quiet" label="Add an MCP server">
+            <IconButton variant="quiet" label="Add an MCP server" edge fullCell>
               <PlusIcon className="size-4" />
             </IconButton>
           }
@@ -250,13 +250,16 @@ export const HeaderRhythm: Story = {
         canvas.getByRole('button', { name }),
       ),
       toggle,
-      canvas.getByRole('button', { name: 'Show diagnostics' }).querySelector('svg')!,
+      canvas.getByRole('button', { name: 'Show diagnostics' }),
     ];
-    const center = (element: Element) => {
-      const box = element.getBoundingClientRect();
-      return box.left + box.width / 2;
-    };
-    for (const action of actions) await expect(center(action)).toBe(center(toggle));
+    // Regression, reported from a phone over this dialog: a switch, a plus and a chevron
+    // are three different widths, so their boxes never shared a centerline — they shared
+    // a 48px cell that stood one gutter inside the rail every row chevron ends on. The
+    // mark, not the box behind it, is what the eye reads down the column.
+    const ink = (control: Element) => control.querySelector('svg') ?? control;
+    const rail = ink(toggle).getBoundingClientRect().right;
+    for (const action of actions)
+      await expect(ink(action).getBoundingClientRect().right).toBeCloseTo(rail, 1);
     for (const action of actions.slice(0, 4)) {
       const reach = getComputedStyle(action, '::after');
       const height = action.getBoundingClientRect().height;

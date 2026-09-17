@@ -606,7 +606,8 @@ export function CopyChip({
  * without making the paper taller. Selection stays the amber edge over raised paper
  * in every form.
  *
- * `inset` chooses the gutter a row keeps: the standard one, or the live view's own
+ * `inset` chooses the gutter a row keeps: the dialog's own rail — the same one its
+ * title band, its section bands and its choice cells stand on — or the live view's
  * inset, so a row inside that view lines up with the cells above and below it.
  */
 export const ListRow = forwardRef<
@@ -637,7 +638,7 @@ export const ListRow = forwardRef<
     density === 'compact'
       ? 'relative min-h-9 py-0.5 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[""] mouse:min-h-8 mouse:py-0 mouse:after:content-none'
       : 'min-h-12 py-2';
-  const gutter = inset === 'live-view' ? 'px-(--live-view-inset)' : 'px-3';
+  const gutter = inset === 'live-view' ? 'px-(--live-view-inset)' : 'px-3 sm:px-4';
   return (
     <button
       ref={ref}
@@ -1545,9 +1546,16 @@ export function SettingsChoiceGroup({
 }
 
 /**
- * One centered row for a settings heading and its trailing control. The fixed
- * action slot aligns add icons, switches and disclosure marks without shrinking
- * their touch targets. A disclosure makes the whole header the button.
+ * One centered row for a settings heading and its trailing control.
+ *
+ * THE TRAILING MARK ENDS WHERE THE HEADING STARTS. The action used to stand centred in a
+ * fixed 48px cell INSIDE the band's own gutter, which parked the add mark, the switch and
+ * the disclosure chevron 16px further in than the chevron on every row below — one column
+ * of controls reading as three, reported from a phone over the settings dialog. The slot
+ * ends on the gutter now, and a control keeps its touch target by growing INTO that gutter
+ * (`IconButton`'s `edge`) rather than by pushing its ink off the rail.
+ *
+ * A disclosure makes the whole header the button.
  */
 export function SettingsHeader({
   children,
@@ -1566,8 +1574,11 @@ export function SettingsHeader({
   const content = (
     <>
       {children}
-      <span className="flex w-12 shrink-0 items-center justify-center empty:hidden mouse:w-10">
-        {disclosure ? <ChevronIcon open={disclosure.isOpen} className="size-4" /> : action}
+      {/* The band's full height, so an `edge` action keeps a 44px target, and `justify-end`,
+          so a switch, an add mark and a bare chevron all stop on the same gutter. The
+          chevron is the size it is on a row: one mark, one meaning, one size. */}
+      <span className="-my-1 flex shrink-0 items-center justify-end self-stretch empty:hidden">
+        {disclosure ? <ChevronIcon open={disclosure.isOpen} className="size-3" /> : action}
       </span>
     </>
   );
@@ -1755,9 +1766,10 @@ export function NotifyConnectionSwitch({
 
 /**
  * The shared close/remove mark, without a border or a filled face in any theme.
- * A band close keeps its full-height trailing cell. Compact row and attachment
- * removes keep their placement and extend their touch reach invisibly.
- * Keyboard focus uses the same underline as other icon controls.
+ * A band close keeps its full-height trailing cell and ends its mark on the dialog's own
+ * rail, so the ✕, the section bands beneath it and every row chevron share one trailing
+ * edge. Compact row and attachment removes keep their placement and extend their touch
+ * reach invisibly. Keyboard focus uses the same underline as other icon controls.
  */
 export function CloseButton({
   label,
@@ -1779,10 +1791,10 @@ export function CloseButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent text-current transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
+      className={`${iconControlClass} grid shrink-0 items-center bg-transparent text-current transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
         isBand
-          ? 'w-12 self-stretch mouse:w-9'
-          : 'size-8 self-center after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none'
+          ? 'w-12 justify-items-end self-stretch pr-3 sm:pr-4 mouse:w-9'
+          : 'size-8 justify-items-center self-center after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none'
       } ${className}`}
       {...props}
     >
