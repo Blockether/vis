@@ -349,6 +349,40 @@ describe('Markdown thinking breaks', () => {
   });
 });
 
+// User report (screenshot): a numbered list in an answer started further left than the
+// bulleted list right above it. Native markers are sized by the engine, so both lists now
+// draw their own marker in a fixed column instead of leaning on `list-style`.
+describe('Markdown list columns', () => {
+  it('hangs an ordered and an unordered list off the same marker column', () => {
+    const view = render(<Markdown>{'- one\n- two\n\n1. first\n2. second'}</Markdown>);
+    for (const list of [view.container.querySelector('ul'), view.container.querySelector('ol')]) {
+      expect(list).toHaveClass('markdown-list', 'pl-[2ch]');
+      expect(list).not.toHaveClass('list-disc');
+      expect(list).not.toHaveClass('list-decimal');
+      // WebKit drops the list semantics together with `list-style: none`.
+      expect(list).toHaveAttribute('role', 'list');
+    }
+    expect(view.container.querySelector('ol')).not.toHaveClass('markdown-list-wide');
+    for (const item of view.container.querySelectorAll('li')) {
+      expect(item.className).not.toMatch(/\bpl-/);
+    }
+  });
+
+  it('widens the column for a list that reaches two digits', () => {
+    const content = Array.from({ length: 10 }, (_, index) => `${index + 1}. step`).join('\n');
+    expect(render(<Markdown>{content}</Markdown>).container.querySelector('ol')).toHaveClass(
+      'markdown-list-wide',
+    );
+  });
+
+  it('counts from the number the list starts on', () => {
+    const view = render(<Markdown>{'8. eight\n9. nine\n10. ten'}</Markdown>);
+    const ordered = view.container.querySelector('ol');
+    expect(ordered).toHaveAttribute('start', '8');
+    expect(ordered).toHaveClass('markdown-list-wide');
+  });
+});
+
 // User report: a Markdown attachment preview looked like a link but tapping it
 // invoked the unsupported `attachment:` browser scheme and opened nothing.
 describe('Markdown attachment links', () => {

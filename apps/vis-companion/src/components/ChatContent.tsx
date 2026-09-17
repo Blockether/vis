@@ -641,16 +641,22 @@ export const Markdown = memo(function Markdown({
             </h6>
           ),
           hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
-          li: ({ children: item }) => (
-            <li className={`${compact ? 'my-0.5 pl-0.5' : 'my-0.5 pl-1'} ${runningText}`}>
-              {item}
-            </li>
-          ),
-          ol: ({ children: list }) => (
-            <ol className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-decimal space-y-0.5`}>
-              {list}
-            </ol>
-          ),
+          li: ({ children: item }) => <li className={`my-0.5 ${runningText}`}>{item}</li>,
+          ol: ({ children: list, node, start }) => {
+            // The markers share one column, so the widest number in the list sizes it:
+            // "9." fits three characters, "10." needs four.
+            const items = node?.children.filter((child) => child.type === 'element').length ?? 0;
+            const wide = (start ?? 1) + Math.max(items - 1, 0) >= 10 ? ' markdown-list-wide' : '';
+            return (
+              <ol
+                start={start}
+                role="list"
+                className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]${wide}`}
+              >
+                {list}
+              </ol>
+            );
+          },
           p: ({ children: paragraph }) => (
             <p className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}>{paragraph}</p>
           ),
@@ -727,7 +733,10 @@ export const Markdown = memo(function Markdown({
             </th>
           ),
           ul: ({ children: list }) => (
-            <ul className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-disc space-y-0.5`}>
+            <ul
+              role="list"
+              className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]`}
+            >
               {list}
             </ul>
           ),

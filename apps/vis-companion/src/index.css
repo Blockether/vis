@@ -372,6 +372,45 @@
   margin-right: -0.75rem;
 }
 
+/* Markdown list markers, painted instead of `list-style`. A native outside marker is
+   right-aligned against the text, and its box is as wide as the engine decides: a disc
+   measures 2.27ch in Blink and 1.51ch in WebKit, while "1." is 3ch in both. Equal
+   padding therefore starts a numbered list further left than a bulleted one, by an
+   amount no constant can cancel. `content` on `::marker` is ignored by WebKit, and an
+   in-flow `::before` drops onto its own line inside a loose item (`<li><p>`), so the
+   marker is positioned out of flow and the item pays for it in padding. The columns
+   follow the TUI (`tui/markdown_layout.clj`): every marker sits on the block's left
+   edge and the text starts one marker width in. `role="list"` on the list element keeps
+   the semantics WebKit drops together with `list-style: none`. */
+.markdown-list {
+  list-style: none;
+}
+
+.markdown-list > li {
+  position: relative;
+  padding-left: 2ch;
+}
+
+.markdown-list > li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  content: '\2022';
+}
+
+ol.markdown-list > li {
+  padding-left: 3ch;
+}
+
+ol.markdown-list > li::before {
+  content: counter(list-item) '.';
+}
+
+/* A list that reaches "10." needs the fourth column for every one of its items. */
+ol.markdown-list-wide > li {
+  padding-left: 4ch;
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
