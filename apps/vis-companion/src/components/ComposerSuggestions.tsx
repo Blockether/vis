@@ -21,8 +21,13 @@ export function composerSuggestionListId(kind: ComposerSuggestionsProps['kind'])
   return kind === 'files' ? 'file-mention-list' : 'slash-command-list';
 }
 
+// The composer footer is this list's positioned ancestor, and that footer owns the
+// dock's width: safe areas, 46rem at `sm`, the 6xl container on a pointer device.
+// Stretching edge to edge inside it keeps the list exactly as wide as the input box.
+// Re-deriving gutters here instead pinned it to the 46rem reading column while the
+// composer widened, so on a wide screen the list stood visibly narrower than the input.
 const FRAME =
-  'absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))]';
+  'absolute bottom-full left-0 right-0 mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none';
 
 /** The one completion list used by both `@file` and `/command`. */
 export function ComposerSuggestions(props: ComposerSuggestionsProps) {

@@ -49,6 +49,19 @@ describe('composer suggestions', () => {
     expect(onSelect).toHaveBeenCalledWith(commands[1]);
   });
 
+  // The footer holding this list owns the dock's width — safe areas, 46rem at `sm`,
+  // the 6xl container on a pointer device — so the list stretches to that box rather
+  // than re-centering a reading column and standing narrower than the input it completes.
+  it('stretches the completion list across the whole composer box', () => {
+    render(
+      <ComposerSuggestions kind="slashes" items={commands} selectedIndex={0} onSelect={vi.fn()} />,
+    );
+
+    const frame = screen.getByRole('listbox', { name: 'Slash commands' }).className;
+    expect(frame).toContain('left-0 right-0');
+    expect(frame).not.toMatch(/(left|right)-\[|46rem/);
+  });
+
   it('does not mount an empty completion surface', () => {
     const { container } = render(
       <ComposerSuggestions kind="files" items={[]} selectedIndex={0} onSelect={vi.fn()} />,

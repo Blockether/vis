@@ -9,7 +9,9 @@ const meta = {
   parameters: { layout: 'fullscreen' },
   decorators: [
     (Story) => (
-      <div className="relative mx-auto h-dvh max-w-[46rem]">
+      // The composer dock at its widest (`mouse:max-w-6xl`), because the list stretches
+      // to whichever box holds it.
+      <div className="relative mx-auto h-dvh max-w-6xl">
         <div className="absolute inset-x-0 bottom-12 h-px">
           <Story />
         </div>
