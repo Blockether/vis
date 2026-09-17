@@ -25,19 +25,68 @@
                                                  (extension/deregister-extension!
                                                    "foundation-core"))))))])
 
-(defdescribe patch-diagnosis-contract-test
-             (let [classify
-                   @#'introspection/classify-expression-failure
+(defdescribe
+  patch-diagnosis-contract-test
+  (let [classify
+        @#'introspection/classify-expression-failure
 
-                   advice
-                   @#'introspection/advice-for-classification]
+        advice
+        @#'introspection/advice-for-classification
 
-               (it "classifies unbalanced patch replacement text and says how to re-emit it"
-                   (expect (= :patch-unbalanced-replacement
-                              (classify "patch(p, edits)" "unmatched delimiter in code")))
-                   (let [message (advice :patch-unbalanced-replacement)]
-                     (expect (str/includes? message "triple-quoted"))
-                     (expect (not (str/includes? message "anchor")))))))
+        next-actions
+        @#'introspection/next-actions
+
+        parse-refusal
+        (str "patch refused — the edit would not parse; nothing was written.\n"
+             "  src/app.py: edit 1/1 lines 12..12; python: ERROR at replacement line 1,"
+             " col 8 — near \"=\\\"Examples\"")
+
+        stale-refusal
+        (str "patch refused at edit 2 of 5 — nothing was written.\n"
+             "  src/app.py: stale to 120:7f2; current 120:a11.\n"
+             "  cat(\"src/app.py\", 117, 123)")
+
+        overlap-refusal
+        (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
+             "  src/app.py: lines 10..14 and 12..18.")
+
+        shape-refusal
+        (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `replace`.")]
+
+    (it "classifies unbalanced patch replacement text and says how to re-emit it"
+        (expect (= :patch-unbalanced-replacement
+                   (classify "patch(p, edits)" "unmatched delimiter in code")))
+        (let [message (advice :patch-unbalanced-replacement)]
+          (expect (str/includes? message "triple-quoted"))
+          (expect (not (str/includes? message "anchor")))))
+    ;; https://github.com/Blockether/vis/issues/265 - the parse gate and a drifted
+    ;; anchor refuse under the SAME `patch refused` head. Classifying the parse gate
+    ;; as a stale anchor told the agent its anchor was wrong and to retry, which
+    ;; re-sent the identical malformed replacement text.
+    (it "classifies a parse-gate refusal as a parse error, not a stale anchor"
+        (expect (= :patch-parse-error (classify "patch(p, edits)" parse-refusal)))
+        (let [message (advice :patch-parse-error)]
+          (expect (str/includes? message "replacement syntax"))
+          (expect (not (str/includes? message "stale"))))
+        (let [actions (next-actions [{:classification :patch-parse-error :message parse-refusal}]
+                                    [])]
+          (expect (some (fn [action]
+                          (str/includes? action "replacement syntax"))
+                        actions))
+          (expect (not-any? (fn [action]
+                              (str/includes? action "anchor the refusal handed back"))
+                            actions))))
+    ;; The same issue in reverse: reading only the block's FIRST token missed a genuine
+    ;; anchor refusal whenever the patch call was assigned or preceded by a read.
+    (it "keeps stale-anchor classification for an anchor mismatch, wherever patch is called"
+        (expect (= :patch-stale-anchor
+                   (classify "rows = cat(path, 1, 20)\nr = patch(path, edits)" stale-refusal)))
+        (expect (str/includes? (advice :patch-stale-anchor) "anchor")))
+    (it "separates overlapping edits and unusable edit shapes from anchor drift"
+        (expect (= :patch-overlapping-edits (classify "patch(p, edits)" overlap-refusal)))
+        (expect (= :patch-invalid-edit (classify "patch(p, edits)" shape-refusal)))
+        (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
+        (expect (str/includes? (advice :patch-invalid-edit) "line:hash")))))
 
 ;; Regression: grep gained `is_regex` and started answering ONE anchored TEXT
 ;; block, but this advice still read "Regex is not supported - filter the matches

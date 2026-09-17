@@ -287,6 +287,32 @@
       (str/includes? lower-message "interrupted while")
       (str/includes? lower-message "sleep interrupted")))
 
+(def ^:private patch-refusal-causes
+  "Cause phrases `patch` prints under its refusal head, in match order, paired with the
+   classification whose advice actually fixes that cause. The wording is the editor's own
+   (`foundation.editing.core`): the parse gate, an overlap, an anchor mismatch, then the
+   edit-shape checks."
+  [[:patch-parse-error ["would not parse" "at replacement line"]]
+   [:patch-overlapping-edits ["overlap"]] [:patch-stale-anchor ["stale from" "stale to"]]
+   [:patch-invalid-edit
+    ["expected line:hash" "out of range" "is after to line" "must be a map" "non-empty list of maps"
+     "missing `from`" "missing `replace`" "allowed: from, to, replace"]]])
+
+(defn- patch-refusal-classification
+  "The classification a `patch` refusal earns from the cause line it printed, or nil when
+   the message is not a patch refusal at all. `patch` refuses ATOMICALLY under ONE shared
+   `patch refused` head for causes whose recoveries are opposites, so the head only proves
+   that nothing was written — the cause line under it is what picks the fix. That head also
+   identifies the refusal on its own, whatever token the failing block happened to open with."
+  [lower-message]
+  (when (str/includes? lower-message "patch refused")
+    (some (fn [[classification phrases]]
+            (when (some (fn [phrase]
+                          (str/includes? lower-message phrase))
+                        phrases)
+              classification))
+          patch-refusal-causes)))
+
 (defn- classify-expression-failure
   [code error]
   (let [message
@@ -296,7 +322,10 @@
         (str/lower-case message)
 
         tool-name
-        (or (tool-name-from-code code) "")]
+        (or (tool-name-from-code code) "")
+
+        patch-refusal
+        (patch-refusal-classification lower-message)]
 
     (cond (retired-python-error? error) :python-environment-retired
           (cancellation-failure? lower-message) :turn-cancelled
@@ -309,13 +338,12 @@
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
           :patch-unbalanced-replacement
-          ;; A refused ANCHOR is its own loop: the exact line/hash pair no longer
-          ;; agrees, and the refusal already carries the fresh anchor. Left generic
-          ;; it would only ever be counted, never explained.
-          (and (str/includes? tool-name "patch")
-               (or (str/includes? lower-message "patch refused")
-                   (str/includes? lower-message "carries")))
-          :patch-stale-anchor
+          ;; A refused ANCHOR is its own loop: the exact line/hash pair no longer agrees, and
+          ;; the refusal already carries the fresh anchor. But a parse-gate rejection, an
+          ;; overlap and an unusable edit shape refuse under the SAME head, and stale-anchor
+          ;; advice sends those back with the very text that was refused, so the cause line
+          ;; decides — never the head alone.
+          (some? patch-refusal) patch-refusal
           (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
           :else :code-execution-error)))
 
@@ -336,6 +364,15 @@
 
     :patch-unbalanced-replacement
     "The `replace` text likely lost the closing quote or a delimiter, and a syntax-breaking write refuses the WHOLE batch. Re-emit that edit with a Python triple-quoted string for multi-line content."
+
+    :patch-parse-error
+    "The parse gate refused the REPLACEMENT text, not the anchor: the message names the language, the replacement line and the text it broke on. Nothing was written, so the anchors you already hold stay live — fix the replacement syntax and re-send the same edit. Re-reading the file or swapping anchors changes nothing."
+
+    :patch-overlapping-edits
+    "Two edits in the batch cover the same line, so the whole batch was refused. Merge them into ONE edit spanning both ranges instead of sending the same pair again."
+
+    :patch-invalid-edit
+    "The edit shape is unusable as written: each edit is {\"from\": \"line:hash\", \"to\": \"line:hash\", \"replace\": text}, with anchors copied verbatim from cat/grep, inside the file and `from` before `to`. The cause line names the failing edit — fix that one and re-send."
 
     :patch-stale-anchor
     "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and put every edit for that file in ONE patch(path, edits) call so earlier edits cannot drift later anchors."
@@ -749,6 +786,10 @@
         (contains? classes :patch-unbalanced-replacement)
         (conj
           "Re-emit the patch with balanced `replace` text; use a triple-quoted Python string for multi-line replacement text.")
+
+        (contains? classes :patch-parse-error)
+        (conj
+          "A patch was refused by the parse gate, not by an anchor: fix the replacement syntax and re-send the same edit. Nothing was written, so the anchors you already hold are still live.")
 
         (contains? classes :patch-stale-anchor)
         (conj
