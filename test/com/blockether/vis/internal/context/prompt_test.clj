@@ -776,7 +776,10 @@
       ;; 10.4k → 10.5k: user report — §2 named the shell handle's ops and not the ONE map
       ;; they answer, so a session wrote `sh.wait(60).out` and read AttributeError instead
       ;; of `r["out"]`. The keys cost 67 characters and land at 10 435.
-      (expect (< (count text) 10500))
+      ;; 10.5k → 10.7k for #271: `fold_count` ships in every context block and was defined
+      ;; nowhere, so folded work read as context the conversation lacks; §6 now names it as
+      ;; budget telemetry, never a reason to re-read a fold. The clause lands at 10 594.
+      (expect (< (count text) 10700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -858,6 +861,7 @@
                "pressure is `last_request_tokens`" "`auto_compress_above`"
                "`saturation`/`headroom_tokens` price"
                "`hint` only arms at 75% of that operating budget"
+               "`fold_count` is how many folds you executed"
                ;; Svar owns prompt-cache policy; the core tells the model which explicit
                ;; provider-cache fields it receives and separates transport continuation.
                "`prompt_cache.token_read_percent`" "`request_hit_percent`"

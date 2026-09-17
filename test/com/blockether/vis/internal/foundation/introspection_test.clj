@@ -610,20 +610,29 @@
           [required
            ["Read session history only when the answer changes with what a past session says"
             "session diagnostics" "evidence from a referenced conversation"
-            "context the conversation lacks" "is a reference, not a reason"
+            "context another session holds" "is a reference, not a reason"
             "One search round settles it" "ends the lookup"
             "A session or turn start, and `/reload`, keep the conversation intact: continue from it."]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Call `await read_session()` once."))))))
-  (it "preserves targeted reads and reuses evidence in the injected prompt"
+  ;; Regression (#271): the affirmative recipe "For current-session evidence, use
+  ;; `await read_session()`" out-argued the gate two lines above it, so an agent
+  ;; re-read its own visible conversation. The current session is never a source:
+  ;; live steps are on the wire, folded steps stand as the gist the agent chose.
+  (it "keeps the current session off the evidence path and reuses targeted reads"
       (with-redefs [vis/toggle-enabled? #(= "introspection" %)]
         (let [text (#'foundation/combined-prompt {})]
-          (doseq [required ["For current-session evidence, use `await read_session()`."
+          (doseq [required ["THIS session's conversation is already in front of you"
+                            "never undoes a fold, whatever `fold_count` says"
+                            "naming that fact and its `tN/iK` scope first"
                             "Reuse the result unless newer evidence is needed."
                             "tool rows overlap, so read each on its own"
                             "transcript/turns/iterations/blocks" "await list_sessions(search="
                             "vis_session_id#<uuid>" "print the fields the question needs"]]
-            (expect (str/includes? text required)))))))
+            (expect (str/includes? text required)))
+          (expect (not (str/includes?
+                         text
+                         "For current-session evidence, use `await read_session()`.")))))))
 
 (defdescribe introspection-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
