@@ -1918,6 +1918,38 @@
             (p/styled g [p/BOLD] (p/put-str! g col row label))
             (.register interactions/hit-map target))))))
 
+(defn- paint-heading-search!
+  "Paint the heading's Search control for an open log, left of the fold control.
+
+   A log's own Search sits on that log's row, which the body scrolls out of the
+   window as soon as the view follows a long tail — a watched run then had no
+   reachable way into its retained output at all. The heading never scrolls, so the
+   whole record stays one click away for the life of the run."
+  [g {:keys [left inner-w]} row view-id entry]
+  (let [label
+        " Search "
+
+        width
+        (long (p/display-width label))
+
+        ;; One column of air from the fold control, itself inset one column from the
+        ;; interior's right edge.
+        col
+        (- (+ (long left) (long inner-w)) 4 width)]
+
+    (when (> col (inc (long left)))
+      (components/button!
+        g
+        col
+        row
+        label
+        :live-log-search
+        {:extra {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
+                 :view-id view-id
+                 :node-id (:node-id entry)
+                 :item-id :search
+                 :label (:search-label entry)}}))))
+
 (defn- band-title
   "The Live View title, including the recorded outcome when the run has ended."
   [pane now-ms]
@@ -2073,16 +2105,28 @@
                total (count rows-plan)
                start (if (and front (not is-minimized)) (offset front rows-plan body-visible) 0)
                shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
-               view-id (view-id front)]
+               view-id (view-id front)
+               ;; Every open log's Search sits on that log's own row — which the body
+               ;; carries out of the window the moment it follows a long tail, leaving
+               ;; a watched run with no entrance to its retained output. The heading
+               ;; stands in for the first log whose row is not painted, so the whole
+               ;; record stays one click away.
+               heading-search (when (and (pos? heading-h) (not search) (>= body-w 24))
+                                (let [painted
+                                      (into #{} (comp (filter :search-label) (map :node-id)) shown)]
+                                  (first (remove #(contains? painted (:node-id %))
+                                           (filter :search-label rows-plan)))))]
 
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            (when (>= (long sep-row) (long top-limit))
              (let [title (p/ellipsize (band-title (or front (last panes)) now-ms)
-                                      (max 1 (- body-w 6)))]
+                                      (max 1 (- body-w 6 (if heading-search 9 0))))]
                (tr/draw-rule! g region sep-row (when (zero? heading-h) title))
                (when (pos? heading-h)
                  (paint-styled! g body-left title-row body-w t/dialog-fg [p/BOLD] title))
-               (paint-fold-control! g region title-row front)))
+               (paint-fold-control! g region title-row front)
+               (when heading-search
+                 (paint-heading-search! g region title-row view-id heading-search))))
            (when (= 2 search-h)
              (let [node (first (filter #(= (:node-id search) (:id %))
                                        (mapcat #(tree-seq :fields :fields %)
@@ -2134,12 +2178,13 @@
                                  {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
                                  {:text "▏" :fg t/dialog-hint-key}])))
            (dialogs/draw-hint-bar! g left hint-at inner-w (hint front others))
-           ;; The gutter lane every scrollable dialog draws its bar in: the last
-           ;; column inside the right rail, which the body's own lead keeps clear.
+           ;; The bar keeps one column of margin inside the right rail: the last
+           ;; column there is the lane the TRANSCRIPT draws its own bar in, and two
+           ;; bars sharing one lane read as a single scrollbar fighting itself.
            (when (> total body-visible)
              (ScrollBar/draw g
                              Direction/VERTICAL
-                             (TerminalPosition. (int (+ left inner-w))
+                             (TerminalPosition. (int (dec (+ left inner-w)))
                                                 (int (+ (long body-top) (count collapsed))))
                              (int body-visible)
                              (int total)

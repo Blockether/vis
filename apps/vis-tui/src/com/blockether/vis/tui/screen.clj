@@ -747,6 +747,16 @@
 
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
+(defn- transcript-bar-owns-press?
+  "Whether the transcript's own scrollbar may take a press at terminal row `my`.
+
+   Its lane runs the full transcript height, the live band's rows included, so a
+   press on a control inside an opened transient used to jump this bar AND fire
+   that control on release: one click, two activations. Only a drag already
+   holding the thumb keeps the bar wherever the pointer travels."
+  [db my dragging?]
+  (or (true? dragging?) (nil? (live-band-pane db my))))
+
 (defn- live-view-wheel-event
   "The pane-local event for `wheel-delta` EFFECTIVE wheel rows over the live band
    (the caller has already smoothed the raw delta through the band's momentum).
@@ -6788,17 +6798,18 @@
                                                                       (Integer/valueOf
                                                                         (int scroll-position)))
                          ^ScrollBar$DragResult scrollbar-drag
-                         (ScrollBar/dragStep ma
-                                             Direction/VERTICAL
-                                             (TerminalPosition. (int (- (long cols) 2))
-                                                                (int bar-top))
-                                             (int track-h)
-                                             (int total-h)
-                                             (int inner-h)
-                                             (Integer/valueOf (int scroll-position))
-                                             (when (some? @scrollbar-drag-offset)
-                                               (Integer/valueOf (int @scrollbar-drag-offset)))
-                                             (int render/MESSAGE_MARGIN_RIGHT))
+                         (when (transcript-bar-owns-press? db my (some? @scrollbar-drag-offset))
+                           (ScrollBar/dragStep ma
+                                               Direction/VERTICAL
+                                               (TerminalPosition. (int (- (long cols) 2))
+                                                                  (int bar-top))
+                                               (int track-h)
+                                               (int total-h)
+                                               (int inner-h)
+                                               (Integer/valueOf (int scroll-position))
+                                               (when (some? @scrollbar-drag-offset)
+                                                 (Integer/valueOf (int @scrollbar-drag-offset)))
+                                               (int render/MESSAGE_MARGIN_RIGHT)))
                          selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
                          transcript-selectable-ranges
                          (get-in db [:layout :transcript-selectable-ranges])

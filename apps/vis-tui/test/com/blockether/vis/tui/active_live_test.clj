@@ -1169,3 +1169,79 @@
           (is (= [:completed] (mapv :reason (get-in @db [:messages 0 :runs])))
               "A later close updates the original receipt, not the newest turn")
           (is (empty? (:runs (last (:messages @db))))))))))
+
+(defn- long-log-pane
+  [line-count]
+  (lv/opened (-> (fixture/view {:title "Build verification"}
+                               (fixture/log "console"
+                                            {:label "Output"
+                                             :default-expanded true
+                                             :lines (mapv #(str "console line " % " output")
+                                                          (range line-count))}))
+                 fixture/normalize-live-view
+                 materializer/materialize
+                 (assoc :id "22222222-2222-4222-8222-222222222222"
+                        :session-id "viewer-review"
+                        :seq 0
+                        :created-at 0
+                        :owner owner))))
+
+(deftest transcript-bar-yields-its-lane-to-the-live-band
+  ;; One press, one activation: the transcript's bar lane covers the band's rows,
+  ;; so arming it there jumped the transcript AND fired the band control the
+  ;; release landed on — a click on the transient's close icon activated two areas.
+  (let [db (assoc (viewer-review-db (review-pane)) :layout {:cols 80 :rows 44})]
+    (with-redefs [state/band-anchor (constantly {:content-top 4 :prompt-h 3})
+                  lv/band-rows (constantly [10 30])]
+
+      (is (#'screen/transcript-bar-owns-press? db 2 false))
+      (is (#'screen/transcript-bar-owns-press? db 40 false))
+      (is (not (#'screen/transcript-bar-owns-press? db 15 false)))
+      (is (not (#'screen/transcript-bar-owns-press? db 30 false)))
+      ;; A drag that began on the thumb keeps the bar while it crosses the band.
+      (is (#'screen/transcript-bar-owns-press? db 15 true)))))
+
+(deftest live-log-search-rides-the-band-heading
+  ;; A watched run follows the tail of its log, and that carries the log's own row
+  ;; — with the Search control on it — out of the window: the retained output had
+  ;; no reachable entrance at all. The heading keeps that control, and the band's
+  ;; bar keeps one column of margin from the lane the transcript's bar owns.
+  (let [cols 120]
+    (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 44))
+                ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [pane (assoc-in (long-log-pane 300) [:disclosures "console"] true)
+            db (atom (assoc (viewer-review-db pane) :layout {:cols cols :rows 44}))]
+
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-redefs [state/app-db db]
+            (paint-viewer-review! ts cols @db)
+            (let [regions (vec (.current interactions/hit-map))
+                  search (first (filter #(= :live-log-search (:kind %)) regions))
+                  close (first (filter #(= :live-viewer-close (:kind %)) regions))
+                  {:keys [row col width]} (:bounds search)
+                  lines (viewer-lines terminal cols)
+                  body (first (filter #(str/includes? % "console line") lines))
+                  rail (long (str/last-index-of body "│"))
+                  bar (- rail 2)]
+
+              (is (some? search) "A long log must still expose its Search control")
+              (is (= "console" (:node-id search)))
+              (is (= (lv/view-id pane) (:view-id search)))
+              (is (= "Search Output" (:label search)))
+              (is (not-any? #(= :live-expand (:kind %)) regions)
+                  "The log's own row is off the window while the band follows its tail")
+              (is (= (:row (:bounds close)) row) "Search belongs to the heading row")
+              (is (< (+ (long col) (long width)) (long (:col (:bounds close)))))
+              (is (= :live-log-search (:kind (.lookup interactions/hit-map (int col) (int row)))))
+              (is (= :live-log-search
+                     (:kind (.lookup interactions/hit-map
+                                     (int (+ (long col) (long width) -1))
+                                     (int row)))))
+              (is (not= \space (nth body bar)) "The band's bar stands inside the rail")
+              (is (= \space (nth body (dec rail))) "…keeping one column of margin from it")
+              (is (< bar (- cols (long render/MESSAGE_MARGIN_RIGHT) 1))
+                  "…and clear of the columns the transcript's own bar owns")
+              (is (#'screen/activate-live-region! @db search))
+              (is (= "console" (get-in @db [:live-viewer-search :node-id]))
+                  "The heading control opens the same search the log's row opened"))))))))
