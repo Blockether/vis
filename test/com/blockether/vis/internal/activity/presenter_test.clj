@@ -131,8 +131,10 @@
              [{"error" 0 "warning" 0 "info" 0 "files" 0} "No files to lint"] [{} "No lint result"]]]
       (expect (= expected
                  (get (presenter/result-presentation {:operation :lint_code} result) "summary")))))
-  (it "keeps clean lint results compact with complete evidence behind disclosure"
+  (it "keeps a clean lint result to its one-line summary"
       ;; Regression #238: a clean run must not repeat its metrics and targets inline.
+      ;; Issue #270: it has no details worth opening either — provider, config and
+      ;; target metadata only restate the summary.
       (let [targets
             (mapv #(str "src/module_" % ".py") (range 15))
 
@@ -151,20 +153,14 @@
             (result-fixture [[:lint_code "src" result nil]])
 
             view
-            (get-in projection ["rows" 0 "presentation"])
-
-            details
-            (get-in view ["sections" 0])]
+            (get-in projection ["rows" 0 "presentation"])]
 
         (expect (contract/valid-projection? projection))
         (expect (= "Linted" (get view "headline")))
         (expect (= "No lint findings · 15 files checked" (get view "summary")))
         (expect (= [] (get view "content")))
-        (expect (= "Lint details" (get details "headline")))
-        (expect (= "" (get details "summary")))
-        (expect (re-find #"ruff" (pr-str (get details "content"))))
-        (expect (re-find #"pyproject.toml" (pr-str (get details "content"))))
-        (expect (some #(= (str/join "\n" targets) (get % "text")) (get details "content")))))
+        (expect (empty? (get view "sections")))
+        (expect (nil? (re-find #"pyproject.toml|ruff" (pr-str view))))))
   (it "keeps clean snippet and no-file results compact"
       (doseq [result [{:error 0
                        :warning 0
@@ -178,7 +174,7 @@
         (let [view (presenter/result-presentation {:operation :lint_code} result)]
           (expect (contract/valid-presentation? view))
           (expect (= [] (get view "content")))
-          (expect (seq (get-in view ["sections" 0 "content"]))))))
+          (expect (empty? (get view "sections"))))))
   (it "keeps findings, failed results and incomplete results inline"
       (doseq [result
               [{"error" 1 "warning" 0 "info" 0} {"error" 0 "warning" 1 "info" 0}
@@ -210,7 +206,7 @@
         (expect (= ["No formatting changes · src/example.clj" "No lint findings · 1 file checked"]
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
         (expect (empty? (get-in (first rows) ["presentation" "content"])))
-        (expect (seq (get-in (second rows) ["presentation" "sections" 0 "content"])))
+        (expect (empty? (get-in (second rows) ["presentation" "sections"])))
         (expect (not-any? #(get % "is_truncated") rows))))
   ;; #218: all findings remain visible, not just complete aggregate counts.
   (it "retains complete per-file and per-finding evidence alongside counts"

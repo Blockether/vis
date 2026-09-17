@@ -982,11 +982,10 @@
             (str/starts-with? op "council.") (council-presentation op value)
             (= op "repl_eval") (repl-presentation value)
             (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+            ;; Issue #270: a clean lint has nothing to open — provider, config and
+            ;; target metadata only repeat the summary the row already carries.
             (and (= op "lint_code") (clean-lint-result? (or result value)))
-            {"headline" headline
-             "summary" summary
-             "content" []
-             "sections" [{"headline" "Lint details" "summary" "" "content" content}]}
+            {"headline" headline "summary" summary "content" []}
             :else {"headline" headline "summary" summary "content" content}))))
 
 (defn for-tool

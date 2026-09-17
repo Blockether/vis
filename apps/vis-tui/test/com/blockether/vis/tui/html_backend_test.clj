@@ -228,6 +228,81 @@
         (reset! expansions {:vis.channel-tui/baseline :expand})
         (is (= #{"BODY_0" "BODY_1"} (bodies)))))))
 
+(deftest activity-lint-sequence-disclosure-test
+  ;; Issue #270: a lint run that found something and its clean rerun join one
+  ;; `Lint ×2` block. Each run has to name its place in the sequence, and closing
+  ;; Activity has to keep every disclosure the reader left open or closed inside it.
+  (with-open [terminal
+              (DefaultVirtualTerminal. (TerminalSize. 100 80))
+
+              screen
+              (doto (TerminalScreen. terminal) (.startScreen))]
+
+    (let [rows
+          [{:id "lint-0"
+            :sequence 0
+            :operation "lint_code"
+            :state "succeeded"
+            :presentation {:headline "Linted"
+                           :summary "1 error · 0 warnings · 0 info · 2 files checked"
+                           :content [{:type "text" :text "BODY_0"}]}}
+           {:id "lint-1"
+            :sequence 1
+            :operation "lint_code"
+            :state "succeeded"
+            :presentation {:headline "Linted"
+                           :summary "No lint findings · 2 files checked"
+                           :content []
+                           :sections [{:headline "Lint details"
+                                       :summary ""
+                                       :content [{:type "text" :text "BODY_1"}]}]}}]
+
+          expansions
+          (atom {})
+
+          paint!
+          #(paint-activity-review! screen rows @expansions)
+
+          region
+          (fn [suffix]
+            (first (filter #(and (= :toggle-details (:kind %))
+                                 (str/ends-with? (str (:node-id %)) suffix))
+                           (.current interactions/hit-map))))
+
+          click!
+          (fn [suffix]
+            (swap! expansions toggle-review-region (region suffix))
+            (paint!))
+
+          bodies
+          (fn []
+            (set (re-seq #"BODY_\d" (:text (paint!)))))
+
+          text
+          (fn []
+            (str/join "\n" (:lines (paint!))))]
+
+      (paint!)
+      (click! ":#band")
+      ;; The group counts its runs; each run says which one it is and how it ended.
+      (is (re-find #"Lint ×2" (text)))
+      (is (re-find #"1: Linted" (text)))
+      (is (re-find #"2: Linted" (text)))
+      (is (empty? (bodies)))
+      ;; Opening one run leaves the other run and the clean run's details closed.
+      (click! ":0:lint-0")
+      (is (= #{"BODY_0"} (bodies)))
+      (click! ":#band")
+      (click! ":#band")
+      (is (= #{"BODY_0"} (bodies)))
+      (is (true? (:collapsed? (region ":0:lint-1:section:0"))))
+      ;; And a run the reader collapsed stays collapsed the next time Activity opens.
+      (click! ":0:lint-0")
+      (click! ":#band")
+      (click! ":#band")
+      (is (empty? (bodies)))
+      (is (true? (:collapsed? (region ":0:lint-0")))))))
+
 (deftest result-first-html-native-parity-test
   (doseq [cols [40 80 120]]
     (with-open [html (activity-review-terminal cols 80)

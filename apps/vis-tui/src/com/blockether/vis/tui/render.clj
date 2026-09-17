@@ -6121,6 +6121,29 @@
                    {:rows [] :by-target {}}
                    (sort-by :sequence rows)))))
 
+(defn- numbered-run-rows
+  "Number the steps a repeated operation discloses. A bare `Lint ×2` block hides
+   whether the second run repeated the first or checked it, so every run wears its
+   place in the sequence beside its own outcome (issue #270)."
+  [children]
+  (if (< (count children) 2)
+    children
+    (into []
+          (map-indexed (fn [index row]
+                         (let [presentation
+                               (:presentation row)
+
+                               headline
+                               (activity-field presentation :headline)]
+
+                           (if (str/blank? (str headline))
+                             row
+                             (assoc-in row
+                               [:presentation
+                                (if (contains? presentation :headline) :headline "headline")]
+                               (str (inc (long index)) ": " headline))))))
+          children)))
+
 (defn- activity-operation-rows
   "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
@@ -6129,14 +6152,16 @@
             (str id "#group")
             label
             rows
-            (mapv (fn [{:keys [id rows]}]
-                    (if (= 1 (count rows))
-                      (first rows)
-                      (let [title (or (not-empty (activity-step-object (first rows))) label)]
-                        (-> (activity-group-row (str id "#arguments") title rows rows)
-                            (assoc :activity-repeat-count (count rows))
-                            (assoc-in [:presentation :headline] title)))))
-                  (activity-contract/argument-groups (merge-read-rows (merge-patch-rows rows))))))
+            (numbered-run-rows
+              (mapv (fn [{:keys [id rows]}]
+                      (if (= 1 (count rows))
+                        (first rows)
+                        (let [title (or (not-empty (activity-step-object (first rows))) label)]
+                          (-> (activity-group-row (str id "#arguments") title rows rows)
+                              (assoc :activity-repeat-count (count rows))
+                              (assoc-in [:presentation :headline] title)))))
+                    (activity-contract/argument-groups (merge-read-rows (merge-patch-rows
+                                                                          rows)))))))
         (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
