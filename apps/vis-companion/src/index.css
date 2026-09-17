@@ -348,19 +348,16 @@
   }
 }
 
-/* Live view rules bleed through the reading column's padding without widening ordinary prose.
-   Separate insets keep the bleed aligned when landscape safe areas are asymmetric. */
+/* The reading column owns its padding; a notch widens it through the safe-area insets. */
 .transcript-column {
-  --transcript-inset-left: max(0.875rem, env(safe-area-inset-left));
-  --transcript-inset-right: max(0.875rem, env(safe-area-inset-right));
-  padding-left: var(--transcript-inset-left);
-  padding-right: var(--transcript-inset-right);
+  padding-left: max(0.875rem, env(safe-area-inset-left));
+  padding-right: max(0.875rem, env(safe-area-inset-right));
 }
 
 @media (width >= 40rem) {
   .transcript-column {
-    --transcript-inset-left: max(1.5rem, env(safe-area-inset-left));
-    --transcript-inset-right: max(1.5rem, env(safe-area-inset-right));
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
   }
 }
 
@@ -368,12 +365,11 @@
   --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
 }
 
-/* An embedded run bleeds out of its message card and through that padding; the 0.75rem
-   matches the card's own inset. A phone column fills the pane, so the rules meet the screen
-   edges, while a wide desktop pane keeps the run inside the reading column. */
+/* An embedded run bleeds through its message card's own 0.75rem padding and stops there: the
+   rules meet the card's edges on a phone and on a wide desktop pane without overhanging it. */
 .live-view-panel[data-execution-run] {
-  margin-left: calc(-1 * (0.75rem + var(--transcript-inset-left, 0px)));
-  margin-right: calc(-1 * (0.75rem + var(--transcript-inset-right, 0px)));
+  margin-left: -0.75rem;
+  margin-right: -0.75rem;
 }
 
 @layer base {

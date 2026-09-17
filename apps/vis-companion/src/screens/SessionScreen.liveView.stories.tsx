@@ -50,16 +50,15 @@ const client = new Proxy(baseClient, {
   },
 });
 
-// Rules span the reading column, not the window: a phone column fills the pane, so a run
-// embedded in a message card meets the screen edges, while a wide desktop pane keeps the run
-// inside the column. A standalone run stays at the column's text width.
+// Rules span the reading column's text width, never the window: an embedded run bleeds through
+// its message card's padding to the card's edges and stops there, so a phone pane and a wide
+// desktop pane both keep the run inside the column. A standalone run needs no bleed at all.
 async function expectColumnRules(panel: Element, column: HTMLElement) {
   const bounds = column.getBoundingClientRect();
   const columnStyle = getComputedStyle(column);
-  const bleeds = panel.hasAttribute('data-execution-run');
   const inner = bounds.left + column.clientLeft;
-  const left = inner + (bleeds ? 0 : parseFloat(columnStyle.paddingLeft));
-  const right = inner + column.clientWidth - (bleeds ? 0 : parseFloat(columnStyle.paddingRight));
+  const left = inner + parseFloat(columnStyle.paddingLeft);
+  const right = inner + column.clientWidth - parseFloat(columnStyle.paddingRight);
   const style = getComputedStyle(panel);
   await expect(style.borderLeftWidth).toBe('0px');
   await expect(style.borderRightWidth).toBe('0px');
@@ -69,6 +68,13 @@ async function expectColumnRules(panel: Element, column: HTMLElement) {
     const box = element.getBoundingClientRect();
     await expect(box.left).toBeCloseTo(left, 0);
     await expect(box.right).toBeCloseTo(right, 0);
+  }
+  // Regression: the run used to bleed through the column padding too and overhang the card.
+  const card = panel.closest<HTMLElement>('[data-execution-group]');
+  if (card) {
+    const cardBox = card.getBoundingClientRect();
+    await expect(cardBox.left).toBeCloseTo(left, 0);
+    await expect(cardBox.right).toBeCloseTo(right, 0);
   }
   const header = panel.querySelector('header')!;
   await expect(parseFloat(getComputedStyle(header).paddingLeft)).toBeGreaterThanOrEqual(12);
@@ -116,7 +122,7 @@ export const Phone: Story = {
   play: async (context) => {
     await meta.play(context);
     const viewport = context.canvas.getByRole('region', { name: 'Transcript' });
-    // A phone reading column fills the pane, so the run rules reach the screen edges.
+    // A phone reading column fills the pane; the run rules stop at its message card.
     await expect((viewport.firstElementChild as HTMLElement).clientWidth).toBe(
       viewport.clientWidth,
     );
@@ -136,8 +142,8 @@ export const Landscape: Story = {
       ['59px', '24px'],
       ['24px', '59px'],
     ]) {
-      column.style.setProperty('--transcript-inset-left', left);
-      column.style.setProperty('--transcript-inset-right', right);
+      column.style.paddingLeft = left;
+      column.style.paddingRight = right;
       await expectColumnRules(panel, column);
       await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     }
