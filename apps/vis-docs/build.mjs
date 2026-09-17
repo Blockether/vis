@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { security } from './headers.js';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
-import { origin, metadataHead, extensionIcon, sitemap } from './web/discovery.js';
+import { origin, metadataHead, sitemap } from './web/discovery.js';
 import { buildPythonApi } from './python-api.mjs';
 
 const dist = new URL('./dist/', import.meta.url);
@@ -38,10 +38,6 @@ for (const page of pages) {
       markdown: '/' + page.slug + '.md',
     }),
   );
-  const link = document.querySelector('.center-link');
-  link.innerHTML = extensionIcon;
-  link.title = 'Extension Center';
-  link.setAttribute('aria-label', 'Extension Center');
   await writeFile(file, dom.serialize());
   dom.window.close();
   await writeFile(new URL(page.slug + '.md', dist), page.md);

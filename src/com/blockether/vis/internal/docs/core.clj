@@ -409,9 +409,17 @@
       (esc (:title site))
       "</a>"
       (when (and (= mode :static) (:public? site-data))
-        (str "<a class=\"center-link\" href=\"/extensions/\">"
-             (esc (get-in site [:extension-center :title]))
-             "</a>"))
+        ;; Lucide grid-2x2, the mark the catalog header also uses; the written-out
+        ;; label stays in the sidebar.
+        (let [label (esc (get-in site [:extension-center :title]))]
+          (str
+            "<a class=\"center-link\" href=\"/extensions/\" title=\"" label
+            "\" aria-label=\"" label
+            "\">"
+            "<svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" "
+            "stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">"
+            "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/>"
+            "<path d=\"M3 12h18M12 3v18\"/>" "</svg></a>")))
       "<search class=\"search\" data-index=\""
       (asset mode "search.json")
       "\">"

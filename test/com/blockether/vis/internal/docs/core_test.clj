@@ -953,8 +953,21 @@
             page
             (first (:pages site))]
 
-        (expect (str/includes? (re-find #"<header[^>]*>.*?</header>"
-                                        (docs/page-html site page :static))
-                               "href=\"/extensions/\""))
+        (let [header
+              (re-find #"<header[^>]*>.*?</header>" (docs/page-html site page :static))
+
+              link
+              (re-find #"<a class=\"center-link\"[^>]*>.*?</a>" header)
+
+              label
+              (get-in site [:site :extension-center :title])]
+
+          (expect (str/includes? link "href=\"/extensions/\""))
+          ;; The header link is always the grid icon: the written-out name is its
+          ;; title and aria-label, never visible text.
+          (expect (str/includes? link "<svg "))
+          (expect (str/includes? link (str "title=\"" label "\"")))
+          (expect (str/includes? link (str "aria-label=\"" label "\"")))
+          (expect (not (str/includes? link (str ">" label "<")))))
         (expect (not (str/includes? (docs/page-html site page :live) "href=\"/extensions/\"")))
         (expect (not-any? #(= "extension-center" (:slug %)) (:pages site))))))

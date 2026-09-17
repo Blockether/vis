@@ -2,11 +2,12 @@ import { expect, test } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
-import { origin, catalogMetadata, sitemap } from './web/discovery.js';
+import { origin, catalogMetadata, extensionIcon, sitemap } from './web/discovery.js';
 import { renderPage } from './web/render.js';
 import items from './web/catalog.fixture.json';
 
 const read = (name) => readFileSync('dist/' + name, 'utf8');
+const icon = JSDOM.fragment(extensionIcon).firstElementChild.outerHTML;
 function xmlLocations(text) {
   const dom = new JSDOM(text, { contentType: 'application/xml' });
   try {
@@ -55,7 +56,8 @@ test('every generated document has canonical metadata, an accessible icon and a 
       expect(read('llms.txt')).toContain(origin + '/' + md);
       expect(read('llms-full.txt')).toContain(read(md));
       expect(d.querySelector('.center-link').getAttribute('aria-label')).toBe('Extension Center');
-      expect(d.querySelector('.center-link svg')).not.toBeNull();
+      expect(d.querySelector('.center-link').getAttribute('title')).toBe('Extension Center');
+      expect(d.querySelector('.center-link svg').outerHTML).toBe(icon);
       expect(d.querySelector('.center-link').textContent).toBe('');
       expect(d.querySelector('.side a[href="/extensions/"]').textContent).toBe('Extension Center');
     } finally {
