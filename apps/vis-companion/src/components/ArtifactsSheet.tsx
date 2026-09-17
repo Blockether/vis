@@ -52,7 +52,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { MediaRecording } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
-import { AlertIcon, ClipIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
+import { AlertIcon, ClipIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
 import { BandButton, Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
@@ -721,8 +721,13 @@ function DetailOverlay({
 }) {
   const [shareState, setShareState] = useState<'idle' | 'sharing'>('idle');
   const [shareStatus, setShareStatus] = useState('');
+  // Honest about the platform — a share sheet where there is one, a download where
+  // there is not — so the mark follows the verb, and the verb stays on the cell as
+  // the name it answers to instead of a second title in a band that has one.
+  const shareVerb = share ? artifactShareVerb(share.name, share.mediaType) : 'Share';
   const shareAction = share ? (
     <BandButton
+      label={shareState === 'sharing' ? `${shareVerb}…` : shareVerb}
       disabled={shareState === 'sharing'}
       onClick={() => {
         setShareState('sharing');
@@ -733,9 +738,7 @@ function DetailOverlay({
           .finally(() => setShareState('idle'));
       }}
     >
-      {shareState === 'sharing'
-        ? `${artifactShareVerb(share.name, share.mediaType)}…`
-        : artifactShareVerb(share.name, share.mediaType)}
+      {shareVerb === 'Share' ? <ShareIcon /> : <DownloadIcon />}
     </BandButton>
   ) : null;
   return (

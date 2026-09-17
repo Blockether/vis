@@ -198,20 +198,28 @@ describe('ManageProjectsSheet paints no box of its own', () => {
     const make = screen.getByRole('button', { name: 'New folder' });
 
     expect(paint(make)).toEqual(
-      skinOf(<BandButton onClick={() => {}}>reference</BandButton>, 'button'),
-    );
-    expect(paint(use)).toEqual(
       skinOf(
-        <BandButton isPrimary onClick={() => {}}>
-          reference
+        <BandButton label="reference" onClick={() => {}}>
+          <span aria-hidden="true" />
         </BandButton>,
         'button',
       ),
     );
-    // The accent burns on the cell that has something to COMMIT and nowhere else,
-    // and neither cell brings the page's ink or a box onto the band.
-    expect(classesOf(use).has('bg-accent')).toBe(true);
-    expect(classesOf(make).has('bg-accent')).toBe(false);
+    expect(paint(use)).toEqual(
+      skinOf(
+        <BandButton isPrimary label="reference" onClick={() => {}}>
+          <span aria-hidden="true" />
+        </BandButton>,
+        'button',
+      ),
+    );
+    // Both verbs are marks in the band's own ink: one drawing each, no word riding
+    // the title, and neither the page's ink, a box nor a slab of paper on the band.
+    expect(make.textContent).toBe('');
+    expect(use.textContent).toBe('');
+    expect(make.querySelectorAll('svg')).toHaveLength(1);
+    expect(use.querySelectorAll('svg')).toHaveLength(1);
+    expect(classesOf(use).has('bg-accent')).toBe(false);
     expect(classesOf(make).has('text-white')).toBe(false);
     expect(classesOf(make).has('border-edge-strong')).toBe(false);
 
@@ -228,8 +236,9 @@ describe('ManageProjectsSheet paints no box of its own', () => {
     sheet({ isAdding: true });
     const use = await screen.findByRole('button', { name: 'Use project' });
 
-    // The path bar already names the folder, and the cell says what will happen to it.
-    expect(use.closest('header')?.textContent).toBe('New projectNew folderUse project');
+    // The path bar already names the folder, and each verb is a mark that says what
+    // will happen to it through its own name, so the band carries one title only.
+    expect(use.closest('header')?.textContent).toBe('New project');
   });
 
   it('keeps the commit verbs in the heading instead of scrolling them away', async () => {

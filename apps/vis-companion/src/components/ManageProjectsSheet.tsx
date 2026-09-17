@@ -23,7 +23,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BandButton, ConfirmRow, IconButton, Input, Spinner } from './ui';
 import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
-import { ChevronIcon, PencilIcon, PlusIcon, ProjectsIcon, TrashIcon } from './icons';
+import {
+  CheckIcon,
+  ChevronIcon,
+  FolderPlusIcon,
+  PencilIcon,
+  PlusIcon,
+  ProjectsIcon,
+  TrashIcon,
+} from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
 import { homeifyPath } from '../lib/path';
@@ -367,29 +375,36 @@ export function ManageProjectsSheet({
     </IconButton>
   );
 
-  // THE STEP'S TWO VERBS ARE THE BAND'S OWN CELLS.
+  // THE STEP'S TWO VERBS ARE THE BAND'S OWN CELLS, AND EACH ONE IS A MARK.
   //
   // They were a `secondary` and a `primary` `Button` — two sheets of paper standing
   // on the dark title band. `secondary` carries `text-white`, which in this app is
   // the PAGE's ink (#262626), so `New folder` was dark ink on the dark band while
   // the amber slab beside it shouted 40px under the panel's own amber rule: one
   // control unreadable, one charging the accent twice. As cells they take the band's
-  // ink and the band's height, and the accent burns on the cell that has something
-  // to COMMIT and nowhere else.
+  // ink and the band's height.
+  //
+  // Marks rather than words, because the band already carries the step's name and two
+  // more phrases beside it read as a second one. Each cell draws what it does — a
+  // folder taking the add stroke, the tick that commits — and keeps its verb as the
+  // name a screen reader speaks and a pointer sees. Naming a folder turns that add
+  // stroke into this app's close stroke: the cell that opened the line takes it back.
   const projectCells = (
     <>
       <BandButton
+        label={folder === null ? 'New folder' : 'Cancel'}
         disabled={saving || !here || alreadyProject}
         onClick={() => setFolder(folder === null ? '' : null)}
       >
-        {folder === null ? 'New folder' : 'Cancel'}
+        {folder === null ? <FolderPlusIcon /> : <PlusIcon className="rotate-45" />}
       </BandButton>
       <BandButton
         isPrimary
+        label={folder === null ? 'Use project' : 'Create project'}
         disabled={saving || !target || alreadyProject || (folder !== null && !folder.trim())}
         onClick={() => void commit()}
       >
-        {folder === null ? 'Use project' : 'Create project'}
+        <CheckIcon />
       </BandButton>
     </>
   );

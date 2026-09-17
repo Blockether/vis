@@ -458,7 +458,10 @@ describe('the artifacts sheet', () => {
     expect(tile).toHaveTextContent('LOG');
     await user.click(tile);
     // jsdom has no platform share sheet, so the same action honestly falls back to Save.
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    const save = await screen.findByRole('button', { name: 'Save' });
+    // And it hands that verb over as a mark, keeping the band's title the only words in it.
+    expect(save.textContent).toBe('');
+    expect(save.querySelectorAll('svg')).toHaveLength(1);
   });
 
   // A settled live view is the one recorded file the app can PAINT, so its tile is

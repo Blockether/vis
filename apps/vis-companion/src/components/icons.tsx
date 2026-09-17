@@ -26,6 +26,7 @@ import {
   Ellipsis,
   Eraser,
   Folder,
+  FolderPlus,
   GitFork,
   Globe,
   Image,
@@ -302,6 +303,11 @@ export function AddressIcon({ className }: { className?: string }) {
  */
 export function ProjectsIcon({ className }: { className?: string }) {
   return <Mark icon={Folder} className={className} />;
+}
+
+/** Make a folder: the project's own mark, taking the add stroke inside it. */
+export function FolderPlusIcon({ className }: { className?: string }) {
+  return <Mark icon={FolderPlus} className={className} />;
 }
 
 /** A fork of a conversation: one trunk with a branch leaving it. */
