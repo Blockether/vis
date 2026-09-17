@@ -137,6 +137,19 @@
                    (expect (some #(= "1. add the allowance:" %) ts))
                    (expect (some #(= "2. add the action:" %) ts))
                    (expect (some #(= "3. keep the restrictions." %) ts))))
+             ;; The companion hangs every item of one list off the same column
+             ;; (`--marker-column` in index.css); "9." and "10." used to start their
+             ;; text one column apart here.
+             (it "ol hangs every item off the column its widest number needs"
+                 (let [md
+                       "9. nine\n10. ten\n11. eleven"
+
+                       ts
+                       (texts (layout/ast->lines (ir/markdown->ast md) 80))]
+
+                   (expect (some #(= "9.  nine" %) ts))
+                   (expect (some #(= "10. ten" %) ts))
+                   (expect (some #(= "11. eleven" %) ts))))
              (it "ul renders GFM task-list markers as checklist glyphs"
                  (let [lines
                        (layout/ast->lines [:ast

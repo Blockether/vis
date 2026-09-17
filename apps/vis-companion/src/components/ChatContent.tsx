@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent,
   type ReactNode,
 } from 'react';
@@ -645,14 +646,15 @@ export const Markdown = memo(function Markdown({
           li: ({ children: item }) => <li className={`my-0.5 ${runningText}`}>{item}</li>,
           ol: ({ children: list, node, start }) => {
             // The markers share one column, so the widest number in the list sizes it:
-            // "9." fits three characters, "10." needs four.
+            // "9." fits three characters, "10." four and "100." five.
             const items = node?.children.filter((child) => child.type === 'element').length ?? 0;
-            const wide = (start ?? 1) + Math.max(items - 1, 0) >= 10 ? ' markdown-list-wide' : '';
+            const last = (start ?? 1) + Math.max(items - 1, 0);
             return (
               <ol
                 start={start}
                 role="list"
-                className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]${wide}`}
+                style={{ '--marker-column': `${String(last).length + 2}ch` } as CSSProperties}
+                className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]`}
               >
                 {list}
               </ol>

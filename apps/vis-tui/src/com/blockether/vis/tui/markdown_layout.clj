@@ -619,7 +619,13 @@
           (if (number? n) (long n) 1))
 
         children
-        (node-children node)]
+        (node-children node)
+
+        ;; Every item hangs off ONE column, the way the companion sizes its
+        ;; `--marker-column` (index.css): the widest number the list reaches sizes it,
+        ;; so "9." and "10." start their text in the same place.
+        marker-column
+        (+ 2 (count (str (+ start (max 0 (dec (count children)))))))]
     (vec
       (mapcat
         (fn [idx li]
@@ -627,7 +633,9 @@
                 first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
                 first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
                 task-marker (task-list-marker ordered? first-runs)
-                marker (if ordered? (str (+ start (long idx)) ". ") (or (:marker task-marker) "- "))
+                marker (if ordered?
+                         (p/pad-right (str (+ start (long idx)) ". ") marker-column)
+                         (or (:marker task-marker) "- "))
                 indent (apply str (repeat (p/display-width marker) " "))
                 marker-run {:text marker :style #{:marker} :node li}
                 ;; canonical :li children = either all blocks (post-canon

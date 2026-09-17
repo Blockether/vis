@@ -362,7 +362,9 @@ describe('Markdown list columns', () => {
       // WebKit drops the list semantics together with `list-style: none`.
       expect(list).toHaveAttribute('role', 'list');
     }
-    expect(view.container.querySelector('ol')).not.toHaveClass('markdown-list-wide');
+    expect(view.container.querySelector('ol')?.style.getPropertyValue('--marker-column')).toBe(
+      '3ch',
+    );
     for (const item of view.container.querySelectorAll('li')) {
       expect(item.className).not.toMatch(/\bpl-/);
     }
@@ -370,16 +372,43 @@ describe('Markdown list columns', () => {
 
   it('widens the column for a list that reaches two digits', () => {
     const content = Array.from({ length: 10 }, (_, index) => `${index + 1}. step`).join('\n');
-    expect(render(<Markdown>{content}</Markdown>).container.querySelector('ol')).toHaveClass(
-      'markdown-list-wide',
-    );
+    const ordered = render(<Markdown>{content}</Markdown>).container.querySelector('ol');
+    expect(ordered?.style.getPropertyValue('--marker-column')).toBe('4ch');
+  });
+
+  // A list that reaches "100." used to keep the four-character column of "10.", so the
+  // marker ran into its own text. The column follows the widest number in the list.
+  it('keeps the column wider than a three-digit marker', () => {
+    const content = ['100. step', '101. step', '102. step'].join('\n');
+    const ordered = render(<Markdown>{content}</Markdown>).container.querySelector('ol');
+    expect(ordered?.style.getPropertyValue('--marker-column')).toBe('5ch');
+  });
+
+  // Each list sizes its own column: a nested list starts its own numbering and must not
+  // inherit the width of the list it sits in.
+  it('sizes a nested list on its own numbers', () => {
+    const view = render(<Markdown>{'10. outer\n\n    1. inner\n    2. inner'}</Markdown>);
+    const outer = view.container.querySelector('ol');
+    expect(outer?.style.getPropertyValue('--marker-column')).toBe('4ch');
+    expect(outer?.querySelector('ol')?.style.getPropertyValue('--marker-column')).toBe('3ch');
   });
 
   it('counts from the number the list starts on', () => {
     const view = render(<Markdown>{'8. eight\n9. nine\n10. ten'}</Markdown>);
     const ordered = view.container.querySelector('ol');
     expect(ordered).toHaveAttribute('start', '8');
-    expect(ordered).toHaveClass('markdown-list-wide');
+    expect(ordered?.style.getPropertyValue('--marker-column')).toBe('4ch');
+  });
+
+  // User report (screenshot): numbered steps split by fenced code blocks restarted at 1 each
+  // time, because every fence closes one list and the next step opens another.
+  it('keeps counting through steps split by a code fence', () => {
+    const content = '1. First.\n\n```\none\n```\n\n2. Second.\n\n```\ntwo\n```\n\n3. Third.';
+    const view = render(<Markdown>{content}</Markdown>);
+    const starts = Array.from(view.container.querySelectorAll('ol'), (list) =>
+      list.getAttribute('start'),
+    );
+    expect(starts).toEqual([null, '2', '3']);
   });
 
   // User report (screenshot): the same trace inside a THINKING band still drew its numbered

@@ -391,17 +391,14 @@
   content: '\2022';
 }
 
+/* The list sizes its own marker column: "9." fits three characters, "10." four and
+   "100." five, and every item in one list hangs off the same column. */
 ol.markdown-list > li {
-  padding-left: 3ch;
+  padding-left: var(--marker-column, 3ch);
 }
 
 ol.markdown-list > li::before {
   content: counter(list-item) '.';
-}
-
-/* A list that reaches "10." needs the fourth column for every one of its items. */
-ol.markdown-list-wide > li {
-  padding-left: 4ch;
 }
 
 @layer base {
