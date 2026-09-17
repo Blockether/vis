@@ -474,22 +474,11 @@
                           (when proj-dir
                             (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
-(defn build-system-prompt
-  "Core system prompt + optional caller addendum + config prompt +
-   SYSTEM.md / APPEND_SYSTEM.md file overrides.
-
-   Assembled in send order (later blocks positionally reinforce earlier):
-   base, then the caller's `:system-prompt` addendum, then the
-   `:system-prompt` pulled from Vis config (`~/.vis/config.yml` / `state.yml` /
-   `<project>/vis.yml` / `.vis/config.yml`, deep-merged), then `~/.vis/APPEND_SYSTEM.md`, then
-   `<workspace>/.vis/APPEND_SYSTEM.md`. The config + file hooks let a project
-   append house rules without any caller having to pass them.
-
-   Full rewrite precedence for the base: `<workspace>/.vis/SYSTEM.md` >
-   `~/.vis/SYSTEM.md` > config `:system-prompt` map with `:replace? true` >
-   `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
-   append files are still appended after it. `workspace-root` scopes all project
-   config and file lookups; an omitted root keeps the caller's workspace binding."
+(defn- system-prompt-blocks
+  "Send-order pieces of the system prompt: the base text, whether a user file or
+   config replaced it, and the custom blocks appended after it.
+   `build-system-prompt` joins them; the context breakdown attributes the base
+   and the additions as separate rows."
   [{:keys [system-prompt workspace-root]}]
   (binding [workspace/*workspace-root* (or workspace-root workspace/*workspace-root*)]
     (let [addendum (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
@@ -507,7 +496,27 @@
                        (comp (filter string?) (remove str/blank?))
                        (into [addendum cfg-prompt] (:appends files)))]
 
-      (str/join "\n\n" (into [base] extras)))))
+      {:base base :replaced? (boolean (or file-replace cfg-replace?)) :extras extras})))
+
+(defn build-system-prompt
+  "Core system prompt + optional caller addendum + config prompt +
+   SYSTEM.md / APPEND_SYSTEM.md file overrides.
+
+   Assembled in send order (later blocks positionally reinforce earlier):
+   base, then the caller's `:system-prompt` addendum, then the
+   `:system-prompt` pulled from Vis config (`~/.vis/config.yml` / `state.yml` /
+   `<project>/vis.yml` / `.vis/config.yml`, deep-merged), then `~/.vis/APPEND_SYSTEM.md`, then
+   `<workspace>/.vis/APPEND_SYSTEM.md`. The config + file hooks let a project
+   append house rules without any caller having to pass them.
+
+   Full rewrite precedence for the base: `<workspace>/.vis/SYSTEM.md` >
+   `~/.vis/SYSTEM.md` > config `:system-prompt` map with `:replace? true` >
+   `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
+   append files are still appended after it. `workspace-root` scopes all project
+   config and file lookups; an omitted root keeps the caller's workspace binding."
+  [opts]
+  (let [{:keys [base extras]} (system-prompt-blocks opts)]
+    (str/join "\n\n" (into [base] extras))))
 
 (defn- project-instructions-block
   "Inline primary-workspace guidance and a metadata-only index of added-root
@@ -580,12 +589,15 @@
             {:content (prompt-block "project-instructions"
                                     (str/join "\n\n"
                                               (keep identity [header primary-body added-body])))
-             :parts (mapv (fn [f]
-                            {:label (str (if (= :project (:scope f)) "Main " "Workspace ")
-                                         (if (= :claude-md (:source f)) "CLAUDE.md" "AGENTS.md"))
-                             :path (paths/abbreviate-home (:path f))
-                             :content (:content f)})
-                          files)}))))
+             :parts (cond-> (mapv (fn [f]
+                                    {:label
+                                     (str (if (= :project (:scope f)) "Main " "Workspace ")
+                                          (if (= :claude-md (:source f)) "CLAUDE.md" "AGENTS.md"))
+                                     :path (paths/abbreviate-home (:path f))
+                                     :content (:content f)})
+                                  files)
+                      (util/non-blank-string? added-body)
+                      (conj {:label "Linked filesystem guidance index" :content added-body}))}))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
                 "project-instructions-block read failed")
@@ -689,7 +701,11 @@
   "Collect prompt text from every active extension that declares
    `:ext/prompt-fn`. Each prompt is `(fn [env] -> string)` (normalized at
    registration). Non-blank results are normalized, wrapped as labeled
-   extension fragments, then joined into one extension context block."
+   extension fragments, then joined into one extension context block.
+
+   Returns `{:content <block> :parts [{:label … :content …}]}` with one part per
+   fragment, so the context breakdown separates built-in rules from each
+   installed extension instead of billing them as one opaque runtime row."
   [environment active-extensions]
   (let [;; Built-ins first so the core kernel prompt (foundation) leads the
         ;; block, header-less, before any third-party `;; -- EXTENSION --`.
@@ -701,7 +717,11 @@
                 (when-let [f (:ext/prompt-fn ext)]
                   (try (let [result (call-extension-callback ext f environment)]
                          (when (util/non-blank-string? result)
-                           (extension-prompt-fragment ext result)))
+                           (when-let [body (extension-prompt-fragment ext result)]
+                             {:label (if (extension/ext-builtin? ext)
+                                       "Built-in tools and rules"
+                                       (str "Extension: " (extension-prompt-id ext)))
+                              :content body})))
                        (catch Throwable t
                          (tel/log! {:level :warn
                                     :id ::extension-prompt-error
@@ -710,7 +730,9 @@
                          nil))))
               active-extensions)]
 
-    (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
+    (when (seq fragments)
+      {:content (prompt-block "extensions" (str/join "\n\n" (map :content fragments)))
+       :parts (vec fragments)})))
 
 (defn- sandbox-shims-prompt-block
   "Advertise Python's execution boundary and the exact model-facing modules Vis
@@ -872,15 +894,34 @@ read-only by default: enable commentable=True only for material the human should
    not in every per-iteration trailer. When a future
    reload path recomputes active extensions mid-turn, it should replace this
    message in the rebuilt stateless provider message vector rather than append
-   a second extension/context message."
+   a second extension/context message.
+
+   Returns `{:content <block> :parts [{:label … :content …}]}` so planning rules,
+   each built-in or installed extension prompt and the sandbox surface are
+   attributed separately in the context breakdown."
   [environment active-extensions]
-  (let [blocks (->> [(when (and (toggles/enabled? "plans") (not= :cli (:channel environment)))
-                       (prompt-block "plans" planning-rules))
-                     (extensions-prompt-block environment active-extensions)
-                     (sandbox-shims-prompt-block active-extensions)]
-                    (filter util/non-blank-string?)
-                    seq)]
-    (when blocks (prompt-block "turn-system-context" (str/join "\n\n" blocks)))))
+  (let [plans
+        (when (and (toggles/enabled? "plans") (not= :cli (:channel environment)))
+          (prompt-block "plans" planning-rules))
+
+        extensions
+        (extensions-prompt-block environment active-extensions)
+
+        shims
+        (sandbox-shims-prompt-block active-extensions)
+
+        blocks
+        (->> [plans (:content extensions) shims]
+             (filter util/non-blank-string?)
+             seq)]
+
+    (when blocks
+      {:content (prompt-block "turn-system-context" (str/join "\n\n" blocks))
+       :parts (vec (concat (when (util/non-blank-string? plans)
+                             [{:label "Planning rules" :content plans}])
+                           (:parts extensions)
+                           (when (util/non-blank-string? shims)
+                             [{:label "Sandbox and Python runtime" :content shims}])))})))
 
 (defn- stable-prompt-message
   [content]
@@ -934,11 +975,23 @@ read-only by default: enable commentable=True only for material the human should
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
                     {:type :vis/missing-active-extensions})))
-  (let [core-block
-        (prompt-block "system-prompt"
-                      (build-system-prompt {:system-prompt system-prompt
-                                            :workspace-root (get-in environment
-                                                                    [:workspace :root])}))
+  (let [core-blocks
+        (system-prompt-blocks {:system-prompt system-prompt
+                               :workspace-root (get-in environment [:workspace :root])})
+
+        core-content
+        (str/join "\n\n" (into [(:base core-blocks)] (:extras core-blocks)))
+
+        core-block
+        (prompt-block "system-prompt" core-content)
+
+        core-parts
+        (cond-> [{:label
+                  (if (:replaced? core-blocks) "Custom system prompt" "Vis core system prompt")
+                  :content (:base core-blocks)}]
+          (seq (:extras core-blocks))
+          (conj {:label "Custom prompt additions"
+                 :content (str/join "\n\n" (:extras core-blocks))}))
 
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never
@@ -961,13 +1014,18 @@ read-only by default: enable commentable=True only for material the human should
                            str/trim))]
 
     (vec (keep identity
-               [(stable-prompt-message core-block) (stable-prompt-message cli-block)
+               [(when-let [m (stable-prompt-message core-block)]
+                  (with-meta m {::parts core-parts}))
+                (when-let [m (stable-prompt-message cli-block)]
+                  (with-meta m {::parts [{:label "Non-interactive run rules" :content cli-block}]}))
                 (when-let [m (stable-prompt-message (:content project-block))]
                   (with-meta m {::parts (:parts project-block)}))
-                (when-let [m (stable-prompt-message turn-system-block)]
+                (when-let [m (stable-prompt-message (:content turn-system-block))]
+                  (with-meta m {::parts (:parts turn-system-block)}))
+                (when-let [m (stable-prompt-message session-context-block)]
                   (with-meta m
-                    {::parts [{:label "Tools, skills and runtime" :content turn-system-block}]}))
-                (stable-prompt-message session-context-block)]))))
+                    {::parts [{:label "Session and environment context"
+                               :content session-context-block}]}))]))))
 
 (defn- root-guidance-estimate
   "Disk-only estimate; never contributes to sent-message totals or model read status."
@@ -983,9 +1041,29 @@ read-only by default: enable commentable=True only for material the human should
                              :else {:status "missing"}))
                      (catch Exception _ {:status "error"})))))
 
+(defn- instruction-attribution
+  "Isolated Svar content counts for the labelled instruction content this request
+   actually sent, in send order. Content never leaves this function."
+  [model messages]
+  (into []
+        (comp (filter #(contains? #{"system" "developer"} (:role %)))
+              (mapcat #(::parts (meta %)))
+              (keep (fn [{:keys [label path content]}]
+                      (when (util/non-blank-string? content)
+                        (cond-> {:label label
+                                 :tokens (long (svar-router/count-tokens model content))}
+                          path
+                          (assoc :path path))))))
+        messages))
+
 (defn- prepared-request-parts
-  "Project Svar's content-free components into UI labels without rescaling them."
-  [model {:keys [source projection input-tokens components] :as accounting}]
+  "Project Svar's content-free components into UI labels without rescaling them.
+   Svar reports ONE `:instructions` total for every system message, so it is split
+   across their labelled parts — core prompt, each injected guidance file, runtime
+   and extension prompts, session context — using isolated Svar content counts.
+   Rows are capped by the reported total, and the unattributed remainder (message
+   framing plus anything unlabelled) stays one explicit `System instructions` row."
+  [model messages {:keys [source projection input-tokens components] :as accounting}]
   (when-not (and (= :svar-estimate source)
                  (= :prepared-request projection)
                  (= model (:model accounting))
@@ -994,13 +1072,28 @@ read-only by default: enable commentable=True only for material the human should
                  (every? #(and (integer? %) (not (neg? (long %)))) (vals components))
                  (= input-tokens (reduce + 0 (vals components))))
     (throw (ex-info "Prepared request accounting unavailable" {})))
-  (let [parts (into []
-                    (keep (fn [[key label]]
-                            (when-let [tokens (get components key)]
-                              (when (pos? tokens) {:label label :tokens tokens}))))
-                    [[:instructions "System instructions"]
-                     [:messages "Conversation and tool results"] [:tools "Tool declarations"]
-                     [:output-format "Output format"] [:reply-priming "Reply framing"]])]
+  (let [instructions
+        (long (or (:instructions components) 0))
+
+        [attributed remainder]
+        (reduce (fn [[rows left] row]
+                  (let [tokens (min (long left) (max 0 (long (:tokens row))))]
+                    [(cond-> rows
+                       (pos? tokens)
+                       (conj (assoc row :tokens tokens))) (- (long left) tokens)]))
+                [[] instructions]
+                (if (pos? instructions) (instruction-attribution model messages) []))
+
+        parts
+        (into (cond-> attributed
+                (pos? (long remainder))
+                (conj {:label "System instructions" :tokens remainder}))
+              (keep (fn [[key label]]
+                      (when-let [tokens (get components key)]
+                        (when (pos? tokens) {:label label :tokens tokens}))))
+              [[:messages "Conversation and tool results"] [:tools "Tool declarations"]
+               [:output-format "Output format"] [:reply-priming "Reply framing"]])]
+
     (when-not (= input-tokens (reduce + 0 (map :tokens parts)))
       (throw (ex-info "Prepared request components unavailable" {})))
     parts))
@@ -1031,7 +1124,8 @@ read-only by default: enable commentable=True only for material the human should
    Neither estimate replaces same-request provider usage for utilization. Root
    guidance is disk-only; logical metadata attributes guidance without rereading it.
    An optional iteration-local message counter shares exact logical estimates with
-   budgeting; prepared accounting never invokes it."
+   budgeting; prepared accounting never invokes it, splitting its single
+   instructions total across the same labelled parts with the shared tokenizer."
   [environment messages tools & [model accounting message-token-counter]]
   (try
     (let [model
@@ -1045,7 +1139,7 @@ read-only by default: enable commentable=True only for material the human should
 
           parts
           (if accounting
-            (prepared-request-parts model accounting)
+            (prepared-request-parts model messages accounting)
             (mapcat
               (fn [message]
                 (let [total

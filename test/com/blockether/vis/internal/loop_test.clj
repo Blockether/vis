@@ -1,47 +1,49 @@
 (ns com.blockether.vis.internal.loop-test
-  (:require [babashka.http-client :as http]
-            [charred.api :as json]
-            [com.blockether.vis-python-runtime :as python-runtime]
-            [com.blockether.vis.test-python-context :as tpc]
-            [clojure.java.io]
-            [clojure.string :as str]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
-            [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.svar.internal.llm :as svar-llm]
-            [com.blockether.vis.internal.activity.core :as activity]
-            [com.blockether.vis.internal.activity.event :as activity-event]
-            [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.context.loop :as ctx-loop]
-            [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.gateway.state :as gateway-state]
-            [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.provider.service :as providers]
-            [com.blockether.vis.internal.python.extensions :as python-extensions]
-            [com.blockether.vis.internal.python.host :as python-host]
-            [com.blockether.vis.internal.python.worker :as python-worker]
-            [com.blockether.vis.internal.sandbox.policy]
-            [com.blockether.vis.internal.context.prompt :as prompt]
-            [com.blockether.vis.internal.context.engine :as eng]
-            [com.blockether.vis.internal.session.titling :as titling]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
-            [com.blockether.vis.internal.session.cancellation :as cancellation]
-            [com.blockether.vis.internal.view.core :as hi]
-            [com.blockether.vis.internal.channel.events :as ce]
-            [com.blockether.vis.internal.provider.error :as perr]
-            [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.python.env :as env]
-            [com.blockether.vis.internal.persistance.core :as persistance]
-            [taoensso.telemere :as tel]
-            [com.blockether.vis.internal.session.model :as session-model]
-            [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
-            [com.blockether.vis.internal.session.goals :as goals]
-            [lazytest.core :refer [defdescribe describe it expect throws?]])
+  (:require
+    [babashka.http-client :as http]
+    [charred.api :as json]
+    [com.blockether.vis-python-runtime :as python-runtime]
+    [com.blockether.vis.test-python-context :as tpc]
+    [clojure.java.io]
+    [clojure.string :as str]
+    [com.blockether.svar.core :as svar]
+    [com.blockether.vis.core :as vis]
+    [com.blockether.svar.internal.router :as svar-router]
+    [com.blockether.svar.internal.llm :as svar-llm]
+    [com.blockether.vis.internal.activity.core :as activity]
+    [com.blockether.vis.internal.activity.event :as activity-event]
+    [com.blockether.vis.internal.content :as content]
+    [com.blockether.vis.internal.context.agents :as agents]
+    [com.blockether.vis.internal.context.loop :as ctx-loop]
+    [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.channel.form :as form]
+    [com.blockether.vis.internal.gateway.state :as gateway-state]
+    [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.python.host :as python-host]
+    [com.blockether.vis.internal.python.worker :as python-worker]
+    [com.blockether.vis.internal.sandbox.policy]
+    [com.blockether.vis.internal.context.prompt :as prompt]
+    [com.blockether.vis.internal.context.engine :as eng]
+    [com.blockether.vis.internal.session.titling :as titling]
+    [com.blockether.vis.internal.config.runtime-settings :as rt]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
+    [com.blockether.vis.internal.view.core :as hi]
+    [com.blockether.vis.internal.channel.events :as ce]
+    [com.blockether.vis.internal.provider.error :as perr]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.python.env :as env]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [taoensso.telemere :as tel]
+    [com.blockether.vis.internal.session.model :as session-model]
+    [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
+    [com.blockether.vis.internal.session.goals :as goals]
+    [lazytest.core :refer [defdescribe describe it expect throws?]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.util.concurrent Executors]))
@@ -404,7 +406,66 @@
                             (reduce + 0 (map :tokens (:breakdown health)))))
                  (expect (= (+ 100 (count @sent)) (get-in result [:api-usage :input-tokens])))
                  (expect (not (str/includes? (pr-str health) dense))))))
-           (finally (lp/dispose-environment! base-environment))))))
+           (finally (lp/dispose-environment! base-environment)))))
+  ;; Regression: Blockether/vis#268 — prepared accounting merged every injected
+  ;; instruction into one row, hiding the workspace AGENTS.md it had just sent.
+  (it
+    "attributes injected project guidance inside a real prepared request"
+    (let [base-environment
+          (lp/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+
+          model
+          "gpt-6-astra"
+
+          environment
+          (assoc base-environment
+            :router (svar/make-router [{:id :prepared-test
+                                        :api-key "test"
+                                        :base-url "http://127.0.0.1:1"
+                                        :api-style :openai-compatible-responses
+                                        :models [{:name model :context 272000}]}]))
+
+          sent
+          (atom [])]
+
+      (try
+        (with-redefs [agents/primary-instructions
+                      (constantly {:files [{:scope :project
+                                            :source :agents-md
+                                            :path "/work/AGENTS.md"
+                                            :content (apply str (repeat 40 "house rule "))}]})
+
+                      agents/added-root-guidance-index
+                      (constantly [])
+
+                      svar-llm/openai-responses-completion
+                      (fn [body _]
+                        (swap! sent conj body)
+                        {:content "Done." :api-usage {:input-tokens 100 :output-tokens 1}})]
+
+          (let [messages
+                (conj (vec (prompt/assemble-stable-prompt-messages {} {:active-extensions []}))
+                      {:role "user" :content "Which fixed context can I cut?"})
+
+                health
+                (:request-health (lp/run-iteration environment
+                                                   messages
+                                                   {:resolved-model {:provider :prepared-test
+                                                                     :name model}}))
+
+                row
+                (fn [label]
+                  (first (filter #(= label (:label %)) (:breakdown health))))]
+
+            (expect (= :prepared-request (:counted-projection health)))
+            (expect (= (svar-router/count-responses-request model (last @sent))
+                       (:estimated-input-tokens health)
+                       (reduce + 0 (map :tokens (:breakdown health)))))
+            (expect (= {:label "Main AGENTS.md" :path "/work/AGENTS.md"}
+                       (select-keys (row "Main AGENTS.md") [:label :path])))
+            (expect (pos? (long (:tokens (row "Vis core system prompt") 0))))
+            (expect (not (str/includes? (pr-str health) "house rule")))))
+        (finally (lp/dispose-environment! base-environment))))))
 
 (defdescribe
   context-overflow-logging-test
