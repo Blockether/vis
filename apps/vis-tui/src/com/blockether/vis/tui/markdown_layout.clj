@@ -607,8 +607,19 @@
     runs))
 
 (defn- list->lines
-  [tag children width opts]
-  (let [ordered? (= :ol tag)]
+  [tag node width opts]
+  (let [ordered?
+        (= :ol tag)
+
+        ;; A numbered list that a fenced code block or a paragraph interrupts continues
+        ;; in the source with `2.`, `3.`: CommonMark keeps that number on the list it
+        ;; starts, so the markers count from it instead of restarting at 1.
+        start
+        (let [n (:start (node-attrs node))]
+          (if (number? n) (long n) 1))
+
+        children
+        (node-children node)]
     (vec
       (mapcat
         (fn [idx li]
@@ -616,7 +627,7 @@
                 first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
                 first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
                 task-marker (task-list-marker ordered? first-runs)
-                marker (if ordered? (str (inc (long idx)) ". ") (or (:marker task-marker) "- "))
+                marker (if ordered? (str (+ start (long idx)) ". ") (or (:marker task-marker) "- "))
                 indent (apply str (repeat (p/display-width marker) " "))
                 marker-run {:text marker :style #{:marker} :node li}
                 ;; canonical :li children = either all blocks (post-canon
@@ -1148,11 +1159,11 @@
                        [(assoc (empty-line) :block-tag :outer-margin)]))))
 
       :ul
-      (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
+      (conj (vec (tag-lines (list->lines :ul node width opts) :ul))
             (assoc (empty-line) :block-tag :outer-margin))
 
       :ol
-      (conj (vec (tag-lines (list->lines :ol (node-children node) width opts) :ol))
+      (conj (vec (tag-lines (list->lines :ol node width opts) :ol))
             (assoc (empty-line) :block-tag :outer-margin))
 
       :quote

@@ -15,6 +15,7 @@
             [clojure.string :as str]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
+            [com.blockether.vis.tui.presentation :as ir]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; small helpers
@@ -112,6 +113,30 @@
 
                    (expect (some #(= "1. x" %) ts))
                    (expect (some #(= "2. y" %) ts))))
+             (it "ol counts from the number the list starts on"
+                 (let [lines
+                       (layout/ast->lines [:ast [:ol {:start 8} [:li "eight"] [:li "nine"]]] 80)
+
+                       ts
+                       (texts lines)]
+
+                   (expect (some #(= "8. eight" %) ts))
+                   (expect (some #(= "9. nine" %) ts))))
+             ;; User report (screenshot): steps split by fenced code blocks end the list,
+             ;; so CommonMark hands the walker `2.` and `3.` as lists of their own — every
+             ;; step painted "1." and the reader could not tell the steps apart.
+             (it "ol keeps counting through steps split by a code fence"
+                 (let [md
+                       (str "1. add the allowance:\n\n```\nsqs:ListQueues\n```\n\n"
+                            "2. add the action:\n\n```\nsqs:PurgeQueue\n```\n\n"
+                            "3. keep the restrictions.")
+
+                       ts
+                       (texts (layout/ast->lines (ir/markdown->ast md) 80))]
+
+                   (expect (some #(= "1. add the allowance:" %) ts))
+                   (expect (some #(= "2. add the action:" %) ts))
+                   (expect (some #(= "3. keep the restrictions." %) ts))))
              (it "ul renders GFM task-list markers as checklist glyphs"
                  (let [lines
                        (layout/ast->lines [:ast
