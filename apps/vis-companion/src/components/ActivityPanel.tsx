@@ -818,11 +818,6 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
           {linkedSummary && metadata}
         </Headline>
       </div>
-      {!open && failed && !presentation && (
-        <p className="pb-1 pl-3 text-meta text-err-ink">
-          {row.error_summary || 'Operation failed'}
-        </p>
-      )}
       {row.state === 'cancelled' && (
         <p className="pb-1 pl-3 text-meta text-dialog-hint">Cancelled</p>
       )}
@@ -1018,12 +1013,14 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
   const expanded = singleton || open;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
-  const previewRows = group.rows.filter((row) =>
-    repeated ? row.state === 'failed' : row.state !== 'succeeded',
-  );
-  const previews = repeated
-    ? [...new Map(previewRows.map((row) => [row.error_summary || row.state, row])).values()]
-    : previewRows;
+  // A CLOSED GROUP PRINTS NO FAILURE. Its head already counts them — `3 failed` — and
+  // the machine's own words wait in the step that produced them, read once, by a reader
+  // who opened the group to read them. Printing them out here spells the same failure a
+  // second time, at someone who closed the group to stop reading it. What survives the
+  // close is work still in flight: a running step has nowhere else to say so while it is
+  // still true, and repeated calls of one shape say it once between them.
+  const inflight = group.rows.filter((row) => row.state === 'running');
+  const previews = repeated ? inflight.slice(0, 1) : inflight;
   return (
     <li
       className="min-w-0"
@@ -1045,12 +1042,8 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
       )}
       {!expanded &&
         previews.map((row) => (
-          <p
-            key={row.id}
-            className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === 'failed' ? 'text-err-ink' : 'text-dialog-hint'}`}
-          >
-            {activityStepObject(row) || row.presentation?.headline || row.operation} ·{' '}
-            {row.error_summary || row.state}
+          <p key={row.id} className="min-w-0 break-words pb-1 pl-3 text-meta text-dialog-hint">
+            {activityStepObject(row) || row.presentation?.headline || row.operation} · {row.state}
           </p>
         ))}
       {expanded && (

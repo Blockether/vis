@@ -262,8 +262,9 @@ describe('joined Activity operation groups', () => {
     for (const id of ['search-2', 'unknown-1', 'unknown-2', 'read-1']) {
       expect(document.querySelector(`[data-activity-row="0:${id}"]`)).toBeTruthy();
     }
-    expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/Search directory unavailable/)).toBeNull();
     fireEvent.click(repeat);
+    expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
     fireEvent.click(
       document.querySelector<HTMLElement>(
         '[data-activity-row="0:search-1"] [data-disclosure-toggle]',
@@ -402,7 +403,7 @@ describe('joined Activity operation groups', () => {
     },
   );
 
-  it('keeps failed and cancelled outcomes visible while a group is collapsed', () => {
+  it('counts failed and cancelled outcomes in a collapsed group and prints neither', () => {
     const activity = reads();
     render(
       <ActivityPanel
@@ -421,8 +422,11 @@ describe('joined Activity operation groups', () => {
     expect(screen.queryByRole('button', { name: /Read ×3/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(screen.getByRole('button', { name: /Read ×3/ }).textContent).toContain('1 failed');
+    expect(screen.getByRole('button', { name: /Read ×3/ }).textContent).toContain('1 cancelled');
+    expect(screen.queryByText(/Permission denied/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Read ×3/ }));
     expect(screen.getByText(/Permission denied/)).toBeTruthy();
-    expect(screen.getByText(/c.clj.*cancelled/)).toBeTruthy();
+    expect(screen.getByText('Cancelled')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Collapse Activity/ }));
     expect(screen.getByRole('button', { name: /Expand Activity/ }).textContent).toContain(
       '1 failed',
@@ -1120,8 +1124,13 @@ describe('what the axis does while the work is still moving', () => {
         | 'succeeded',
     }));
     render(<ActivityPanel activity={{ ...base, rows }} />);
-    expect(screen.getByText(/search-4 · failed/)).toBeTruthy();
-    expect(screen.getByText(/search-5 · cancelled/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const group = screen.getByRole('button', { name: /Search ×6/ });
+    expect(group.textContent).toContain('1 failed');
+    expect(group.textContent).toContain('1 cancelled');
+    fireEvent.click(group);
+    expect(document.querySelector('[data-activity-row="0:step-4"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:step-5"]')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /more steps/i })).toBeNull();
   });
 

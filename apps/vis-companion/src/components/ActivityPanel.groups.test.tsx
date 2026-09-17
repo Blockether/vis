@@ -23,12 +23,18 @@ it('labels extension groups and preserves disclosures, arguments and live failur
   expect(screen.getByRole('button', { name: /Search reviews ×3/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Search reviews ×2/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Check review deployment ×2/ })).toBeTruthy();
-  expect(screen.getByText(/Closed reviews · Review service unavailable/)).toBeTruthy();
+  // A closed group counts its failures and prints none of them; only work still in
+  // flight keeps a line, because it has nowhere else to appear while it is running.
+  expect(screen.queryByText(/Review service unavailable/)).toBeNull();
+  expect(screen.getByRole('button', { name: /Search reviews ×3/ }).textContent).toContain(
+    '1 failed',
+  );
   expect(screen.getByText(/Waiting for deployment · running/)).toBeTruthy();
   expect(document.body.textContent).not.toContain('reviews.search');
   expect(document.body.textContent).not.toContain('reviews.deployment_status');
 
   fireEvent.click(screen.getByRole('button', { name: /Search reviews ×3/ }));
+  expect(document.body.textContent).toContain('Review service unavailable');
   const group = screen.getByRole('list', {
     name: 'Search reviews ×3 operations',
   });

@@ -264,9 +264,10 @@ export const RepeatedArguments: Story = {
     const repeated = canvas.getByRole('button', { name: /same query ×3/ });
     await expect(repeated.getBoundingClientRect().height).toBe(24);
     await expect(repeated).toHaveAttribute('aria-expanded', 'false');
-    await expect(canvas.getByText(/Search directory unavailable/)).toBeVisible();
+    await expect(canvasElement).not.toHaveTextContent('Search directory unavailable');
     repeated.focus();
     await userEvent.keyboard('{Enter}');
+    await expect(canvas.getByText(/Search directory unavailable/)).toBeVisible();
     const first = within(
       canvasElement.querySelector<HTMLElement>('[data-activity-row="0:search-1"]')!,
     );
@@ -370,7 +371,10 @@ export const InterleavedOperations: Story = {
     await expect(canvas.getByRole('button', { name: /Test ×2/ })).toHaveTextContent(
       '1 running · 1 failed',
     );
-    await expect(canvas.getByText(/Assertion failed/)).toBeVisible();
+    await expect(canvasElement).not.toHaveTextContent('Assertion failed');
+    await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
+    await expect(canvasElement).toHaveTextContent('Assertion failed');
+    await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
     const reads = canvas.getByRole('button', { name: /Read ×10/ });
     reads.focus();
     await userEvent.keyboard('{Enter}');
@@ -598,8 +602,9 @@ export const ExtensionGroups: Story = {
     await expect(canvas.getByRole('button', { name: /Search reviews ×2/ })).toBeVisible();
     await expect(canvas.getByRole('button', { name: /Check review deployment ×2/ })).toBeVisible();
     await expect(canvas.getByText(/Waiting for deployment · running/)).toBeVisible();
-    await expect(canvas.getByText(/Closed reviews · Review service unavailable/)).toBeVisible();
+    await expect(canvasElement).not.toHaveTextContent('Review service unavailable');
     await userEvent.click(canvas.getByRole('button', { name: /Search reviews ×3/ }));
+    await expect(canvasElement).toHaveTextContent('Review service unavailable');
     await userEvent.click(canvas.getByRole('button', { name: /Changes: 0 ×2/ }));
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(3);
     await expect(canvasElement).not.toHaveTextContent('reviews.search');
