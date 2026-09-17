@@ -2235,22 +2235,31 @@
   ;; `.stdout` and data-style `.logs[-n:]` guesses both failed before revealing `out`.
   ;; Regression, session report a6f58df5-94bc-442f-a9c6-945edbeaee33: `.status`
   ;; raised AttributeError after a successful wait despite being present in the result map.
-  (it "quietly accepts object-style shell aliases without changing the result map"
+  ;; Session report 7794f83a-3903-479f-8208-d29e8f1ebecf: `sh.wait(60).out` raised
+  ;; AttributeError while `.status` and `.stdout` answered, so the handle read as an object
+  ;; with three fields instead of the map every shell stage returns.
+  (it "answers every shell field by key and by dot without changing the result map"
       (let [sid
             (str "py-shell-output-aliases-" (System/nanoTime))
 
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true true true true true true "exited" true]
+        (try (expect (= [true true true true true true "exited" true true true true true]
                         (py c
                             (str
                               "sh = __vis_settle__(shell('printf abcdefghij', {'id':'aliases'}))\n"
                               "waited = sh.wait(30)\n"
+                              "try:\n" "    waited.output\n"
+                              "    miss = 'nothing was refused'\n" "except AttributeError as e:\n"
+                              "    miss = str(e)\n"
                               "[waited.stdout == waited['out'], 'stdout' not in waited,"
                               " waited.stderr == waited['out'], 'stderr' not in waited,"
                               " waited.logs[-4:] == 'ghij', callable(waited.logs),"
-                              " waited.status, waited.status == waited['status']]"))))
+                              " waited.status, waited.status == waited['status'],"
+                              " waited.out == waited['out'], waited.exit == 0,"
+                              " miss.startswith(\"'output' is not a field of this shell result\"),"
+                              " \"Did you mean 'out'?\" in miss]"))))
              (finally (resources/stop-all! sid)))))
   (it
     "walks ready log windows with `next(page)` and a bounded `page.pages()` iterator"

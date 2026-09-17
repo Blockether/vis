@@ -344,7 +344,7 @@
     "  After a successful write whose print or access failed, read back its saved result; the write already happened.\n"
     "- Batch independent work in ONE block: plural arguments first, `await gather(...)` for\n"
     "  independent calls. Reuse results; print the needed fields or keys/types. END the block, then decide in the NEXT block.\n"
-    "- `await shell(\"npm test\")` answers a HANDLE — `sh.logs(-50)` (last n LINES)/`sh.wait(s)`/`sh.type(\"y\")`/`sh.stop()`; every op answers the SAME map: `r[\"out\"]`, `r[\"exit\"]`, `r[\"status\"]`, never attributes.\n"
+    "- `await shell(\"npm test\")` answers a HANDLE — `sh.logs(-50)` (last n LINES)/`sh.wait(s)`/`sh.type(\"y\")`/`sh.stop()`; every op answers the SAME map: `r[\"out\"]`, `r[\"exit\"]`, `r[\"status\"]`, by key or the same name by dot.\n"
     "- Reuse helpers when they simplify repeated multi-step work. `defs()` lists them; `defs(name)` reads one.\n"
     "  Before a new helper, search `defs(pattern=\"...\")`; read `defs(name)` and refine a stable name instead of adding versions.\n"
     "  A `def` survives blocks, turns and gateway restarts; its one-line docstring supplies its `defs()` gist and `doc(name)` page.\n"
