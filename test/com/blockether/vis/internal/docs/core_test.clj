@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.docs.core-test
   "Documentation rendering, navigation, supported features and Python examples."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -75,6 +76,84 @@
         (when-let [body (:body response)]
           (with-open [in ^java.io.InputStream body]
             (expect (str/includes? (slurp in) "mountSelects")))))))
+
+(defdescribe
+  search-test
+  (it "mounts the search box and its entrypoint in static and live documentation"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            page
+            (first pages)]
+
+        (doseq [[mode prefix] [[:static "assets/"] [:live "/docs/assets/"]]]
+          (let [html (docs/page-html site page mode)]
+            (expect (str/includes?
+                      html
+                      (str "<search class=\"search\" data-index=\"" prefix "search.json\">")))
+            (expect (str/includes? html
+                                   (str "<script type=\"module\" src=\""
+                                        prefix
+                                        "search-init.js\"></script>")))))))
+  (it "copies the search modules with the other static assets"
+      (doseq [name ["search.js" "search-init.js"]]
+        (expect (= (str "assets/" name) (get @#'docs/asset-files (str "vis-docs/assets/" name))))))
+  (it
+    "serves a live JSON index whose sections answer their page's own anchors"
+    (let [{:keys [pages]}
+          (docs/collect)
+
+          anchors
+          (into {} (map (juxt :slug #(set (map :id (:toc %))))) pages)
+
+          {:keys [status headers body]}
+          (docs/handle {:uri "/docs/assets/search.json" :headers {}})
+
+          entries
+          (:pages (json/read-json body :key-fn keyword))
+
+          slug-of
+          (fn [href]
+            (-> href
+                (str/replace #"^/docs/" "")
+                (str/split #"#")
+                first))]
+
+      (expect (= 200 status))
+      (expect (= "application/json; charset=utf-8" (get headers "content-type")))
+      (expect (= (count pages) (count (distinct (map (comp slug-of :href) entries)))))
+      (doseq [{:keys [slug]} pages]
+        (expect (some #(and (= slug (slug-of (:href %))) (str/blank? (:heading %))) entries)
+                (str slug " has no lead section in the search index")))
+      (doseq [{:keys [href]}
+              entries
+
+              :let [frag
+                    (second (str/split href #"#"))]
+              :when frag]
+
+        (expect (contains? (get anchors (slug-of href)) frag)
+                (str href " points at no anchor on its page")))))
+  (it "writes the static index beside the pages it searches"
+      (let [dir (io/file (System/getProperty "java.io.tmpdir")
+                         (str "vis-docs-search-" (java.util.UUID/randomUUID)))]
+        (try (let [built (docs/build-site! dir {:public? true})
+                   entries (:pages (json/read-json (slurp (io/file dir "assets" "search.json"))
+                                                   :key-fn
+                                                   keyword))]
+
+               (expect (= (count (:pages built))
+                          (count (distinct (map #(-> (:href %)
+                                                     (str/split #"#")
+                                                     first
+                                                     (str/replace #".html$" ""))
+                                                entries)))))
+               (expect (some #(= "index.html" (:href %)) entries))
+               (doseq [{:keys [href]} entries]
+                 (expect (re-find #"^[a-z0-9-]+\.html(#|$)" href)
+                         (str href " is not a static page link"))))
+             (finally (doseq [f (reverse (file-seq dir))]
+                        (.delete f)))))))
 
 (defdescribe
   screenshot-assets-test

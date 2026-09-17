@@ -42,7 +42,8 @@
 
    Markdown → HTML uses commonmark-java. Static and live pages share a
    responsive layout with navigation, article content and a table of contents."
-  (:require [clojure.edn :as edn]
+  (:require [charred.api :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
@@ -305,6 +306,71 @@
              (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
          "</aside>")))
 
+;; documentation search — the header box `page-html` renders fetches this index
+
+(defn- search-text
+  "The plain text a query is matched against: tags stripped with block edges
+   spaced apart, so `</td><td>` reads as the word gap it is, entities undone
+   and whitespace collapsed."
+  ^String [^String html]
+  (-> html
+      (str/replace #"><" "> <")
+      strip-tags
+      (str/replace #"\s+" " ")
+      str/trim))
+
+(defn- page-sections
+  "PURE: `[{:id anchor :heading text :text body} …]` — one page's rendered body
+   cut at every anchored `##`/`###`, starting with the page's lead, which has
+   no anchor of its own. Search answers with the section that matches, so a hit
+   lands on the passage, not merely the page holding it."
+  [^String html]
+  (let [^java.util.regex.Matcher matcher
+        (re-matcher #"<h[23] id=\"([^\"]+)\">(.*?)</h[23]>" html)
+
+        marks
+        (loop [acc []]
+          (if-some [hit (re-find matcher)]
+            (recur (conj acc {:at (.start matcher) :id (hit 1) :heading (strip-tags (hit 2))}))
+            acc))
+
+        starts
+        (cons 0 (map :at marks))
+
+        ends
+        (concat (rest starts) [(count html)])]
+
+    (map (fn [start end mark]
+           {:id (:id mark)
+            :heading (str (:heading mark))
+            :text (search-text (subs html start end))})
+         starts
+         ends
+         (cons nil marks))))
+
+(defn- search-entries
+  "The flat index a reader's query runs over: one row per page section with the
+   URL that reaches it in `mode`."
+  [{:keys [pages]} mode]
+  (into []
+        (for [{:keys [slug title section html]}
+              pages
+
+              {:keys [id heading text]}
+              (page-sections html)]
+
+          {"title" (str title)
+           "section" (str section)
+           "heading" heading
+           "href" (str (href mode slug) (when id (str "#" id)))
+           "text" text})))
+
+(def ^:private search-json
+  "The whole manual as one JSON document per serving `mode` — only the result
+   hrefs differ. Memoized: the corpus cannot change under a running process."
+  (memoize (fn [mode]
+             (json/write-json-str {"pages" (search-entries @rendered mode)}))))
+
 (def ^:private prism-js (delay (slurp (io/resource "vis-transcript/prism.min.js"))))
 
 (defn page-html
@@ -346,6 +412,13 @@
         (str "<a class=\"center-link\" href=\"/extensions/\">"
              (esc (get-in site [:extension-center :title]))
              "</a>"))
+      "<search class=\"search\" data-index=\""
+      (asset mode "search.json")
+      "\">"
+      "<input type=\"search\" placeholder=\"Search docs\""
+      " aria-label=\"Search the documentation\" autocomplete=\"off\" spellcheck=\"false\">"
+      "<div class=\"search-results\" hidden></div>"
+      "</search>"
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
         (str
@@ -375,12 +448,16 @@
       (when-let [r (:repo site)]
         (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>"))
       "</div>"
-      "</article></main>" (or (toc-html toc) "<div></div>")
+      "</article></main>"
+      (or (toc-html toc) "<div></div>")
       "</div>"
       (if (= mode :static)
         "<script src=\"assets/prism.min.js\" defer></script><script src=\"assets/docs.js\" defer></script>"
         (str "<script>" @prism-js "\nPrism.highlightAll();</script>"))
-      "<script type=\"module\" src=\"" (asset mode "select-init.js")
+      "<script type=\"module\" src=\""
+      (asset mode "select-init.js")
+      "\"></script>"
+      "<script type=\"module\" src=\"" (asset mode "search-init.js")
       "\"></script>" "</body></html>")))
 
 ;; static site
@@ -417,6 +494,8 @@
    "vis-docs/assets/docs.js" "assets/docs.js"
    "vis-docs/assets/select.js" "assets/select.js"
    "vis-docs/assets/select-init.js" "assets/select-init.js"
+   "vis-docs/assets/search.js" "assets/search.js"
+   "vis-docs/assets/search-init.js" "assets/search-init.js"
    "vis-transcript/prism.min.js" "assets/prism.min.js"})
 
 (defn- copy-assets!
@@ -437,6 +516,7 @@
      (when (empty? pages) (throw (ex-info "no vis-docs pages found on classpath" {})))
      (io/make-parents (io/file out-dir "x"))
      (copy-assets! out-dir)
+     (spit (io/file out-dir "assets" "search.json") (search-json :static))
      (doseq [{:keys [slug] :as page} pages]
        (spit (io/file out-dir (str slug ".html")) (page-html site-data page :static)))
      (let [home (or (first (filter #(= "index" (:slug %)) pages)) (first pages))]
@@ -499,7 +579,11 @@
         accept-encoding
         (get headers "accept-encoding")]
 
-    (cond (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
+    (cond (= path "assets/search.json") {:status 200
+                                         :headers {"content-type" "application/json; charset=utf-8"
+                                                   "cache-control" "no-store"}
+                                         :body (search-json :live)}
+          (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
           (#{"gateway" "gateway.md" "gateway.html"} path)
           {:status 301 :headers {"location" "/docs"} :body ""}
           (or (= path "") (= path "index"))

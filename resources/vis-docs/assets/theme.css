@@ -722,6 +722,109 @@ button.primary:hover {
 .scrim {
   display: none;
 }
+/* Header search over the manual's build-time index (assets/search.js). */
+.top .search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 9rem;
+  max-width: 24rem;
+  min-width: 0;
+}
+.top .search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--text-small);
+}
+.top .search input::placeholder {
+  color: var(--faint);
+}
+.top .search input:disabled {
+  color: var(--dim);
+  cursor: not-allowed;
+  opacity: 1;
+}
+.search-results {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  z-index: 70;
+  width: min(32rem, calc(100vw - 2rem));
+  min-width: 100%;
+  max-height: min(26rem, calc(100dvh - 7rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: 3px 3px 0 var(--line);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  text-align: start;
+}
+.search-result {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.6rem;
+  color: var(--fg);
+  text-decoration: none;
+}
+.search-result:hover,
+.search-result[data-active] {
+  background: var(--bg-soft);
+}
+.search-result:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.search-result__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.search-result__head strong {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg);
+}
+.search-result__heading {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-result__section {
+  flex: 1;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 0.75rem;
+  text-align: right;
+}
+.search-result__snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--dim);
+}
+.search-result__snippet mark {
+  background: var(--sel);
+  color: inherit;
+}
+.search-empty {
+  padding: 0.6rem;
+  color: var(--dim);
+}
 @media (pointer: coarse) {
   .vis-select__option {
     min-height: 2.75rem;
@@ -737,6 +840,9 @@ button.primary:hover {
   .nav a {
     display: flex;
     align-items: center;
+    min-height: 2.75rem;
+  }
+  .search-result {
     min-height: 2.75rem;
   }
   .top .gh,
@@ -779,6 +885,19 @@ button.primary:hover {
     padding-top: env(safe-area-inset-top);
     padding-left: max(1rem, env(safe-area-inset-left));
     padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  /* The header is the positioning context that spans the viewport, so the
+     dropdown becomes a full-width sheet instead of overflowing the narrow box. */
+  .top .search {
+    position: static;
+    flex: 1 1 4.5rem;
+    max-width: none;
+  }
+  .search-results {
+    left: max(1rem, env(safe-area-inset-left));
+    right: max(1rem, env(safe-area-inset-right));
+    width: auto;
+    min-width: 0;
   }
   .main {
     padding: 1.6rem max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));

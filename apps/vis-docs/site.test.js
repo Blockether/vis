@@ -20,7 +20,7 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     ),
   ).toBe(true);
   expect(readFileSync('dist/assets/docs.js', 'utf8')).toContain('Prism.highlightAll()');
-  for (const name of ['select.js', 'select-init.js']) {
+  for (const name of ['select.js', 'select-init.js', 'search.js', 'search-init.js']) {
     expect(readFileSync('dist/assets/' + name)).toEqual(
       readFileSync('../../resources/vis-docs/assets/' + name),
     );
@@ -58,6 +58,28 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     } finally {
       dom.window.close();
     }
+  }
+});
+
+test('the manual search index covers every page and answers with reachable anchors', () => {
+  const index = JSON.parse(readFileSync('dist/assets/search.json', 'utf8'));
+  const slugs = new Set(htmlFiles.map((file) => file.replace(/\.html$/, '')));
+  const covered = new Set(index.pages.map((entry) => entry.href.split('#')[0].replace(/\.html$/, '')));
+  for (const slug of slugs) expect(covered.has(slug), slug).toBe(true);
+  expect(index.pages.length).toBeGreaterThan(htmlFiles.length);
+  const pages = new Map();
+  for (const entry of index.pages) {
+    const [file, anchor] = entry.href.split('#');
+    if (!pages.has(file)) pages.set(file, readFileSync('dist/' + file, 'utf8'));
+    if (anchor) expect(pages.get(file).includes(`id="${anchor}"`), entry.href).toBe(true);
+  }
+  const dom = new JSDOM(readFileSync('dist/index.html', 'utf8'));
+  try {
+    expect(
+      dom.window.document.querySelector('.search[data-index="assets/search.json"] input[type="search"]'),
+    ).not.toBeNull();
+  } finally {
+    dom.window.close();
   }
 });
 
