@@ -861,3 +861,14 @@
                      (expect (str/includes? text "pro"))
                      (expect (not (str/includes? text "Auth state")))
                      (expect (not (str/includes? text "Is loading")))))))
+
+(defdescribe gateway-advertise-option-test
+             (it
+               "prefers the flag, falls back to VIS_GATEWAY_ADVERTISE, and ignores blank values"
+               (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "10.0.0.5"} nil)))
+               (expect (= "10.0.0.5"
+                          (#'main/advertise-option {"advertise" "10.0.0.5"} "gateway.example.com")))
+               (expect (= "gateway.example.com" (#'main/advertise-option {} "gateway.example.com")))
+               (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "   "} " 10.0.0.5 ")))
+               (expect (nil? (#'main/advertise-option {} nil)))
+               (expect (nil? (#'main/advertise-option {"advertise" ""} "   ")))))

@@ -229,6 +229,20 @@ vis-agent gateway pair --advertise https://gateway.example.com
 `--advertise` accepts a host, `host:port` or a full URL. It changes what the
 link says, not what the gateway listens on, so the address still has to reach
 this computer.
+
+If the same address is always the right one on this computer, set
+`VIS_GATEWAY_ADVERTISE` once and every pairing link uses it without the flag:
+
+```bash
+export VIS_GATEWAY_ADVERTISE=10.0.0.5
+vis-agent gateway start --require-token --pair
+vis-agent gateway pair
+```
+
+The flag wins when you pass both. Vis ships no built-in default here, because
+the address that works on your network belongs to another computer on the next
+one — most often the router rather than the machine running the gateway.
+
 You can also type a reachable address and supply the token from
 `~/.vis/gateway.token` on the gateway's computer. Each saved machine shows its
 connection state: green online, red offline, amber wrong or missing token.
