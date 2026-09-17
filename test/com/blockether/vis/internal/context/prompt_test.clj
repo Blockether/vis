@@ -30,6 +30,9 @@
             (expect (str/includes? text "bundled SDK takes precedence"))
             ;; Issue #253: importable declarations do not imply extension host access.
             (expect (str/includes? text "Import `blockether.vis.extension`"))
+            ;; User report: the bundled SDK is frozen into the runtime, so
+            ;; `blockether.vis.__file__` raises AttributeError and reads as a broken import.
+            (expect (str/includes? text "frozen: no on-disk `__file__`"))
             (expect (str/includes? text "no registration or extension host APIs"))
             (expect (str/includes? text "do not change instruction priority")))))))
 
@@ -556,11 +559,14 @@
                       "Reuse results" "print the needed fields or keys/types"
                       "END the block, then decide in the NEXT block"]]
           (expect (str/includes? text rule) rule))))
+  ;; Regression, user report: the handle line named the ops and not the ONE map they
+  ;; answer, so a session wrote `sh.wait(60).out` and read AttributeError, not `r["out"]`.
   (it "preserves output and watched shell handles"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["keep results in variables" "`print()` is the ONE channel back"
                       "what you print is what returns" "answers a HANDLE" "`sh.logs(-50)`"
-                      "`sh.wait(s)`" "`sh.stop()`" "each carrying status"]]
+                      "`sh.wait(s)`" "`sh.stop()`" "every op answers the SAME map" "`r[\"out\"]`"
+                      "`r[\"exit\"]`"]]
           (expect (str/includes? text rule) rule))))
   ;; #239: pin type-directed access and recovery without adding another discovery preflight.
   (it "distinguishes mapping keys from record attributes and inspects only unknown shapes"
@@ -696,7 +702,10 @@
       ;; 10k → 10.3k for #259: extension results are field records whose errors list the real fields.
       ;; 10.3k → 10.6k for #262: prior-turn context is the visible conversation, not session history to fetch.
       ;; 10.6k → 10.4k: positive wording — goals instead of prohibitions, one statement per duplicated rule.
-      (expect (< (count text) 10400))
+      ;; 10.4k → 10.5k: user report — §2 named the shell handle's ops and not the ONE map
+      ;; they answer, so a session wrote `sh.wait(60).out` and read AttributeError instead
+      ;; of `r["out"]`. The keys cost 67 characters and land at 10 435.
+      (expect (< (count text) 10500))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -948,7 +957,9 @@
         (doseq [shim (filter :shim/docs shims)]
           (expect (not (str/includes? text (subs (:shim/docs shim) 0 40)))
                   (str (:shim/name shim) " pushes its pulled page into every request")))
-        (expect (< (count text) 1500)))))
+        ;; 1.5k → 1.55k: user report — a session read `blockether.vis.__file__` as proof the
+        ;; import was broken, so the frozen SDK's missing on-disk path is named here.
+        (expect (< (count text) 1550)))))
 
 (defdescribe
   project-instructions-hoist-test
