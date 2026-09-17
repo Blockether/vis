@@ -597,6 +597,9 @@
 
 ;; Regression (session 6073ae2a): an unconditional read-once instruction made an
 ;; unrelated Activity audit read its own history before starting the task.
+;; Regression (session 02071515): "ten lek" — a pointing word that did not change
+;; the answer — was read as a referenced conversation, then nine `list_sessions`
+;; searches ran because nothing made the first miss terminal.
 (defdescribe
   demand-driven-introspection-prompt-test
   (it
@@ -605,8 +608,10 @@
       (doseq [text [(introspection/prompt {}) (#'foundation/combined-prompt {})]]
         (doseq
           [required
-           ["Session history serves three needs" "session diagnostics"
-            "evidence from a referenced conversation" "context the conversation lacks"
+           ["Read session history only when the answer changes with what a past session says"
+            "session diagnostics" "evidence from a referenced conversation"
+            "context the conversation lacks" "is a reference, not a reason"
+            "One search round settles it" "ends the lookup"
             "A session or turn start, and `/reload`, keep the conversation intact: continue from it."]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Call `await read_session()` once."))))))
