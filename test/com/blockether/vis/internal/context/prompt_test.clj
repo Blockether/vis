@@ -818,7 +818,8 @@
       ;; These assertions pin prompt content, not model compliance.
       (doseq
         [required
-         ["Analysis-only and diff-preview requests end in findings or a proposed diff, with the tree left as found"
+         ["Analysis-only and diff-preview requests end in findings or a proposed diff, and leave the tree untouched"
+          "scratch and debugging stay in sandbox variables, findings in the answer"
           "checkout or enabled draft workflow" "other worktrees/clones need an explicit request"
           "Commit and push require an explicit request"
           "or explicit authorization in applicable project instructions"

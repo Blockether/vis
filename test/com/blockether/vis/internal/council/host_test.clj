@@ -186,12 +186,13 @@
             "interrupted" "a wake resumes the related task alone" "provider prompt-cache"
             "When asked to find a session" "search with `await list_sessions(search=...)`"
             "check relevant history" "return matching session IDs/titles"
-            "a ping or wake follows its own request" "ask another agent or consult other sessions"
+            "a ping or wake needs its own request" "ask another agent or consult other sessions"
             "publish a focused Council question"
             "the consultation is complete when its answer is reported"
             "report explicitly that tools or recipients were unavailable or the reply is still missing"
             "An explicit consultation request is binding"
-            "for trivial, self-contained work, autonomous consultation is optional"]]
+            "for trivial, self-contained work, autonomous consultation is optional"
+            "The obligation clears when the reply is published"]]
           (is (str/includes? normalized guidance)
               (str surface " is missing context-reuse guidance: " guidance)))))))
 
