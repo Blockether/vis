@@ -711,6 +711,23 @@
 
         (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
         (expect (string/includes? (ex-message err) "is a file; use `cat`."))))
+  ;; Regression, issue #267: one file in a batch of confirmed directories aborts the
+  ;; whole call instead of listing the rest — `ls` maps directories, `cat` reads files.
+  (it "ls refuses a batch that mixes a directory with a file"
+      (let [_
+            (write-temp! "lsmixed/sub/b.txt" "x")
+
+            dir
+            (temp-dir-path "lsmixed")
+
+            file
+            (str (temp-dir-path "lsmixed") "/sub/b.txt")
+
+            err
+            (try (ls-rows {"paths" [dir file]}) nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
+        (expect (string/includes? (ex-message err) "b.txt` is a file; use `cat`."))))
   ;; Regression, issue #126: a missing path must name a real parent to list.
   ;; Namespace-to-path guidance belongs in the prompt, not in every error.
   (it "ls names the nearest existing directory for a path that does not exist"

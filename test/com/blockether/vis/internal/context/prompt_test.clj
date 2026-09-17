@@ -738,7 +738,11 @@
       ;; Regression, issue #126: list a known parent rather than inventing source roots.
       (expect (str/includes? text "confirmed directories"))
       (expect (str/includes? text "a namespace or package name is a lead to confirm"))
-      (expect (str/includes? text "one missing path aborts"))
+      ;; Regression, issue #267: the batch rule must rule a FILE path out up front —
+      ;; one mixed into a batch of directories aborts the listing, it is not skipped.
+      (expect (str/includes? text "Batch confirmed directories only"))
+      (expect (str/includes? text "one file or missing path aborts the call"))
+      (expect (str/includes? text "`cat` reads a file"))
       ;; The routing rule sends every filesystem CHANGE to Python; naming the retired
       ;; verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]

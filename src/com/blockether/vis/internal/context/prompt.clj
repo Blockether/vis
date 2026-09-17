@@ -361,7 +361,7 @@
     "  `pattern`: case-sensitive basename glob (not regex), None disables; applies at each depth, keeps ancestors; per-path specs override it.\n"
     "  Unknown paths: `ls` the nearest confirmed parent, initially `project_root_path`.\n"
     "  A path is confirmed by a listing, a hit or an explicit project/user reference; a namespace or package name is a lead to confirm.\n"
-    "  Batch confirmed directories: one missing path aborts.\n"
+    "  Batch confirmed directories only: one file or missing path aborts the call; `cat` reads a file.\n"
     "  EDIT reads: `cat(path, start, end)` → `line:hash│ text`; a negative\n"
     "  `start` counts from the end. `Path.read_text` suits whole-file processing; creating/moving/deleting is plain Python.\n"
     "- Search the known owner; broaden only for an unresolved caller, dependency or contract.\n"
