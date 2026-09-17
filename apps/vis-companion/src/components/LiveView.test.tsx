@@ -715,10 +715,11 @@ describe('the section is built from the closed vocabulary', () => {
 });
 
 // A run used to open in the artifact overlay, which on a desktop papered the session list,
-// the transcript and the composer with one view. It opens in the app's ONE dialog now.
+// the transcript and the composer with one view. It opens in the app's ONE dialog now, and
+// that dialog stands in the session's own pane rather than over the whole window.
 describe('an opened run is a dialog over the chat', () => {
   it('opens in `Modal` + `DialogFrame`, never the full-screen artifact overlay', () => {
-    expect(liveViewSource).toContain('<Modal onDismiss={onClose}>');
+    expect(liveViewSource).toContain('<Modal within="session" onDismiss={onClose}>');
     expect(liveViewSource).toContain('<DialogFrame title={title} subtitle={subtitle} onClose={onClose}>');
     expect(liveViewSource).not.toContain('OverlayScreen');
   });

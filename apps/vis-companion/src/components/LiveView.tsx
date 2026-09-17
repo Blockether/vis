@@ -1238,8 +1238,10 @@ export function LiveViewPanel({
  * A run used to open in the artifact overlay — the viewport-pinned layer a document
  * opens in — which is right for a document and wrong for a run: on a desktop one
  * click papered the session list, the transcript and the composer with a single
- * view. It opens in the app's ONE dialog instead (`Modal` + `DialogFrame`): the whole
- * glass on a phone, a box standing over the chat everywhere else.
+ * view. It opens in the app's ONE dialog instead (`Modal` + `DialogFrame`), and that
+ * dialog belongs to the session it came from (`within="session"`): the whole glass on
+ * a phone, a box over the chat pane on a desk, with the list beside it neither dimmed
+ * nor covered.
  *
  * The run keeps its own border in here, so the box the transcript shows is the box
  * the dialog shows.
@@ -1266,7 +1268,7 @@ export function RunDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <Modal onDismiss={onClose}>
+    <Modal within="session" onDismiss={onClose}>
       <DialogFrame title={title} subtitle={subtitle} onClose={onClose}>
         {/* The run is a BOX in here, so the dialog's edge is never mistaken for the run's. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3">{children}</div>

@@ -1846,7 +1846,11 @@ describe('Modal, fit', () => {
     expect(appSource).toContain('data-viewport-shell');
     expect(uiSource).toContain("document.querySelector<HTMLElement>('[data-viewport-shell]')");
     expect(uiSource).toContain("host === document.body ? 'fixed' : 'absolute'");
-    expect(uiSource).toContain('const { host: portalHost, position } = overlayLayer();');
+    expect(uiSource).toContain("within === 'session' ? sessionLayer() : overlayLayer()");
+    // A layer that belongs to ONE session stands in that session's own root instead, so an
+    // opened run dims the pane it came from and leaves the desk beside it alone.
+    expect(uiSource).toContain("document.querySelector<HTMLElement>('[data-session-surface]')");
+    expect(sessionScreenSource).toContain('data-session-surface');
     expect(uiSource).toContain('portalHost,\n  );');
     // The opened document is the app's other full-screen layer, and it asks the
     // same question instead of hanging off the body at `100dvh`.

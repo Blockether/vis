@@ -185,6 +185,27 @@ export const SplitPane: Story = {
       </div>
     ),
   ],
+  // The desk is a list AND a transcript. An opened run belongs to the session, so its dialog
+  // stands in the session pane: the third of the window beside it keeps its own pixels,
+  // neither covered nor dimmed.
+  play: async (context) => {
+    await meta.play(context);
+    const pane = document.querySelector<HTMLElement>('[data-session-surface]')!;
+    const paneBox = pane.getBoundingClientRect();
+    await expect(paneBox.left).toBeGreaterThan(0);
+    await userEvent.click(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
+    const page = within(document.body);
+    const dialog = page.getByRole('dialog', { name: view.title });
+    await expect(pane.contains(dialog)).toBe(true);
+    const layer = [...pane.children].find((child) => child.contains(dialog))!;
+    const scrim = layer.getBoundingClientRect();
+    await expect(scrim.left).toBeGreaterThanOrEqual(paneBox.left);
+    await expect(scrim.right).toBeLessThanOrEqual(paneBox.right);
+    await expect(scrim.top).toBeGreaterThanOrEqual(paneBox.top);
+    await expect(scrim.bottom).toBeLessThanOrEqual(paneBox.bottom);
+    await expect(dialog.getBoundingClientRect().left).toBeGreaterThanOrEqual(paneBox.left);
+    await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
+  },
 };
 
 export const Unmatched: Story = {

@@ -4495,7 +4495,12 @@ export function SessionScreen({
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
-        <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+        <section
+          // Every layer that belongs to THIS session — an opened run, the paste editor —
+          // stands in here, so it covers the pane and never the desk beside it.
+          data-session-surface
+          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+        >
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
            is answered. The prompt portals its own overlay, so it sits here purely
            to be mounted for this session — the TUI shows the same form. */}

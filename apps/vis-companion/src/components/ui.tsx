@@ -2123,9 +2123,32 @@ export function overlayLayer(): {
   return { host, position: host === document.body ? 'fixed' : 'absolute' };
 }
 
+/**
+ * WHERE A LAYER THAT COVERS ONLY THE OPEN SESSION MOUNTS.
+ *
+ * A run is the session's own work, and the desk beside it is not part of the
+ * question: on a wide window the app layer dimmed the session list and the
+ * header along with the transcript, so one opened run took the whole screen.
+ * The session screen marks its own positioned root (`data-session-surface`),
+ * and a layer that belongs to that session stands `absolute` INSIDE it — scrim,
+ * box and all — leaving everything outside the pane legible and clickable.
+ *
+ * That root is itself inside the shell, so such a layer keeps the keyboard
+ * behaviour `overlayLayer` exists for. With no session on screen there is
+ * nothing to stand in, and the app shell is the fallback.
+ */
+export function sessionLayer(): {
+  host: HTMLElement;
+  position: 'absolute' | 'fixed';
+} {
+  const host = document.querySelector<HTMLElement>('[data-session-surface]');
+  return host ? { host, position: 'absolute' } : overlayLayer();
+}
+
 export function Modal({
   onDismiss,
   size = 'full',
+  within = 'app',
   children,
 }: {
   onDismiss: () => void;
@@ -2143,9 +2166,19 @@ export function Modal({
    * Below `sm:` the columns stack and, like `fit`, it stops at its content.
    */
   size?: 'full' | 'fit' | 'wide';
+  /**
+   * WHAT THE DIALOG STANDS OVER. `app` is every dialog that belongs to the whole
+   * application — settings, the model picker, a confirmation — and it covers the
+   * shell.
+   *
+   * `session` is a dialog about ONE session, and it stands in that session's pane
+   * instead. On a desk that is a list and a transcript side by side, an opened run
+   * has no business dimming the list beside it.
+   */
+  within?: 'app' | 'session';
   children: ReactNode;
 }) {
-  const { host: portalHost, position } = overlayLayer();
+  const { host: portalHost, position } = within === 'session' ? sessionLayer() : overlayLayer();
   const dismissOnClick = useRef(false);
   // ONLY `full` PAPERS THE WHOLE PHONE. Reported over settings on an iPhone: with the
   // application fold closed and three machines listed, two thirds of the glass below the

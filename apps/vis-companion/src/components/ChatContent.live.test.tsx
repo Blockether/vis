@@ -35,6 +35,28 @@ it('opens a run in the app dialog, with the run still a bordered box inside it',
   expect(opened).not.toHaveClass('border-y');
 });
 
+// The dialog belongs to the SESSION, not to the window: the list beside the transcript stays
+// uncovered and undimmed, so the layer mounts in the session screen's own positioned root.
+it('mounts the opened run in the session pane rather than over the whole app', () => {
+  const shell = document.createElement('div');
+  shell.setAttribute('data-viewport-shell', '');
+  const pane = document.createElement('div');
+  pane.setAttribute('data-session-surface', '');
+  document.body.append(shell, pane);
+  try {
+    const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
+    fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+    const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
+    expect(pane.contains(dialog)).toBe(true);
+    expect(shell.contains(dialog)).toBe(false);
+    expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
+    expect(pane.firstElementChild).not.toHaveClass('fixed');
+  } finally {
+    shell.remove();
+    pane.remove();
+  }
+});
+
 // Regression #222: opening watches the current projection, and dismissal never interrupts it.
 it('updates an open live screen and keeps the inline preview when closed or escaped', () => {
   const onInterrupt = vi.fn();
