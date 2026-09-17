@@ -4,7 +4,8 @@
    A snapshot is created once for a root environment, inherited unchanged by
    child environments, and replaced only by an explicit environment rebuild.
    Enforcement and context both derive from this value."
-  (:require [clojure.string :as str]
+  (:require [babashka.fs :as fs]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
@@ -60,6 +61,39 @@
 (defn- resolve-paths
   [paths base-dir home]
   (vec (distinct (keep #(nearest-real-path % base-dir home) paths))))
+
+(def ^:private glob-characters "What makes a deny rule a PATTERN rather than one path." #"[*?\[{]")
+
+(defn- glob-split
+  "An absolute glob pattern as `[literal-ancestor-directory remainder]`, the two
+   halves `babashka.fs/glob` wants."
+  [pattern]
+  (let [segments
+        (str/split pattern #"/")
+
+        literal
+        (take-while #(not (re-find glob-characters %)) segments)
+
+        root
+        (str/join "/" literal)]
+
+    [(if (str/blank? root) "/" root) (str/join "/" (drop (count literal) segments))]))
+
+(defn- deny-target-paths
+  "The concrete paths an OS sandbox profile can deny for `patterns`. A literal
+   rule is denied by SPELLING, whether or not that file exists yet; a glob names
+   nothing the kernel understands, so it is expanded against the files present
+   when this snapshot is built. Hidden files are included — `.env` is the point."
+  [patterns base-dir home]
+  (vec (distinct (mapcat (fn [pattern]
+                           (if (re-find glob-characters pattern)
+                             (let [[root remainder] (glob-split pattern)]
+                               (keep #(nearest-real-path % base-dir home)
+                                     (try
+                                       (fs/glob root remainder {:hidden true :follow-links false})
+                                       (catch Throwable _ nil))))
+                             [pattern]))
+                         patterns))))
 
 (defn- stable-value
   [value]
@@ -202,6 +236,16 @@
                  jail
                  path-keys)
 
+         ;; A deny rule stays a PATTERN for the host tools and the diagnostics view,
+         ;; which match it live. The OS sandbox profile can only name concrete
+         ;; paths, so the jail's copy is expanded here, once per snapshot.
+         jail
+         (-> jail
+             (assoc :deny-read-rules (:deny-read jail)
+                    :deny-write-rules (:deny-write jail))
+             (update :deny-read deny-target-paths base-dir home)
+             (update :deny-write deny-target-paths base-dir home))
+
          ;; (language caches now live in the workspace catalog and resolve through the
          ;;  path-keys reduce above; no separate cache-resolution pass.)
          jail
@@ -315,10 +359,10 @@
              (mapv #(home-relative % home)))
 
         deny-read
-        (mapv #(home-relative % home) (:deny-read jail))
+        (mapv #(home-relative % home) (or (:deny-read-rules jail) (:deny-read jail)))
 
         deny-write
-        (mapv #(home-relative % home) (:deny-write jail))
+        (mapv #(home-relative % home) (or (:deny-write-rules jail) (:deny-write jail)))
 
         no-search
         (mapv #(home-relative % home) (no-search-roots policy))

@@ -492,6 +492,20 @@
             "type": "string",
             "pattern": ".*\\S.*"
           }
+        },
+        "deny_read": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "deny_write": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
         }
       },
       "additionalProperties": false

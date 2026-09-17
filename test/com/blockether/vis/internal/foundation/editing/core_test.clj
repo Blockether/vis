@@ -488,6 +488,34 @@
                          ;; The gate is asked about the ABSOLUTE path the op resolved to, so a
                          ;; rule cannot be dodged by spelling the same file differently.
                          (expect (clojure.string/starts-with? (:path (first @seen!)) "/")))))))
+  (it "a configured deny rule refuses cat with no extension gate registered (#263)"
+      (let [rule
+            (str (.getCanonicalPath ^java.io.File (fs/file "target/editing-test")) "/**/.env")
+
+            env
+            {:extensions (atom []) :security-policy {:process-jail {:deny-read-rules [rule]}}}
+
+            before
+            (:ext.symbol/before-fn (private-fn "cat-symbol"))
+
+            failure
+            (:result (before env (constantly :ok) ["target/editing-test/service/.env"]))]
+
+        (expect (some? failure))
+        (expect (= :ext.foundation.editing/path-protected
+                   (-> failure
+                       :error
+                       :type)))
+        (expect (= :policy
+                   (-> failure
+                       :error
+                       :owner)))
+        (expect (clojure.string/includes? (-> failure
+                                              :error
+                                              :hint)
+                                          "jail.filesystem.deny_read"))
+        ;; One rule closes one thing: the rest of the workspace still reads.
+        (expect (nil? (:result (before env (constantly :ok) ["target/editing-test/a.clj"]))))))
   (it "patch asks with file-write and refuses when its path is protected"
       (let [seen!
             (atom [])

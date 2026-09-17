@@ -447,3 +447,85 @@
       (is (not (str/includes? (:message refusal) "other-value")))
       ;; an ADDED or DROPPED name differs too
       (is (= ["EXTRA"] (pj/env-difference running (assoc running "EXTRA" "d")))))))
+
+(deftest configured-deny-rules-refuse-host-tools
+  ;; #263: the host file tools run in THIS process, which no sandbox confines, so
+  ;; they ask the policy directly for the rules the children get from the kernel.
+  (let [env {:security-policy {:process-jail {:deny-read-rules ["/ws/.env" "/ws/**/.env"]
+                                              :deny-write-rules ["/ws/vendor"]}}}]
+    (testing "a read rule closes the file it names and every file a glob matches"
+      (is (str/includes? (pj/deny-refusal env "file-read" "/ws/.env") "jail.filesystem.deny_read"))
+      (is (some? (pj/deny-refusal env "file-read" "/ws/service/.env")))
+      ;; Reading is how a rewrite starts: a file this session may not read is not
+      ;; one it may patch either.
+      (is (some? (pj/deny-refusal env "file-write" "/ws/.env"))))
+    (testing "the rest of the root stays open, and a near-miss name is not a match"
+      (is (nil? (pj/deny-refusal env "file-read" "/ws/src/core.clj")))
+      (is (nil? (pj/deny-refusal env "file-read" "/ws/.envrc"))))
+    (testing "a write rule names a directory and closes its subtree for writes only"
+      (is (str/includes? (pj/deny-refusal env "file-write" "/ws/vendor/lib/a.js")
+                         "jail.filesystem.deny_write"))
+      (is (nil? (pj/deny-refusal env "file-read" "/ws/vendor/lib/a.js"))))
+    (testing "no policy in the environment, no refusal"
+      (is (nil? (pj/deny-refusal {} "file-read" "/ws/.env"))))))
+
+(deftest configured-deny-read-reaches-every-child
+  ;; #263: `cat` is not the only reader. The rule has to reach the shell child,
+  ;; the language REPL and the Python worker, or it protects only the built-in
+  ;; tools while `open(".env")` still succeeds.
+  (let [root
+        (.getCanonicalPath (doto (io/file (System/getProperty "java.io.tmpdir")
+                                          (str "visdeny-" (System/nanoTime)))
+                             (.mkdirs)))
+
+        secret
+        (io/file root ".env")
+
+        nested
+        (io/file root "service" ".env")
+
+        readable
+        (io/file root "README.md")]
+
+    (try (.mkdirs (io/file root "service"))
+         (spit secret "TOKEN=secret")
+         (spit nested "TOKEN=secret")
+         (spit readable "ok")
+         ;; The snapshot expands the glob, so it is built AFTER the files exist.
+         (let [policy
+               (assoc (:process-jail (security-policy/snapshot
+                                       {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                        "jail" {"enabled" true
+                                                "filesystem" {"allow" ["project"]
+                                                              "deny_read" [".env" "**/.env"]}}}
+                                       {:base-dir root}))
+                 :roots-fn (constantly [root])
+                 :net-enabled? false)
+
+               denied
+               [(.getPath secret) (.getPath nested)]]
+
+           (testing "every managed child is handed the same expanded deny list"
+             (with-redefs [runtime/jailed?
+                           (constantly false)
+
+                           runtime/spawn-process!
+                           (fn [_ options]
+                             options)]
+
+               (doseq [child [policy (pj/language-process-policy policy nil)
+                              (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
+                 (is (= denied
+                        (:deny-read (:policy
+                                      (pj/spawn! ["/bin/true"] nil child {:environment {}}))))))))
+           (testing "and a host that can enforce stops the child itself"
+             (when (sandbox-applicable?)
+               (let [read-file (fn [^java.io.File file]
+                                 (run-process ["/bin/sh" "-c" (str "cat " (.getPath file))]
+                                              (io/file root)
+                                              policy))]
+                 (is (not (zero? (:exit (read-file secret)))))
+                 (is (not (zero? (:exit (read-file nested)))))
+                 (is (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))))))
+         (finally (doseq [file (reverse (file-seq (io/file root)))]
+                    (io/delete-file file true))))))

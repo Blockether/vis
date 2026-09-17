@@ -234,6 +234,13 @@
 
 (defn- rooted-path-list? [value] (and (vector? value) (every? rooted-path? value)))
 
+(defn- deny-rule-list?
+  "Filesystem deny rules as the operator wrote them: non-blank patterns that may
+   be absolute, home-relative or workspace-relative and may carry `*`/`**`
+   segments. Resolving and expanding them is the policy snapshot's job."
+  [value]
+  (and (vector? value) (every? util/non-blank-string? value)))
+
 (defn- port? [value] (and (integer? value) (<= 1 value 65535)))
 
 (defn- string-map?
@@ -242,7 +249,7 @@
 
 (def process-jail-config-keys
   #{:disabled? :inherit-host-env? :allow-read-write :allow-read :deny-read :deny-write :deny-exec
-    :no-search :inbound-ports :path-descriptions :keychain?})
+    :deny-read-rules :deny-write-rules :no-search :inbound-ports :path-descriptions :keychain?})
 
 (defn- process-jail-config?
   [policy]
@@ -250,8 +257,10 @@
        (every? process-jail-config-keys (keys policy))
        (boolean? (:disabled? policy))
        (boolean? (:inherit-host-env? policy))
-       (every? rooted-path-list?
-               ((juxt :allow-read-write :allow-read :deny-read :deny-write) policy))
+       (every? rooted-path-list? ((juxt :allow-read-write :allow-read) policy))
+       (every? deny-rule-list? ((juxt :deny-read :deny-write) policy))
+       (deny-rule-list? (or (:deny-read-rules policy) []))
+       (deny-rule-list? (or (:deny-write-rules policy) []))
        (rooted-path-list? (or (:no-search policy) []))
        (rooted-path-list? (or (:deny-exec policy) []))
        (vector? (:inbound-ports policy))
@@ -289,6 +298,13 @@
                                     dirs)))))
                 (distinct))
           names)))
+
+(defn- deny-rules
+  "Configured filesystem deny patterns, trimmed and deduped in the operator's
+   order. A rule stays exactly what `vis.yml` declared: resolution against the
+   workspace root and glob expansion belong to the policy snapshot."
+  [patterns]
+  (into [] (comp (map #(str/trim (str %))) (remove str/blank?) (distinct)) patterns))
 
 (defn entry-read-only?
   "True when the catalog entry explicitly declares read-only access."
@@ -543,15 +559,29 @@
          (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
 
          no-search
-         (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)]
+         (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)
 
+         deny-read
+         (deny-rules (get-in jail ["filesystem" "deny_read"]))
+
+         deny-write
+         (deny-rules (get-in jail ["filesystem" "deny_write"]))]
+
+     (when (and (not (true? (get jail "enabled"))) (or (seq deny-read) (seq deny-write)))
+       (throw (ex-info "jail.filesystem deny rules require jail.enabled: true"
+                       {:type :vis/invalid-config
+                        :problems
+                        [(str "jail.filesystem.deny_read and deny_write are enforced by the OS"
+                              " sandbox. While jail.enabled is false, Python file IO and child"
+                              " processes still read those paths, so Vis refuses a deny rule it"
+                              " cannot enforce: enable the jail or remove the rule.")]})))
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
         :inherit-host-env? (= "inherit" (get jail "environment"))
         :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
         :allow-read read-only
-        :deny-read []
-        :deny-write []
+        :deny-read deny-read
+        :deny-write deny-write
         :deny-exec (resolve-exec-denies (get jail "deny_exec"))
         :no-search no-search
         :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))

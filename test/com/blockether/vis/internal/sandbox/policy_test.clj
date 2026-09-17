@@ -355,3 +355,52 @@
         (expect (= "vis.yml" (get-in erred ["config_error" "source"])))
         (expect (= ["toggles: unknown top-level config key (config is closed)"]
                    (get-in erred ["config_error" "problems"]))))))
+
+(defn- with-secret-project
+  "A temp project holding a root `.env`, a nested `.env` and one ordinary file."
+  [f]
+  (let [root
+        (.toRealPath (Files/createTempDirectory "vis-deny-policy"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+                     (make-array java.nio.file.LinkOption 0))
+
+        directory
+        (.toFile root)]
+
+    (try (spit (File. directory ".env") "TOKEN=secret")
+         (.mkdirs (File. directory "service"))
+         (spit (File. directory "service/.env") "TOKEN=secret")
+         (spit (File. directory "README.md") "hello")
+         (f (.toString root))
+         (finally (doseq [^File file (reverse (file-seq directory))]
+                    (.delete file))))))
+
+(defdescribe
+  filesystem-deny-rule-test
+  (it "resolves deny rules against the workspace root and expands globs for the jail (#263)"
+      (with-secret-project
+        (fn [root]
+          (let [snapshot
+                (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                  "jail" {"enabled" true
+                                          "filesystem" {"allow" ["project"]
+                                                        "deny_read" [".env" "**/.env"]
+                                                        "deny_write" ["service"]}}}
+                                 {:base-dir root})
+
+                jail
+                (:process-jail snapshot)]
+
+            ;; The rules stay patterns: the host tools match them live, so a file
+            ;; created after startup is still refused by `cat`.
+            (expect (= [(str root "/.env") (str root "/**/.env")] (:deny-read-rules jail)))
+            (expect (= [(str root "/service")] (:deny-write-rules jail)))
+            ;; The OS profile can only name concrete paths, so the glob is expanded.
+            (expect (= [(str root "/.env") (str root "/service/.env")] (:deny-read jail)))
+            (expect (= [(str root "/service")] (:deny-write jail)))
+            ;; Diagnostics show the rules an operator wrote, never file contents.
+            (expect (= [(str root "/.env") (str root "/**/.env")]
+                       (get-in (policy/access-view snapshot []) ["filesystem" "deny_read"])))
+            (expect (= [(str root "/service")]
+                       (get-in (policy/access-view snapshot []) ["filesystem" "deny_write"]))))))))

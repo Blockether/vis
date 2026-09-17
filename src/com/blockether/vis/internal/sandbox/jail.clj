@@ -49,7 +49,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
-  (:import (java.nio.file Path Paths)
+  (:import (java.nio.file FileSystems Path PathMatcher Paths)
            (java.util HashMap)))
 
 (defn supported?
@@ -159,6 +159,54 @@
              (not= :off (workspace/draft-backend-setting))
              (some #(beneath? path %) (draft-source-roots env)))
     draft-required-message))
+
+(def ^:private deny-rule-settings
+  "Configured filesystem deny rules, by the `vis.yml` key that declared them and
+   the host operations each one closes. A READ rule closes writing too: a file
+   this session may not read is not one it may rewrite either."
+  [{:rules :deny-read-rules
+    :paths :deny-read
+    :setting "jail.filesystem.deny_read"
+    :closure "is closed to this session: nothing here can read or change it"
+    :operations #{"file-read" "file-write"}}
+   {:rules :deny-write-rules
+    :paths :deny-write
+    :setting "jail.filesystem.deny_write"
+    :closure "is closed to writes in this session: nothing here can change it"
+    :operations #{"file-write"}}])
+
+(defn- rule-covers?
+  "True when `path` is the file a deny rule names or lies beneath it. Every
+   ancestor is tested too, so a rule naming a directory closes the whole subtree
+   and `**/.env` closes each file it matches, without a second spelling."
+  [rule ^String path]
+  (when-let [^PathMatcher matcher (try (.getPathMatcher (FileSystems/getDefault) (str "glob:" rule))
+                                       (catch Throwable _ nil))]
+    (loop [^Path candidate (Paths/get path (make-array String 0))]
+      (cond (nil? candidate) false
+            (.matches matcher candidate) true
+            :else (recur (.getParent candidate))))))
+
+(defn deny-refusal
+  "Actionable refusal when a configured `jail.filesystem` deny rule covers `path`
+   for `operation` (`\"file-read\"` / `\"file-write\"`), else nil.
+
+   The kernel stops a confined child; the host file tools run in THIS process,
+   which no sandbox confines, so they ask here for the same rules. Matching is on
+   the canonical path, so a symlink or a `..` spelling cannot dodge a rule."
+  [env operation path]
+  (when-let [canonical (workspace/normalize-root path)]
+    (let [policy (:process-jail (:security-policy env))]
+      (some (fn [{:keys [rules paths setting closure operations]}]
+              (when (contains? operations (str operation))
+                (when-let [rule (first (filter #(rule-covers? % canonical)
+                                               (or (get policy rules) (get policy paths))))]
+                  (str "Blocked by " setting
+                       " in vis.yml: " rule
+                       " " closure
+                       " — continue without that file, or ask the operator to change"
+                       " the rule."))))
+            deny-rule-settings))))
 
 (defn draft-policy-expanded?
   "True when a live repository was not covered by the worker's launch-time write denials."

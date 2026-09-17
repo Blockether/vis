@@ -316,7 +316,10 @@ without it, shells and language processes run with your full permissions. With
 and through the gateway's egress proxy. Unsupported hosts return an error.
 
 Declare directories in `workspace.filesystem`, then allow them by id in
-`jail.filesystem.allow`. The jail does not expose unlisted roots.
+`jail.filesystem.allow`. The jail does not expose unlisted roots. To keep specific
+files out of every grant, list patterns under `jail.filesystem.deny_read` or
+`jail.filesystem.deny_write`; those rules require `jail.enabled: true` and are
+described in [Deny specific files](jail.md#deny-specific-files).
 
 | Key | Meaning |
 |---|---|
@@ -365,6 +368,11 @@ jail:
   environment: declared          # or inherit
   filesystem:
     allow: [sibling, reference, m2, cuda, scratch]
+    deny_read:                   # patterns denied to every jailed reader
+      - .env
+      - "**/.env*"
+    deny_write:
+      - deploy/production
   keychain: true                 # let gh/git credential helpers reach the OS keychain
   network:
     allowed_domains:

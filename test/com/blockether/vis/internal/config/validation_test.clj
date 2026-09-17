@@ -498,3 +498,35 @@
                  (expect (seq (config-validation/explain-problems (assoc-in full-config
                                                                     ["jail" "mach_services"]
                                                                     {"keychain" true}))))))
+
+(defdescribe jail-filesystem-deny-test
+             (it "vis.yml can declare read and write deny rules (#263)"
+                 (expect (config-validation/valid? (assoc-in full-config
+                                                     ["jail" "filesystem" "deny_read"]
+                                                     [".env" "**/.env" "**/.env.*"])))
+                 ;; The block stays closed: a misspelled key is a config error, not a silent gap.
+                 (expect (seq (config-validation/explain-problems
+                                (assoc-in full-config ["jail" "filesystem" "deny"] [".env"])))))
+             (it "keeps each rule exactly as written, trimmed and deduped"
+                 (let [policy (config-validation/process-jail-config
+                                (assoc-in full-config
+                                  ["jail" "filesystem"]
+                                  {"allow" ["svar" "ref" "gen" "cache"]
+                                   "deny_read" [".env" "  **/.env  " "**/.env" "~/secrets/prod.env"]
+                                   "deny_write" ["vendor"]}))]
+                   ;; Resolution against the workspace root and glob expansion belong to the
+                   ;; policy snapshot; config validation must not guess a path here.
+                   (expect (= [".env" "**/.env" "~/secrets/prod.env"] (:deny-read policy)))
+                   (expect (= ["vendor"] (:deny-write policy)))))
+             (it "refuses a deny rule that nothing would enforce"
+                 (let [error (try (config-validation/process-jail-config
+                                    (-> full-config
+                                        (assoc-in ["jail" "enabled"] false)
+                                        (assoc-in ["jail" "filesystem" "deny_read"] [".env"])))
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                   ;; Without the OS sandbox the rule would cover `cat` and nothing else, so
+                   ;; Vis fails closed rather than implying a boundary it cannot hold.
+                   (expect (some? error))
+                   (expect (= :vis/invalid-config (:type (ex-data error))))
+                   (expect (str/includes? (ex-message error) "jail.enabled: true")))))

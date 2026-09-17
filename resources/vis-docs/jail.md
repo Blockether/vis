@@ -92,6 +92,41 @@ an explicit path. `draft` controls isolated workspace copies independently of th
 jail. Vis also grants `~/.vis` read/write and excludes it from default searches;
 declare it explicitly only to change that access.
 
+### Deny specific files
+
+Deny rules take individual files back out of every grant. List patterns under
+`jail.filesystem.deny_read` and `jail.filesystem.deny_write`:
+
+```yaml
+jail:
+  enabled: true
+  filesystem:
+    allow: [sibling, reference]
+    deny_read:
+      - .env
+      - "**/.env*"
+      - ~/secrets
+    deny_write:
+      - deploy/production
+```
+
+A pattern is absolute, home-relative, or relative to the workspace root. `*` matches
+inside one path segment, `**` crosses directories, and a rule that names a directory
+covers everything under it.
+
+Denial wins over allow lists, workspace roots and runtime grants. Vis matches a rule
+against the normalized path with symlinks resolved, so a denied file stays denied when
+you reach it through another root, a relative path or a link. `deny_read` blocks both
+reading and writing; `deny_write` blocks writing only.
+
+The same rules cover host tools (`cat`, `ls`, `grep`, `patch` and the other readers and
+writers), `python_execution` and every child process Vis starts. A call that touches
+several paths is refused whole: no path in the batch is read or written.
+
+Deny rules require `jail.enabled: true`, because only the OS jail can keep a confined
+child out of a single file. With the jail off, Vis reports the configuration as invalid
+instead of accepting rules it cannot enforce.
+
 ## Environment filtering
 
 With the jail enabled, a child receives:
@@ -254,6 +289,8 @@ keychain databases; on Linux it exposes the session D-Bus so the Secret Service
 ## Diagnose the effective policy
 
 1. Inspect `session["access"]`; do not infer access from the YAML file alone.
+   `session["access"]["filesystem"]["deny_read"]` and `["deny_write"]` list the
+   effective deny rules.
 2. Run `/reload` after a config edit, then send a message in each session that must
    adopt it.
 3. Use `/net-probe METHOD URL` or `/net-probe host:port` for egress decisions.

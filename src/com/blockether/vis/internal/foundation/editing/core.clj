@@ -762,8 +762,9 @@
                :kind kind}})))
 
 (defn- fs-access-refusal
-  "First draft-policy or extension-owned `:fs/access` refusal, or nil when all
-   paths are allowed. Host readers and writers use `file-read` and `file-write`."
+  "First configured-deny, draft-policy or extension-owned `:fs/access` refusal, or
+   nil when all paths are allowed. Host readers and writers use `file-read` and
+   `file-write`."
   [env kind operation paths]
   (some (fn [path]
           (let [target
@@ -772,7 +773,9 @@
                 absolute
                 (or (:absolute target) (str path))]
 
-            (or (when (= "file-write" operation)
+            (or (when-let [reason (process-jail/deny-refusal env operation absolute)]
+                  {:reason reason :owner :policy :target target})
+                (when (= "file-write" operation)
                   (when-let [reason (process-jail/draft-write-refusal env absolute)]
                     {:reason reason :owner :draft :target target}))
                 (when (extension/gate-hooked? :fs/access)
