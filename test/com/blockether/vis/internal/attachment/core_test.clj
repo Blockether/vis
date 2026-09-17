@@ -703,6 +703,76 @@
             (expect (str/includes? (:reason (first (:skipped out))) "limit")))))))
 
 (defdescribe
+  csv-attachment-test
+  "A shared table is a DOCUMENT, and CSV/TSV have no magic bytes at all: the
+   filename or the MIME claim is the only hint there is, and a browser routinely
+   spells a `.csv` as `text/plain` or an Excel type. Intake keeps the bytes whole
+   under the canonical spelling, so a later tool can read the table back."
+  (it "keeps a shared table as a UTF-8 document, whatever the browser claimed"
+      (doseq [[filename media-type expected]
+              [["rows.csv" nil "text/csv"] ["ROWS.CSV" "application/octet-stream" "text/csv"]
+               ["rows.csv" "text/plain" "text/csv"]
+               ["rows.csv" "application/vnd.ms-excel" "text/csv"]
+               ["shared-rows" "text/csv; charset=utf-8" "text/csv"]
+               ["shared-rows" "TEXT/X-CSV" "text/csv"] ["rows.tsv" "" "text/tab-separated-values"]
+               ["shared-rows" "text/tab-separated-values" "text/tab-separated-values"]]
+
+              text
+              ["name,total\ncafé,2\n" "name\ttotal\ncafé\t2\n" "single-column\n" ""
+               "\uFEFFname,total\r\nrow,1\r\n"]]
+
+        (let [payload
+              (b64 (.getBytes ^String text "UTF-8"))
+
+              out
+              (attachments/prepare-inline-attachments
+                [{"filename" filename "media_type" media-type "base64" payload}])
+
+              attachment
+              (first (:attached out))]
+
+          (expect (empty? (:skipped out)))
+          (expect (= filename (:filename attachment)))
+          (expect (= expected (:media-type attachment)))
+          (expect (= payload (:base64 attachment))))))
+  (it "keeps a table readable without sending it as an image"
+      (doseq [media-type ["text/csv" "text/tab-separated-values"]]
+        (let [attachment {:filename "rows.csv"
+                          :media-type media-type
+                          :base64 (b64 (.getBytes "name,total\n" "UTF-8"))
+                          :audience "both"}
+              wired (attachments/wire-images [attachment])]
+
+          (expect (attachments/hidden-from-model? attachment))
+          (expect (empty? (:attached wired)))
+          (expect (:readable-blind? (first (:skipped wired)))))))
+  (it "refuses binary or invalid UTF-8 even with a CSV name or media type"
+      (doseq [bytes [(byte-array [0 1 2 3]) (byte-array [0xc3 0x28])]]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:filename "rows.csv" :media-type "text/csv" :base64 (b64 bytes)}])]
+          (expect (empty? (:attached out)))
+          (expect (= "not a supported attachment format" (:reason (first (:skipped out))))))))
+  ;; A table is not pixels, so it is stored well past the provider image cap and
+  ;; the offload rail moves it to a backend (see `storage-test`). The cap is
+  ;; scaled down here instead of allocating megabytes of commas.
+  (it "stores a table past the image cap, up to the oversize ceiling"
+      (let [payload
+            (b64 (.getBytes "name,total\ncafé,2\n" "UTF-8"))
+
+            attachment
+            {:filename "rows.csv" :base64 payload}
+
+            out
+            (attachments/prepare-inline-attachments [attachment] {:max-bytes 6})
+
+            refused
+            (attachments/prepare-inline-attachments [attachment] {:max-bytes 4})]
+
+        (expect (= "text/csv" (:media-type (first (:attached out)))))
+        (expect (empty? (:attached refused)))
+        (expect (str/includes? (:reason (first (:skipped refused))) "limit")))))
+
+(defdescribe
   provider-safe-media-type-test
   "Intake STORES, it does not decide. The wire's four containers are still the
    only ones a provider takes, but which of them a payload must become is a
@@ -1071,14 +1141,15 @@
 ;; clamp lives in `attachment-audience`, the one funnel every gate reads.
 (defdescribe
   human-only-documents-test
-  "PDF/HTML attachments are for the human, whatever audience was asked for."
+  "PDF, HTML and CSV attachments are for the human, whatever audience was asked for."
   (it "names the document media types and ignores charset parameters"
       (expect (attachments/human-only-media-type? "application/pdf"))
       (expect (attachments/human-only-media-type? "text/html"))
       (expect (attachments/human-only-media-type? "application/xhtml+xml"))
       (expect (attachments/human-only-media-type? "TEXT/HTML; charset=utf-8"))
+      (expect (attachments/human-only-media-type? "text/csv"))
+      (expect (attachments/human-only-media-type? "text/tab-separated-values"))
       (expect (not (attachments/human-only-media-type? "image/png")))
-      (expect (not (attachments/human-only-media-type? "text/csv")))
       (expect (not (attachments/human-only-media-type? nil))))
   (it
     "clamps a document's audience to the human, even when 'model' was asked for"

@@ -315,11 +315,25 @@
    :html "text/html"
    :xhtml "application/xhtml+xml"
    :markdown "text/markdown"
+   :csv "text/csv"
+   :tsv "text/tab-separated-values"
    :jsonl "application/x-ndjson"})
 
 (def markdown-media-types
   "MIME spellings used by Markdown file providers. Intake stores `text/markdown`."
   #{"text/markdown" "text/x-markdown"})
+
+(def csv-media-types
+  "MIME spellings file providers and servers use for a comma-separated table.
+   Intake stores `text/csv`; a shared `.csv` routinely arrives under one of the
+   other spellings, and a server that answers `text/plain` is judged by the
+   filename instead."
+  #{"text/csv" "application/csv" "text/x-csv" "application/x-csv" "text/comma-separated-values"})
+
+(def tsv-media-types
+  "MIME spellings file providers use for a tab-separated table. Intake stores
+   `text/tab-separated-values`."
+  #{"text/tab-separated-values" "text/tsv" "text/x-tsv"})
 
 (def gzip-media-types
   "MIME spellings file providers use for a gzip stream. Intake sniffs and stores
@@ -337,7 +351,8 @@
    audience the caller asked for. Documents and gzip streams are not pixels; the
    honest route is to keep their bytes in the session, name the file to the model,
    and let it inspect those bytes on demand with `read_attachment`."
-  (into (set (vals document-media-types)) (concat gzip-media-types markdown-media-types)))
+  (into (set (vals document-media-types))
+        (concat gzip-media-types markdown-media-types csv-media-types tsv-media-types)))
 
 (defn detect-document-mime
   "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
@@ -672,21 +687,36 @@
       (if (neg? i) s (subs s (inc i))))
     s))
 
-(defn- detect-markdown-mime
-  "Markdown has no magic bytes. Require a filename or MIME hint and valid UTF-8
-   without binary control characters; ordinary prose and empty documents are valid."
+(defn- detect-text-mime
+  "Sniff a TEXT format -- Markdown, or a CSV/TSV table -- which has no magic
+   bytes of any kind. A filename or MIME hint is the only claim there is, so the
+   bytes must then BE text: valid UTF-8 without binary control characters.
+   Ordinary prose, a one-column table and an empty document are all valid."
   [^bytes b filename media-type]
-  (let [media-type (-> (str media-type)
-                       str/lower-case
-                       (str/split #";" 2)
-                       first
-                       str/trim)]
-    (when (or (re-find #"(?i)\.(?:md|markdown|mdown|mkd)$" (str filename))
-              (contains? markdown-media-types media-type))
+  (let [media-type
+        (-> (str media-type)
+            str/lower-case
+            (str/split #";" 2)
+            first
+            str/trim)
+
+        name-s
+        (str filename)
+
+        hinted
+        (cond (or (re-find #"(?i)\.(?:md|markdown|mdown|mkd)$" name-s)
+                  (contains? markdown-media-types media-type))
+              (:markdown document-media-types)
+              (or (re-find #"(?i)\.csv$" name-s) (contains? csv-media-types media-type))
+              (:csv document-media-types)
+              (or (re-find #"(?i)\.tsv$" name-s) (contains? tsv-media-types media-type))
+              (:tsv document-media-types))]
+
+    (when hinted
       (let [text (String. b StandardCharsets/UTF_8)]
         (when (and (Arrays/equals b (util/utf8 text))
                    (not (re-find #"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]" text)))
-          (:markdown document-media-types))))))
+          hinted)))))
 
 (defn image-reference
   "The optional composer token naming an image, or nil for an invalid label."
@@ -698,7 +728,7 @@
   "Validate already-encoded attachments delivered INLINE (web/API upload) rather
    than as filesystem paths. Each entry is `{:base64 :filename :media-type? :reference?}`;
    the base64 may be a bare payload or a `data:...;base64,` URL. Decodes each, sniffs
-   the MIME from magic bytes, then checks Markdown hints against valid UTF-8 text.
+   the MIME from magic bytes, then a text hint (Markdown, CSV/TSV) against valid UTF-8.
    A declared `:media-type` alone never accepts binary bytes. Enforces the same caps
    as [[collect-user-images]], returning its `{:attached [...] :skipped [...]}` shape.
    Never throws.
@@ -725,7 +755,7 @@
 
                mime
                (or (detect-media-mime raw)
-                   (detect-markdown-mime raw label (or (:media-type att) (get att "media_type"))))
+                   (detect-text-mime raw label (or (:media-type att) (get att "media_type"))))
 
                reference
                (when (and mime (str/starts-with? mime "image/")) (image-reference att))

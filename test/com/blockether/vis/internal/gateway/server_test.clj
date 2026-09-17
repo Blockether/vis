@@ -977,14 +977,16 @@
           ;; INTAKE ceiling (25MB), not the 5MB provider cap: an oversize still is
           ;; squeezed on the way OUT rather than refused at upload.
           (is (= (* 25 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
-          ;; Every sniffable file is advertised to the picker. Recordings, JSONL and
-          ;; gzip diagnostics ride beside documents: their bytes stay in session storage,
-          ;; and the model is told it can inspect them on demand.
-          (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "application/gzip"
-                  "application/pdf" "application/x-gzip" "application/x-ndjson"
-                  "application/xhtml+xml" "text/html" "text/markdown" "text/x-markdown" "video/mp4"
-                  "video/quicktime" "audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4"
-                  "audio/mpeg" "audio/ogg" "audio/wav" "audio/x-caf"]
+          ;; Every sniffable file is advertised to the picker. Recordings, tables,
+          ;; JSONL and gzip diagnostics ride beside documents: their bytes stay in
+          ;; session storage, and the model is told it can inspect them on demand.
+          (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "application/csv"
+                  "application/gzip" "application/pdf" "application/x-csv" "application/x-gzip"
+                  "application/x-ndjson" "application/xhtml+xml" "text/comma-separated-values"
+                  "text/csv" "text/html" "text/markdown" "text/tab-separated-values" "text/tsv"
+                  "text/x-csv" "text/x-markdown" "text/x-tsv" "video/mp4" "video/quicktime"
+                  "audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg"
+                  "audio/ogg" "audio/wav" "audio/x-caf"]
                  (get-in body ["features" "attachments" "media_types"])))
           (is (= ["video/mp4" "video/quicktime"]
                  (get-in body ["features" "attachments" "video_media_types"])))

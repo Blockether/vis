@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
@@ -58,10 +59,12 @@ import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
   capturePhotoAttachment,
+  dragCarriesFiles,
   editedAttachment,
   isVideoMediaType,
   pickDocumentAttachments,
   pickMediaAttachments,
+  rejectionNotice,
   type AttachmentLimits,
   type PendingAttachment,
   type PickAttachmentResult,
@@ -839,6 +842,9 @@ export function SessionScreen({
   // inherits the app shell's keyboard pin without a second viewport listener or
   // a lagging fixed WebKit layer.
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  // A drag carrying files is over the composer: the box has to say so, or the
+  // reader is guessing where to let go with a file already in hand.
+  const [dropActive, setDropActive] = useState(false);
   // Seeded from the same cached capabilities as the composer above, so the mic
   // button is there on the first frame instead of arriving a round-trip late.
   const [voiceSupported, setVoiceSupported] = useState(
@@ -3093,7 +3099,7 @@ export function SessionScreen({
       });
       if (generation !== intakeGenerationRef.current) return;
       stageAttachments(result.attachments, maximum);
-      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+      setComposerNotice(rejectionNotice(result.rejected));
     } catch (cause) {
       // A dismissed sheet is a decision, not a failure.
       setComposerNotice(sheetDismissed(cause) ? dismissedNotice : (cause as Error).message);
@@ -3135,10 +3141,54 @@ export function SessionScreen({
       });
       if (generation !== intakeGenerationRef.current) return;
       stageAttachments(result.attachments, maximum);
-      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+      setComposerNotice(rejectionNotice(result.rejected));
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
+  }
+
+  // A file dropped anywhere ELSE in the window must not make the browser open
+  // it: that replaces the whole app, and the draft goes with it. The composer's
+  // own handler has already claimed the event by the time this one runs.
+  useEffect(() => {
+    const swallow = (event: globalThis.DragEvent) => {
+      if (dragCarriesFiles(event.dataTransfer)) event.preventDefault();
+    };
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return () => {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
+
+  // DRAG AND DROP, the way a desk hands a file to an app. The pointer that can
+  // drag a spreadsheet onto this box is exactly the one with no share sheet and
+  // no gallery behind the paperclip — and the files land in the SAME gate the
+  // paperclip uses, so a drop is refused for the same reasons, in the same
+  // words, one line per file.
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    if (!dragCarriesFiles(event.dataTransfer)) return;
+    // Claiming the drag is what shows the copy cursor and what makes the drop
+    // event fire here at all.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setDropActive(true);
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLDivElement>) {
+    // Moving over a CHILD fires `dragleave` on the box; only the pointer
+    // actually leaving it ends the highlight.
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDropActive(false);
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>) {
+    if (!dragCarriesFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    setDropActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length) void addBrowserFiles(files);
   }
 
   const attachmentCommands: ComposerAttachmentCommands = {
@@ -3237,7 +3287,7 @@ export function SessionScreen({
       });
       if (generation !== intakeGenerationRef.current) return;
       stageAttachments(result.attachments, maximum);
-      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+      setComposerNotice(rejectionNotice(result.rejected));
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
@@ -4642,7 +4692,13 @@ export function SessionScreen({
               onError={setError}
             />
 
-            <div className="relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent">
+            <div
+              onDragEnter={handleDragOver}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent ${dropActive ? 'ring-1 ring-accent ring-inset' : ''}`}
+            >
               <ComposerPayloadShelf
                 pastes={activePastes}
                 attachments={attachments}
@@ -4654,7 +4710,7 @@ export function SessionScreen({
                 voicePhase !== 'idle' ||
                 voiceModel?.status === 'downloading' ||
                 (voiceRequested && voiceModel?.status !== 'ready')) && (
-                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 whitespace-pre-line border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
                   {voicePhase === 'recording' ? (
                     <>
                       <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}

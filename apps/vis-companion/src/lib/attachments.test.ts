@@ -24,8 +24,10 @@ vi.mock('@capacitor/core', () => ({
 import {
   attachmentsFromFiles,
   candidateMediaType,
+  dragCarriesFiles,
   isAudioMediaType,
   pickDocumentAttachments,
+  rejectionNotice,
 } from './attachments';
 
 /** One picked file, exactly as the plugin hands it over. */
@@ -132,7 +134,9 @@ describe('the FILES door', () => {
     const result = await pickDocumentAttachments({ mediaTypes: ['audio/mp4'] });
 
     expect(result.attachments).toEqual([]);
-    expect(result.rejected).toEqual(['archive.zip: unsupported media format']);
+    expect(result.rejected).toEqual([
+      'archive.zip: application/zip is not an accepted attachment format',
+    ]);
   });
 
   // Regression, user report: the Files door advertised only camera and recording media,
@@ -272,6 +276,82 @@ describe('Markdown attachments', () => {
   });
 });
 
+// Regression #261: a colleague's spreadsheets came back as "media not supported".
+describe('CSV and TSV attachments', () => {
+  it.each([
+    ['rows.csv', ''],
+    ['ROWS.CSV', 'application/octet-stream'],
+    ['rows.csv', 'text/plain'],
+    ['rows.csv', 'application/vnd.ms-excel'],
+    ['shared-rows', 'text/csv; charset=utf-8'],
+    ['shared-rows', 'TEXT/X-CSV'],
+  ])('admits %s declared as %s', async (name, type) => {
+    const result = await attachmentsFromFiles([new File(['name,total\ncafé,2\n'], name, { type })]);
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0]).toMatchObject({ filename: name, media_type: 'text/csv' });
+  });
+
+  it.each([
+    ['rows.tsv', ''],
+    ['rows.tsv', 'text/plain'],
+    ['shared-rows', 'text/tab-separated-values'],
+  ])('admits %s declared as %s as a tab-separated table', async (name, type) => {
+    const result = await attachmentsFromFiles([new File(['name\ttotal\n'], name, { type })]);
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0]).toMatchObject({
+      filename: name,
+      media_type: 'text/tab-separated-values',
+    });
+  });
+
+  it('offers tables in the document picker', async () => {
+    filePicker.pickFiles.mockResolvedValue({ files: [picked('rows.csv', 'text/csv')] });
+    const result = await pickDocumentAttachments();
+    expect(filePicker.pickFiles).toHaveBeenCalledWith({
+      types: expect.arrayContaining(['text/csv', 'text/tab-separated-values']),
+      readData: false,
+    });
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments).toHaveLength(1);
+  });
+
+  it('leaves a type the platform actually named alone', () => {
+    expect(candidateMediaType('notes.txt', 'text/plain')).toBe('text/plain');
+    expect(candidateMediaType('rows.csv', 'image/png')).toBe('image/png');
+  });
+});
+
+// Regression #261: every refusal arrived glued into one unreadable sentence.
+describe('what the composer says about a refusal', () => {
+  it('gives every refused file its own line, and says nothing when nothing was refused', () => {
+    expect(rejectionNotice([])).toBeNull();
+    expect(rejectionNotice(['rows.csv: too big', 'notes.exe: not accepted'])).toBe(
+      '- rows.csv: too big\n- notes.exe: not accepted',
+    );
+  });
+
+  it('names the type it refused, or says the type could not be read', async () => {
+    const result = await attachmentsFromFiles([
+      new File(['MZ'], 'installer.exe', { type: 'application/x-msdownload' }),
+      new File([new Uint8Array(4)], 'mystery'),
+    ]);
+    expect(result.attachments).toEqual([]);
+    expect(rejectionNotice(result.rejected)).toBe(
+      '- installer.exe: application/x-msdownload is not an accepted attachment format\n' +
+        '- mystery: its file type could not be recognised',
+    );
+  });
+});
+
+describe('a drag over the composer', () => {
+  it('is claimed only when it carries files', () => {
+    const carrying = { types: ['Files', 'text/plain'] } as unknown as DataTransfer;
+    const text = { types: ['text/plain'] } as unknown as DataTransfer;
+    expect(dragCarriesFiles(carrying)).toBe(true);
+    expect(dragCarriesFiles(text)).toBe(false);
+    expect(dragCarriesFiles(null)).toBe(false);
+  });
+});
 // Regression: diagnostics shared back to Vis were rejected by paste/file intake.
 describe('diagnostics attachments', () => {
   it.each([

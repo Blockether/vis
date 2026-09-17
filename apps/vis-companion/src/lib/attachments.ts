@@ -14,6 +14,19 @@ export interface PickAttachmentResult {
   rejected: string[];
 }
 
+/**
+ * The composer's notice for everything a pick REFUSED: ONE LINE PER FILE.
+ *
+ * A refusal names a file and says why, so five refused files are five facts.
+ * Joined into one sentence they stop being readable — nobody can tell which
+ * name belongs to which reason, which is exactly what dropping a folder of
+ * spreadsheets produces. A leading dash makes the list a list.
+ */
+export function rejectionNotice(rejected: readonly string[]): string | null {
+  if (!rejected.length) return null;
+  return rejected.map((reason) => `- ${reason}`).join('\n');
+}
+
 const DEFAULT_IMAGE_MEDIA_TYPES = [
   'image/jpeg',
   'image/png',
@@ -53,6 +66,8 @@ const DEFAULT_DOCUMENT_MEDIA_TYPES = [
   'text/html',
   'text/markdown',
   'text/x-markdown',
+  'text/csv',
+  'text/tab-separated-values',
 ];
 
 const DEFAULT_MEDIA_TYPES = [
@@ -185,6 +200,15 @@ function attachmentGate({
   };
 }
 
+// WHY a candidate was refused, in the reader's words. "Unsupported media
+// format" names neither the file's type nor anything to do about it, and a
+// notice that repeats it once per file is a wall of the same dead end.
+function unsupportedReason(mimeType: string): string {
+  return mimeType
+    ? `${mimeType} is not an accepted attachment format`
+    : 'its file type could not be recognised';
+}
+
 async function collectAttachments(
   candidates: MediaCandidate[],
   limits: AttachmentLimits,
@@ -194,7 +218,7 @@ async function collectAttachments(
   const rejected: string[] = [];
   const accepted = candidates.filter((candidate) => {
     if (gate.accepts(candidate.mimeType)) return true;
-    rejected.push(`${candidate.name}: unsupported media format`);
+    rejected.push(`${candidate.name}: ${unsupportedReason(candidate.mimeType)}`);
     return false;
   });
   // Native path reads and data-URL encodes are independent. Starting all of them
@@ -259,6 +283,8 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   markdown: 'text/markdown',
   mdown: 'text/markdown',
   mkd: 'text/markdown',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
   gz: 'application/gzip',
   jsonl: 'application/x-ndjson',
   ndjson: 'application/x-ndjson',
@@ -289,14 +315,52 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
 // is the verdict either way.
 const UNNAMED_MEDIA_TYPES = ['application/octet-stream', 'binary/octet-stream'];
 
+// A TEXT format is the one thing a FILENAME settles better than the platform
+// does. The `.csv` a colleague shared arrives as `text/plain` from one browser,
+// `application/vnd.ms-excel` from a machine with Excel installed and
+// `application/csv` from a download server; none of those words says "table",
+// and the gate would refuse two of them outright. The extension decides for
+// these, and the gateway's own UTF-8 check is still the verdict on the bytes.
+const TEXT_EXTENSION_MEDIA_TYPES = ['text/markdown', 'text/csv', 'text/tab-separated-values'];
+const LOOSE_TEXT_MEDIA_TYPES = [
+  'text/plain',
+  'application/vnd.ms-excel',
+  'application/csv',
+  'text/x-csv',
+  'application/x-csv',
+  'text/comma-separated-values',
+  'text/tsv',
+  'text/x-tsv',
+];
+
+// One table, MANY spellings: a download server answers `application/csv`, an
+// Excel export says `text/x-csv`, a Markdown provider says `text/x-markdown`.
+// The gateway stores one canonical name for each, so a file that names itself
+// with a variant is admitted under the name the gate and the shelf both know.
+const CANONICAL_TEXT_MEDIA_TYPES: Record<string, string> = {
+  'text/x-markdown': 'text/markdown',
+  'application/csv': 'text/csv',
+  'text/x-csv': 'text/csv',
+  'application/x-csv': 'text/csv',
+  'text/comma-separated-values': 'text/csv',
+  'text/tsv': 'text/tab-separated-values',
+  'text/x-tsv': 'text/tab-separated-values',
+};
+
 /** What a picked file CLAIMS to be: the platform's word, else its extension. */
 export function candidateMediaType(name: string, declared: string | null | undefined): string {
   const claim = (declared ?? '').split(';')[0].trim().toLowerCase();
   const extension = (name.split('.').pop() ?? '').toLowerCase();
   const inferred = EXTENSION_MEDIA_TYPES[extension];
-  if (claim === 'text/x-markdown' || (claim === 'text/plain' && inferred === 'text/markdown')) {
-    return 'text/markdown';
+  if (
+    inferred &&
+    TEXT_EXTENSION_MEDIA_TYPES.includes(inferred) &&
+    (!claim || LOOSE_TEXT_MEDIA_TYPES.includes(claim) || UNNAMED_MEDIA_TYPES.includes(claim))
+  ) {
+    return inferred;
   }
+  const canonical = CANONICAL_TEXT_MEDIA_TYPES[claim];
+  if (canonical) return canonical;
   if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
   return inferred ?? claim;
 }
@@ -391,6 +455,17 @@ export async function capturePhotoAttachment(
     ],
     { ...limits, maxFiles: 1 },
   );
+}
+
+/**
+ * Does this drag carry FILES, rather than selected text or a link?
+ *
+ * The composer claims a drag only when there is something to attach, so
+ * dropping a sentence into the box still writes it into the message the way the
+ * browser always has.
+ */
+export function dragCarriesFiles(transfer: DataTransfer | null | undefined): boolean {
+  return !!transfer && Array.from(transfer.types).includes('Files');
 }
 
 // Build attachments from raw File/Blob objects — the clipboard-paste and
