@@ -334,6 +334,34 @@
             (expect (not (re-find #"href=\"[^\"/:][^\":]*\.md[\"#]" html))
                     (str "dangling .md link in live page " (:slug page))))))))
 
+(defdescribe
+  mobile-zoom-test
+  (it "pins phones to the mobile layout instead of letting them zoom the page"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            home
+            (first (filter #(= "index" (:slug %)) pages))]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site home mode)
+
+                      css
+                      (rendered-theme html mode)]]
+
+          (expect (str/includes?
+                    html
+                    (str "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,"
+                         "maximum-scale=1,user-scalable=no,viewport-fit=cover\">")))
+          ;; `manipulation` would still allow pinch zoom; only panning may stay.
+          (expect (str/includes? css "touch-action: pan-x pan-y")))
+        ;; Safari obeys neither the meta nor touch-action, so the static script
+        ;; refuses its pinch gestures.
+        (expect (str/includes? (slurp (io/resource "vis-docs/assets/docs.js")) "gesturestart")))))
+
 (defdescribe mobile-navigation-test
              (it "keeps the menu control without a hover or tap highlight rectangle"
                  (let [{:keys [pages] :as site}
@@ -415,9 +443,7 @@
           (expect (re-find #"\.content pre\s*\{\s*font-family: inherit" css))
           (expect (re-find #"\.content th,\s*\.content td\s*\{[^}]*white-space: normal" css))
           (expect (re-find #"\.content th code,\s*\.content td code\s*\{\s*font-size: inherit" css))
-          (expect (str/includes? html "<thead>"))
-          (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
-          (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
+          (expect (str/includes? html "<thead>"))))))
 
 (defdescribe shared-theme-test
              (it "shares one stylesheet, external in static output and embedded in live output"

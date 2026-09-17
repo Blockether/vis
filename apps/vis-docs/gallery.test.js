@@ -182,3 +182,15 @@ test('the enhancement is harmless on documentation pages without galleries', () 
   expect(() => dom.window.eval(script)).not.toThrow();
   expect(dom.window.Prism.highlightAll).toHaveBeenCalledOnce();
 });
+
+test('the page refuses Safari pinch gestures so a phone keeps the mobile layout', () => {
+  const dom = new JSDOM('<p>Another guide</p>', { runScripts: 'outside-only' });
+  documents.push(dom);
+  dom.window.Prism = { highlightAll: vi.fn() };
+  dom.window.eval(script);
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+    const gesture = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    dom.window.document.dispatchEvent(gesture);
+    expect(gesture.defaultPrevented, type).toBe(true);
+  }
+});

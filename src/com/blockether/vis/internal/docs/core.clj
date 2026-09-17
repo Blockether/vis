@@ -379,7 +379,11 @@
   (let [home? (= slug "index")]
     (str
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
+      ;; The mobile layout is the design: phones read it at its own scale, so the
+      ;; page pins zoom instead of letting a pinch, a double tap or a focused
+      ;; search box rescale it.
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1"
+      ",maximum-scale=1,user-scalable=no,viewport-fit=cover\">"
       "<title>"
       (esc title)
       " · "

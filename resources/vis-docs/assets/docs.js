@@ -63,3 +63,9 @@ for (const gallery of document.querySelectorAll('[data-screenshot-gallery]')) {
   update(0);
   controls.hidden = false;
 }
+
+/* Safari ignores `user-scalable=no` and `touch-action`, so the page refuses its
+   pinch gestures directly; the layout is already sized for the screen. */
+for (const gesture of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(gesture, (event) => event.preventDefault(), { passive: false });
+}

@@ -54,6 +54,8 @@ html {
   scrollbar-gutter: stable;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Panning is all a phone needs here: `manipulation` would keep pinch zoom. */
+  touch-action: pan-x pan-y;
 }
 body {
   margin: 0;
