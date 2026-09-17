@@ -38,7 +38,8 @@ precedence over pip and editable copies in both trusted extensions and
 In `python_execution`, you can import `blockether.vis.extension` to inspect public
 types and construct declarations without registering them. Registration and host
 callbacks such as `state` and `shell` raise `RuntimeError`; native filesystem helpers
-such as `fs.read` raise `PermissionError`. No standalone host is initialized. See
+such as `fs.read` raise `PermissionError`. No standalone host is initialized, and
+`blockether.vis.extension` is the only import under `blockether.vis` there. See
 [sandbox experimentation](python-sandbox.md#experiment-with-extension-declarations)
 for an example. The registration and host API examples below require a trusted
 extension context.

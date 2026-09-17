@@ -48,10 +48,39 @@ restricted to trusted extensions and raise `PermissionError` in the sandbox.
 Importing the SDK does not relax filesystem, process or network restrictions or
 initialize the standalone SDK host.
 
+### What the sandbox does not provide
+
+The sandbox carries one SDK module, `blockether.vis.extension`, and nothing else
+under `blockether.vis`, so imports that work against an installed `vis-agent`
+package fail here:
+
+```python
+import blockether.vis.extension as sdk   # the bundled module
+from blockether.vis.engine import Agent  # ModuleNotFoundError
+```
+
+`blockether.vis.engine` and `blockether.vis.views` belong to the
+[Python SDK](python-sdk.md), which drives Vis from your own program. Install
+`vis-agent` and run that code in your own interpreter.
+
+Underscore-prefixed names inside the bundled module are internal, and reading
+them here describes nothing outside the sandbox: no extension registers in
+`python_execution`, so the module's own registration record stays empty.
+
+Executing an extension entry file yourself does not get around that. `importlib`
+runs the file, and the file stops at the first host operation it performs while
+declaring itself:
+
+```text
+RuntimeError: Extension host operation 'declare_env' is unavailable in
+python_execution. You can inspect SDK types and construct declarations here;
+load an extension to use its host APIs.
+```
+
 To register tools and test their host operations, load an extension using the
 [extension tutorial](extending.md). Trusted extension code runs in a separate
 process with its own host bindings. The bundled SDK takes precedence over pip and
-editable copies in both contexts; other SDK modules are not bundled sandbox APIs.
+editable copies in both contexts.
 
 ## Reading tool results
 
