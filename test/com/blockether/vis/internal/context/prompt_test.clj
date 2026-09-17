@@ -452,16 +452,15 @@
   core-prompt-demand-driven-discovery-test
   ;; Regression: #231 repeated discovery after /reload despite an already known contract.
   ;; These assertions pin the base prompt's decision rules, not model compliance.
-  (it
-    "reuses facts from system instructions, prior work and recovered context"
-    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-      (doseq
-        [rule
-         ["Reuse signatures and preconditions from the system prompt, prior work or recovered context"
-          "Skip `apropos()`, `doc()` and `inspect.signature()` for known facts"
-          "for known facts across turns, `/reload` and repeated calls"
-          "None | Call directly; skip discovery"]]
-        (expect (str/includes? text rule) rule))))
+  (it "reuses facts from system instructions and the visible conversation"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq
+          [rule
+           ["Reuse signatures and preconditions from the system prompt and the visible conversation"
+            "Skip `apropos()`, `doc()` and `inspect.signature()` for known facts"
+            "for known facts across turns, `/reload` and repeated calls"
+            "None | Call directly; skip discovery"]]
+          (expect (str/includes? text rule) rule))))
   (it "requires a missing fact or evidence of a changed contract before rediscovery"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (expect (str/includes? text "Refresh on contract-change evidence"))))
@@ -508,6 +507,21 @@
       (expect (= 1
                  (count (re-seq #"identify the unresolved question affecting the next step" text))))
       (expect (not (str/includes? text "Unknown call shape: use narrow `doc(name)`"))))))
+
+(defdescribe
+  core-prompt-prior-turn-context-test
+  ;; Regression: #262 "prior work or recovered context" read as an instruction to fetch
+  ;; the current session's history at task start although the conversation held the task.
+  (it "treats prior-turn context as visible conversation, not session history to fetch"
+      (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
+        (doseq
+          [rule
+           ["Reuse signatures and preconditions from the system prompt and the visible conversation"
+            "Prior-turn context | Already in the visible conversation, fold gists included"
+            "continuation-like wording (\"now…\", \"taking into account…\") is not a missing fact"
+            "Session history answers only a named question the conversation cannot"]]
+          (expect (str/includes? text rule) rule))
+        (expect (not (str/includes? text "recovered context"))))))
 
 (defdescribe
   core-prompt-registered-python-contract-test
@@ -683,7 +697,8 @@
       ;; 9.1k → 9.7k for #232: registered call shape, semantic prose and withheld defaults.
       ;; 9.7k → 10k for #239: type-directed recovery and explicit issue-tracker routing.
       ;; 10k → 10.3k for #259: extension results are field records whose errors list the real fields.
-      (expect (< (count text) 10300))
+      ;; 10.3k → 10.6k for #262: prior-turn context is the visible conversation, not session history to fetch.
+      (expect (< (count text) 10600))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]

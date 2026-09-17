@@ -193,3 +193,18 @@
             "Autonomous consultation is optional for trivial, self-contained work; explicit requests are not"]]
           (is (str/includes? normalized guidance)
               (str surface " is missing context-reuse guidance: " guidance)))))))
+
+(deftest read-session-scope-guidance-test
+  ;; Regression: #262 "reuse saved context" and "recover ... state" read as instructions
+  ;; to read the current session's history at task start.
+  (with-redefs [toggles/enabled? (constantly true)]
+    (let [normalized (str/replace (council/prompt {}) #"\s+" " ")]
+      (doseq
+        [guidance
+         ["Before repeating substantial research another session may already hold, reuse its saved context"
+          "Use `read_session(session_id)` on that other session for missing evidence, not whole histories and not the current session, whose conversation is already visible"
+          "On wake, the visible conversation holds any unfinished user-authorized task and its state"]]
+        (is (str/includes? normalized guidance)
+            (str "council prompt is missing read_session scope guidance: " guidance)))
+      (is (not (str/includes? normalized "recover"))
+          "council prompt must not describe session history as context to recover"))))
