@@ -50,31 +50,37 @@ const client = new Proxy(baseClient, {
   },
 });
 
-// Rules span the reading column's text width, never the window: an embedded run bleeds through
-// its message card's padding to the card's edges and stops there, so a phone pane and a wide
-// desktop pane both keep the run inside the column. A standalone run needs no bleed at all.
-async function expectColumnRules(panel: Element, column: HTMLElement) {
+// The run is a BOX, not a pair of rules: bordered on every side, inset by its message card's own
+// padding, with every row stopping at the box's content edges. A phone pane and a wide desktop
+// pane both keep it inside the reading column, and the opened dialog shows the same box.
+async function expectRunBox(panel: Element, column: HTMLElement) {
   const bounds = column.getBoundingClientRect();
   const columnStyle = getComputedStyle(column);
   const inner = bounds.left + column.clientLeft;
   const left = inner + parseFloat(columnStyle.paddingLeft);
   const right = inner + column.clientWidth - parseFloat(columnStyle.paddingRight);
   const style = getComputedStyle(panel);
-  await expect(style.borderLeftWidth).toBe('0px');
-  await expect(style.borderRightWidth).toBe('0px');
+  await expect(style.borderLeftWidth).toBe('1px');
+  await expect(style.borderRightWidth).toBe('1px');
   await expect(style.borderTopWidth).toBe('1px');
   await expect(style.borderBottomWidth).toBe('1px');
-  for (const element of [panel, ...panel.querySelectorAll(':scope > ul > li, hr, table')]) {
-    const box = element.getBoundingClientRect();
-    await expect(box.left).toBeCloseTo(left, 0);
-    await expect(box.right).toBeCloseTo(right, 0);
+  const box = panel.getBoundingClientRect();
+  await expect(box.left).toBeGreaterThanOrEqual(left);
+  await expect(box.right).toBeLessThanOrEqual(right);
+  for (const element of panel.querySelectorAll(':scope > ul > li, hr, table')) {
+    const row = element.getBoundingClientRect();
+    await expect(row.left).toBeCloseTo(box.left + 1, 0);
+    await expect(row.right).toBeCloseTo(box.right - 1, 0);
   }
-  // Regression: the run used to bleed through the column padding too and overhang the card.
+  // Regression: the run used to bleed through the column padding and overhang the card. It stands
+  // inside the card's own padding now, and the card still fills the reading column.
   const card = panel.closest<HTMLElement>('[data-execution-group]');
   if (card) {
     const cardBox = card.getBoundingClientRect();
     await expect(cardBox.left).toBeCloseTo(left, 0);
     await expect(cardBox.right).toBeCloseTo(right, 0);
+    await expect(box.left).toBeGreaterThan(cardBox.left);
+    await expect(box.right).toBeLessThan(cardBox.right);
   }
   const header = panel.querySelector('header')!;
   await expect(parseFloat(getComputedStyle(header).paddingLeft)).toBeGreaterThanOrEqual(12);
@@ -100,14 +106,14 @@ const meta = {
     const viewport = canvas.getByRole('region', { name: 'Transcript' });
     const column = viewport.firstElementChild as HTMLElement;
     const panel = title.closest('section')!;
-    await expectColumnRules(panel, column);
+    await expectRunBox(panel, column);
     await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     const launch = canvas.queryByRole('button', { name: `Open run ${view.title}` });
     if (launch) {
       await userEvent.click(launch);
       const page = within(document.body);
       const expanded = page.getAllByText(view.title).at(-1)!.closest('section')!;
-      await expectColumnRules(expanded, expanded.parentElement!);
+      await expectRunBox(expanded, expanded.parentElement!);
       await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
       await expect(title).toBeVisible();
     }
@@ -144,7 +150,7 @@ export const Landscape: Story = {
     ]) {
       column.style.paddingLeft = left;
       column.style.paddingRight = right;
-      await expectColumnRules(panel, column);
+      await expectRunBox(panel, column);
       await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     }
     await expect(getComputedStyle(panel.querySelector('header')!).paddingLeft).toBe('59px');

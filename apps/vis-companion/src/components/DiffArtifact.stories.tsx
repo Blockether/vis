@@ -3,7 +3,7 @@ import { expect, fn, userEvent } from 'storybook/test';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import type { ComponentProps } from 'react';
 import { DiffArtifact } from './DiffArtifact';
-import { OverlayScreen } from './ui';
+import { OverlayScreen } from './DocArtifact';
 
 const client = {
   base: 'http://127.0.0.1',

@@ -154,6 +154,9 @@ describe('the artifact on screen', () => {
 
   it("is built out of the app's own controls", () => {
     expect(liveArtifactSource).toContain('<LiveViewPanel');
+    // The opened record is the app's one dialog, not the full-screen artifact overlay.
+    expect(liveArtifactSource).toContain('<RunDialog');
+    expect(liveArtifactSource).not.toContain('OverlayScreen');
     expect(liveArtifactSource).not.toContain('<button');
     expect(liveArtifactSource).not.toContain('style=');
   });

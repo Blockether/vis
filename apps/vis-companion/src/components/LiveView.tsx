@@ -6,18 +6,18 @@ import {
   useRef,
   useState,
   type HTMLAttributes,
+  type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   BandLabel,
   Button,
+  DialogFrame,
   Disclosure,
   ExecutionAction,
   Input,
   ListRow,
   LoadMore,
-  overlayLayer,
-  OverlayScreen,
+  Modal,
   PROSE,
   Spinner,
   ViewHeading,
@@ -1104,7 +1104,7 @@ export function LiveViewPanel({
   return (
     <>
       <section
-        className={`live-view-panel min-w-0 overflow-hidden border-y ${
+        className={`live-view-panel min-w-0 overflow-hidden border ${
           embedded ? 'border-dialog-hint' : 'border-dialog-edge bg-panel'
         }`}
         data-execution-run={embedded || undefined}
@@ -1212,26 +1212,66 @@ export function LiveViewPanel({
           ))}
         </ul>
       </section>
-      {embedded &&
-        opened &&
-        createPortal(
-          <OverlayScreen title={view.title} onClose={() => setOpened(false)}>
-            <div className="min-h-0 flex-1 overflow-y-auto py-3">
-              <LiveViewPanel
-                view={view}
-                onInterrupt={onInterrupt}
-                onSelect={onSelect}
-                onActivate={onActivate}
-                error={error}
-                isInterrupting={isInterrupting}
-                load={load}
-                isSettled={isSettled}
-              />
-            </div>
-          </OverlayScreen>,
-          overlayLayer().host,
-        )}
+      {embedded && opened && (
+        <RunDialog title={view.title} onClose={() => setOpened(false)}>
+          <div className="min-h-0 flex-1 overflow-y-auto py-3">
+            <LiveViewPanel
+              view={view}
+              onInterrupt={onInterrupt}
+              onSelect={onSelect}
+              onActivate={onActivate}
+              error={error}
+              isInterrupting={isInterrupting}
+              load={load}
+              isSettled={isSettled}
+            />
+          </div>
+        </RunDialog>
+      )}
     </>
+  );
+}
+
+/**
+ * AN OPENED RUN IS A DIALOG, NOT THE WHOLE APPLICATION.
+ *
+ * A run used to open in the artifact overlay — the viewport-pinned layer a document
+ * opens in — which is right for a document and wrong for a run: on a desktop one
+ * click papered the session list, the transcript and the composer with a single
+ * view. It opens in the app's ONE dialog instead (`Modal` + `DialogFrame`): the whole
+ * glass on a phone, a box standing over the chat everywhere else.
+ *
+ * The run keeps its own border in here, so the box the transcript shows is the box
+ * the dialog shows.
+ */
+export function RunDialog({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string;
+  /** What the band REPORTS under the run's name — a settled run's verdict. */
+  subtitle?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  // Escape is the way out a keyboard has. An ARMED interrupt inside the run stops the
+  // key before it reaches here, so Escape sends that stop rather than closing the run.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <Modal onDismiss={onClose}>
+      <DialogFrame title={title} subtitle={subtitle} onClose={onClose}>
+        {/* The run is a BOX in here, so the dialog's edge is never mistaken for the run's. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3">{children}</div>
+      </DialogFrame>
+    </Modal>
   );
 }
 

@@ -9,15 +9,30 @@ import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
-it('separates the embedded live view with horizontal rules on its shared background', () => {
+it('frames the embedded live view as a bordered box on its shared background', () => {
   const view = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
   const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
-  expect(panel).toHaveClass('border-y', 'border-dialog-hint');
-  expect(panel).not.toHaveClass('border', 'px-3');
-  // The run band owns no vertical gap: it continues the CODE/ACTIVITY rhythm.
+  expect(panel).toHaveClass('border', 'border-dialog-hint');
+  expect(panel).not.toHaveClass('border-y', 'px-3');
+  // The box is inset by the message card's own padding and owns no vertical gap of its
+  // own: CODE, ACTIVITY and RUN keep one rhythm down the card.
   expect(panel).not.toHaveClass('mt-3', 'pt-3');
   expect(panel).not.toHaveClass('bg-panel');
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
+});
+
+// The opened run is the app's ONE dialog (`Modal` + `DialogFrame`), not the viewport-pinned
+// artifact screen: on a desktop, opening a run used to paper the session list, the transcript
+// and the composer with a single view.
+it('opens a run in the app dialog, with the run still a bordered box inside it', () => {
+  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
+  expect(mounted.queryByRole('dialog')).toBeNull();
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+  const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
+  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  const opened = dialog.querySelector('section.live-view-panel');
+  expect(opened).toHaveClass('border', 'border-dialog-edge');
+  expect(opened).not.toHaveClass('border-y');
 });
 
 // Regression #222: opening watches the current projection, and dismissal never interrupts it.
@@ -86,7 +101,7 @@ it.each([
       />,
     );
     expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
-    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border-y');
+    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
     mounted.rerender(
       <IterationTrace
         iterations={[{ forms: [{ source, activity }] }]}
@@ -102,7 +117,7 @@ it.each([
     const group = title.closest('[data-execution-group]');
     expect(group).toHaveClass('bg-code');
     expect(group).not.toHaveClass('border');
-    expect(title.closest('.border-y')).toBe(title.closest('section'));
+    expect(title.closest('.border')).toBe(title.closest('section'));
   },
 );
 
@@ -380,8 +395,8 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
   expect(first?.parentElement).not.toHaveClass('border');
-  expect(first?.closest('.border-y')).toBe(first);
-  expect(second?.closest('.border-y')).toBe(second);
+  expect(first?.closest('.border')).toBe(first);
+  expect(second?.closest('.border')).toBe(second);
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 

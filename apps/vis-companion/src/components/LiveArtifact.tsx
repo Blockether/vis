@@ -18,14 +18,13 @@
  */
 
 import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { attachmentBytes } from '../lib/artifacts';
 import type { GatewayClient } from '../lib/gateway';
 import { liveRecordFromText, type LiveRecord } from '../lib/live-view';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import type { IterationAttachment } from '../lib/types';
-import { LiveViewPanel } from './LiveView';
-import { BandLabel, ExecutionAction, ListRow, overlayLayer, OverlayScreen } from './ui';
+import { LiveViewPanel, RunDialog } from './LiveView';
+import { BandLabel, ExecutionAction, ListRow } from './ui';
 
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
@@ -263,31 +262,27 @@ export const LiveRunRow = memo(function LiveRunRow({
           ) : null}
         </ListRow>
       )}
-      {/* The opened run is a SCREEN, not a part of the transcript — portalled
-          out of the turn into the viewport-pinned shell, exactly as an opened
-          document is, so the composer strip cannot paint over it. */}
+      {/* The opened run is a DIALOG over the transcript, not a second screen: the box
+          every other dialog opens in on a desktop, the whole glass on a phone. */}
       {opened &&
-        createPortal(
-          url ? (
-            <LiveArtifact
-              client={client}
-              sid={sid}
-              url={url}
-              chrome={({ subtitle, body }) => (
-                <OverlayScreen title={name} subtitle={subtitle} onClose={close}>
-                  {body}
-                </OverlayScreen>
-              )}
-            />
-          ) : (
-            <OverlayScreen title={name} onClose={close}>
-              <p className="p-4 font-mono text-meta text-dialog-hint">
-                {failed ? "This run's record could not be read." : 'Loading…'}
-              </p>
-            </OverlayScreen>
-          ),
-          overlayLayer().host,
-        )}
+        (url ? (
+          <LiveArtifact
+            client={client}
+            sid={sid}
+            url={url}
+            chrome={({ subtitle, body }) => (
+              <RunDialog title={name} subtitle={subtitle} onClose={close}>
+                {body}
+              </RunDialog>
+            )}
+          />
+        ) : (
+          <RunDialog title={name} onClose={close}>
+            <p className="p-4 font-mono text-meta text-dialog-hint">
+              {failed ? "This run's record could not be read." : 'Loading…'}
+            </p>
+          </RunDialog>
+        ))}
     </>
   );
 });

@@ -4,6 +4,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import { Markdown } from './ChatContent';
+import { OverlayScreen } from './DocArtifact';
 import {
   CheckIcon,
   DownloadIcon,
@@ -41,7 +42,6 @@ import {
   Modal,
   NotifyConnectionSwitch,
   OptionRow,
-  OverlayScreen,
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   SettingsDisclosure,

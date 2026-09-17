@@ -1912,12 +1912,11 @@ describe('Modal, fit', () => {
 // faces nobody had chosen.
 describe("every surface uses the vocabulary's own controls", () => {
   it('titles an opened document with the one header band and the one way out', () => {
-    // The band is `OverlayScreen`'s now — the ONE opened-artifact screen, which
-    // a settled run wears too — so the document reaches it by name instead of
-    // spelling a second header of its own.
+    // The band is `OverlayScreen`'s — the ONE opened-document screen, which owns the
+    // vocabulary's header band once, so no document spells a second header of its own.
     expect(docSource).toContain('<OverlayScreen');
-    expect(uiSource).toContain('closeLabel={`Close ${title}`}');
-    expect(docSource).not.toContain('<DialogHeader');
+    expect(docSource).toContain('closeLabel={`Close ${title}`}');
+    expect([...docSource.matchAll(/<DialogHeader/g)]).toHaveLength(1);
     // The X is the header's own; nothing hangs it off a caption strip.
     expect(docSource).not.toContain('<CloseButton');
     expect(docSource).not.toContain('self-stretch');
@@ -3472,7 +3471,7 @@ describe('one way out, and it says what it closes', () => {
 
   it("calls the artifact's way out the same thing on both surfaces", () => {
     expect(artifactsSheetSource).toContain('closeLabel={`Close ${name}`}');
-    expect(uiSource).toContain('closeLabel={`Close ${title}`}');
+    expect(docSource).toContain('closeLabel={`Close ${title}`}');
     expect(docSource).toContain('<OverlayScreen');
     expect(artifactsSheetSource).not.toContain('closeLabel="Back to artifacts"');
   });

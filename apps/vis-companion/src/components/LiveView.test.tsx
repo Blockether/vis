@@ -714,6 +714,16 @@ describe('the section is built from the closed vocabulary', () => {
   });
 });
 
+// A run used to open in the artifact overlay, which on a desktop papered the session list,
+// the transcript and the composer with one view. It opens in the app's ONE dialog now.
+describe('an opened run is a dialog over the chat', () => {
+  it('opens in `Modal` + `DialogFrame`, never the full-screen artifact overlay', () => {
+    expect(liveViewSource).toContain('<Modal onDismiss={onClose}>');
+    expect(liveViewSource).toContain('<DialogFrame title={title} subtitle={subtitle} onClose={onClose}>');
+    expect(liveViewSource).not.toContain('OverlayScreen');
+  });
+});
+
 describe('live horizontal dividers', () => {
   it.each([false, true])('retains a semantic noninteractive divider (settled=%s)', (isSettled) => {
     const view = liveViewFromWire({

@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn } from 'storybook/test';
 import type { ComponentProps } from 'react';
 import { MarkdownArtifact } from './MarkdownArtifact';
-import { OverlayScreen } from './ui';
+import { OverlayScreen } from './DocArtifact';
 
 const specification =
   '# Session search\n\n**Feature:** session-search\n**Status:** ready\n\n## Spec\nFind a session by title without leaving the current conversation.\n\n## Implementation plan\n1. Search titles end to end.\n2. Restore the selected session and its scroll position.\n';

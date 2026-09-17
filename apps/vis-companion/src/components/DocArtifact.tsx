@@ -17,7 +17,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText, TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
-import { BandButton, ListRow, overlayLayer, OverlayScreen } from './ui';
+import { BandButton, DialogHeader, ListRow, overlayLayer } from './ui';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 
 /**
@@ -31,6 +31,62 @@ export type AnnotateContext = {
   sid: string;
   iterationId: string;
 };
+
+/**
+ * AN OPENED DOCUMENT IS THE WHOLE SCREEN, and there is one of it.
+ *
+ * A note, a PDF, a diff and a data file are opened from the transcript by one
+ * gesture, so they open on one screen: the band names the document, reports what
+ * it IS under that name, and the way out is the band's own cell. The body under
+ * it takes every remaining pixel and owns its own scrolling. A RUN is not one of
+ * these — it opens in the app's dialog (`RunDialog`), standing over the chat
+ * rather than replacing it.
+ *
+ * IT IS THE VIEWPORT-PINNED LAYER, NOT THE GLASS. It mounts where `Modal`
+ * mounts (`overlayLayer`), `absolute` in the shell the keyboard driver pins, so
+ * a raised keyboard cannot bury a field at its bottom edge. Escape is the way
+ * out a keyboard has, and it is here rather than at a call site so every
+ * document answers that key the same.
+ */
+export function OverlayScreen({
+  title,
+  subtitle,
+  actions,
+  onClose,
+  children,
+}: {
+  title: string;
+  /** What the band REPORTS about the artifact under its name. */
+  subtitle?: ReactNode;
+  /** The artifact's own verbs, as cells of this band before the ✕. */
+  actions?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const { position } = overlayLayer();
+  return (
+    <div
+      className={`${position} inset-0 z-50 flex h-full min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]`}
+    >
+      <DialogHeader
+        title={title}
+        subtitle={subtitle}
+        actions={actions}
+        closeLabel={`Close ${title}`}
+        onClose={onClose}
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+    </div>
+  );
+}
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `attach` clamps it to

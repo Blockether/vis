@@ -89,7 +89,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// ACTIVITY remains outside the full-width horizontal rules around the live RUN.
+// ACTIVITY stands outside the live RUN, which is a bordered box of its own inside the card.
 async function expectLiveFrame(element: Element) {
   const frame = element.closest<HTMLElement>('[data-execution-run]')!;
   const group = element.closest<HTMLElement>('[data-execution-group]')!;
@@ -97,19 +97,22 @@ async function expectLiveFrame(element: Element) {
   await expect(frame).not.toBeNull();
   await expect(frame.contains(activity)).toBe(false);
   await expect(activity.closest('.border')).toBeNull();
-  // Regression: CODE, ACTIVITY and RUN keep one rhythm down the card — the run band
-  // owns no gap of its own, so its rule is all that sits between it and the activity.
+  // Regression: CODE, ACTIVITY and RUN keep one rhythm down the card — the run owns no gap
+  // of its own, so its top border is all that sits between it and the activity.
   await expect(frame.getBoundingClientRect().top).toBe(activity.getBoundingClientRect().bottom);
   const style = getComputedStyle(frame);
   await expect(style.marginTop).toBe('0px');
   await expect(style.paddingTop).toBe('0px');
   for (const side of ['top', 'right', 'bottom', 'left']) {
-    const width = side === 'top' || side === 'bottom' ? '1px' : '0px';
-    await expect(style.getPropertyValue(`border-${side}-width`)).toBe(width);
+    await expect(style.getPropertyValue(`border-${side}-width`)).toBe('1px');
     await expect(getComputedStyle(group).getPropertyValue(`border-${side}-width`)).toBe('0px');
   }
   await expect(frame).toHaveClass('border-dialog-hint');
   await expect(style.borderRadius).toBe('0px');
+  // The box stands INSIDE the card's own padding — it used to bleed through it to the edges.
+  const card = group.getBoundingClientRect();
+  await expect(frame.getBoundingClientRect().left).toBeGreaterThan(card.left);
+  await expect(frame.getBoundingClientRect().right).toBeLessThan(card.right);
   await expect(frame.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
   await expect(frame.getBoundingClientRect().right).toBeLessThanOrEqual(innerWidth);
   return frame;
@@ -122,7 +125,7 @@ export const Running: Story = {
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;
-    await expect(title.closest('.border-y')).toBe(liveFrame);
+    await expect(title.closest('.border')).toBe(liveFrame);
     const controls = within(activitySurface);
     await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
     await expect(controls.getByText('RUN')).toBeInTheDocument();

@@ -365,13 +365,6 @@
   --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
 }
 
-/* An embedded run bleeds through its message card's own 0.75rem padding and stops there: the
-   rules meet the card's edges on a phone and on a wide desktop pane without overhanging it. */
-.live-view-panel[data-execution-run] {
-  margin-left: -0.75rem;
-  margin-right: -0.75rem;
-}
-
 /* Markdown list markers, painted instead of `list-style`. A native outside marker is
    right-aligned against the text, and its box is as wide as the engine decides: a disc
    measures 2.27ch in Blink and 1.51ch in WebKit, while "1." is 3ch in both. Equal
