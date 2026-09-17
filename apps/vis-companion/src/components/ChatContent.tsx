@@ -1803,18 +1803,20 @@ export const ThinkingBand = memo(function ThinkingBand({
     <section
       className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
     >
+      {/* The `+N more` tally rides AFTER the chevron, never inside the label span: at its
+          own smaller step it stretched that span's line box, and the centred row then set
+          the word THINKING half a pixel lower whenever the count was there — the label
+          stepped under the cursor that clicked it. Same order as CODE and RESULT. */}
       {collapsible && (
         <Disclosure
           isOpen={expanded}
           tone="thinking"
           inlineChevron
           className="mb-1"
+          tally={!expanded ? <BandTally> +{hiddenRows} more</BandTally> : undefined}
           onClick={() => setExpandRequested((value) => !value)}
         >
-          <span className="min-w-0 truncate">
-            THINKING
-            {!expanded && <BandTally> +{hiddenRows} more</BandTally>}
-          </span>
+          <span className="min-w-0 truncate">THINKING</span>
         </Disclosure>
       )}
       {/* Reasoning streams one sentence per line, so nearly every line renders

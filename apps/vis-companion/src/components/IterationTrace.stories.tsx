@@ -379,12 +379,25 @@ export const ThinkingDisclosure: Story = {
     const body = toggle.nextElementSibling as HTMLElement;
     const closedHeight = body.getBoundingClientRect().height;
     const header = toggle.getBoundingClientRect();
+    // Regression (user report, web): clicking the header made the word THINKING itself
+    // step. The `+N more` tally sat INSIDE the truncating label span, where its smaller
+    // type stretched that span's line box — so dropping the tally on expand moved the
+    // label. The word holds one position through every toggle.
+    const word = () => {
+      const text = document.createTreeWalker(toggle, NodeFilter.SHOW_TEXT).nextNode()!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return range.getBoundingClientRect();
+    };
+    const resting = word();
     const assertChevron = async () => {
       const label = toggle.firstElementChild!.getBoundingClientRect();
       const chevron = toggle.querySelector('svg')!.getBoundingClientRect();
       await expect(chevron.left - label.right).toBeCloseTo(6, 0);
       await expect(toggle.getBoundingClientRect().width).toBe(header.width);
       await expect(toggle.getBoundingClientRect().height).toBe(header.height);
+      await expect(word().top).toBeCloseTo(resting.top, 2);
+      await expect(word().left).toBeCloseTo(resting.left, 2);
     };
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toHaveTextContent(/\+\d+ more/);
@@ -404,6 +417,11 @@ export const ThinkingDisclosure: Story = {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toHaveTextContent(/\+\d+ more/);
   },
+};
+
+export const ThinkingDisclosurePointer: Story = {
+  ...ThinkingDisclosure,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /** Metadata stays close to copy without moving the glyph or joining the controls. */
