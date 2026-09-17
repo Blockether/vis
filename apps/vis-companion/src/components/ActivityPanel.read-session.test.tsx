@@ -11,12 +11,11 @@ afterEach(cleanup);
 // the reader chooses the relevant evidence; rendering never repeats a failure.
 it('shows session usage and turn boundaries before independently revealing full evidence', () => {
   const activity = activityProjectionFromWire(readSessionFixture)!;
-  expect(activity).not.toBeNull();
   render(<ActivityPanel activity={activity} />);
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(screen.getByRole('button', { name: /Read session/ }));
   for (const heading of ['Current turn', 'Usage', 'Diagnosis', 'Turns']) {
-    expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: heading })).toBeVisible();
   }
   const main = document.querySelector('[data-activity-content]')!;
   expect(main.textContent!.length).toBeLessThan(2000);

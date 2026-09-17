@@ -183,7 +183,7 @@ it('keeps concurrent owned views and unmatched views separate, including streame
   const mounted = render(<IterationTrace {...props} />);
   const firstSurface = mounted.getByText('First monitor').closest('[data-execution-group]');
   const secondSurface = mounted.getByText('Second monitor').closest('[data-execution-group]');
-  expect(firstSurface).not.toBeNull();
+  expect(firstSurface).toBeVisible();
   expect(secondSurface).not.toBe(firstSurface);
   expect(mounted.getByText('Other monitor').closest('[data-execution-group]')).toBeNull();
   mounted.rerender(
@@ -238,7 +238,7 @@ it('replaces the live view with one retained run receipt beside the same Activit
   expect(receipts).toHaveLength(1);
   const receipt = receipts[0];
   const group = receipt.closest('[data-execution-group]');
-  expect(group).not.toBeNull();
+  expect(group).toBeInTheDocument();
   expect(receipt.closest('[data-execution-activity]')).toBeNull();
   expect(group).not.toHaveClass('border');
   expect(receipt.closest('.border')).toBeNull();
@@ -345,7 +345,7 @@ it.each(['hidden', 'ramped'])(
         />,
       );
       expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-      expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).not.toBeNull();
+      expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeVisible();
     }
   },
 );

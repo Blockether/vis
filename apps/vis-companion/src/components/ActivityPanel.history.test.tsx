@@ -133,7 +133,7 @@ it.each([false, true])('pages grouped histories without a toolbar (mixed: %s)', 
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(6);
   const more = screen.getByRole('button', { name: 'Show more operations' });
   const chronology = screen.getByRole('list', { name: 'Operation groups' });
-  expect(chronology.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(chronology.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   fireEvent.click(more);
   await screen.findByText('review-3-3.clj');
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);

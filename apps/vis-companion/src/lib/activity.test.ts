@@ -26,7 +26,6 @@ import {
 for (const sample of copyCases) {
   it(`portable Activity copy: ${sample.name}`, () => {
     const projection = activityProjectionFromWire(sample.projection);
-    expect(projection).not.toBeNull();
     expect(activityCopyText(projection!)).toBe(sample.text);
   });
 }
@@ -46,7 +45,6 @@ for (const sample of argumentCases) {
 for (const sample of groupingCases) {
   it(`portable grouping: ${sample.name}`, () => {
     const projection = activityProjectionFromWire(sample.projection);
-    expect(projection).not.toBeNull();
     expect(
       operationGroups(projection!.rows).map(({ id, label, rows }) => ({
         id,
@@ -329,7 +327,6 @@ describe('complete Activity presentation content', () => {
 
   it('retains all large blocks, table cells and sections through parsing and copying', () => {
     const parsed = activityProjectionFromWire({ ...page, rows: [row] });
-    expect(parsed).not.toBeNull();
     expect(parsed!.rows[0].presentation).toEqual(presentation);
     const copied = activityCopyText(parsed!);
     expect(copied).toContain(body);
@@ -341,7 +338,6 @@ describe('complete Activity presentation content', () => {
 
   it('admits one oversized invocation on a history page without losing its cursor', () => {
     const parsed = activityProjectionFromWire({ ...page, rows: [row], history });
-    expect(parsed).not.toBeNull();
     expect(parsed!.history).toEqual(history);
     expect(parsed!.rows[0].presentation).toEqual(presentation);
     expect(

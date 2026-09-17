@@ -75,7 +75,7 @@ describe('live log disclosures', () => {
     expect(screen.queryByText('A retained')).toBeNull();
     expect(screen.queryByText('B retained')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
-    expect(screen.getByText('A retained')).toBeTruthy();
+    expect(screen.getByText('A retained')).toBeVisible();
     expect(screen.queryByText('B retained')).toBeNull();
     expect(view.nodes[0]).toHaveProperty('lines', ['A retained']);
   });
@@ -151,7 +151,7 @@ describe('a live view on the phone', () => {
       }),
     });
     expect(html).toContain('no rows yet');
-    expect(screen.getByRole('columnheader', { name: 'Host' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Host' })).toBeVisible();
   });
 
   // Weight is for the NAME, and caps are for no one's words but ours. A live node
@@ -285,12 +285,12 @@ describe('selecting a table row', () => {
     const parent = screen.getByRole('button', { name: 'Release apps' });
     expect(parent.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
 
     fireEvent.click(parent);
     expect(parent.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeTruthy();
-    expect(screen.getByText('Android')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeVisible();
+    expect(screen.getByText('Android')).toBeVisible();
   });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: every poll re-sent the
   // running jobs as the selection, which sprang open the branch the reader had closed.
@@ -359,7 +359,7 @@ describe('a log the operator walks back through', () => {
     const html = paint({ view: behind(), load: vi.fn() });
     // What a screen reader hears is the PROMISE; what the eye reads is how much
     // of the run is still behind the window.
-    expect(screen.getByRole('button', { name: 'Load 200 earlier lines' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Load 200 earlier lines' })).toBeVisible();
     expect(html).toContain('499 earlier lines');
 
     cleanup();
@@ -476,7 +476,7 @@ describe('what a run says about its own layout', () => {
       row.textContent?.includes('Hosts'),
     ) as HTMLElement;
     expect(beside.textContent).toContain('Why');
-    expect(beside.querySelector('[data-view-layout="row"]')).not.toBeNull();
+    expect(beside.querySelector('[data-view-layout="row"]')).toBeInTheDocument();
     const alone = [...list.children].find((row) =>
       row.textContent?.includes('Elsewhere'),
     ) as HTMLElement;
@@ -591,7 +591,7 @@ describe('what a run says about its own layout', () => {
     }
 
     render(<Probe />);
-    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('0')).toBeVisible());
     vi.useFakeTimers();
     try {
       for (const seq of [1, 2, 3]) {
@@ -606,9 +606,9 @@ describe('what a run says about its own layout', () => {
         );
       }
 
-      expect(screen.getByText('0')).toBeTruthy();
+      expect(screen.getByText('0')).toBeVisible();
       act(() => vi.advanceTimersByTime(100));
-      expect(screen.getByText('3')).toBeTruthy();
+      expect(screen.getByText('3')).toBeVisible();
     } finally {
       vi.useRealTimers();
     }
@@ -635,7 +635,7 @@ describe('what a run says about its own layout', () => {
     }
 
     render(<Probe />);
-    await waitFor(() => expect(screen.getByText('1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('1')).toBeVisible());
     vi.useFakeTimers();
     try {
       act(() =>
@@ -648,7 +648,7 @@ describe('what a run says about its own layout', () => {
       );
 
       expect(onRecordFiled).toHaveBeenCalledTimes(1);
-      expect(screen.getByText('0')).toBeTruthy();
+      expect(screen.getByText('0')).toBeVisible();
       act(() => vi.advanceTimersByTime(8_000));
       expect(onRecordFiled).toHaveBeenCalledTimes(5);
     } finally {
@@ -682,7 +682,7 @@ describe('what a run says about its own layout', () => {
     }
 
     render(<Probe />);
-    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('0')).toBeVisible());
     act(() =>
       receive?.({
         type: VIEW_PATCH_EVENT,
@@ -692,7 +692,7 @@ describe('what a run says about its own layout', () => {
         patch: { view_id: running.id, seq: 4, ops: [] },
       }),
     );
-    await waitFor(() => expect(screen.getByText('4')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('4')).toBeVisible());
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
 
@@ -719,9 +719,9 @@ describe('what a run says about its own layout', () => {
     }
 
     render(<Probe />);
-    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('0')).toBeVisible());
     act(() => reconnect?.(true));
-    await waitFor(() => expect(screen.getByText('2')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('2')).toBeVisible());
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
 });
@@ -770,11 +770,11 @@ describe('live horizontal dividers', () => {
     expect(
       screen.getByText('Build completed').compareDocumentPosition(divider) &
         Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(
       divider.compareDocumentPosition(screen.getByText('Review the results')) &
         Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
   it('adds and removes a divider without allowing content patches to mutate it', () => {
     let view = liveViewFromWire({ ...fixture, nodes: [{ id: 'break', type: 'divider' }] })!;

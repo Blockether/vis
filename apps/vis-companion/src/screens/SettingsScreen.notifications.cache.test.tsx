@@ -132,7 +132,7 @@ describe('reopening the notifications panel', () => {
       screen.getByRole('switch', {
         name: 'Notifications from buildbox: on',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(
       screen
         .getByRole('switch', { name: 'Notifications from buildbox: on' })
@@ -231,7 +231,7 @@ describe('reopening the notifications panel', () => {
       screen.getByRole('switch', {
         name: 'Notifications from buildbox: on',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(
       screen
         .getByRole('switch', { name: 'Notifications from buildbox: on' })

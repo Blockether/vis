@@ -50,7 +50,7 @@ describe('what a machine row says about its rank', () => {
     expect(screen.queryByText('Current')).toBeNull();
     // The pin stays: it is the only mark here that can vary, and it is why this
     // device is on THIS address instead of the most durable one.
-    expect(screen.getByText('Pinned')).toBeTruthy();
+    expect(screen.getByText('Pinned')).toBeVisible();
     expect(lineOf('tower')).toContain('tower');
   });
 

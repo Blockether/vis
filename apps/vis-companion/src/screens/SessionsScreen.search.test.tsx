@@ -75,10 +75,10 @@ describe('search asks the active gateway once per pause', () => {
     const view = renderSessionsScreen({ machines: machines([hit]) });
     restore = view.restore;
     await screen.findByText('First');
-    expect(screen.getByText('1 session')).toBeTruthy();
+    expect(screen.getByText('1 session')).toBeVisible();
 
     view.setQuery('needle');
-    expect(await screen.findByText('1 match')).toBeTruthy();
+    expect(await screen.findByText('1 match')).toBeVisible();
   });
 
   it('says a machine has no hit, never "No sessions yet"', async () => {
@@ -89,8 +89,8 @@ describe('search asks the active gateway once per pause', () => {
     view.setQuery('needle');
     await waitFor(() => expect(searches(view.requests)).toEqual(['needle']));
     await waitFor(() => expect(screen.queryByText('First')).toBeNull());
-    expect(screen.getByText('0 matches')).toBeTruthy();
-    expect(screen.getByText('No matching sessions')).toBeTruthy();
+    expect(screen.getByText('0 matches')).toBeVisible();
+    expect(screen.getByText('No matching sessions')).toBeVisible();
     expect(document.body.textContent).not.toContain('No sessions yet');
   });
 
@@ -104,10 +104,10 @@ describe('search asks the active gateway once per pause', () => {
     await screen.findByText('First');
 
     view.setQuery('needle');
-    expect(await screen.findByText('searching...')).toBeTruthy();
+    expect(await screen.findByText('searching...')).toBeVisible();
     // Not a result, so not a dead end either.
     expect(document.body.textContent).not.toContain('No matching sessions');
-    await waitFor(() => expect(screen.getByText('1 match')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('1 match')).toBeVisible());
     expect(screen.queryByText('searching...')).toBeNull();
   });
 
@@ -130,7 +130,7 @@ describe('search asks the active gateway once per pause', () => {
     view.requests.length = 0;
 
     view.setQuery('needle');
-    expect(await screen.findByText('1 match')).toBeTruthy();
+    expect(await screen.findByText('1 match')).toBeVisible();
     expect(searches(view.requests)).toEqual(['needle']);
     expect(document.body.textContent).not.toContain('machines...');
   });
@@ -152,7 +152,7 @@ describe('an inactive dead machine is outside the search', () => {
     view.requests.length = 0;
 
     view.setQuery('needle');
-    expect(await screen.findByText('1 match')).toBeTruthy();
+    expect(await screen.findByText('1 match')).toBeVisible();
     expect(document.body.textContent).not.toContain('did not answer');
     expect(searches(view.requests)).toEqual(['needle']);
   });
@@ -188,16 +188,16 @@ describe('a search gives up on a silent machine on its own clock', () => {
 
     view.setQuery('needle');
     await settle(300);
-    expect(screen.getByText('searching...')).toBeTruthy();
+    expect(screen.getByText('searching...')).toBeVisible();
 
     // Seven seconds of silence is still a machine reading its transcripts.
     await settle(7_000);
-    expect(screen.getByText('searching...')).toBeTruthy();
+    expect(screen.getByText('searching...')).toBeVisible();
 
     // Past the search's own deadline it is absence, not a transport-length wait.
     await settle(2_000);
     expect(screen.queryByText('searching...')).toBeNull();
-    expect(screen.getByText('This machine did not answer.')).toBeTruthy();
+    expect(screen.getByText('This machine did not answer.')).toBeVisible();
   });
 
   // A machine that stopped answering is not a machine that read its transcripts and
@@ -220,7 +220,7 @@ describe('a search gives up on a silent machine on its own clock', () => {
     // search's own deadline starts from there.
     await settle(300);
     await settle(8_700);
-    expect(screen.getByText('This machine did not answer.')).toBeTruthy();
+    expect(screen.getByText('This machine did not answer.')).toBeVisible();
     expect(document.body.textContent).not.toContain('Nothing on any paired machine');
   });
 });
@@ -262,13 +262,13 @@ describe('a machine already known to be dark is not asked again', () => {
     await settle(300);
     await settle(8_700);
     expect(searches(view.requests)).toEqual(['needle']);
-    expect(screen.getByText('This machine did not answer.')).toBeTruthy();
+    expect(screen.getByText('This machine did not answer.')).toBeVisible();
 
     view.requests.length = 0;
     view.setQuery('other');
     await settle(300);
     expect(searches(view.requests)).toEqual([]);
-    expect(screen.getByText('This machine did not answer.')).toBeTruthy();
+    expect(screen.getByText('This machine did not answer.')).toBeVisible();
   });
 
   it('asks it again as soon as a list read proves the machine alive', async () => {
@@ -279,7 +279,7 @@ describe('a machine already known to be dark is not asked again', () => {
     view.setQuery('needle');
     await settle(300);
     await settle(8_700);
-    expect(screen.getByText('This machine did not answer.')).toBeTruthy();
+    expect(screen.getByText('This machine did not answer.')).toBeVisible();
 
     // The blackout is a memory of one failure, not a verdict on the machine: the 10s
     // poll's list read lands and the next search asks this machine again.
@@ -333,19 +333,19 @@ describe('typing does not redraw the list under the thumb', () => {
     await settle(300);
     // A transcript hit, not a title match: this row is on screen only because the answer
     // to "need" put it there, which is exactly what a keystroke used to throw away.
-    expect(screen.getByText('First')).toBeTruthy();
-    expect(screen.getByText('1 match')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
+    expect(screen.getByText('1 match')).toBeVisible();
     expect(searches(view.requests)).toEqual(['need']);
 
     view.setQuery('needl');
     await settle(50);
-    expect(screen.getByText('First')).toBeTruthy();
-    expect(screen.getByText('1 match')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
+    expect(screen.getByText('1 match')).toBeVisible();
 
     view.setQuery('needle');
     await settle(150);
-    expect(screen.getByText('First')).toBeTruthy();
-    expect(screen.getByText('1 match')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
+    expect(screen.getByText('1 match')).toBeVisible();
 
     // One question for the word the typing rested on, not one per letter.
     await settle(300);
@@ -362,12 +362,12 @@ describe('typing does not redraw the list under the thumb', () => {
 
     view.setQuery('n');
     await settle(50);
-    expect(screen.getByText('searching...')).toBeTruthy();
+    expect(screen.getByText('searching...')).toBeVisible();
     expect(screen.queryByText('2 matches')).toBeNull();
     expect(screen.queryByText('1 match')).toBeNull();
 
     await settle(300);
-    expect(screen.getByText('1 match')).toBeTruthy();
+    expect(screen.getByText('1 match')).toBeVisible();
   });
 
   // Regression, user report (paraphrased: "this looks awful on iPhone", with a screenshot
@@ -383,7 +383,7 @@ describe('typing does not redraw the list under the thumb', () => {
     view.setQuery('needle');
     await settle(300);
     const report = screen.getByText('1 match').closest('div');
-    expect(report).toBeTruthy();
+    expect(report).toBeVisible();
     const row = report!.parentElement!;
     // The row wraps on a phone and stops wrapping where there is room for both.
     expect(row.className).toContain('flex-wrap');

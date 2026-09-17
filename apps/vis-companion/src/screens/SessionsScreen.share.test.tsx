@@ -33,7 +33,7 @@ describe('the share the list is holding', () => {
     const machines = screen.getByRole('group', { name: 'Machines' });
     expect(
       banner!.compareDocumentPosition(machines) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('counts a multi-file share rather than listing it', async () => {

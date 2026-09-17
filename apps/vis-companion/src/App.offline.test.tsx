@@ -19,7 +19,7 @@ describe('the app against a gateway that answers nothing', () => {
     try {
       // The pairing screen IS the way out: the dead machine is listed (its
       // settings reachable) and another one can be added.
-      await waitFor(() => expect(screen.getByText('Add a machine')).toBeTruthy());
+      await waitFor(() => expect(screen.getByText('Add a machine')).toBeVisible());
       expect(screen.getAllByText('tower').length).toBeGreaterThan(0);
     } finally {
       view.unmount();

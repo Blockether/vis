@@ -66,13 +66,13 @@ describe('opening settings for a machine that already answered', () => {
     globalThis.fetch = machine() as unknown as typeof fetch;
     const first = open();
     await waitFor(() => expect(screen.getAllByTitle('Online').length).toBeGreaterThan(0));
-    await waitFor(() => expect(screen.getByText('files')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('files')).toBeVisible());
     first.unmount();
 
     // A recheck is pending, but the last online verdict and panels are still fresh.
     globalThis.fetch = silent() as unknown as typeof fetch;
     const second = open();
-    expect(screen.getByText('files')).toBeTruthy();
+    expect(screen.getByText('files')).toBeVisible();
     expect(screen.queryByText('Checking provider sign-in…')).toBeNull();
     second.unmount();
   });

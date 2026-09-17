@@ -22,7 +22,7 @@ describe('the camera-free scanner surface', () => {
       />,
     );
 
-    expect(screen.getByText(/Still waiting on the camera/)).toBeTruthy();
+    expect(screen.getByText(/Still waiting on the camera/)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Take a photo instead' }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(photo).toHaveBeenCalledOnce();

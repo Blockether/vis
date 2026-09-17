@@ -110,13 +110,13 @@ describe('starring a session', () => {
 
     // No remount, no reopened list: the same row, in the same commit. One star,
     // not a mark and a control — the row's state IS the way to take it back.
-    expect(row().querySelector("svg[fill='currentColor']")).not.toBeNull();
+    expect(row().querySelector("svg[fill='currentColor']")).toBeInTheDocument();
     expect(row().querySelectorAll("svg[fill='currentColor']")).toHaveLength(1);
     expect(
       screen
         .getByRole('group', { name: 'Older session actions' })
         .querySelector('button[aria-label="Unstar"]'),
-    ).not.toBeNull();
+    ).toBeVisible();
   });
 
   // Regression, user report (paraphrased: the star is in two states at once): the
@@ -137,7 +137,7 @@ describe('starring a session', () => {
     ]);
     // The mark the row wears is the rank that came BACK — there is no local copy of
     // the tap left over to disagree with it.
-    expect(await screen.findByRole('button', { name: 'Unstar' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Unstar' })).toBeVisible();
 
     await userEvent.click(cell().querySelector('button[aria-label="Unstar"]')!);
 
@@ -145,7 +145,7 @@ describe('starring a session', () => {
       { is_favorite: true },
       { is_favorite: false },
     ]);
-    expect(cell().querySelector('button[aria-label="Star"]')).not.toBeNull();
+    expect(cell().querySelector('button[aria-label="Star"]')).toBeInTheDocument();
   });
   // Regression, user report on iOS ("when I click the star on some other row, first I
   // don't see the star automatically, only after I do slide once again ... there is
@@ -188,7 +188,7 @@ describe('starring a session', () => {
     // Home in the same frame the star was tapped — there is no animation left to be
     // dropped by the re-order that same tap starts.
     expect(home).toEqual([{ left: 0, behavior: 'auto' }]);
-    expect(row.parentElement!.querySelector("svg[fill='currentColor']")).not.toBeNull();
+    expect(row.parentElement!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
 
   // Regression, user report ("the star is not showing on the session row ... as long
@@ -226,8 +226,8 @@ describe('starring a session', () => {
     await waitFor(() => expect(rowOrder()[0]).toBe('s17'));
     expect(screen.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
     const row = document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
-    expect(row).not.toBeNull();
-    expect(row!.querySelector("svg[fill='currentColor']")).not.toBeNull();
+    expect(row).toBeVisible();
+    expect(row!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
   // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
   // star, the row moves up wearing no mark, and only the next slide shows it — with
@@ -302,7 +302,7 @@ describe('starring a session', () => {
     expect(plainFavorite.nextElementSibling).toBe(status('plain'));
     expect(row('starred').firstElementChild).not.toBe(starredFavorite);
     expect(row('plain').firstElementChild).not.toBe(plainFavorite);
-    expect(starredFavorite.querySelector("svg[fill='currentColor']")).not.toBeNull();
+    expect(starredFavorite.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
     expect(plainFavorite.querySelector('svg')).toBeNull();
     expect(starredFavorite.className).toBe(plainFavorite.className);
     expect(status('starred').children[0]?.hasAttribute('data-session-status-dot')).toBe(true);

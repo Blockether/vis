@@ -33,7 +33,7 @@ describe('warming the split screens', () => {
       expect(watch.escaped).toEqual([]);
       // And the app is still the app: a chunk that will not warm is asked for
       // again at the tap, so nothing about the shell changed.
-      expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
     } finally {
       watch.stop();
       view.unmount();

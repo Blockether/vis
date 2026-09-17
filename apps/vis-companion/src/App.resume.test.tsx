@@ -53,9 +53,9 @@ describe('a cold start reopens only the transcript the app died on', () => {
     openSession(Date.now() - 2 * MINUTE);
     const view = coldStart();
 
-    expect(await screen.findByLabelText('Message Vis', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(await screen.findByLabelText('Message Vis', {}, { timeout: 5_000 })).toBeVisible();
     // On top of the list, the way a tap on its row would have put it.
-    expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeVisible();
     view.unmount();
   });
 
@@ -63,7 +63,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     openSession(Date.now() - 3 * 60 * MINUTE);
     const view = coldStart();
 
-    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(await screen.findByText('Session one')).toBeVisible();
     expect(screen.queryByLabelText('Message Vis')).toBeNull();
     view.unmount();
   });
@@ -74,7 +74,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     const view = coldStart();
 
     // Not the transcript: the list, with the machine's own tile to reconnect it.
-    expect(await screen.findByRole('button', { name: 'Projects on laptop' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Projects on laptop' })).toBeVisible();
     expect(screen.queryByLabelText('Message Vis')).toBeNull();
     view.unmount();
   });
@@ -83,7 +83,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     openSession(Date.now() - MINUTE, 'http://forgotten.example.com');
     const view = coldStart();
 
-    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(await screen.findByText('Session one')).toBeVisible();
     expect(screen.queryByLabelText('Message Vis')).toBeNull();
     view.unmount();
   });
@@ -92,7 +92,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     seed('vis.sessionSubscriptions', JSON.stringify({ [LAPTOP]: ['s1'] }));
     const view = coldStart();
 
-    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(await screen.findByText('Session one')).toBeVisible();
     expect(screen.queryByLabelText('Message Vis')).toBeNull();
     view.unmount();
   });

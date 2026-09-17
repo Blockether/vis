@@ -190,8 +190,8 @@ describe('the speech-engines band', () => {
     expect(screen.queryByText('Whisper (gateway)')).toBeNull();
 
     fireEvent.click(asr);
-    expect(choice(/Parakeet \(gateway\)/)).toBeTruthy();
-    expect(screen.getByText('Whisper (gateway)')).toBeTruthy();
+    expect(choice(/Parakeet \(gateway\)/)).toBeVisible();
+    expect(screen.getByText('Whisper (gateway)')).toBeVisible();
     expect(screen.queryByText('Whisper (local)')).toBeNull();
   });
 
@@ -243,15 +243,15 @@ describe('the speech-engines band', () => {
     );
     const piperOwner = piper.closest('[data-speech-engine="piper-local"]') as HTMLElement;
     const deviceOwner = device.closest('[data-speech-engine="device"]') as HTMLElement;
-    expect(await within(piperOwner).findByRole('group', { name: 'Voices' })).toBeTruthy();
+    expect(await within(piperOwner).findByRole('group', { name: 'Voices' })).toBeVisible();
 
     fireEvent.click(disclosures[0]!);
-    expect(within(piperOwner).getByRole('group', { name: 'Voices' })).toBeTruthy();
-    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeTruthy();
+    expect(within(piperOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
+    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
 
     fireEvent.click(disclosures[1]!);
     expect(within(piperOwner).queryByRole('group', { name: 'Voices' })).toBeNull();
-    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeTruthy();
+    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
   });
 
   it("separates gateway engines from the selected device's premium voices", async () => {
@@ -272,15 +272,15 @@ describe('the speech-engines band', () => {
     const device = choice(/This device/)!;
     const pocket = choice(/Pocket TTS \(gateway\)/)!;
     expect(device.getAttribute('aria-pressed')).toBe('true');
-    expect(choice(/Piper \(gateway\)/)).toBeTruthy();
+    expect(choice(/Piper \(gateway\)/)).toBeVisible();
     const deviceEngine = device.closest('[data-speech-engine="device"]') as HTMLElement;
     expect(screen.queryByRole('button', { name: /Piper \(local\)/ })).toBeNull();
 
     fireEvent.click(within(engines).getByRole('button', { name: 'Settings for This device' }));
     const deviceVoices = within(deviceEngine).getByRole('group', { name: 'Voices' });
-    expect(within(deviceVoices).getByRole('button', { name: /^Samantha/ })).toBeTruthy();
-    expect(within(deviceVoices).getByRole('button', { name: /^Ava/ })).toBeTruthy();
-    expect(within(deviceVoices).getByRole('button', { name: /^Tom/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole('button', { name: /^Samantha/ })).toBeVisible();
+    expect(within(deviceVoices).getByRole('button', { name: /^Ava/ })).toBeVisible();
+    expect(within(deviceVoices).getByRole('button', { name: /^Tom/ })).toBeVisible();
     expect(within(deviceVoices).queryByRole('button', { name: /Piper/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Alex/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Zoe/ })).toBeNull();
@@ -292,7 +292,7 @@ describe('the speech-engines band', () => {
       expect((await getSpeechPrefs()).deviceVoice).toBe('com.apple.voice.premium.en-US.Samantha'),
     );
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /TTS.*This device · Samantha/ })).toBeTruthy(),
+      expect(screen.getByRole('button', { name: /TTS.*This device · Samantha/ })).toBeVisible(),
     );
     fireEvent.click(pocket);
 
@@ -301,7 +301,7 @@ describe('the speech-engines band', () => {
     expect(pocket.getAttribute('aria-pressed')).toBe('false');
     releasePaint();
     await waitFor(() => expect(pocket.getAttribute('aria-pressed')).toBe('true'));
-    expect(screen.getByRole('button', { name: /^Samantha/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Samantha/ })).toBeVisible();
   });
 
   // Regression, user report: iOS listed its system voices but gave them no sample action,
@@ -324,18 +324,18 @@ describe('the speech-engines band', () => {
     fireEvent.click(within(engines).getByRole('button', { name: 'Settings for This device' }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Play a sample of Samantha' }));
-    expect(await screen.findByRole('button', { name: 'Stop the sample of Samantha' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Stop the sample of Samantha' })).toBeVisible();
     expect(spoken).toHaveLength(1);
     expect(spoken[0]?.text.length).toBeGreaterThan(0);
     expect(spoken[0]?.voice?.voiceURI).toBe('com.apple.voice.premium.en-US.Samantha');
-    expect(screen.getByRole('button', { name: 'Play a sample of Ava' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Play a sample of Ava' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Play a sample of Ava' }));
-    expect(await screen.findByRole('button', { name: 'Play a sample of Samantha' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Play a sample of Samantha' })).toBeVisible();
     const stopAva = screen.getByRole('button', { name: 'Stop the sample of Ava' });
     fireEvent.click(stopAva);
 
-    expect(await screen.findByRole('button', { name: 'Play a sample of Ava' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Play a sample of Ava' })).toBeVisible();
     expect(cancel).toHaveBeenCalled();
   });
 
@@ -351,7 +351,7 @@ describe('the speech-engines band', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Settings for Piper (gateway)' }));
 
     const engine = piper.closest('[data-speech-engine="piper-local"]');
-    expect(engine).toBeTruthy();
+    expect(engine).toBeVisible();
     const voiceGroup = await within(engine as HTMLElement).findByRole('group', {
       name: 'Voices',
     });
@@ -420,8 +420,8 @@ describe('the speech-engines band', () => {
     render(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /ASR/ }));
-    expect(await screen.findByText(/could not load its native library/)).toBeTruthy();
+    expect(await screen.findByText(/could not load its native library/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /TTS/ }));
-    await waitFor(() => expect(choice(/This device/)).toBeTruthy());
+    await waitFor(() => expect(choice(/This device/)).toBeVisible());
   });
 });

@@ -192,7 +192,7 @@ describe('App wiring', () => {
     const view = renderApp({ machines: [{ label: 'laptop' }] });
     await screen.findByRole('button', { name: 'Projects on laptop' });
     // The chrome is on screen: this is the list.
-    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
 
     taps[0]?.({
       sessionId: 'sess-42',

@@ -117,7 +117,7 @@ describe('ensureAndroidChannel', () => {
       name: 'Answers',
       importance: 4,
     });
-    expect(native.channels[0].description).toBeTruthy();
+    expect(native.channels[0].description).toMatch(/finished turn/);
   });
 
   // iOS has no channels at all, and the plugin throws when asked on the web.

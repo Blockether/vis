@@ -96,7 +96,7 @@ describe('machine settings disclosures', () => {
 
     expect(first).toHaveAttribute('aria-expanded', 'true');
     expect(second).toHaveAttribute('aria-expanded', 'false');
-    await waitFor(() => expect(screen.getByText('MCP servers')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
     view.unmount();
   });
 
@@ -112,7 +112,7 @@ describe('machine settings disclosures', () => {
     const [first, second] = await onlineRows(2);
     expect(first).toHaveAttribute('aria-expanded', 'false');
     expect(second).toHaveAttribute('aria-expanded', 'true');
-    await waitFor(() => expect(screen.getByText('Providers')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Providers')).toBeVisible());
     view.unmount();
   });
   // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: a protocol refusal
@@ -155,7 +155,7 @@ describe('machine settings disclosures', () => {
 
     fetcher.mockImplementation(quiet);
     await act(async () => answer(await quiet()));
-    await waitFor(() => expect(screen.getByText('MCP servers')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
     expect(screen.getByText('laptop').closest('button')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Checking connection to laptop' })).toBeNull();
     view.unmount();

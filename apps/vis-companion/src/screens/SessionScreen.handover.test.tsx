@@ -111,7 +111,7 @@ describe('a finished turn handed to its persisted row', () => {
     expect(await screen.findByText('THE FINAL ANSWER')).toBeInTheDocument();
     // Long enough for the settle poll to swap in that same canonical row.
     await linger(600);
-    expect(screen.queryByText('THE FINAL ANSWER')).not.toBeNull();
+    expect(screen.queryByText('THE FINAL ANSWER')).toBeInTheDocument();
   });
 });
 // Regression, Vis session 976f705e-fd80-4787-adc6-1ae8388fdaa2: cancelling
@@ -144,7 +144,7 @@ describe('a turn cancelled from this screen', () => {
     expect(await screen.findByText('stop this turn')).toBeInTheDocument();
     const liveRow = document.querySelector('[data-live="true"]') as HTMLElement;
     const phaseSlot = liveRow.querySelector('[aria-hidden="true"].mt-5');
-    expect(phaseSlot).not.toBeNull();
+    expect(phaseSlot).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
     events.emit({
       type: 'turn.cancelled',
@@ -156,7 +156,7 @@ describe('a turn cancelled from this screen', () => {
     expect(await screen.findAllByText('Cancelled by user.')).toHaveLength(2);
     expect(screen.queryByText('Loading latest changes')).toBeNull();
     const cancelledRow = document.querySelector('[data-live="true"]') as HTMLElement;
-    expect(cancelledRow).not.toBeNull();
+    expect(cancelledRow).toBeInTheDocument();
     expect(cancelledRow.querySelector('[aria-hidden="true"].mt-5')).toBe(phaseSlot);
     // Cancelling before output arrives must not create an empty answer bubble.
     expect(cancelledRow.querySelector('.bg-answer')).toBeNull();

@@ -64,10 +64,10 @@ describe('skill slash search', () => {
     const composer = screen.getByLabelText('Message Vis');
     await user.type(composer, '/create-ext');
 
-    expect(await screen.findByText('/skill:create-extension')).toBeTruthy();
+    expect(await screen.findByText('/skill:create-extension')).toBeVisible();
 
     await user.clear(composer);
     await user.type(composer, '/');
-    expect(await screen.findByText('/skill:create-extension')).toBeTruthy();
+    expect(await screen.findByText('/skill:create-extension')).toBeVisible();
   });
 });

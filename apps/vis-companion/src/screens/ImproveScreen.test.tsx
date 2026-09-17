@@ -57,7 +57,7 @@ describe('Improve workspace', () => {
     click('Original report · read only');
     expect(
       screen.getByText('A tool call failed. Reproduction has not been attempted.'),
-    ).toBeTruthy();
+    ).toBeVisible();
     click('Edit issue');
     change('Issue content', '## Reproduction\nConfirmed by the focused test.');
     click('Save issue');
@@ -102,7 +102,7 @@ describe('Improve workspace', () => {
     fireEvent.click(screen.getByText('Make collected reports actionable'));
     click('Close issue');
     expect(update).not.toHaveBeenCalled();
-    expect(screen.getByText(/including children not loaded here/)).toBeTruthy();
+    expect(screen.getByText(/including children not loaded here/)).toBeVisible();
     click('Close issue and children');
     await screen.findByRole('button', { name: 'Reopen' });
     expect(update).toHaveBeenCalledWith(1, { status: 'closed', expected_version: 1 });
@@ -191,7 +191,7 @@ describe('Improve workspace', () => {
     await screen.findByText('Review settings saved.');
     click('Back to issues');
     expect(screen.queryByRole('button', { name: 'New issue' })).toBeNull();
-    expect(screen.getByText(/Improve is off/)).toBeTruthy();
+    expect(screen.getByText(/Improve is off/)).toBeVisible();
   });
 
   it('requires an explicit discard before closing an unsaved issue', async () => {

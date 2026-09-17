@@ -358,7 +358,7 @@ describe('the artifacts sheet', () => {
     await waitFor(() => expect(view.baseElement.innerHTML).toContain(mask));
     const masked = [...view.baseElement.querySelectorAll(`.${CSS.escape(mask)}`)];
     expect(masked).toHaveLength(1);
-    expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).not.toBeNull();
+    expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).toBeInTheDocument();
     view.unmount();
     vi.unstubAllGlobals();
   });
@@ -637,7 +637,7 @@ describe('the artifacts surface', () => {
       render(<ArtifactsSheet client={client} sid="s1" artifacts={[picture]} onClose={() => {}} />);
 
       const surface = shell.querySelector('#artifacts-surface');
-      expect(surface).toBeTruthy();
+      expect(surface).toBeInTheDocument();
       expect(surface?.className).not.toContain('pt-[env(safe-area-inset-top)]');
       const header = surface?.querySelector('header');
       expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
@@ -671,7 +671,7 @@ describe('an opened artifact', () => {
       await userEvent.click(
         screen.getByRole('button', { name: /^Open vis-issue-115-comment\.md/ }),
       );
-      expect(await screen.findByText('Already downloaded.', { selector: 'p' })).toBeTruthy();
+      expect(await screen.findByText('Already downloaded.', { selector: 'p' })).toBeVisible();
       expect(stalledFetch).not.toHaveBeenCalled();
     } finally {
       view.unmount();
@@ -689,7 +689,7 @@ describe('an opened artifact', () => {
       />,
     );
 
-    expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeVisible();
   });
   const openNote = async () => {
     const view = render(

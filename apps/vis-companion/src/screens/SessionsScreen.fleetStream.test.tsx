@@ -107,7 +107,7 @@ describe('a session list carried by the fleet stream', () => {
     await fleet.emit({ type: 'session.deleted', session_id: 's1' });
     await fleet.emit({ type: 'session.deleted', session_id: 's1' });
     expect(screen.queryByText('First')).toBeNull();
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeVisible();
     expect(listReads(view.requests)).toBe(read);
     expect(new GatewayClient(view.conns[1]!).isSessionDeleted('s1')).toBe(false);
   });
@@ -143,7 +143,7 @@ describe('a session list carried by the fleet stream', () => {
     const view = oneRow(fleet);
     restore = view.restore;
     await settle(50);
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
     expect(screen.queryByText('LIVE')).toBeNull();
     const read = listReads(view.requests);
 
@@ -155,7 +155,7 @@ describe('a session list carried by the fleet stream', () => {
       current_turn_id: 't1',
     });
 
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     expect(listReads(view.requests)).toBe(read);
   });
 
@@ -201,7 +201,7 @@ describe('a session list carried by the fleet stream', () => {
       title: 'Renamed by the engine',
     });
 
-    expect(screen.getByText('Renamed by the engine')).toBeTruthy();
+    expect(screen.getByText('Renamed by the engine')).toBeVisible();
     expect(listReads(view.requests)).toBe(read);
   });
 
@@ -231,8 +231,8 @@ describe('a session list carried by the fleet stream', () => {
       title: 'First renamed',
     });
 
-    expect(screen.getByText('First renamed')).toBeTruthy();
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('First renamed')).toBeVisible();
+    expect(screen.getByText('Second')).toBeVisible();
   });
 
   // A frame about a session this window does not hold is news about MEMBERSHIP, and
@@ -275,7 +275,7 @@ describe('a session list carried by the fleet stream', () => {
     else await fleet.emit({ type: 'subscription.ready', scope: 'fleet' });
     await settle(200);
     expect(listReads(view.requests)).toBeGreaterThan(read);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
   });
 
   it('does not overwrite a reconnect snapshot with an older cold response', async () => {
@@ -294,10 +294,10 @@ describe('a session list carried by the fleet stream', () => {
     );
     await fleet.emit({ type: 'subscription.ready', scope: 'fleet' });
     await settle(200);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     view.releasePages();
     await settle();
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
   });
 
   it('does not count superseded read failures against a newer successful connection', async () => {
@@ -323,17 +323,17 @@ describe('a session list carried by the fleet stream', () => {
     view.setVisible(false);
     view.setVisible(true);
     await settle(200);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     await act(async () => {
       for (const reject of rejectReads) reject();
     });
     expect(screen.queryByText('obsolete read')).toBeNull();
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     // One genuine failure is still only a blip, not the second failure of an outage.
     read.mockRejectedValueOnce(new Error('current blip'));
     await fleet.streaming(false);
     await settle(5_000);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
   });
 
   it.each([false, true])('does not let a stale list erase a goal start (cold=%s)', async (cold) => {
@@ -369,7 +369,7 @@ describe('a session list carried by the fleet stream', () => {
     if (cold) view.releasePages();
     else view.releaseList();
     await settle();
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     expect(listReads(view.requests)).toBe(read);
     await settle(200);
 
@@ -411,7 +411,7 @@ describe('a session list carried by the fleet stream', () => {
       return response;
     };
     await settle(30_000);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     expect(reads).toBe(1);
 
     announce = false;
@@ -440,7 +440,7 @@ describe('a session list carried by the fleet stream', () => {
       new URL('http://gateway.example.com/v1/sessions'),
     );
     await settle(200);
-    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeVisible();
     view.releaseList();
     await settle();
     expect(screen.queryByText('LIVE')).toBeNull();

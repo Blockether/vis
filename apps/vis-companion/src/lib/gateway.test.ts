@@ -600,14 +600,16 @@ describe('GatewayClient rolling transcript cache', () => {
       await first.transcript(`session-${index}`);
     }
     await second.transcript('other-session');
-    expect(first.cachedTranscript('session-1')).not.toBeNull();
+    expect(first.cachedTranscript('session-1')?.map((turn) => turn.id)).toEqual(['turn-session-1']);
 
     await first.transcript('session-11');
 
     expect(first.cachedTranscript('session-2')).toBeNull();
-    expect(first.cachedTranscript('session-1')).not.toBeNull();
-    expect(first.cachedTranscript('session-11')).not.toBeNull();
-    expect(second.cachedTranscript('other-session')).not.toBeNull();
+    expect(first.cachedTranscript('session-1')?.map((turn) => turn.id)).toEqual(['turn-session-1']);
+    expect(first.cachedTranscript('session-11')?.map((turn) => turn.id)).toEqual(['turn-session-11']);
+    expect(second.cachedTranscript('other-session')?.map((turn) => turn.id)).toEqual([
+      'turn-other-session',
+    ]);
 
     persistGatewayCaches();
     vi.resetModules();
@@ -615,9 +617,13 @@ describe('GatewayClient rolling transcript cache', () => {
     const coldFirst = new cold.GatewayClient(conn);
     const coldSecond = new cold.GatewayClient({ url: 'http://second.example.com:7890' });
     expect(coldFirst.cachedTranscript('session-2')).toBeNull();
-    expect(coldFirst.cachedTranscript('session-1')).not.toBeNull();
-    expect(coldFirst.cachedTranscript('session-11')).not.toBeNull();
-    expect(coldSecond.cachedTranscript('other-session')).not.toBeNull();
+    expect(coldFirst.cachedTranscript('session-1')?.map((turn) => turn.id)).toEqual(['turn-session-1']);
+    expect(coldFirst.cachedTranscript('session-11')?.map((turn) => turn.id)).toEqual([
+      'turn-session-11',
+    ]);
+    expect(coldSecond.cachedTranscript('other-session')?.map((turn) => turn.id)).toEqual([
+      'turn-other-session',
+    ]);
   });
 
   it('prefetches active transcripts behind the session-list response', async () => {
@@ -671,7 +677,11 @@ describe('GatewayClient rolling transcript cache', () => {
         }),
       ),
     );
-    await vi.waitFor(() => expect(client.cachedTranscript('active-session')).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(client.cachedTranscript('active-session')?.map((turn) => turn.id)).toEqual([
+        'turn-active-session',
+      ]),
+    );
     await client.listSessions();
     await Promise.resolve();
 
@@ -730,7 +740,12 @@ describe('GatewayClient rolling transcript cache', () => {
     const client = new GatewayClient(conn);
 
     await client.listSessions();
-    await vi.waitFor(() => expect(client.cachedTranscript('news-session')).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(client.cachedTranscript('news-session')?.map((turn) => turn.id)).toEqual([
+        'turn-1',
+        'turn-2',
+      ]),
+    );
 
     settled = true;
     const held = await client.listSessions();
@@ -808,7 +823,7 @@ describe('GatewayClient turn cancellation', () => {
     const submitBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     const cancelBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/sessions/session-1/cancel-current');
-    expect(submitBody.idempotency_key).toBeTruthy();
+    expect(submitBody.idempotency_key).toMatch(/\S/);
     expect(cancelBody.idempotency_key).toBe(submitBody.idempotency_key);
   });
 

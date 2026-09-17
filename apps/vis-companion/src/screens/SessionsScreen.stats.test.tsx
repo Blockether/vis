@@ -76,29 +76,29 @@ describe('the expanded session card', () => {
 
   it('renders the measured request from the usage endpoint, not lifetime totals', async () => {
     const view = await open();
-    expect(await screen.findByRole('meter', { name: 'Context budget' })).toBeTruthy();
-    expect(screen.getByText('16%')).toBeTruthy();
-    expect(screen.getByText('32k')).toBeTruthy();
-    expect(screen.getByText('85k')).toBeTruthy();
+    expect(await screen.findByRole('meter', { name: 'Context budget' })).toBeVisible();
+    expect(screen.getByText('16%')).toBeVisible();
+    expect(screen.getByText('32k')).toBeVisible();
+    expect(screen.getByText('85k')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: /Context breakdown/ }));
-    expect(screen.getByText('/work/AGENTS.md')).toBeTruthy();
+    expect(screen.getByText('/work/AGENTS.md')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: /Linked filesystems/ }));
-    expect(screen.getByText('AGENTS.md · ≈800 tokens on disk')).toBeTruthy();
+    expect(screen.getByText('AGENTS.md · ≈800 tokens on disk')).toBeVisible();
     expect(view.requests.filter((r) => r.path.endsWith('/usage'))).toHaveLength(1);
   });
 
   it('keeps the totals and drops the tool and error rankings', async () => {
     await open();
     // The grid the report kept, proving the card did expand.
-    expect(await screen.findByText('Cost')).toBeTruthy();
-    expect(screen.getByText('85k')).toBeTruthy();
-    expect(screen.getByText('2.3k')).toBeTruthy();
-    expect(screen.getByText('$0.21')).toBeTruthy();
-    expect(screen.getByText('59')).toBeTruthy();
+    expect(await screen.findByText('Cost')).toBeVisible();
+    expect(screen.getByText('85k')).toBeVisible();
+    expect(screen.getByText('2.3k')).toBeVisible();
+    expect(screen.getByText('$0.21')).toBeVisible();
+    expect(screen.getByText('59')).toBeVisible();
 
     // Model and Active are the whole labelled meta row now.
-    expect(screen.getByText('Model')).toBeTruthy();
-    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getByText('Model')).toBeVisible();
+    expect(screen.getByText('Active')).toBeVisible();
     expect(screen.queryByText('Top tools')).toBeNull();
     expect(screen.queryByText('Top errors')).toBeNull();
     expect(screen.queryByText(/python_execution/)).toBeNull();
@@ -108,16 +108,16 @@ describe('the expanded session card', () => {
     await open();
     const cachedInput = await screen.findByText('Cached input');
     const reuseCoverage = screen.getByText('Reuse coverage');
-    expect(screen.getByText('Share of all input served from provider cache')).toBeTruthy();
+    expect(screen.getByText('Share of all input served from provider cache')).toBeVisible();
     expect(
       screen.getByText(
         'Estimated share of reusable prior input recovered from cache · 4 of 5 calls',
       ),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(cachedInput.closest('dl')).toBe(reuseCoverage.closest('dl'));
     expect(cachedInput.closest('dl')).not.toBe(screen.getByText('Turns').closest('dl'));
-    expect(screen.getByText('77%')).toBeTruthy();
-    expect(screen.getByText('≈98%')).toBeTruthy();
+    expect(screen.getByText('77%')).toBeVisible();
+    expect(screen.getByText('≈98%')).toBeVisible();
   });
 
   // Regression, user report ("alignment is wrong"): the cache row put its label on the

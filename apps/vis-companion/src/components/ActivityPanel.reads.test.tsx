@@ -42,7 +42,7 @@ it('merges distinct ranges of one file into one disclosure without changing invo
   const toggle = within(row as HTMLElement).getByRole('button');
   expect(toggle).toHaveTextContent('PLAN.md · lines 583–584, 615–616');
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(within(row as HTMLElement).getByLabelText('Duration 3ms')).toBeTruthy();
+  expect(within(row as HTMLElement).getByLabelText('Duration 3ms')).toBeVisible();
   fireEvent.click(toggle);
   const content = row.querySelector('[data-activity-content]')!;
   expect(content.textContent).toContain('583 │ Verify the affected tests.');
@@ -62,7 +62,7 @@ it('keeps an open read mounted when another range arrives', () => {
   expect(row.isConnected).toBe(true);
   expect(content.isConnected).toBe(true);
   expect(firstCode.isConnected).toBe(true);
-  expect(within(row as HTMLElement).getByRole('button', { expanded: true })).toBeTruthy();
+  expect(within(row as HTMLElement).getByRole('button', { expanded: true })).toBeVisible();
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   expect(content.textContent).toContain('616 │ Review the final diff.');
 });

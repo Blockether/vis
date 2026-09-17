@@ -55,13 +55,13 @@ describe('code block copy controls', () => {
     try {
       const button = view.getByRole('button', { name: 'Copy code' });
       expect(button.textContent).toBe('');
-      expect(button.querySelector('svg')).not.toBeNull();
+      expect(button.querySelector('svg')).toBeInTheDocument();
       expect(button.title).toBe('Copy code');
       fireEvent.click(button);
       await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
       await waitFor(() => expect(button.getAttribute('aria-label')).toBe('Copied'));
       expect(button.textContent).toBe('');
-      expect(button.querySelector('svg.lucide-check')).not.toBeNull();
+      expect(button.querySelector('svg.lucide-check')).toBeInTheDocument();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -100,7 +100,7 @@ describe('provider failure card', () => {
     );
 
     try {
-      expect(view.getByRole('heading', { name: 'Provider rate limit reached' })).toBeTruthy();
+      expect(view.getByRole('heading', { name: 'Provider rate limit reached' })).toBeVisible();
       const card = view.getByRole('alert');
       expect(card.textContent).toContain('The provider is throttling new requests.');
       expect(card.textContent).toContain('Wait and retry, or switch provider/model.');
@@ -134,8 +134,8 @@ describe('provider failure card', () => {
     );
 
     try {
-      expect(view.getByRole('heading', { name: 'Turn failed' })).toBeTruthy();
-      expect(view.getByText('Unexpected failure.')).toBeTruthy();
+      expect(view.getByRole('heading', { name: 'Turn failed' })).toBeVisible();
+      expect(view.getByText('Unexpected failure.')).toBeVisible();
       expect(view.queryByRole('button', { name: 'Diagnostics' })).toBeNull();
     } finally {
       view.unmount();
@@ -175,7 +175,7 @@ describe('spoken transcript', () => {
     try {
       const play = view.getByRole('button', { name: 'Play' });
       expect(play.textContent).toBe('');
-      expect(play.querySelector('svg')).not.toBeNull();
+      expect(play.querySelector('svg')).toBeInTheDocument();
       // The transport LEADS the header row, and the name is no longer in it.
       const header = play.parentElement;
       expect(header?.hasAttribute('data-speech-header')).toBe(true);
@@ -220,8 +220,8 @@ describe('spoken transcript', () => {
       fireEvent.click(view.getByRole('button', { name: /Transcript/ }));
 
       expect(view.container.querySelector('p')).toBeNull();
-      expect(view.getByRole('slider', { name: 'Speech position' })).not.toBeNull();
-      expect(view.getByRole('button', { name: 'Play' })).not.toBeNull();
+      expect(view.getByRole('slider', { name: 'Speech position' })).toBeVisible();
+      expect(view.getByRole('button', { name: 'Play' })).toBeVisible();
     } finally {
       view.unmount();
     }
@@ -247,7 +247,7 @@ describe('spoken transcript', () => {
       expect(
         play.compareDocumentPosition(view.getByRole('slider', { name: 'Speech position' })) &
           Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     } finally {
       view.unmount();
     }
@@ -806,7 +806,7 @@ describe('user bubble recordings', () => {
       </UserMessage>,
     );
     const player = container.querySelector('audio');
-    expect(player).not.toBeNull();
+    expect(player).toBeInTheDocument();
     if (player) player.currentTime = 7;
 
     rerender(
@@ -1106,9 +1106,9 @@ describe('a Python evaluation without detected Activity', () => {
     const codeName = painted.getByRole('button', { name: 'Expand code' });
     expect(codeName.textContent).toMatch(/^CODE/);
     expect(codeName.textContent).not.toContain('Failed');
-    expect(codeName.querySelector('.text-white')).not.toBeNull();
+    expect(codeName.querySelector('.text-white')).toBeInTheDocument();
     expect(codeName.querySelector('.text-err')).toBeNull();
-    expect(painted.container.querySelector('[data-code-result] .text-err')).not.toBeNull();
+    expect(painted.container.querySelector('[data-code-result] .text-err')).toBeInTheDocument();
   });
 
   it('shows an interrupted Python execution as a stop, not a JVM failure', () => {
@@ -2090,8 +2090,8 @@ describe('user log attachments', () => {
         {''}
       </UserMessage>,
     );
-    expect(view.getByText('vis-diagnostics.jsonl.gz')).toBeTruthy();
-    expect(view.getByText('vis-diagnostics.jsonl')).toBeTruthy();
+    expect(view.getByText('vis-diagnostics.jsonl.gz')).toBeVisible();
+    expect(view.getByText('vis-diagnostics.jsonl')).toBeVisible();
     expect(view.queryByText('not-user.gz')).toBeNull();
     expect(view.container.querySelector('img, audio, video')).toBeNull();
   });

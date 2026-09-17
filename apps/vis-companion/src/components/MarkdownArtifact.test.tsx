@@ -201,7 +201,7 @@ describe('picking a passage on a touch screen', () => {
     // Regression, user report ("in the input I don't need to show what is
     // selected — the colour already tells me"): the composer opens with the field
     // and nothing else. The passage is what says which passage it is.
-    expect(host.querySelector('textarea[aria-label="Comment"]')).not.toBeNull();
+    expect(host.querySelector('textarea[aria-label="Comment"]')).toBeInTheDocument();
     expect(host.textContent).not.toContain('Comment on “We cut on Friday.”');
 
     // The native callout is what broke it, so the prose does not offer one on a
@@ -277,7 +277,7 @@ describe('marking up the passages a comment is about', () => {
     expect(paragraph.style.backgroundColor).toBe(annotationWash(1));
 
     // The list below says the same thing, and removal names the number.
-    expect(host.querySelector('button[aria-label="Remove comment 2"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Remove comment 2"]')).toBeInTheDocument();
 
     // The card's ordinal is a plain number in its comment's colour: no filled
     // circle, no background, nothing that reads as a control — even though the card
@@ -358,7 +358,7 @@ describe('a comment on the whole note', () => {
     const open = host.querySelector<HTMLButtonElement>(
       'button[aria-label="Comment on the whole document"]',
     );
-    expect(open).toBeTruthy();
+    expect(open).toBeVisible();
     act(() => {
       open!.click();
     });
@@ -460,7 +460,7 @@ describe('the tap that quotes a passage', () => {
     expect(paragraph.dataset.quotePending).toBe('true');
     expect([...paragraph.style]).toEqual(['background-color']);
     expect(host.textContent).not.toContain('Comment on “We cut on Friday.”');
-    expect(host.querySelector('textarea[aria-label="Comment"]')).not.toBeNull();
+    expect(host.querySelector('textarea[aria-label="Comment"]')).toBeInTheDocument();
     done();
   });
 
@@ -557,7 +557,7 @@ describe('a remark already written', () => {
     const field = opened.host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!;
     // The same words, in the same composer, under a verb that says what it will do.
     expect(field.value).toBe('Stale.');
-    expect(opened.verb('Update comment')).toBeTruthy();
+    expect(opened.verb('Update comment')).toBeVisible();
 
     typeInto(field, 'Still stale.');
     act(() => opened.verb('Update comment').click());
@@ -578,7 +578,7 @@ describe('a remark already written', () => {
     expect(body.className).toContain('italic');
 
     // Pressing the card edits; the one mark on it still removes.
-    expect(opened.host.querySelector('button[aria-label="Remove comment 1"]')).not.toBeNull();
+    expect(opened.host.querySelector('button[aria-label="Remove comment 1"]')).toBeInTheDocument();
     opened.done();
   });
 });

@@ -183,7 +183,7 @@ describe('the slide', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.getByRole('group', { name: 'first actions' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'first actions' })).toBeVisible();
   });
 
   it('opens one row at a time, so no second row keeps a delete armed', () => {

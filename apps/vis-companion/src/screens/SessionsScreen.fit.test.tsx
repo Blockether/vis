@@ -28,7 +28,7 @@ const onScreen = (height: number) => {
 const expectRows = async (height: number, count: number) => {
   const view = onScreen(height);
   try {
-    await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('alpha 00')).toBeVisible());
     expect(shown(view)).toHaveLength(count);
   } finally {
     view.unmount();
@@ -75,19 +75,19 @@ describe("a project's page is cut by the device", () => {
   it('keeps the row the reader is on when the screen changes shape', async () => {
     const view = onScreen(844);
     try {
-      await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 00')).toBeVisible());
       fireEvent.click(view.getByLabelText('Next page'));
-      await waitFor(() => expect(view.getByText('alpha 15')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 15')).toBeVisible());
       fireEvent.click(view.getByLabelText('Next page'));
       // Page 3 of 3 at fifteen rows a page: the reader is holding `alpha 30`.
-      await waitFor(() => expect(view.getByText('alpha 30')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 30')).toBeVisible());
 
       // The device is turned, and the step under the pager grows. A page NUMBER
       // kept across that would name a different stretch, so the row index is kept.
       window.innerHeight = 1200;
       fireEvent(window, new Event('resize'));
       await waitFor(() => expect(shown(view)).toHaveLength(18));
-      expect(view.getByText('alpha 30')).toBeTruthy();
+      expect(view.getByText('alpha 30')).toBeVisible();
     } finally {
       view.unmount();
       view.restore();
@@ -106,7 +106,7 @@ describe('a desk cuts a page for the room it really has', () => {
     const restoreDensity = onADesk();
     const view = onScreen(900);
     try {
-      await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 00')).toBeVisible());
       // The wider sidebar exposes row metadata, while inline pages free their old band.
       // Its footer and next-project peek leave room for thirteen two-line rows.
       expect(shown(view)).toHaveLength(13);

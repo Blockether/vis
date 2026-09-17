@@ -20,16 +20,16 @@ it('labels extension groups and preserves disclosures, arguments and live failur
       group.getAttribute('data-activity-group'),
     ),
   ).toEqual(['0:search-1', '0:status-1', '0:lookup-1']);
-  expect(screen.getByRole('button', { name: /Search reviews ×3/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Search reviews ×2/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Check review deployment ×2/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Search reviews ×3/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: /Search reviews ×2/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: /Check review deployment ×2/ })).toBeVisible();
   // A closed group counts its failures and prints none of them; only work still in
   // flight keeps a line, because it has nowhere else to appear while it is running.
   expect(screen.queryByText(/Review service unavailable/)).toBeNull();
   expect(screen.getByRole('button', { name: /Search reviews ×3/ }).textContent).toContain(
     '1 failed',
   );
-  expect(screen.getByText(/Waiting for deployment · running/)).toBeTruthy();
+  expect(screen.getByText(/Waiting for deployment · running/)).toBeVisible();
   expect(document.body.textContent).not.toContain('reviews.search');
   expect(document.body.textContent).not.toContain('reviews.deployment_status');
 
@@ -88,6 +88,6 @@ it('keeps an extension disclosure open when its fallback gains a headline', () =
   expect(
     screen.getByRole('button', { name: /Search open reviews ×4/ }).getAttribute('aria-expanded'),
   ).toBe('true');
-  expect(screen.getByRole('button', { name: /reviews.custom ×2/ })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Read ×2/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /reviews.custom ×2/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: /Read ×2/ })).toBeVisible();
 });

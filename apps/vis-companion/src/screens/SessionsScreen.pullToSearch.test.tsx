@@ -16,10 +16,10 @@ const down = (by: number) => ({ x: AT.x, y: AT.y + by });
 /** The list's scroller, once the fleet has painted a row into it. */
 async function listOf(view: ReturnType<typeof renderSessionsScreen>) {
   await waitFor(() => {
-    expect(view.container.querySelector('[data-session-id]')).not.toBeNull();
+    expect(view.container.querySelector('[data-session-id]')).toBeInTheDocument();
   });
   const viewport = view.container.querySelector<HTMLElement>('.overflow-y-auto');
-  expect(viewport).not.toBeNull();
+  expect(viewport).toBeInTheDocument();
   return viewport!;
 }
 

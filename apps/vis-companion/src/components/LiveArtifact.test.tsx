@@ -83,7 +83,7 @@ describe('a long record, read at its two ends', () => {
   it('is null when neither end holds one complete line', () => {
     // A tail slice starts mid-line, so the FIRST line in it is only half a patch:
     // taking it would paint a picture out of a line the engine never finished.
-    expect(liveRecordFromEdges(openLine, 'half a lin')).not.toBeNull();
+    expect(liveRecordFromEdges(openLine, 'half a lin')?.view.title).toBe(fixture.title);
     expect(liveRecordFromEdges('half a lin', 'half a lin')).toBeNull();
   });
 });
@@ -106,8 +106,8 @@ describe('the artifact on screen', () => {
         )}
       />,
     );
-    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeTruthy());
-    expect(screen.getByText('finished')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeVisible());
+    expect(screen.getByText('finished')).toBeVisible();
     // A record cannot change again: no live region, and nothing to interrupt.
     expect(document.querySelector('[role="status"]')).toBeNull();
     expect(document.querySelector('[aria-live]')).toBeNull();
@@ -125,7 +125,7 @@ describe('the artifact on screen', () => {
       />,
     );
     await waitFor(() =>
-      expect(screen.getByText("This run's record could not be read.")).toBeTruthy(),
+      expect(screen.getByText("This run's record could not be read.")).toBeVisible(),
     );
   });
 
@@ -148,8 +148,8 @@ describe('the artifact on screen', () => {
         )}
       />,
     );
-    await waitFor(() => expect(screen.getByText('failed')).toBeTruthy());
-    expect(screen.getByText('swept 3 hosts')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('failed')).toBeVisible());
+    expect(screen.getByText('swept 3 hosts')).toBeVisible();
   });
 
   it("is built out of the app's own controls", () => {
@@ -200,8 +200,8 @@ describe('the settled run in the transcript', () => {
     const { client: c, attachmentUrl } = rowClient();
     render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
     // Named after the RUN, not after the file the engine filed it under.
-    expect(screen.getByRole('button', { name: 'Open run release' })).toBeTruthy();
-    expect(screen.getByText('RUN')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open run release' })).toBeVisible();
+    expect(screen.getByText('RUN')).toBeVisible();
     // A 40MB record must not be fetched to paint a line of text.
     expect(attachmentUrl).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -263,9 +263,9 @@ describe('the settled run in the transcript', () => {
         chrome={({ body }) => <div>{body}</div>}
       />,
     );
-    await waitFor(() => expect(screen.getByText('Tests failed')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Tests failed')).toBeVisible());
     fireEvent.click(screen.getByRole('button', { name: 'Select macOS' }));
-    expect(screen.getByText('Tests passed')).toBeTruthy();
+    expect(screen.getByText('Tests passed')).toBeVisible();
     expect(screen.queryByText('Tests failed')).toBeNull();
   });
 
@@ -292,7 +292,7 @@ describe('the settled run in the transcript', () => {
         chrome={({ body }) => <div>{body}</div>}
       />,
     );
-    await waitFor(() => expect(screen.getByText('Recorded job')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Recorded job')).toBeVisible());
     expect(screen.queryByRole('button', { name: 'Select Recorded job' })).toBeNull();
   });
 
@@ -351,11 +351,11 @@ describe('the settled run in the transcript', () => {
     expect(launch).not.toHaveAttribute('aria-expanded');
     expect(launch.querySelector('svg')).toBeNull();
     fireEvent.click(launch);
-    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeVisible());
     expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
     // The band REPORTS the verdict; the run is over, so it is what it took, not
     // an offer to stop it.
-    expect(screen.getByText('stopped by hand — enough')).toBeTruthy();
+    expect(screen.getByText('stopped by hand — enough')).toBeVisible();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
     expect(document.querySelector('[role="status"]')).toBeNull();
     // The way out is the band's own, and it names the run.
@@ -368,7 +368,7 @@ describe('the settled run in the transcript', () => {
     const { client: c } = rowClient(null);
     render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
-    await waitFor(() => expect(screen.getByText('Loading…')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Loading…')).toBeVisible());
   });
 
   it('paints nothing for a run no iteration owns', () => {

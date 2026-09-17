@@ -31,7 +31,7 @@ describe('the primary machine owns the first sessions scope', () => {
     );
 
     expect(strip.getByRole('button', { name: /^beta/ }).getAttribute('aria-pressed')).toBe('true');
-    expect(await screen.findByText('Beta session')).toBeTruthy();
+    expect(await screen.findByText('Beta session')).toBeVisible();
     expect(screen.queryByText('Alpha session')).toBeNull();
   });
   it('renders and caches the primary server order rather than pairing order', async () => {

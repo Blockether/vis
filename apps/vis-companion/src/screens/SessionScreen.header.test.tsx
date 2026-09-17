@@ -31,7 +31,7 @@ describe('the composer under an open artifacts sheet', () => {
     });
 
     const composer = document.querySelector('footer');
-    expect(composer).not.toBeNull();
+    expect(composer).toBeVisible();
     expect(composer).not.toHaveClass('hidden');
 
     await user.click(await screen.findByRole('button', { name: /artifact/i }));

@@ -200,7 +200,7 @@ describe('an opened document', () => {
     );
     await userEvent.click(screen.getByText(name));
     const close = document.querySelector(`[aria-label="Close ${name}"]`)!;
-    expect(close).toBeTruthy();
+    expect(close).toBeInTheDocument();
     return { view, screenEl: close.closest('div[class*=inset-0]') as HTMLElement };
   };
 
@@ -338,7 +338,7 @@ describe('a revised document', () => {
     expect(cell.textContent).toContain('v2 of 2');
 
     await userEvent.click(cell);
-    expect(screen.getByText('2 versions')).toBeTruthy();
+    expect(screen.getByText('2 versions')).toBeVisible();
 
     await userEvent.click(screen.getByLabelText('Read v1 of THREAD.md'));
     expect(picked).toEqual([1]);

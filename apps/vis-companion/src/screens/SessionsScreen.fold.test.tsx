@@ -38,10 +38,10 @@ describe('folding a project', () => {
   it('opens the top project and no other', async () => {
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     try {
-      await waitFor(() => expect(view.getByText('alpha 0')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 0')).toBeVisible());
       // The one project that opens by itself is the one the order put on top.
-      expect(view.getByLabelText('Collapse alpha')).toBeTruthy();
-      expect(view.getByLabelText('Expand beta')).toBeTruthy();
+      expect(view.getByLabelText('Collapse alpha')).toBeVisible();
+      expect(view.getByLabelText('Expand beta')).toBeVisible();
       expect(view.queryAllByText(/beta \d/)).toHaveLength(0);
     } finally {
       view.restore();
@@ -52,7 +52,7 @@ describe('folding a project', () => {
     const first = renderSessionsScreen({ machines: [{ sessions: rows }] });
     let conns;
     try {
-      await waitFor(() => expect(first.getByText('alpha 0')).toBeTruthy());
+      await waitFor(() => expect(first.getByText('alpha 0')).toBeVisible());
       conns = first.conns;
       // The reader disagrees with both defaults: the top project is one they are done
       // with, the one under it is the one they are in.
@@ -68,9 +68,9 @@ describe('folding a project', () => {
     // The app comes back: the same machine, a screen built from nothing.
     const again = renderSessionsScreen({ machines: [{ sessions: rows }], at: conns });
     try {
-      await waitFor(() => expect(again.getByText('beta 0')).toBeTruthy());
-      expect(again.getByLabelText('Expand alpha')).toBeTruthy();
-      expect(again.getByLabelText('Collapse beta')).toBeTruthy();
+      await waitFor(() => expect(again.getByText('beta 0')).toBeVisible());
+      expect(again.getByLabelText('Expand alpha')).toBeVisible();
+      expect(again.getByLabelText('Collapse beta')).toBeVisible();
       expect(again.queryAllByText(/alpha \d/)).toHaveLength(0);
     } finally {
       again.restore();
@@ -80,12 +80,12 @@ describe('folding a project', () => {
   it('shows what a query matched, fold or no fold', async () => {
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     try {
-      await waitFor(() => expect(view.getByText('alpha 0')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('alpha 0')).toBeVisible());
       expect(view.queryAllByText(/beta \d/)).toHaveLength(0);
       // A filter is a fleet-wide question. Answering it with a folded project would
       // be the screen saying it found nothing while holding the row.
       view.setQuery('beta 1');
-      await waitFor(() => expect(view.getByText('beta 1')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('beta 1')).toBeVisible());
     } finally {
       view.restore();
     }
@@ -114,7 +114,7 @@ describe('folding a project', () => {
       ],
     });
     try {
-      await waitFor(() => expect(view.getByText('0 sessions')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('0 sessions')).toBeVisible());
       expect(view.getByText('vis').closest('button')).toBeNull();
       expect(view.queryByLabelText(/^(Expand|Collapse) vis$/)).toBeNull();
     } finally {

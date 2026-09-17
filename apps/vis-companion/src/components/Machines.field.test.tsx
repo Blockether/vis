@@ -67,7 +67,7 @@ describe('one field takes whatever the terminal printed', () => {
     // copy, and the field's verb is the only primary one on the page.
     expect(screen.queryByRole('button', { name: 'Scan QR' })).toBeNull();
     // The command is there to be TAKEN to the other machine, not read off the screen.
-    expect(screen.getByRole('button', { name: 'Copy command' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy command' })).toBeVisible();
     const command = document.querySelector('code');
     expect(command?.textContent).toBe(
       'vis-agent gateway start --host 0.0.0.0 --require-token --pair',
@@ -97,12 +97,12 @@ describe('one field takes whatever the terminal printed', () => {
     const ways = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(ways).toEqual(['Scan the QR code', 'I have a pairing link']);
     expect(document.body.textContent).not.toMatch(/^\s*1\s/m);
-    expect(screen.getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Scan QR' })).toBeVisible();
     // The start command has nowhere to be pasted from a phone, so it is not shown;
     // the field still takes the link or a bare address.
     expect(screen.queryByRole('button', { name: 'Copy command' })).toBeNull();
     expect(document.body.textContent).not.toContain('--require-token');
-    expect(field()).toBeTruthy();
+    expect(field()).toBeVisible();
   });
 
   it('pairs from a pasted link without asking for a token', async () => {
@@ -124,7 +124,7 @@ describe('one field takes whatever the terminal printed', () => {
     expect(tokenField()).toBeNull();
     type('10.0.0.5:7890');
     const token = tokenField();
-    expect(token).toBeTruthy();
+    expect(token).toBeVisible();
     fireEvent.change(token!, { target: { value: 'tok' } });
     await pair();
     expect(onAdd.mock.calls[0][0]).toMatchObject({ url: 'http://10.0.0.5:7890', token: 'tok' });

@@ -148,11 +148,11 @@ describe('a machine keeps its verbs under its own row', () => {
     ).toEqual(['No, keep', 'Yes, forget']);
     // What it costs is said where it is asked: the panel this verb came from
     // spent a paragraph on it, and the answer is worthless without the sentence.
-    expect(screen.getByText(/access token from this device/)).toBeTruthy();
+    expect(screen.getByText(/access token from this device/)).toBeVisible();
 
     await user.click(within(ask).getByRole('button', { name: 'No, keep' }));
     expect(onForget).not.toHaveBeenCalled();
-    expect(stripOf('laptop').getByRole('button', { name: 'Forget' })).toBeTruthy();
+    expect(stripOf('laptop').getByRole('button', { name: 'Forget' })).toBeVisible();
 
     await user.click(stripOf('laptop').getByRole('button', { name: 'Forget' }));
     await user.click(screen.getByRole('button', { name: 'Yes, forget' }));

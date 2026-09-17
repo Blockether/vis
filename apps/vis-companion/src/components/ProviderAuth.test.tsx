@@ -310,7 +310,7 @@ describe('ProviderRows', () => {
     );
 
     const row = screen.getByText('GITHUB-COPILOT').closest('button');
-    expect(row).not.toBeNull();
+    expect(row).toBeVisible();
     if (!row) throw new Error('provider row missing');
     expect(row.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
@@ -347,7 +347,7 @@ describe('ProviderRows', () => {
       expect(asked).toEqual(pending ? [] : ['github-copilot']);
       expect(
         screen.getByRole('button', { name: /^GITHUB-COPILOT/i, expanded: false }),
-      ).toBeTruthy();
+      ).toBeVisible();
     },
   );
 
@@ -379,11 +379,11 @@ describe('ProviderRows', () => {
     );
 
     const row = screen.getByText('GITHUB-COPILOT').closest('button');
-    expect(row).not.toBeNull();
+    expect(row).toBeVisible();
     if (!row) throw new Error('provider row missing');
     fireEvent.click(row);
 
-    expect(screen.getByText('Signed in')).toBeTruthy();
+    expect(screen.getByText('Signed in')).toBeVisible();
     expect(screen.queryByText(/Checking/)).toBeNull();
     expect(screen.queryByText('No limits reported by this provider.')).toBeNull();
     expect(row.querySelector('[title="Authentication verified"]')?.className).not.toContain(
@@ -403,7 +403,7 @@ describe('ProviderRows', () => {
         })}
       />,
     );
-    expect(screen.getByText('Sign in')).toBeTruthy();
+    expect(screen.getByText('Sign in')).toBeVisible();
     fireEvent.click(screen.getByText('ANTHROPIC'));
     expect(started).toEqual(['anthropic']);
   });
@@ -415,7 +415,7 @@ describe('ProviderRows', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Run every turn on GITHUB-COPILOT' }));
-    expect(screen.getByText('glm-5.3-air')).toBeTruthy();
+    expect(screen.getByText('glm-5.3-air')).toBeVisible();
   });
 
   it('never offers the fallback to the provider that already runs every turn', () => {
@@ -442,7 +442,7 @@ describe('ProviderRows', () => {
       expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
       expect(
         screen.getByRole('button', { name: 'Run every turn on EXTENSION-OWNED' }),
-      ).toBeTruthy();
+      ).toBeVisible();
     },
   );
 
@@ -450,7 +450,7 @@ describe('ProviderRows', () => {
     const row = { ...provider('anthropic'), is_managed: false };
     const view = render(<ProviderRows auth={state({ providers: [row] })} />);
     fireEvent.click(screen.getByRole('button', { name: /remove it from this machine/ }));
-    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeVisible();
     view.rerender(<ProviderRows auth={state({ providers: [{ ...row, is_managed: true }] })} />);
     expect(screen.queryByRole('group', { name: 'Remove ANTHROPIC?' })).toBeNull();
     expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
@@ -474,7 +474,7 @@ describe('ProviderRows', () => {
         name: 'Sign out of ANTHROPIC and remove it from this machine',
       }),
     );
-    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeVisible();
     expect(removed).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Yes, remove' }));
     expect(removed).toEqual([row]);

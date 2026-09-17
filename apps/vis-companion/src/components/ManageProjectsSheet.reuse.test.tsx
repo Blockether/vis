@@ -238,9 +238,9 @@ describe('ManageProjectsSheet paints no box of its own', () => {
     const use = screen.getByRole('button', { name: 'Use project' });
 
     const scroller = row.closest('.overflow-y-auto');
-    expect(scroller).not.toBeNull();
+    expect(scroller).toBeVisible();
     expect(scroller!.contains(use)).toBe(false);
-    expect(use.closest('header')).not.toBeNull();
+    expect(use.closest('header')).toBeInTheDocument();
   });
 
   it('keeps a crumb a real target rather than 14px of bare text', async () => {
@@ -396,7 +396,7 @@ describe('the path band', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
     const naming = screen.getByLabelText('New folder name').closest('div.h-11');
 
-    expect(naming).not.toBeNull();
+    expect(naming).toBeVisible();
     expect(heights(naming!)).toEqual(['h-11', 'mouse:h-9']);
   });
 
@@ -409,7 +409,7 @@ describe('the path band', () => {
     const use = screen.getByRole('button', { name: 'Use project' });
     const folder = screen.getByRole('button', { name: 'New folder' });
     const heading = use.closest('header');
-    expect(heading).not.toBeNull();
+    expect(heading).toBeInTheDocument();
     expect(heading).toBe(folder.closest('header'));
     expect(use.closest('footer')).toBeNull();
   });
@@ -434,7 +434,7 @@ describe('the projects mark opens the inventory', () => {
     const heading = create.closest('header')!;
     expect(heading).toHaveClass('bg-dialog-title');
     expect(create.textContent).toBe('');
-    expect(create.querySelector('svg')).not.toBeNull();
+    expect(create.querySelector('svg')).toBeInTheDocument();
 
     const row = await screen.findByRole('button', { name: /^vis/ });
     expect(row.textContent).toContain('3 transcripts, 1 running');

@@ -39,7 +39,7 @@ describe('deleting one session confirms inside its own row', () => {
     expect(strip.classList.contains('border')).toBe(false);
     // The neighbour keeps its own row: one question, one row.
     expect(screen.queryByRole('group', { name: 'Delete Second?' })).toBeNull();
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeVisible();
   });
 
   it('deletes on yes and asks the gateway for exactly that session', async () => {
@@ -63,7 +63,7 @@ describe('deleting one session confirms inside its own row', () => {
       ).toBe(true),
     );
     await waitFor(() => expect(screen.queryByText('First')).toBeNull());
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeVisible();
   });
 
   it('no keeps the session: the row comes back and nothing is sent', async () => {
@@ -80,7 +80,7 @@ describe('deleting one session confirms inside its own row', () => {
     fireEvent.click(await screen.findByText('No, keep'));
 
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Delete First?' })).toBeNull());
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
   });
 });
@@ -213,7 +213,7 @@ describe('deleting a project confirms inside its inventory row', () => {
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'No, keep' }));
-    expect(await screen.findByRole('button', { name: /^project/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^project/ })).toBeVisible();
 
     fireEvent.click(
       screen.getByRole('button', {
@@ -233,7 +233,7 @@ describe('deleting a project confirms inside its inventory row', () => {
       expect(screen.queryByRole('group', { name: 'Delete project?' })).toBeNull(),
     );
     expect(screen.getAllByRole('dialog')).toEqual([sheet]);
-    expect(screen.getByText('This machine has no projects yet.')).toBeTruthy();
+    expect(screen.getByText('This machine has no projects yet.')).toBeVisible();
   });
 });
 
@@ -278,7 +278,7 @@ describe('deleting a session does not re-download the fleet', () => {
 
     // The row goes because the delete succeeded, not because a fresh list said so.
     await waitFor(() => expect(screen.queryByText('First')).toBeNull());
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeVisible();
     expect(screen.queryByText('Elsewhere')).toBeNull();
     expect(listReads(view)).toEqual([]);
   });
@@ -309,7 +309,7 @@ describe('deleting a session does not re-download the fleet', () => {
     fireEvent.change(field, { target: { value: 'Renamed' } });
     fireEvent.keyDown(field, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByText('Renamed')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Renamed')).toBeVisible());
     expect(
       view.requests
         .filter((request) => request.method === 'PATCH')

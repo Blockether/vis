@@ -110,7 +110,7 @@ describe('binding a machine to one of its addresses', () => {
     const { menu } = await openAddresses('tower');
 
     expect(screen.getByRole('dialog').getAttribute('aria-label')).toBe('Addresses on tower');
-    expect(menu.getByText('Bind tower to…')).toBeTruthy();
+    expect(menu.getByText('Bind tower to…')).toBeVisible();
     // Each row NAMES the address and says what makes it durable; the one this
     // device is talking to wears the only mark on the list, and every one of them
     // is probed from HERE while the menu is open, so an address that answers
@@ -147,7 +147,7 @@ describe('binding a machine to one of its addresses', () => {
     // A pinned machine says so on its own row, beside `Primary` and `Current`, and
     // the last row of its menu is the way back to letting this device follow the
     // durability order.
-    expect(screen.getByText('Pinned')).toBeTruthy();
+    expect(screen.getByText('Pinned')).toBeVisible();
     const pinned = await openAddresses('tower');
     expect(rowsOf(pinned.menu).at(-1)).toBe(
       'AutomaticFollow the most durable address that answers',

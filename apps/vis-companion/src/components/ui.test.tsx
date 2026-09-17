@@ -625,7 +625,7 @@ describe('a setting is picked and switched by one control each', () => {
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(2);
     const choice = buttons.find((button) => button.getAttribute('aria-pressed') === 'true');
-    expect(choice).toBeDefined();
+    expect(choice).toBeVisible();
     expect(choice).toHaveAccessibleName(/Piper \(gateway\)/);
   });
 

@@ -239,8 +239,10 @@ describe('every control is drawn in the gallery', () => {
 
     expect(missing).toEqual([]);
     for (const owner of Object.values(indirectStoryOwner)) {
-      const story = stories.find(([path]) => path === owner);
-      expect(story, `${owner} is named as a component's gallery owner`).toBeDefined();
+      expect(
+        stories.map(([path]) => path),
+        `${owner} is named as a component's gallery owner`,
+      ).toContain(owner);
     }
   });
 

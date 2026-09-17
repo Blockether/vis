@@ -50,7 +50,7 @@ describe('a poll that changes nothing leaves the list alone', () => {
     });
     restore = view.restore;
     await settle(50);
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
 
     const painted = badge.syncBadge.mock.calls.length;
     const read = listReads(view.requests);
@@ -64,7 +64,7 @@ describe('a poll that changes nothing leaves the list alone', () => {
     // ...and said nothing new, so the fleet the whole list is derived from is the
     // very array it was before.
     expect(badge.syncBadge.mock.calls.length).toBe(painted);
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
   });
 
   it('keeps polling while an iOS webview reports the document hidden', async () => {
@@ -112,7 +112,7 @@ describe('the list parked behind an open session', () => {
 
     expect(listReads(view.requests)).toBe(1);
     // What the reader arrives on is the list itself, never its loading state.
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
     expect(screen.queryByLabelText('Loading sessions')).toBeNull();
   });
 

@@ -20,7 +20,7 @@ describe('sessions feature boundaries', () => {
       const match = sessionProjectGroupsSource.match(
         new RegExp(`${name} = memo\\(function ${name}\\(\\{([\\s\\S]*?)\\}: \{`),
       );
-      expect(match, `${name} signature`).not.toBeNull();
+      expect(match?.[1], `${name} signature`).toMatch(/\S/);
       return match?.[1] ?? '';
     });
     const looseActions = [
@@ -46,7 +46,7 @@ describe('sessions feature boundaries', () => {
     const match = sessionListSource.match(
       /SessionRow = memo\(function SessionRow\(\{([\s\S]*?)\}: \{/,
     );
-    expect(match, 'SessionRow signature').not.toBeNull();
+    expect(match?.[1], 'SessionRow signature').toMatch(/\S/);
     const signature = match?.[1] ?? '';
     const looseActions = [
       'onOpen',
@@ -70,7 +70,7 @@ describe('sessions feature boundaries', () => {
     const match = sessionProjectGroupsSource.match(
       /ProjectGroup = memo\(function ProjectGroup\(\{([\s\S]*?)\}: \{/,
     );
-    expect(match, 'ProjectGroup signature').not.toBeNull();
+    expect(match?.[1], 'ProjectGroup signature').toMatch(/\S/);
     const signature = match?.[1] ?? '';
     const leakedFields = [
       'project',
@@ -105,12 +105,12 @@ describe('sessions feature boundaries', () => {
     const section = sessionsScreenSource.match(
       /<section\s+aria-label="Sessions"\s+className=\{\s*`([^`]*)`\s*\}/,
     );
-    expect(section, 'sessions section').not.toBeNull();
+    expect(section?.[1], 'sessions section').toMatch(/\S/);
     expect(section?.[1]).not.toContain('safe-area-inset-bottom');
     const list = sessionsScreenSource.match(
       /<div\s+ref=\{listRef\}\s+className=\{\s*`([^`]*)`\s*\}/,
     );
-    expect(list, 'list scroller').not.toBeNull();
+    expect(list?.[1], 'list scroller').toMatch(/\S/);
     expect(list?.[1]).toContain('overflow-y-auto');
     expect(list?.[1]).toContain('pb-[calc(0.75rem+env(safe-area-inset-bottom))]');
   });
@@ -119,7 +119,7 @@ describe('sessions feature boundaries', () => {
     const viewport = sessionsScreenSource.match(
       /<div className="([^"]*overflow-hidden[^"]*bg-page[^"]*)">/,
     );
-    expect(viewport, 'list viewport').not.toBeNull();
+    expect(viewport?.[1], 'list viewport').toMatch(/\S/);
     const classes = viewport?.[1].split(' ');
     expect(classes).not.toContain('border-t');
     expect(classes).toEqual(

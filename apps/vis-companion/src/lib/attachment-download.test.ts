@@ -150,7 +150,7 @@ describe('downloading one produced artifact', () => {
     }) as typeof fetch;
 
     const client = new GatewayClient(CONN);
-    await expect(client.attachmentUrl('s1', 'landing', 0)).resolves.toBeTruthy();
+    expect(urls.sizeOf(await client.attachmentUrl('s1', 'landing', 0))).toBe(14791);
     expect(responses).toBe(2);
   });
 
@@ -160,7 +160,7 @@ describe('downloading one produced artifact', () => {
     uninstallFakeCacheStorage();
     const client = new GatewayClient(CONN);
     expect(urls.sizeOf(await client.attachmentUrl('s1', 'i1', 0))).toBe(1024);
-    expect(await new GatewayClient(CONN).attachmentUrl('s1', 'i1', 0)).toBeTruthy();
+    expect(urls.sizeOf(await new GatewayClient(CONN).attachmentUrl('s1', 'i1', 0))).toBe(1024);
     expect(asked).toHaveLength(2);
   });
 });

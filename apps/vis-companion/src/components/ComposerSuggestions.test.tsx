@@ -64,14 +64,14 @@ describe('composer suggestions', () => {
     const inset = (classes: string, utility: string) =>
       classes.match(new RegExp(`(?:^|\\s)${utility}-\\[([^\\]]+)\\]`))?.[1];
 
-    expect(footer).not.toBeNull();
+    expect(footer?.[0], 'the composer footer classes').toMatch(/\bpl-\[/);
     for (const [padding, side] of [
       ['pl', 'left'],
       ['pr', 'right'],
     ]) {
       for (const variant of ['', 'sm:', 'mouse:']) {
         const gutter = inset(footer?.[0] ?? '', `${variant}${padding}`);
-        expect(gutter, `${variant}${padding}`).toBeDefined();
+        expect(gutter, `${variant}${padding}`).toMatch(/\S/);
         expect(inset(frame, `${variant}${side}`), `${variant}${side}`).toBe(gutter);
       }
     }

@@ -24,8 +24,8 @@ it('requires explicit confirmation, focuses Cancel, and never submits on Escape'
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   expect(consume).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
-  expect(screen.getByText(/Account: account-1/)).toBeTruthy();
-  expect(screen.getByText(/all devices and sessions/)).toBeTruthy();
+  expect(screen.getByText(/Account: account-1/)).toBeVisible();
+  expect(screen.getByText(/all devices and sessions/)).toBeVisible();
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
   expect(screen.queryByRole('button', { name: 'Use 1 reset' })).toBeNull();
   expect(consume).not.toHaveBeenCalled();
@@ -39,19 +39,19 @@ it('distinguishes zero, missing, unsupported and loading without offering a new 
   const view = render(
     <ProviderLimitReset {...base} credits={{ ...credits, available_count: 0 }} />,
   );
-  expect(screen.getByText('0 resets available')).toBeTruthy();
+  expect(screen.getByText('0 resets available')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeDisabled();
   view.rerender(<ProviderLimitReset {...base} />);
   expect(
     screen.getByText('The gateway did not report reset availability. Check that it is up to date.'),
-  ).toBeTruthy();
+  ).toBeVisible();
   view.rerender(<ProviderLimitReset {...base} credits={{ status: 'error' }} />);
-  expect(screen.getByText('Available resets could not be checked.')).toBeTruthy();
+  expect(screen.getByText('Available resets could not be checked.')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Reset limits…' })).toBeNull();
   view.rerender(<ProviderLimitReset {...base} credits={{ status: 'unsupported' }} />);
-  expect(screen.getByText(/not available for this account/)).toBeTruthy();
+  expect(screen.getByText(/not available for this account/)).toBeVisible();
   view.rerender(<ProviderLimitReset {...base} credits={credits} isChecking />);
-  expect(screen.getByText('Checking available resets…')).toBeTruthy();
+  expect(screen.getByText('Checking available resets…')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeDisabled();
 });
 
@@ -72,11 +72,11 @@ it.each<ProviderResetOutcome>(['reset', 'nothing_to_reset', 'no_credit', 'alread
     expect(consume).toHaveBeenCalledExactlyOnceWith('account-1');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeVisible();
     await act(async () => finish(outcome));
     expect(screen.queryByRole('button', { name: 'Use 1 reset' })).toBeNull();
     expect(screen.getAllByRole('status')).toHaveLength(2);
-    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Done' })).toHaveFocus();
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Reset limits' })).toBeNull();
@@ -162,7 +162,7 @@ it('refreshes missing reset data from the row action without consuming a reset',
   await screen.findByText('3 resets available');
   expect(read).toHaveBeenCalledTimes(2);
   expect(consume).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: /^OpenAI Codex/i, expanded: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^OpenAI Codex/i, expanded: true })).toBeVisible();
 });
 
 it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a lost response after reopening', async () => {
@@ -226,7 +226,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   fireEvent.click(screen.getByRole('button', { name: 'Use 1 reset' }));
   await screen.findByText(/Reset could not be confirmed/);
-  expect(screen.getByText('0 resets available')).toBeTruthy();
+  expect(screen.getByText('0 resets available')).toBeVisible();
   first.unmount();
   render(<ConnectedRows client={client} />);
   fireEvent.click(await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
@@ -237,7 +237,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
   failRefresh = true;
   fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
   await screen.findByText(/already processed/);
-  expect(screen.getByText('Available resets could not be checked.')).toBeTruthy();
+  expect(screen.getByText('Available resets could not be checked.')).toBeVisible();
   const posts = calls.filter((call) => call.body);
   expect(posts).toHaveLength(2);
   expect(posts[0].body).toEqual(posts[1].body);
@@ -278,24 +278,24 @@ it.runIf(!!process.env.VIS_CODEX_RESET_E2E_URL)(
     async function submit(trigger: string, confirm: string) {
       await waitFor(() => expect(screen.getByRole('button', { name: trigger })).toBeEnabled());
       fireEvent.click(screen.getByRole('button', { name: trigger }));
-      expect(screen.getByText('Account: test-account')).toBeTruthy();
+      expect(screen.getByText('Account: test-account')).toBeVisible();
       fireEvent.click(screen.getByRole('button', { name: confirm }));
     }
     await openRow();
     await screen.findByText('2 resets available');
     await submit('Reset limits…', 'Use 1 reset');
     await screen.findByText(/Reset could not be confirmed/);
-    expect(screen.getByText('1 reset available')).toBeTruthy();
+    expect(screen.getByText('1 reset available')).toBeVisible();
     view.unmount();
     render(<ConnectedRows client={client} />);
     await openRow();
     await submit('Check reset result…', 'Retry same request');
     await screen.findByText(/already processed/);
-    expect(screen.getByText('1 reset available')).toBeTruthy();
+    expect(screen.getByText('1 reset available')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await submit('Reset limits…', 'Use 1 reset');
     await screen.findByText('Limits reset. Your task has not been resent.');
-    expect(screen.getByText('0 resets available')).toBeTruthy();
+    expect(screen.getByText('0 resets available')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeDisabled();
   },
 );

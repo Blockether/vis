@@ -122,7 +122,7 @@ describe('the app bar', () => {
 
     const sessions = screen.getByRole('region', { name: 'Sessions' });
     const list = sessions.querySelector('.overflow-y-auto') as HTMLElement;
-    expect(list).toBeTruthy();
+    expect(list).toBeInTheDocument();
     expect(list.parentElement?.className).not.toContain('sm:h-auto');
 
     view.unmount();
@@ -184,7 +184,7 @@ describe('the app bar', () => {
     ]) {
       const mark = screen.getByRole('button', { name: label });
       expect(mark.getAttribute('title')).toBe(title);
-      expect(mark.querySelector('svg')).not.toBeNull();
+      expect(mark.querySelector('svg')).toBeInTheDocument();
       expect(mark.textContent).toBe('');
     }
     view.unmount();
@@ -231,12 +231,12 @@ describe('the app bar', () => {
     expect(field.getAttribute('placeholder')).toBe('Search all machines…');
     // The page IS the search: the mark that opened it has given the bar up.
     expect(screen.queryByRole('button', { name: 'Search all machines' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close search' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Close search' })).toBeVisible();
     // Nothing scopes it: the fleet list is still the answer underneath.
-    expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Search all machines' })).toBeTruthy(),
+      expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible(),
     );
     view.unmount();
     view.restore();
@@ -253,7 +253,7 @@ describe('the app bar', () => {
     const list = Array.from(main.children).find(
       (child) => child.className === 'h-full',
     ) as HTMLElement;
-    expect(list).toBeTruthy();
+    expect(list).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
     // The way in is the band's own + now, so the dialog is what to wait for.
@@ -262,7 +262,7 @@ describe('the app bar', () => {
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
     expect(list.className).toBe('h-full');
-    expect(within(list).getByRole('button', { name: 'Projects on laptop' })).toBeTruthy();
+    expect(within(list).getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
     view.unmount();
     view.restore();
   });
@@ -294,15 +294,15 @@ describe('the app bar', () => {
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
         name: 'Forget',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
 
     // Pairing is one word in the band, and what it opens stands OVER this dialog
     // rather than inside it: nothing navigates away to reach either way in.
     expect(within(dialog).queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add a machine' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add a machine' });
-    expect(within(sheet).getByPlaceholderText(/vis:\/\/gateway/)).toBeTruthy();
-    expect(within(sheet).getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    expect(within(sheet).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
+    expect(within(sheet).getByRole('button', { name: 'Scan QR' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Pair a machine' })).toBeNull();
     view.unmount();
     view.restore();
@@ -324,7 +324,7 @@ describe('the app bar', () => {
         name: 'Forget',
       }),
     );
-    expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();
+    expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeVisible();
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Forget laptop?' })).toBeNull());
     expect(screen.getAllByRole('button', { name: 'Close Settings' })).toHaveLength(1);

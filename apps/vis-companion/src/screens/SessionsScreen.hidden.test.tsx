@@ -47,7 +47,7 @@ describe('a sessions list that is not on the glass', () => {
     view.setVisible(true);
     await waitFor(() => expect(view.requests.filter(isListRead).length).toBeGreaterThan(1));
     // Shown means CURRENT: the load is the first thing coming back does.
-    expect(await screen.findByText('A session')).toBeTruthy();
+    expect(await screen.findByText('A session')).toBeVisible();
     view.unmount();
     view.restore();
   });
@@ -66,7 +66,7 @@ describe('a sessions list that is not on the glass', () => {
     try {
       await screen.findByText('Untitled session');
       await save('Visible draft');
-      expect(await screen.findByText('Visible draft')).toBeTruthy();
+      expect(await screen.findByText('Visible draft')).toBeVisible();
 
       view.setVisible(false);
       const before = view.requests.filter(isListRead).length;
@@ -77,10 +77,10 @@ describe('a sessions list that is not on the glass', () => {
       expect(view.requests.filter(isListRead)).toHaveLength(before);
 
       view.setVisible(true);
-      expect(await screen.findByText('Changed while hidden')).toBeTruthy();
+      expect(await screen.findByText('Changed while hidden')).toBeVisible();
       await waitFor(() => expect(view.requests.filter(isListRead)).toHaveLength(before + 1));
       await save('Visible again');
-      expect(await screen.findByText('Visible again')).toBeTruthy();
+      expect(await screen.findByText('Visible again')).toBeVisible();
     } finally {
       view.unmount();
       view.restore();

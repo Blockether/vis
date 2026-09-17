@@ -35,7 +35,7 @@ describe('the complete live vocabulary', () => {
     );
     render(<LiveViewPanel view={v} onActivate={vi.fn()} />);
     for (let level = 1; level <= 6; level++)
-      expect(screen.getByRole('heading', { level })).toBeTruthy();
+      expect(screen.getByRole('heading', { level })).toBeVisible();
     expect(document.querySelector('pre code')?.textContent).toBe(
       fixture.nodes.find((n) => n.id === 'code')!.text,
     );
@@ -77,10 +77,10 @@ describe('the complete live vocabulary', () => {
     const mounted = render(<LiveViewPanel view={v} />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
-    expect(screen.getByText(/A started/)).toBeTruthy();
+    expect(screen.getByText(/A started/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByText(/A started/)).toBeTruthy();
+    expect(screen.getByText(/A started/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
     v = applyLivePatch(v, {
       view_id: v.id,
@@ -92,7 +92,7 @@ describe('the complete live vocabulary', () => {
       'false',
     );
     fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
-    expect(screen.getByText(/A updated/)).toBeTruthy();
+    expect(screen.getByText(/A updated/)).toBeVisible();
     mounted.rerender(<LiveViewPanel view={v} isSettled />);
     expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
       'false',
@@ -124,11 +124,11 @@ describe('the complete live vocabulary', () => {
       ],
     };
     const mounted = render(<LiveViewPanel view={v} />);
-    expect(screen.getByText('retained')).toBeTruthy();
+    expect(screen.getByText('retained')).toBeVisible();
     mounted.rerender(<LiveViewPanel view={v} isSettled />);
     expect(screen.queryByText('retained')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Logs' }));
-    expect(screen.getByText('retained')).toBeTruthy();
+    expect(screen.getByText('retained')).toBeVisible();
   });
 
   it.each(['constructor', 'toString', '__proto__'])(
@@ -153,7 +153,7 @@ describe('the complete live vocabulary', () => {
       expect(toggle.getAttribute('aria-expanded')).toBe('false');
       expect(screen.queryByText('retained')).toBeNull();
       fireEvent.click(toggle);
-      expect(screen.getByText('retained')).toBeTruthy();
+      expect(screen.getByText('retained')).toBeVisible();
       fireEvent.click(toggle);
       expect(screen.queryByText('retained')).toBeNull();
     },
@@ -212,7 +212,7 @@ describe('the complete live vocabulary', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.queryByText(/A started/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
-    expect(screen.getByText(/A started/)).toBeTruthy();
+    expect(screen.getByText(/A started/)).toBeVisible();
     expect(screen.queryByText(/B started/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Refresh results' })).toHaveProperty(
       'disabled',

@@ -87,7 +87,7 @@ describe('attachment review capability', () => {
         chrome={chrome}
       />,
     );
-    expect(host.querySelector('[aria-label="Comment on the whole document"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Comment on the whole document"]')).toBeInTheDocument();
     expect(host.textContent).toContain('Approve and start');
   });
   it('shows IMPLEMENTATION as a report without review controls', async () => {
@@ -124,7 +124,7 @@ describe('attachment review capability', () => {
       onClose: () => {},
     };
     const { host, tree } = await mount(<DocOverlay {...props} shownAt={0} />);
-    expect(host.querySelector('[aria-label="Comment on the whole document"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Comment on the whole document"]')).toBeInTheDocument();
     await act(async () => tree.render(<DocOverlay {...props} shownAt={1} />));
     expect(host.querySelector('[aria-label="Comment on the whole document"]')).toBeNull();
     expect(host.querySelector('[aria-label="Save changes"]')).toBeNull();
@@ -137,8 +137,8 @@ describe('attachment review capability', () => {
     // ImageViewer portals its screen outside the local host.
     expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
     expect(document.querySelector('[aria-label="Trim to view"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Copy image"]')).not.toBeNull();
-    expect(host).toBeTruthy();
+    expect(document.querySelector('[aria-label="Copy image"]')).toBeInTheDocument();
+    expect(host).toBeEmptyDOMElement();
   });
 });
 
@@ -146,7 +146,7 @@ async function press(host: HTMLElement, label: string) {
   const button = [...host.querySelectorAll('button')].find(
     (entry) => entry.getAttribute('aria-label') === label || entry.textContent?.trim() === label,
   );
-  expect(button, label).toBeDefined();
+  expect(button, label).toBeInTheDocument();
   await act(async () => button!.click());
 }
 async function addComment(host: HTMLElement, body: string) {

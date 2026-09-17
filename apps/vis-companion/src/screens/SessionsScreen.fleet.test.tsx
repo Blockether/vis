@@ -57,11 +57,11 @@ describe('the machine scope always has one active machine', () => {
 
     await userEvent.click(alpha);
     expect(alpha.getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
     expect(screen.queryByText('Second')).toBeNull();
 
     await userEvent.click(beta);
-    expect(await screen.findByText('Second')).toBeTruthy();
+    expect(await screen.findByText('Second')).toBeVisible();
     expect(screen.queryByText('First')).toBeNull();
     expect(beta.getAttribute('aria-pressed')).toBe('true');
   });
@@ -76,8 +76,8 @@ describe('the machine scope always has one active machine', () => {
     const beta = strip.getByRole('button', { name: /^beta/ });
     const alphaHue = hue(alpha.querySelector("[class*='bg-machine-']"), 'bg');
     const betaHue = hue(beta.querySelector("[class*='bg-machine-']"), 'bg');
-    expect(alphaHue).toBeTruthy();
-    expect(betaHue).toBeTruthy();
+    expect(alphaHue).toMatch(/^[a-z]+$/);
+    expect(betaHue).toMatch(/^[a-z]+$/);
     expect(alphaHue).not.toBe(betaHue);
     // Regression, user report (paraphrased: bin that rail on the left): the list used to
     // echo the tab's hue as a 2px frame down everything that machine owned.
@@ -187,7 +187,7 @@ describe('a machine that misses one read is not an outage', () => {
 
     // The screen the reader left is the screen they came back to.
     expect(screen.queryByText('First')).toBeNull();
-    expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeVisible();
     expect(named(/^Reconnect to beta/)).toHaveLength(0);
   });
 
@@ -206,7 +206,7 @@ describe('a machine that misses one read is not an outage', () => {
     leaveSession(view);
     await waitFor(() => expect(betaReads(view)).toBe(3));
 
-    expect(await screen.findByText('First')).toBeTruthy();
+    expect(await screen.findByText('First')).toBeVisible();
     await waitFor(() => expect(named(/^Reconnect to beta/)).toHaveLength(1));
     expect(screen.queryByText('Second')).toBeNull();
   });
@@ -259,7 +259,7 @@ describe('a retry answers on its own clock', () => {
     await settle(1_500);
     expect(note(tile())).toBe('Unable to connect');
     // Red: a failure in the strip's own hint ink reads as more chrome.
-    expect(tile().querySelector('.text-err')).toBeTruthy();
+    expect(tile().querySelector('.text-err')).toBeInTheDocument();
   });
 
   it('takes the failure back off the tile three seconds later', async () => {
@@ -376,7 +376,7 @@ describe('a machine known to be dark reconnects in the background', () => {
       });
       restore = view.restore;
       await settle(50);
-      expect(screen.getByText('First')).toBeTruthy();
+      expect(screen.getByText('First')).toBeVisible();
 
       // One poll, then the next: neither is spent waiting on the machine that is not there.
       const cold = listReads(view);
@@ -434,10 +434,10 @@ describe('what this device found dark outlives the app', () => {
     restore = view.restore;
     await screen.findByText('First');
     await waitFor(() =>
-      expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeTruthy(),
+      expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible(),
     );
 
-    expect(machineOutage(view.conns[1].url)).toBeTruthy();
+    expect(machineOutage(view.conns[1].url)).toMatch(/\S/);
     // The machine that answered is not remembered as anything.
     expect(machineOutage(view.conns[0].url)).toBeNull();
   });
@@ -457,12 +457,12 @@ describe('what this device found dark outlives the app', () => {
     restore = view.restore;
 
     // Nothing has been probed yet in this app: the tile is the retry, not a place to go.
-    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeTruthy();
+    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible();
     expect(strip().queryByRole('button', { name: /^beta$/ })).toBeNull();
     expect(screen.queryByLabelText('beta projects')).toBeNull();
 
     await screen.findByText('First');
-    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeTruthy();
+    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible();
   });
 
   // A memory is not a blackout: the shell's offline screen belongs to a fleet that has RUN OUT

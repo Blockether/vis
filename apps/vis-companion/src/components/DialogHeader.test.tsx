@@ -46,7 +46,7 @@ describe('every dialog header is the one dialog header', () => {
 
     const frame = screen.getByRole('dialog', { name: 'Model' });
     const header = frame.querySelector('header')!;
-    expect(header.nextElementSibling).toBeTruthy();
+    expect(header.nextElementSibling).toBeInTheDocument();
     expect(header.className).not.toMatch(/\brounded-b-/);
   });
 
@@ -64,7 +64,7 @@ describe('every dialog header is the one dialog header', () => {
     // of them, and could not hold the gateway / model / paste line four surfaces need.
     expect(band().className).not.toContain('justify-center');
     expect(band().className).not.toContain('px-12');
-    expect(screen.getByText('gateway.example.com')).toBeTruthy();
+    expect(screen.getByText('gateway.example.com')).toBeVisible();
     const title = screen.getByText('Model');
     expect(title.getBoundingClientRect().left).toBeLessThanOrEqual(
       screen.getByText('gateway.example.com').getBoundingClientRect().left,
@@ -137,7 +137,7 @@ describe('every dialog header is the one dialog header', () => {
         <p>body</p>
       </DialogFrame>,
     );
-    expect(screen.getByRole('button', { name: 'Cancel this request' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Cancel this request' })).toBeVisible();
 
     // ...and a band with no way out builds no button at all.
     view.rerender(

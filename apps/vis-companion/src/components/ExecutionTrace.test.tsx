@@ -214,7 +214,7 @@ describe('execution grouping', () => {
     const band = view.container.querySelector('[data-execution-code]')!;
     // The label starts the row; its chevron and tally still expose the fold.
     expect(view.getByRole('button', { name: 'Expand code' }).textContent).toBe('CODE +2 more');
-    expect(view.getByRole('button', { name: 'Expand code' }).querySelector('svg')).not.toBeNull();
+    expect(view.getByRole('button', { name: 'Expand code' }).querySelector('svg')).toBeVisible();
     expect(band.querySelector('[data-code-node]')).toBeNull();
     expect(view.queryByText('RESULT')).toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
@@ -227,14 +227,14 @@ describe('execution grouping', () => {
     expect(band.textContent).toContain('out-42');
     expect(
       view.getByRole('button', { name: 'Collapse result' }).querySelector('svg'),
-    ).not.toBeNull();
+    ).toBeVisible();
     expect(band.querySelector('summary')).toBeNull();
     expect(band.querySelector('details')).toBeNull();
     expect(
       band.compareDocumentPosition(view.container.querySelector('[data-activity-row]')!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(view.getByText('57ms')).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(view.getByText('57ms')).toBeVisible();
     fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
     expect(view.queryByText(/RESULT/)).toBeNull();
     act(() => setPythonCodeShown(false));
@@ -479,7 +479,7 @@ describe('device-local Python visibility', () => {
     expect(view.container.textContent).not.toContain('secret_source()');
     expect(view.container.textContent).not.toContain('raw Python output');
     expect(view.container.textContent).not.toContain('raw failure details');
-    expect(view.container.querySelector('[data-execution-activity]')).not.toBeNull();
+    expect(view.container.querySelector('[data-execution-activity]')).toBeInTheDocument();
     expect(view.container.textContent).toContain('retained stage');
   });
 
@@ -542,19 +542,19 @@ it.each([true, false])('pads standalone source until Activity arrives (live=%s)'
   );
   expect(band.querySelector('[data-code-body]')).toBe(body);
   expect(body).not.toHaveClass('last:pb-2');
-  expect(view.getByRole('button', { name: 'Expand Activity' })).toBeTruthy();
+  expect(view.getByRole('button', { name: 'Expand Activity' })).toBeVisible();
 
   view.rerender(
     <IterationTrace whole live={live} iterations={iterations([{ ...form, stdout: '42' }])} />,
   );
   // RESULT owns the next header's spacing; the source is no longer the last child.
   expect(body).not.toBe(band.lastElementChild);
-  expect(view.getByRole('button', { name: 'Expand result' })).toBeTruthy();
+  expect(view.getByRole('button', { name: 'Expand result' })).toBeVisible();
 });
 
 it('folds even a one-line program under the CODE header', () => {
   const view = render(<IterationTrace whole iterations={iterations([{ source: 'print(42)' }])} />);
   fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
   expect(view.container.textContent).toContain('print(42)');
-  expect(view.getByRole('button', { name: 'Copy code' })).toBeTruthy();
+  expect(view.getByRole('button', { name: 'Copy code' })).toBeVisible();
 });

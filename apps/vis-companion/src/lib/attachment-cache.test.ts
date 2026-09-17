@@ -79,7 +79,6 @@ describe('the persistent attachment cache', () => {
     await writeCachedAttachment(url, bytes(2048, 3));
 
     const hit = await readCachedAttachment(url);
-    expect(hit).not.toBeNull();
     expect(hit?.size).toBe(2048);
     expect(new Uint8Array(await hit!.arrayBuffer())[2047]).toBe(3);
   });

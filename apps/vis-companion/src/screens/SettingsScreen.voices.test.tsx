@@ -55,7 +55,7 @@ describe('licence-gated gateway voices', () => {
       name: /^Ryan \(en-US, high\)en-US/,
     });
     const actionStrip = voiceChoice.parentElement;
-    expect(actionStrip).toBeTruthy();
+    expect(actionStrip).toBeVisible();
     expect(voiceChoice.textContent).not.toContain('○');
     const download = within(actionStrip as HTMLElement).getByRole('button', {
       name: 'Download Ryan (en-US, high)',
@@ -63,11 +63,11 @@ describe('licence-gated gateway voices', () => {
     expect(actionStrip?.firstElementChild).toBe(download);
     expect(actionStrip?.children.item(1)).toBe(voiceChoice);
     expect(download.textContent).toBe('');
-    expect(download.querySelector('svg')).not.toBeNull();
+    expect(download.querySelector('svg')).toBeInTheDocument();
     fireEvent.click(download);
 
-    expect(screen.getByText('Non-commercial use only, with attribution.')).toBeTruthy();
-    expect(screen.getByText(/CC-BY-NC-SA-4.0/)).toBeTruthy();
+    expect(screen.getByText('Non-commercial use only, with attribution.')).toBeVisible();
+    expect(screen.getByText(/CC-BY-NC-SA-4.0/)).toBeVisible();
     expect(client.speechModel).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept and download' }));
@@ -138,7 +138,7 @@ describe('hearing a voice before choosing it', () => {
       await screen.findByRole('button', {
         name: 'Download Kristin (en-US, medium)',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(
       screen.queryByRole('button', {
         name: 'Play a sample of Kristin (en-US, medium)',
@@ -160,7 +160,7 @@ describe('hearing a voice before choosing it', () => {
     expect(row?.firstElementChild).toBe(play);
     expect(row?.children.item(1)).toBe(voice);
     expect(play.textContent).toBe('');
-    expect(play.querySelector('svg')).not.toBeNull();
+    expect(play.querySelector('svg')).toBeInTheDocument();
   });
 
   // Regression, user report: an active sample still looked like Play, so there was no way
@@ -188,14 +188,14 @@ describe('hearing a voice before choosing it', () => {
       await screen.findByRole('button', {
         name: 'Stop the sample of Kristin (en-US, medium)',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Play a sample of Cori (en-GB, high)' }));
 
     expect(
       await screen.findByRole('button', {
         name: 'Play a sample of Kristin (en-US, medium)',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     const stopCori = screen.getByRole('button', {
       name: 'Stop the sample of Cori (en-GB, high)',
     });
@@ -205,7 +205,7 @@ describe('hearing a voice before choosing it', () => {
       await screen.findByRole('button', {
         name: 'Play a sample of Cori (en-GB, high)',
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(stopped).toHaveBeenCalledTimes(2);
   });
 
@@ -295,12 +295,12 @@ describe('imported voice actions', () => {
     render(<VoicesPanel client={client} prefs={prefs} onChange={vi.fn()} />);
     const choice = await screen.findByRole('button', { name: /^My voice/ });
     const track = choice.closest<HTMLElement>('[data-swipe-track]');
-    expect(track).not.toBeNull();
+    expect(track).toBeVisible();
     const action = within(track!).getByRole('button', {
       name: 'Forget My voice',
     });
     expect(action).toHaveTextContent('Forget');
-    expect(action.querySelector('svg')).not.toBeNull();
+    expect(action.querySelector('svg')).toBeInTheDocument();
     track!.scrollTo = vi.fn();
     fireEvent.click(action);
     expect(client.forgetSpeechVoice).not.toHaveBeenCalled();

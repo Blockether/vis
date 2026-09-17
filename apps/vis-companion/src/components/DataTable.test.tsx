@@ -337,7 +337,7 @@ describe('DataTable', () => {
     const user = userEvent.setup();
     render(<DataTable body={fence} compact />);
     const cell = screen.getByText('first').closest('td');
-    expect(cell).not.toBeNull();
+    expect(cell).toBeVisible();
 
     await user.click(cell!);
     expect(screen.getByRole('button', { name: 'Copy value' })).toBeInTheDocument();

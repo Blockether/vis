@@ -85,15 +85,15 @@ describe('session row inline rename', () => {
     expect((field as HTMLInputElement).selectionStart).toBe(0);
     expect((field as HTMLInputElement).selectionEnd).toBe((field as HTMLInputElement).value.length);
     expect((field as HTMLInputElement).selectionDirection).toBe('backward');
-    expect(document.querySelector(`[data-session-id="${STORY_SESSION_ROW.id}"]`)).not.toBeNull();
-    expect(screen.getByText(STORY_SESSION_ROW.id)).toBeTruthy();
-    expect(screen.getByText(`${STORY_SESSION_ROW.turn_count} turns`)).toBeTruthy();
-    expect(screen.getByText('INPUT NEEDED')).toBeTruthy();
+    expect(document.querySelector(`[data-session-id="${STORY_SESSION_ROW.id}"]`)).toBeInTheDocument();
+    expect(screen.getByText(STORY_SESSION_ROW.id)).toBeVisible();
+    expect(screen.getByText(`${STORY_SESSION_ROW.turn_count} turns`)).toBeVisible();
+    expect(screen.getByText('INPUT NEEDED')).toBeVisible();
     expect(
       screen.getByRole('button', {
         name: `Show details for ${STORY_SESSION_ROW.title}`,
       }),
-    ).toBeTruthy();
+    ).toBeVisible();
     expect(
       screen.queryByRole('group', {
         name: `${STORY_SESSION_ROW.title} actions`,
@@ -105,7 +105,7 @@ describe('session row inline rename', () => {
     await user.type(field, '  Release notes  {Enter}');
 
     expect(rename).toHaveBeenCalledWith(STORY_SESSION_ROW, conn, 'Release notes');
-    expect(screen.getByText('Saving')).toBeTruthy();
+    expect(screen.getByText('Saving')).toBeVisible();
     request.resolve();
     await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull());
   });

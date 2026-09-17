@@ -31,12 +31,12 @@ describe('the QR scanner is a verb for the device in your hand', () => {
     render(<AddMachine onAdd={vi.fn(async () => {})} />);
     expect(screen.queryByRole('button', { name: 'Scan QR' })).toBeNull();
     // The other way in stays: the link is what a desktop pastes.
-    expect(screen.getByRole('button', { name: 'Pair' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pair' })).toBeVisible();
   });
 
   it('is offered on a touch screen', () => {
     pointing('coarse');
     render(<AddMachine onAdd={vi.fn(async () => {})} />);
-    expect(screen.getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Scan QR' })).toBeVisible();
   });
 });

@@ -38,7 +38,7 @@ async function mount(node: ReactElement) {
     );
   const click = async (label: string) => {
     const element = button(label);
-    expect(element, label).toBeDefined();
+    expect(element, label).toBeInTheDocument();
     await act(async () => element!.click());
   };
   const comment = async () => {
@@ -76,7 +76,7 @@ describe('specification review actions', () => {
     const workflow = view.host.querySelector('[aria-label="Specification workflow"]')!;
     expect(workflow.querySelectorAll('button')).toHaveLength(1);
     const prose = view.host.querySelector('h1')!;
-    expect(prose.compareDocumentPosition(workflow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(prose.compareDocumentPosition(workflow) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     await view.click('Approve and start');
     await view.click('Approve and start');
     expect(plan.onSend).toHaveBeenCalledExactlyOnceWith('approve', 3);
@@ -162,7 +162,7 @@ describe('specification review actions', () => {
       <MarkdownAnnotator text={text} chrome={chrome} onSave={async () => 4} />,
     );
     expect(ordinary.button('Approve and start')).toBeUndefined();
-    expect(ordinary.button('Save changes')).toBeDefined();
+    expect(ordinary.button('Save changes')).toBeVisible();
     const invalid = await mount(
       <MarkdownAnnotator
         text={text.replace('**Feature:** search', '**Feature:** other')}
@@ -172,7 +172,7 @@ describe('specification review actions', () => {
       />,
     );
     expect(invalid.button('Send for revision')).toBeUndefined();
-    expect(invalid.button('Save changes')).toBeDefined();
+    expect(invalid.button('Save changes')).toBeVisible();
   });
 
   it('keeps a draft informational until remarks are ready to send', async () => {
@@ -190,7 +190,7 @@ describe('specification review actions', () => {
     expect(view.host.textContent).toContain('Draft');
     await view.comment();
     expect(plan.onSend).not.toHaveBeenCalled();
-    expect(view.button('Send for revision')).toBeDefined();
+    expect(view.button('Send for revision')).toBeInTheDocument();
   });
 
   it('cannot approve while a comment is being composed', async () => {

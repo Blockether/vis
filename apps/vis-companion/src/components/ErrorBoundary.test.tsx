@@ -12,7 +12,7 @@ describe('the render failure surface', () => {
     const reload = vi.fn();
     render(<ErrorFallback message="timeline failed" onReload={reload} />);
 
-    expect(screen.getByText('timeline failed')).toBeTruthy();
+    expect(screen.getByText('timeline failed')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Reload Vis' }));
     expect(reload).toHaveBeenCalledOnce();
   });

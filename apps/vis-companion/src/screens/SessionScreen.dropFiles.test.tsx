@@ -50,7 +50,7 @@ it('claims a drag carrying files so the browser never opens the file instead', (
 it('shows the composer taking the drag, and stops when the pointer leaves', () => {
   renderSessionScreen();
   fireEvent.dragEnter(editor(), { dataTransfer: carrying([table()]) });
-  expect(document.querySelector('.ring-accent')).not.toBeNull();
+  expect(document.querySelector('.ring-accent')).toBeInTheDocument();
   fireEvent.dragLeave(editor(), { dataTransfer: carrying([table()]) });
   expect(document.querySelector('.ring-accent')).toBeNull();
 });

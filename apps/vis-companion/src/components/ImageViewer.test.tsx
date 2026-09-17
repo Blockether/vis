@@ -63,7 +63,7 @@ describe('ImageViewer', () => {
         />,
       ),
     );
-    expect(document.querySelector('[aria-label="Draw on image"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeInTheDocument();
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' })));
     expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
   });
@@ -90,7 +90,7 @@ describe('ImageViewer', () => {
 
     for (const action of actions) {
       expect(action.textContent).toBe('');
-      expect(action.querySelector('svg')).not.toBeNull();
+      expect(action.querySelector('svg')).toBeInTheDocument();
       expect(action.title).toBe(action.getAttribute('aria-label'));
     }
   });
@@ -101,7 +101,7 @@ describe('ImageViewer', () => {
   it("leaves through the app's one X, named after the picture", () => {
     const close = control('Close chart.png');
     expect(close.textContent).toBe('');
-    expect(close.querySelector('svg')).not.toBeNull();
+    expect(close.querySelector('svg')).toBeInTheDocument();
     expect(close.className).not.toContain('border-l');
   });
 
@@ -153,9 +153,9 @@ describe('ImageViewer', () => {
     const filename = [...trigger.querySelectorAll('span')].find(
       (element) => element.textContent === 'chart.png',
     );
-    expect(filename).toBeTruthy();
+    expect(filename).toBeInTheDocument();
     act(() => filename?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeInTheDocument();
   });
 
   // The readout is written straight to the DOM rather than through state — a
@@ -213,7 +213,7 @@ describe('ImageViewer', () => {
     expect(tools?.querySelectorAll('button[aria-pressed]')).toHaveLength(5);
     for (const action of [control('Undo'), control('Clear')]) {
       expect(action.textContent).toBe('');
-      expect(action.querySelector('svg')).not.toBeNull();
+      expect(action.querySelector('svg')).toBeInTheDocument();
     }
 
     act(() => control('Finish drawing').click());
@@ -236,7 +236,7 @@ describe('ImageViewer', () => {
   // Regression, user report: the drawing rail covered the picture with no way to tuck it away.
   it('folds the drawing rail to one reversible edge control', () => {
     act(() => control('Draw on image').click());
-    expect(document.querySelector('[aria-label="Drawing tools"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
 
     const hide = control('Hide drawing tools');
     expect(hide.getAttribute('aria-expanded')).toBe('true');
@@ -247,7 +247,7 @@ describe('ImageViewer', () => {
     const show = control('Show drawing tools');
     expect(show.getAttribute('aria-expanded')).toBe('false');
     act(() => show.click());
-    expect(document.querySelector('[aria-label="Drawing tools"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
   });
 
   // The promise under the buttons follows the control that is actually there:
@@ -270,7 +270,7 @@ describe('ImageViewer', () => {
         />,
       ),
     );
-    expect(named('Attach to message')).toBeTruthy();
+    expect(named('Attach to message')).toBeVisible();
   });
 });
 
@@ -298,7 +298,7 @@ it('replaces the pencil with the drawing check in the same footer slot', () => {
 
   const finish = control('Save changes');
   expect(finish.parentElement).toBe(slot);
-  expect(finish.querySelector('svg')).not.toBeNull();
+  expect(finish.querySelector('svg')).toBeInTheDocument();
   expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
 
   act(() => finish.click());
@@ -756,7 +756,7 @@ describe('the grid is the gallery', () => {
 
     act(() => control('Open pic-0.png full screen').click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('1 of 2');
-    expect(document.querySelector('[aria-label="Draw on image"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeInTheDocument();
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
     });

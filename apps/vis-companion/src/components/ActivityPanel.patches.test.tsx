@@ -67,7 +67,7 @@ it('combines same-file patches into one chronological diff without changing the 
   );
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   const row = document.querySelector('[data-activity-row="0:patch-1"]')! as HTMLElement;
-  expect(within(row).getByLabelText('Duration 3ms')).toBeTruthy();
+  expect(within(row).getByLabelText('Duration 3ms')).toBeVisible();
   expect(within(row).getByRole('button')).toHaveTextContent('+2 −2');
   fireEvent.click(within(row).getByRole('button'));
   const diff = screen.getByLabelText('Unified diff');

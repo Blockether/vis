@@ -129,7 +129,7 @@ describe('a machine hides its own settings under its own row', () => {
     expect(panel?.textContent).toContain('settings of tower');
     // Under the machine it belongs to, and above the machine it does not.
     const wherever = panel?.compareDocumentPosition(rowOf('laptop')) ?? 0;
-    expect(wherever & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(wherever & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(panelOf('laptop')).toBeNull();
   });
 
@@ -179,7 +179,7 @@ describe('a machine hides its own settings under its own row', () => {
       await userEvent.click(rowOf('tower'));
       expect(onPick).not.toHaveBeenCalled();
       expect(onRetry).toHaveBeenCalledTimes(state === 'checking' ? 0 : 1);
-      expect(rowOf('tower').querySelector('.lucide-refresh-cw')).not.toBeNull();
+      expect(rowOf('tower').querySelector('.lucide-refresh-cw')).toBeInTheDocument();
       expect(rowOf('tower').querySelector('.lucide-chevron-right')).toBeNull();
     },
   );
@@ -194,7 +194,7 @@ describe('a machine hides its own settings under its own row', () => {
     const view = render(
       <MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />,
     );
-    expect(screen.getByText('settings of tower')).toBeTruthy();
+    expect(screen.getByText('settings of tower')).toBeVisible();
     for (const state of ['offline', 'checking'] as const) {
       view.rerender(<MachineRows {...props} health={{ [tower.url]: { state, at: Date.now() } }} />);
       expect(screen.queryByText('settings of tower')).toBeNull();
@@ -203,7 +203,7 @@ describe('a machine hides its own settings under its own row', () => {
     view.rerender(
       <MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />,
     );
-    expect(screen.getByText('settings of tower')).toBeTruthy();
+    expect(screen.getByText('settings of tower')).toBeVisible();
     expect(screen.getByText('tower').closest('button')).toBeNull();
   });
 });

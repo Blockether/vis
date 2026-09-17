@@ -50,7 +50,7 @@ describe('what a project header counts', () => {
     await screen.findByText('First');
 
     // One row is on screen; the header still says what the project holds.
-    expect(await screen.findByText('400 sessions')).toBeTruthy();
+    expect(await screen.findByText('400 sessions')).toBeVisible();
     expect(screen.getAllByText(/2 live/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/1 needs input/).length).toBeGreaterThan(0);
     // One list read, and a project's own page is the only other (`listProjectPage`).
@@ -147,7 +147,7 @@ describe('a fleet far deeper than one window', () => {
     expect(screen.getAllByText('150 sessions').length).toBeGreaterThan(0);
     // Every project the machine holds has a band, whether or not a row of it was
     // in the window: eight of alpha's, however deep the last one sits.
-    expect(view.getByLabelText('Expand alpha-p7')).toBeTruthy();
+    expect(view.getByLabelText('Expand alpha-p7')).toBeVisible();
 
     // ONE fleet read per machine, for the head window alone — no `after`, no walk.
     const fleetReads = view.requests.filter(

@@ -55,7 +55,7 @@ describe('session search previews', () => {
       'win(dows)+',
       'WIN(DOWS)+',
     ]);
-    expect(container.querySelector('strong mark')).not.toBeNull();
+    expect(container.querySelector('strong mark')).toBeInTheDocument();
   });
 
   it('keeps code literal and external content inert while preserving labels', () => {

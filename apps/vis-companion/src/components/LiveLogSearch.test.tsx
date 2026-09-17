@@ -42,17 +42,17 @@ describe('log search', () => {
     search('[DISK]');
     expect(output()).toContain('2: ERROR [disk]');
     expect(output()).not.toContain('error again');
-    expect(screen.getByText(/1 matches/)).toBeTruthy();
+    expect(screen.getByText(/1 matches/)).toBeVisible();
     fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' });
     expect(output()).toContain('error again');
     search('.*');
-    expect(screen.getByText('No matching lines.')).toBeTruthy();
+    expect(screen.getByText('No matching lines.')).toBeVisible();
   });
 
   it('labels a local-only search when history is unavailable', () => {
     render(<LiveViewPanel view={view(['error visible'], 500)} />);
     search('error');
-    expect(screen.getByText(/Loaded lines only/)).toBeTruthy();
+    expect(screen.getByText(/Loaded lines only/)).toBeVisible();
     expect(output()).toContain('500: error visible');
   });
 
@@ -65,7 +65,7 @@ describe('log search', () => {
     search('ERROR');
     await waitFor(() => expect(output()).toContain('10: ERROR [disk]'));
     expect(load).toHaveBeenCalledWith('log', 0, 200, 'ERROR');
-    expect(screen.getByText(/201 matches.*500 recorded lines/)).toBeTruthy();
+    expect(screen.getByText(/201 matches.*500 recorded lines/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Next matches' }));
     await waitFor(() => expect(output()).toContain('error last'));
     expect(load).toHaveBeenLastCalledWith('log', 200, 200, 'ERROR');
@@ -115,7 +115,7 @@ describe('log search', () => {
     search('error');
     await waitFor(() => expect(output()).toContain('error before'));
     rendered.rerender(<LiveViewPanel view={view(['error after'], 4)} load={load} />);
-    expect(screen.getByText('Log changed. Refresh results.')).toBeTruthy();
+    expect(screen.getByText('Log changed. Refresh results.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh results' }));
     await waitFor(() => expect(output()).toContain('error after'));
     expect(screen.queryByText('Log changed. Refresh results.')).toBeNull();
@@ -171,7 +171,7 @@ it('keeps only one earlier styled page while retaining Stop and independent stat
   fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
   await waitFor(() => expect(output()).toContain('WARN page 599'));
   expect(output()).not.toContain('WARN page 799');
-  expect(screen.getByText('Failed promptly')).toBeTruthy();
+  expect(screen.getByText('Failed promptly')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
-  expect(screen.getByRole('textbox', { name: 'Why are you stopping Build?' })).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Why are you stopping Build?' })).toBeVisible();
 });

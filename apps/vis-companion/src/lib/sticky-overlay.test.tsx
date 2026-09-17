@@ -49,10 +49,10 @@ describe('an artifact opened from a live answer', () => {
         .querySelector<HTMLButtonElement>('button[aria-label="Open chart.png full screen"]')
         ?.click(),
     );
-    expect(viewer()).not.toBeNull();
+    expect(viewer()).toBeInTheDocument();
 
     paint(true);
-    expect(viewer()).not.toBeNull();
+    expect(viewer()).toBeInTheDocument();
   });
 
   it('is handed over only to the row that replaces it, and only at once', () => {

@@ -25,7 +25,7 @@ describe('a machine whose id is backfilled after the fleet was built', () => {
       },
     });
     try {
-      await waitFor(() => expect(view.getByText('A session')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('A session')).toBeVisible());
 
       // What the app saves once `/identify` answers: the same machine at the same
       // address, now carrying the identity that survives an address change.
@@ -51,11 +51,11 @@ describe('a machine whose id is backfilled after the fleet was built', () => {
       machines: [{ sessions: [listSession({ id: 's1', title: 'A session' })] }],
     });
     try {
-      await waitFor(() => expect(view.getByText('A session')).toBeTruthy());
+      await waitFor(() => expect(view.getByText('A session')).toBeVisible());
       view.setConns(view.conns.map((conn) => ({ ...conn, id: 'm1' })));
       // Learning an id is not news about a machine's sessions: nothing reloads, so
       // the list never blinks back to its empty frame.
-      expect(view.getByText('A session')).toBeTruthy();
+      expect(view.getByText('A session')).toBeVisible();
     } finally {
       view.restore();
     }

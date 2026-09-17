@@ -59,13 +59,13 @@ describe('a desk keeps the list beside the conversation', () => {
 
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;
-    expect(within(sidebar).getByRole('region', { name: 'Sessions' })).toBeTruthy();
+    expect(within(sidebar).getByRole('region', { name: 'Sessions' })).toBeVisible();
     // Regression: the desktop rail must fit project names and numbered pages together.
     expect(sidebar.className).toContain('w-[33%]');
     expect(sidebar.className).toContain('min-w-80');
-    expect(screen.getByRole('region', { name: 'No session open' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     // The shell's own bar stays over both columns.
-    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
     view.unmount();
   });
 
@@ -81,11 +81,11 @@ describe('a desk keeps the list beside the conversation', () => {
     await screen.findByLabelText('Message Vis');
 
     // The list did not leave; the empty pane did.
-    expect(screen.getByRole('region', { name: 'Sessions' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'No session open' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
     // The shell's bar is still over both columns.
-    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
     view.unmount();
   });
 
@@ -107,8 +107,8 @@ describe('a desk keeps the list beside the conversation', () => {
     // With nothing open, putting the list away leaves the empty pane and the
     // bar's explicit way back; it never relabels a list that is still visible.
     expect((main.firstElementChild as HTMLElement).className).toBe('hidden');
-    expect(screen.getByRole('region', { name: 'No session open' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Show the session list' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Show the session list' })).toBeVisible();
     expect(localStorage.getItem('vis.sidebar')).toBe('hidden');
 
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
@@ -122,10 +122,10 @@ describe('a desk keeps the list beside the conversation', () => {
     expect((main.firstElementChild as HTMLElement).className).toBe('hidden');
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
-    expect(screen.getByRole('region', { name: 'Sessions' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
     expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
     expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
-    expect(screen.getByRole('button', { name: 'Hide the session list' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide the session list' })).toBeVisible();
     view.unmount();
   });
 
@@ -136,7 +136,7 @@ describe('a desk keeps the list beside the conversation', () => {
     expect(screen.queryByRole('region', { name: 'No session open' })).toBeNull();
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
-    expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeVisible();
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Open preferences' })).toBeNull(),
     );

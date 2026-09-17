@@ -142,8 +142,8 @@ describe('typing in the composer', () => {
 
     // Leaving persists the message, and that is when the list is told: the row
     // of a session with no title of its own is named by what is waiting in it.
-    expect(await screen.findByText('half a thought')).toBeTruthy();
-    expect(screen.getByText('dirty')).toBeTruthy();
+    expect(await screen.findByText('half a thought')).toBeVisible();
+    expect(screen.getByText('dirty')).toBeVisible();
     view.unmount();
   });
 });

@@ -62,11 +62,11 @@ describe('the running app compatibility listener', () => {
       view.restore();
     };
 
-    await waitFor(() => expect(screen.getByText('Update this app')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Update this app')).toBeVisible());
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Choose another machine' })).toBeNull();
     expect(gatewayEvent.registrations).toBe(1);
-    expect(gatewayEvent.listener).not.toBeNull();
+    expect(gatewayEvent.listener).toBeTypeOf('function');
 
     const healthReads = () =>
       view.requests.filter((href) => new URL(href).pathname === '/healthz').length;

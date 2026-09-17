@@ -38,7 +38,7 @@ it.each([
   activity.rows = activity.rows.filter((row) => row.operation === operation);
   expect(activity.rows).toHaveLength(1);
   paintActivity({ activity });
-  expect(screen.getByRole('button', { name: new RegExp(headline) })).toBeTruthy();
+  expect(screen.getByRole('button', { name: new RegExp(headline) })).toBeVisible();
   expect(document.querySelector('[data-activity-summary]')).toBeNull();
   openEverySettledStep();
   expect(document.body.textContent).toContain(
@@ -60,7 +60,7 @@ it.each([
 it('keeps embedded document headings and code inside their Activity step', () => {
   paintActivity({ activity: storyData.ACTIVITY_RESULTS });
   openEverySettledStep();
-  expect(screen.getByRole('heading', { name: 'Activity', level: 5 })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Activity', level: 5 })).toBeVisible();
   expect(screen.queryAllByRole('region', { name: 'text code' })).toHaveLength(0);
   // Issue #260: a clean run_tests row no longer embeds its runner output.
   expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(1);
@@ -73,7 +73,7 @@ it('shares a table layout without losing repeated headers or result groups', () 
   expect(screen.getAllByRole('columnheader', { name: 'Result' })).toHaveLength(3);
   expect(screen.getByRole('table').querySelectorAll('tbody')).toHaveLength(3);
   expect(screen.getAllByRole('cell', { name: 'informational' })).toHaveLength(3);
-  expect(screen.getByRole('cell', { name: /部署/ })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: /部署/ })).toBeVisible();
 });
 
 it('keeps table schemas and intervening content separate, including empty groups', () => {
@@ -94,8 +94,8 @@ it('keeps table schemas and intervening content separate, including empty groups
   openEverySettledStep();
   expect(screen.getAllByRole('table')).toHaveLength(5);
   expect(screen.getByText('No rows').getAttribute('colspan')).toBe('2');
-  expect(screen.getByText('Next result')).toBeTruthy();
-  expect(screen.getByText('Still separate')).toBeTruthy();
+  expect(screen.getByText('Next result')).toBeVisible();
+  expect(screen.getByText('Still separate')).toBeVisible();
   expect(screen.getByRole('cell', { name: '<tag>' }).innerHTML).toBe('&lt;tag&gt;');
   expect(screen.getByRole('cell', { name: '**ready**' }).textContent).toBe('**ready**');
 });
@@ -260,7 +260,7 @@ describe('joined Activity operation groups', () => {
     expect(repeat.getAttribute('aria-expanded')).toBe('false');
     expect(document.querySelector('[data-activity-row="0:search-1"]')).toBeNull();
     for (const id of ['search-2', 'unknown-1', 'unknown-2', 'read-1']) {
-      expect(document.querySelector(`[data-activity-row="0:${id}"]`)).toBeTruthy();
+      expect(document.querySelector(`[data-activity-row="0:${id}"]`)).toBeInTheDocument();
     }
     expect(screen.queryByText(/Search directory unavailable/)).toBeNull();
     fireEvent.click(repeat);
@@ -271,15 +271,15 @@ describe('joined Activity operation groups', () => {
         '[data-activity-row="0:search-3"] [data-disclosure-toggle]',
       )!,
     );
-    expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
+    expect(screen.getByText(/Search directory unavailable/)).toBeVisible();
     fireEvent.click(
       document.querySelector<HTMLElement>(
         '[data-activity-row="0:search-1"] [data-disclosure-toggle]',
       )!,
     );
-    expect(screen.getByText('First search: 2 matches')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="0:search-3"]')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="0:search-4"]')).toBeTruthy();
+    expect(screen.getByText('First search: 2 matches')).toBeVisible();
+    expect(document.querySelector('[data-activity-row="0:search-3"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-activity-row="0:search-4"]')).toBeInTheDocument();
     rerender(
       <ActivityPanel
         activity={{
@@ -305,13 +305,13 @@ describe('joined Activity operation groups', () => {
     expect(
       screen.getByRole('button', { name: /same query ×3/ }).getAttribute('aria-expanded'),
     ).toBe('true');
-    expect(screen.getByText('First search: 2 matches')).toBeTruthy();
+    expect(screen.getByText('First search: 2 matches')).toBeVisible();
     fireEvent.click(
       document.querySelector<HTMLElement>(
         '[data-activity-row="0:search-4"] [data-disclosure-toggle]',
       )!,
     );
-    expect(screen.getByText('Last search: 5 matches')).toBeTruthy();
+    expect(screen.getByText('Last search: 5 matches')).toBeVisible();
   });
 
   it('groups adjacent reads, counts unique files and preserves disclosure through updates', () => {
@@ -328,7 +328,7 @@ describe('joined Activity operation groups', () => {
     expect(group.textContent).toContain('1 file');
     expect(group.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(group);
-    expect(document.querySelector('[data-activity-row="0:b"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:b"]')).toBeInTheDocument();
     rerender(
       <ActivityPanel
         activity={{
@@ -359,7 +359,7 @@ describe('joined Activity operation groups', () => {
     const { rerender } = render(<ActivityPanel activity={{ ...activity, rows }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(document.querySelectorAll('[data-activity-group]')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: /Search ×10/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Search ×10/ })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Read ×10/ }));
     expect(
       [...document.querySelectorAll('[data-activity-row]')].map((row) =>
@@ -436,8 +436,8 @@ describe('joined Activity operation groups', () => {
     fireEvent.click(
       document.querySelector<HTMLElement>('[data-activity-row="0:b"] [data-disclosure-toggle]')!,
     );
-    expect(screen.getByText(/Permission denied/)).toBeTruthy();
-    expect(screen.getByText('Cancelled')).toBeTruthy();
+    expect(screen.getByText(/Permission denied/)).toBeVisible();
+    expect(screen.getByText('Cancelled')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Collapse Activity/ }));
     expect(screen.getByRole('button', { name: /Expand Activity/ }).textContent).toContain(
       '1 failed',
@@ -524,13 +524,13 @@ describe("one form's Activity on the phone", () => {
       name: /Listed apps\/vis-companion\/src/,
     });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByText('3 directories · 2 files')).toBeTruthy();
+    expect(screen.getByText('3 directories · 2 files')).toBeVisible();
     expect(screen.queryByText('Listing details')).toBeNull();
     fireEvent.click(toggle);
-    expect(screen.getByText('Listing details')).toBeTruthy();
+    expect(screen.getByText('Listing details')).toBeVisible();
     expect(screen.getAllByText('3 directories · 2 files')).toHaveLength(1);
     fireEvent.click(toggle);
-    expect(screen.getByText('3 directories · 2 files')).toBeTruthy();
+    expect(screen.getByText('3 directories · 2 files')).toBeVisible();
     expect(screen.queryByText('Listing details')).toBeNull();
   });
   it('shows batch sections after opening their call and replaces them without resetting disclosure', () => {
@@ -544,8 +544,8 @@ describe("one form's Activity on the phone", () => {
     const toggle = screen.getByRole('button', {
       name: activity.rows[0].presentation!.sections![0].headline,
     });
-    expect(screen.getByText('3 directories · 2 files')).toBeTruthy();
-    expect(screen.getByText('0 directories · 2 files')).toBeTruthy();
+    expect(screen.getByText('3 directories · 2 files')).toBeVisible();
+    expect(screen.getByText('0 directories · 2 files')).toBeVisible();
     expect(screen.queryByRole('table')).toBeNull();
     const sections = [...document.querySelectorAll('[data-activity-section]')];
     expect(sections[0].classList.contains('mt-1')).toBe(true);
@@ -571,11 +571,11 @@ describe("one form's Activity on the phone", () => {
       />,
     );
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('8 entries')).toBeTruthy();
+    expect(screen.getByText('8 entries')).toBeVisible();
     expect(screen.getAllByRole('table')).toHaveLength(1);
     fireEvent.click(toggle);
     expect(screen.queryByRole('table')).toBeNull();
-    expect(screen.getByText('0 directories · 2 files')).toBeTruthy();
+    expect(screen.getByText('0 directories · 2 files')).toBeVisible();
   });
   it('does not put a chevron on a summary-only presentation or infer content headings', () => {
     const base = activityProjection();
@@ -596,7 +596,7 @@ describe("one form's Activity on the phone", () => {
         ],
       },
     });
-    expect(screen.getByText('2 files')).toBeTruthy();
+    expect(screen.getByText('2 files')).toBeVisible();
     expect(screen.queryByRole('button', { name: /Listed src/ })).toBeNull();
   });
   it('keeps a presented failure inside the step until the reader opens it', () => {
@@ -624,9 +624,9 @@ describe("one form's Activity on the phone", () => {
     expect(screen.queryByText('Listing details')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /List src/ }));
     // Opened, the step says what it was doing, what it produced and why it ended, once each.
-    expect(screen.getByText('Preparing listing')).toBeTruthy();
-    expect(screen.getByText('Listing details')).toBeTruthy();
-    expect(screen.getByText('Permission denied')).toBeTruthy();
+    expect(screen.getByText('Preparing listing')).toBeVisible();
+    expect(screen.getByText('Listing details')).toBeVisible();
+    expect(screen.getByText('Permission denied')).toBeVisible();
   });
   it('draws the chronology without being asked, in engine sequence', () => {
     paintActivity();
@@ -641,7 +641,7 @@ describe("one form's Activity on the phone", () => {
     // The band folds independently; it does not add another live region.
     expect(chronologyText).not.toContain('[{query: needle}]');
     expect(chronologyText).not.toContain('24 passed');
-    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeVisible();
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
   });
@@ -674,8 +674,8 @@ describe("one form's Activity on the phone", () => {
       'SHELL · git status · 66ms',
     );
     expect(screen.getByLabelText('Operation groups').textContent).toContain('Ran git status');
-    expect(screen.getByText('66ms')).toBeTruthy();
-    expect(screen.getByText('12.5s')).toBeTruthy();
+    expect(screen.getByText('66ms')).toBeVisible();
+    expect(screen.getByText('12.5s')).toBeVisible();
   });
 
   it('adds no empty panel before the first operation', () => {
@@ -764,29 +764,27 @@ describe('a run reads as one thread', () => {
   });
   it('states running, failed and cancelled work in words rather than colour alone', () => {
     const base = activityProjection();
-    render(
-      <ActivityPanel
-        activity={{
-          ...base,
-          rows: [
-            {
-              ...base.rows[0],
-              id: 'failed',
-              state: 'failed',
-              error_summary: 'Read refused',
-            },
-            { ...base.rows[1], id: 'cancelled', state: 'cancelled' },
-          ],
-        }}
-      />,
-    );
+    paintActivity({
+      activity: {
+        ...base,
+        rows: [
+          {
+            ...base.rows[0],
+            id: 'failed',
+            state: 'failed',
+            error_summary: 'Read refused',
+          },
+          { ...base.rows[1], id: 'cancelled', state: 'cancelled' },
+        ],
+      },
+    });
     fireEvent.click(
       document.querySelector<HTMLElement>(
         '[data-activity-row="0:failed"] [data-disclosure-toggle]',
       )!,
     );
-    expect(screen.getByText('Read refused')).toBeTruthy();
-    expect(screen.getByText('Cancelled')).toBeTruthy();
+    expect(screen.getByText('Read refused')).toBeVisible();
+    expect(screen.getByText('Cancelled')).toBeVisible();
   });
 
   it('names the work with a verb', () => {
@@ -835,7 +833,7 @@ describe('a run reads as one thread', () => {
     expect(screen.queryByText('Patch')).toBeNull();
     expect(screen.queryByText('Changed files')).toBeNull();
     expect(screen.queryByText('1 file')).toBeNull();
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeTruthy();
+    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeInTheDocument();
 
     // Only the patch text folds.
     expect(screen.queryByText('added')).toBeNull();
@@ -844,7 +842,7 @@ describe('a run reads as one thread', () => {
         name: 'Expand the diff of src/components/ui.tsx',
       }),
     );
-    expect(screen.getByText('added')).toBeTruthy();
+    expect(screen.getByText('added')).toBeVisible();
   });
 
   it('gives a step with nothing to open no chevron and no toggle of its own', () => {
@@ -891,8 +889,8 @@ describe('a run reads as one thread', () => {
 
     fireEvent.click(step);
     expect(step.getAttribute('aria-expanded')).toBe('true');
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeTruthy();
-    expect(screen.getByText(/ui\.tsx:40: matched/)).toBeTruthy();
+    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeInTheDocument();
+    expect(screen.getByText(/ui\.tsx:40: matched/)).toBeVisible();
   });
 
   it('lists the paths a step touched under its own line', () => {
@@ -913,7 +911,7 @@ describe('a run reads as one thread', () => {
     });
 
     openEverySettledStep();
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeTruthy();
+    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeInTheDocument();
     // A path is a path everywhere on the axis: the type badge belonged to the
     // patch card, and that card is gone.
     expect(screen.queryByText('TSX')).toBeNull();
@@ -998,7 +996,7 @@ describe('a step that ended badly', () => {
     expect(document.querySelector('[data-activity-row="0:call-1"]')?.textContent).not.toContain(
       'NO MATCH',
     );
-    expect(screen.getByText('patch refused: no anchor matched')).toBeTruthy();
+    expect(screen.getByText('patch refused: no anchor matched')).toBeVisible();
   });
 
   // Regression, T131: a refusal was clamped to three lines with the rest behind a
@@ -1007,9 +1005,9 @@ describe('a step that ended badly', () => {
     paintFailure(['one', 'two', 'three', 'four', 'five'].join('\n'));
     openFailure();
 
-    expect(screen.getByText('one')).toBeTruthy();
-    expect(screen.getByText('three')).toBeTruthy();
-    expect(screen.getByText('five')).toBeTruthy();
+    expect(screen.getByText('one')).toBeVisible();
+    expect(screen.getByText('three')).toBeVisible();
+    expect(screen.getByText('five')).toBeVisible();
     expect(screen.queryByText('2 more lines')).toBeNull();
   });
 });
@@ -1087,7 +1085,7 @@ describe('the axis says a thing once', () => {
     const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
     expect(chronology).toContain('Read');
     expect(chronology).not.toContain('2 files');
-    expect(document.querySelector('[data-path="src/index.css"]')).toBeTruthy();
+    expect(document.querySelector('[data-path="src/index.css"]')).toBeInTheDocument();
   });
 
   it('prioritizes the file name and retains the full path', () => {
@@ -1125,11 +1123,11 @@ describe('what the axis does while the work is still moving', () => {
     const { rerender } = render(<ActivityPanel activity={activity} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(document.querySelector('[data-activity-row="0:live-4"]')).toBeNull();
-    expect(screen.getByText(/search-6 · running/)).toBeTruthy();
+    expect(screen.getByText(/search-6 · running/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
     const step = screen.getByRole('button', { name: /Searched.*search-4/ });
     fireEvent.click(step);
-    expect(screen.getByText('result-4')).toBeTruthy();
+    expect(screen.getByText('result-4')).toBeVisible();
     rerender(
       <ActivityPanel
         activity={{
@@ -1138,7 +1136,7 @@ describe('what the axis does while the work is still moving', () => {
         }}
       />,
     );
-    expect(screen.getByText('result-4')).toBeTruthy();
+    expect(screen.getByText('result-4')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
     expect(document.querySelector('[data-activity-row="0:live-4"]')).toBeNull();
     expect(screen.getByRole('button', { name: /Search ×7/ }).getAttribute('aria-expanded')).toBe(
@@ -1165,8 +1163,8 @@ describe('what the axis does while the work is still moving', () => {
     expect(group.textContent).toContain('1 failed');
     expect(group.textContent).toContain('1 cancelled');
     fireEvent.click(group);
-    expect(document.querySelector('[data-activity-row="0:step-4"]')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="0:step-5"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:step-4"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-activity-row="0:step-5"]')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /more steps/i })).toBeNull();
   });
 
@@ -1198,10 +1196,10 @@ describe('what the axis does while the work is still moving', () => {
       presentation: { headline: 'Searched', summary: '2 matches', content: [] },
       is_truncated: true,
     };
-    render(<ActivityPanel activity={{ ...base, rows: [row] }} />);
+    paintActivity({ activity: { ...base, rows: [row] } });
     expect(screen.queryByText('Details truncated')).toBeNull();
     expect(document.querySelector(`[data-activity-row="0:${row.id}"] button`)).toBeNull();
-    expect(screen.getByText('2 matches')).toBeTruthy();
+    expect(screen.getByText('2 matches')).toBeVisible();
   });
 
   it('labels discarded steps as unavailable, not as a show-more control', () => {
@@ -1414,11 +1412,11 @@ it('renders symbol content and replaces progress without changing lifecycle', ()
   ];
   const { rerender } = render(<ActivityPanel activity={activity} />);
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  expect(screen.getByRole('heading', { name: /Verification/ })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: /Verification/ })).toBeVisible();
   expect(screen.getByText('Prepared').tagName).toBe('STRONG');
-  expect(screen.getByRole('cell', { name: 'passed' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'passed' })).toBeVisible();
   expect(screen.getByRole('progressbar', { name: 'Checking' }).getAttribute('value')).toBe('1');
-  expect(screen.getByText('Attachment unavailable')).toBeTruthy();
+  expect(screen.getByText('Attachment unavailable')).toBeVisible();
   const next = {
     ...activity,
     rows: [
@@ -1434,7 +1432,7 @@ it('renders symbol content and replaces progress without changing lifecycle', ()
   };
   rerender(<ActivityPanel activity={next} />);
   expect(screen.queryByRole('progressbar')).toBeNull();
-  expect(screen.getByText('Finished stage')).toBeTruthy();
+  expect(screen.getByText('Finished stage')).toBeVisible();
 });
 
 // Regression #230: long evidence is independent of the primary result disclosure.
@@ -1481,14 +1479,14 @@ it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
     fireEvent.click(root);
     expect(screen.queryByText('Full request body')).toBeNull();
     fireEvent.click(turns);
-    expect(screen.getByText('Full request body')).toBeTruthy();
+    expect(screen.getByText('Full request body')).toBeVisible();
     expect(screen.queryByText('Unique failure body')).toBeNull();
     fireEvent.click(root);
-    expect(screen.getByText('Full request body')).toBeTruthy();
+    expect(screen.getByText('Full request body')).toBeVisible();
     fireEvent.click(failures);
     expect(screen.getAllByText('Unique failure body')).toHaveLength(1);
     fireEvent.click(turns);
     expect(screen.queryByText('Full request body')).toBeNull();
-    expect(screen.getByText('Unique failure body')).toBeTruthy();
+    expect(screen.getByText('Unique failure body')).toBeVisible();
   },
 );

@@ -44,7 +44,7 @@ describe('menuPosition', () => {
     const keyboardUp = menuPosition({ top: 60, bottom: 88, right: 378 }, 320, DESKTOP);
     const keyboardHidden = menuPosition({ top: 104, bottom: 132, right: 378 }, 320, DESKTOP);
 
-    expect(keyboardUp).not.toBeNull();
+    expect(keyboardUp).toEqual({ top: 94, left: 58 });
     expect(keyboardHidden).toEqual({ top: 138, left: 58 });
   });
 

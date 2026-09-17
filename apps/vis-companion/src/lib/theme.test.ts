@@ -32,7 +32,7 @@ describe('the shipped theme catalog', () => {
 
   it('resolves a stored id, and falls back to the default for anything else', () => {
     const dark = THEMES.find((theme) => theme.mode === 'dark');
-    expect(dark).toBeDefined();
+    expect(dark?.mode).toBe('dark');
     expect(resolveTheme(dark!.id)).toEqual(dark);
     expect(resolveTheme('a-theme-that-was-uninstalled')).toEqual(DEFAULT_THEME);
   });

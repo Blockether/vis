@@ -39,7 +39,7 @@ describe('where "New session" lives', () => {
     // The word repeated once per project; the mark says the same thing in 37px, and the
     // name it gave up is on the label and the tooltip above.
     expect(create[0]!.textContent).toBe('');
-    expect(create[0]!.querySelector('svg')).toBeTruthy();
+    expect(create[0]!.querySelector('svg')).toBeInTheDocument();
     // It sits inside the project header's trailing cluster, never on the machine band.
     const header = within(screen.getByLabelText('project sessions'));
     expect(header.getByRole('button', { name: 'New session on alpha' })).toBe(create[0]);
@@ -140,7 +140,7 @@ describe('where "New session" lives', () => {
     // The one row it held that this screen owns is the sheet the amber mark opens.
     await userEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
     const sheet = within(await screen.findByRole('dialog'));
-    expect(sheet.getByRole('button', { name: 'New project' })).toBeTruthy();
+    expect(sheet.getByRole('button', { name: 'New project' })).toBeVisible();
   });
 
   // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
@@ -155,14 +155,14 @@ describe('where "New session" lives', () => {
 
     const add = screen.getByRole('button', { name: 'Projects on alpha' });
     expect(add.textContent).toBe('');
-    expect(add.querySelector('svg')).toBeTruthy();
+    expect(add.querySelector('svg')).toBeInTheDocument();
     // ...and the plus is left to mean exactly one thing on this screen: a session.
     expect(add.innerHTML).not.toBe(
       screen.getAllByRole('button', { name: /^New session on/ })[0]!.innerHTML,
     );
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
-    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(await screen.findByRole('dialog')).toBeVisible();
   });
 
   // Regression, user report: `Use project` said it added a project but created and opened
@@ -267,7 +267,7 @@ describe('where "New session" lives', () => {
     expect(create.closest('section')).toBe(screen.getByLabelText('Sessions'));
     expect(list.contains(create)).toBe(false);
     expect(list.contains(strip)).toBe(false);
-    expect(strip.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
 
@@ -284,10 +284,10 @@ describe('machine, project and session are three different shapes', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Collapse project' }));
     expect(screen.queryByText('First')).toBeNull();
     // The verb stays outside the fold.
-    expect(screen.getByRole('button', { name: 'New session on alpha' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New session on alpha' })).toBeVisible();
 
     await userEvent.click(screen.getByRole('button', { name: 'Expand project' }));
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
   });
 
   // Regression, user report (the empty list repeated the Projects control already shown
@@ -347,7 +347,7 @@ describe('machine, project and session are three different shapes', () => {
         'true',
       ),
     );
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.getByText('First')).toBeVisible();
   });
 });
 
@@ -387,8 +387,8 @@ describe('the machine strip', () => {
     expect(screen.queryByText('Second')).toBeNull();
 
     await userEvent.click(strip.getByRole('button', { name: /^beta/ }));
-    expect(await screen.findByText('Second')).toBeTruthy();
+    expect(await screen.findByText('Second')).toBeVisible();
     expect(screen.queryByText('First')).toBeNull();
-    expect(screen.getByRole('button', { name: 'New session on beta' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New session on beta' })).toBeVisible();
   });
 });

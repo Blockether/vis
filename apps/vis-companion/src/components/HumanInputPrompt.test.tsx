@@ -122,12 +122,11 @@ describe('human input sheet', () => {
   it('connects every written-field label and refusal to its native control', () => {
     markup('grouped', { errors: { user: 'Use a service account.' } });
 
-    expect(screen.getByRole('textbox', { name: 'User, required' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'User, required' })).toBeVisible();
     const password = screen.getByLabelText(/Password/);
-    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeVisible();
     const user = screen.getByRole('textbox', { name: 'User, required' });
     const describedBy = user.getAttribute('aria-describedby');
-    expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy ?? '')?.textContent).toBe('Use a service account.');
     expect(user.getAttribute('aria-invalid')).toBe('true');
     expect(user.getAttribute('aria-required')).toBe('true');

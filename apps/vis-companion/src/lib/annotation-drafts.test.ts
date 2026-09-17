@@ -154,7 +154,9 @@ describe('the unsaved-comment store', () => {
       unknown
     >;
     expect(Object.keys(kept)).toHaveLength(MAX_DRAFT_DOCUMENTS);
-    expect(peekAnnotationDraft(named(`note-${MAX_DRAFT_DOCUMENTS}.md`))).not.toBeNull();
+    expect(peekAnnotationDraft(named(`note-${MAX_DRAFT_DOCUMENTS}.md`))).toEqual([
+      { quote: '', body: `remark ${MAX_DRAFT_DOCUMENTS}` },
+    ]);
     expect(peekAnnotationDraft(named('note-0.md'))).toBeNull();
   });
 });

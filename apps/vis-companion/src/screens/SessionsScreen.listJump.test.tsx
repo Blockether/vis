@@ -27,7 +27,7 @@ describe('the sessions list while a machine loads', () => {
       expect(screen.queryByText('Second')).toBeNull();
 
       view.releasePages();
-      await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+      await waitFor(() => expect(screen.getByText('First')).toBeVisible());
       expect(screen.queryByText('Second')).toBeNull();
     } finally {
       view.restore();

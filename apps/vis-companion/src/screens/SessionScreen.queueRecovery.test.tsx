@@ -53,8 +53,8 @@ describe('a queued turn after a failed request', () => {
       },
     });
 
-    expect(await screen.findByText('Run this after recovery')).toBeTruthy();
-    expect(screen.getByText('1 held · turn failed')).toBeTruthy();
+    expect(await screen.findByText('Run this after recovery')).toBeVisible();
+    expect(screen.getByText('1 held · turn failed')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue queue' }));
     await waitFor(() => expect(resumeQueue).toHaveBeenCalledWith('s1'));

@@ -397,7 +397,7 @@ describe('validation', () => {
     // be JSON. The app has nothing to run, so it has nothing to guess either.
     expect(JSON.stringify(fixture)).not.toContain('validate');
     const notify = parsed().fields.find((row) => row.id === 'notify') as HumanInputField;
-    expect(notify).toBeDefined();
+    expect(notify.id).toBe('notify');
     expect('validate' in notify).toBe(false);
   });
 

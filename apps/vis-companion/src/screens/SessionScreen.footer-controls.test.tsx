@@ -112,17 +112,17 @@ describe('composer response controls', () => {
     // Each chip LEADS WITH A MARK: `◇`, `≡` and `»` used to stand in for
     // one, in the body face, beside real icons.
     expect(reasoningButton).toHaveTextContent('balanced');
-    expect(reasoningButton.querySelector('svg')).not.toBeNull();
+    expect(reasoningButton.querySelector('svg')).toBeInTheDocument();
     expect(verbosityButton).toHaveTextContent('low');
-    expect(verbosityButton.querySelector('svg')).not.toBeNull();
+    expect(verbosityButton.querySelector('svg')).toBeInTheDocument();
     expect(fastButton).toHaveTextContent('standard');
-    expect(fastButton.querySelector('svg')).not.toBeNull();
+    expect(fastButton.querySelector('svg')).toBeInTheDocument();
     expect(
       reasoningButton.compareDocumentPosition(verbosityButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(
       verbosityButton.compareDocumentPosition(fastButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     await user.click(verbosityButton);
 
     expect(setSetting).toHaveBeenCalledWith('verbosity', 'cycle');

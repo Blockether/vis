@@ -90,7 +90,7 @@ describe('queued turns tray', () => {
         'Inspect the signed release manifest',
       ),
     );
-    expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
+    expect(screen.getByText('Inspect the release manifest')).toBeVisible();
     expect(screen.queryByText('manifest.png')).not.toBeInTheDocument();
   });
 
@@ -110,13 +110,13 @@ describe('queued turns tray', () => {
       />,
     );
 
-    expect(screen.getByText('2 held · turn failed')).toBeTruthy();
+    expect(screen.getByText('2 held · turn failed')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Continue queue' }));
     expect(client.resumeQueue).toHaveBeenCalledWith('session-1');
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove queued message 1' }));
     expect(client.deleteQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-2');
-    expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
+    expect(screen.getByText('Inspect the release manifest')).toBeVisible();
     await waitFor(() => expect(onError).toHaveBeenCalledWith('queue changed first'));
   });
   it('keeps the queued label and the shared square removal target', () => {
@@ -130,7 +130,7 @@ describe('queued turns tray', () => {
       />,
     );
 
-    expect(screen.getByText('Queued · 1')).toBeTruthy();
+    expect(screen.getByText('Queued · 1')).toBeVisible();
     const queue = screen.getByRole('region', { name: 'Queued messages' });
     for (const row of queue.querySelectorAll('[role="listitem"]')) {
       expect(row.className).toContain('py-0.5');
