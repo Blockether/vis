@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { FileSuggestion, SlashCommand } from '../lib/types';
 import { ComposerSuggestions, composerSuggestionListId } from './ComposerSuggestions';
+import sessionScreenSource from '../screens/SessionScreen.tsx?raw';
 
 const files: FileSuggestion[] = [
   { name: 'src/App.tsx', size: '24 KB', age: '2m', status: 'modified' },
@@ -49,17 +50,31 @@ describe('composer suggestions', () => {
     expect(onSelect).toHaveBeenCalledWith(commands[1]);
   });
 
-  // The footer holding this list owns the dock's width — safe areas, 46rem at `sm`,
-  // the 6xl container on a pointer device — so the list stretches to that box rather
-  // than re-centering a reading column and standing narrower than the input it completes.
-  it('stretches the completion list across the whole composer box', () => {
+  // An absolute box is laid out against its ancestor's PADDING box, so the composer
+  // footer's gutters do not inset this list: it has to repeat them at every breakpoint to
+  // stay as wide as the input. With only the `sm` reading column it stood narrower than a
+  // composer widened to `mouse:max-w-6xl`; with no gutters at all it overhung the input.
+  it('repeats the composer footer gutters at every breakpoint', () => {
     render(
       <ComposerSuggestions kind="slashes" items={commands} selectedIndex={0} onSelect={vi.fn()} />,
     );
 
     const frame = screen.getByRole('listbox', { name: 'Slash commands' }).className;
-    expect(frame).toContain('left-0 right-0');
-    expect(frame).not.toMatch(/(left|right)-\[|46rem/);
+    const footer = sessionScreenSource.match(/shrink-0 border-t border-dialog-edge bg-ink[^`]*/);
+    const inset = (classes: string, utility: string) =>
+      classes.match(new RegExp(`(?:^|\\s)${utility}-\\[([^\\]]+)\\]`))?.[1];
+
+    expect(footer).not.toBeNull();
+    for (const [padding, side] of [
+      ['pl', 'left'],
+      ['pr', 'right'],
+    ]) {
+      for (const variant of ['', 'sm:', 'mouse:']) {
+        const gutter = inset(footer?.[0] ?? '', `${variant}${padding}`);
+        expect(gutter, `${variant}${padding}`).toBeDefined();
+        expect(inset(frame, `${variant}${side}`), `${variant}${side}`).toBe(gutter);
+      }
+    }
   });
 
   it('does not mount an empty completion surface', () => {

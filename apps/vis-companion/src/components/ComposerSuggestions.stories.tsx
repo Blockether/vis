@@ -9,8 +9,8 @@ const meta = {
   parameters: { layout: 'fullscreen' },
   decorators: [
     (Story) => (
-      // The composer dock at its widest (`mouse:max-w-6xl`), because the list stretches
-      // to whichever box holds it.
+      // The composer dock at its widest (`mouse:max-w-6xl`), where the list's own gutters
+      // have to line up with the input box.
       <div className="relative mx-auto h-dvh max-w-6xl">
         <div className="absolute inset-x-0 bottom-12 h-px">
           <Story />

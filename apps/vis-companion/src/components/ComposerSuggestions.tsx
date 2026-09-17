@@ -21,13 +21,14 @@ export function composerSuggestionListId(kind: ComposerSuggestionsProps['kind'])
   return kind === 'files' ? 'file-mention-list' : 'slash-command-list';
 }
 
-// The composer footer is this list's positioned ancestor, and that footer owns the
-// dock's width: safe areas, 46rem at `sm`, the 6xl container on a pointer device.
-// Stretching edge to edge inside it keeps the list exactly as wide as the input box.
-// Re-deriving gutters here instead pinned it to the 46rem reading column while the
-// composer widened, so on a wide screen the list stood visibly narrower than the input.
+// This list is absolutely positioned inside the composer footer, so it is laid out against
+// that footer's PADDING box and the footer's own gutters do not inset it. To stand exactly
+// as wide as the input box it repeats those gutters at every breakpoint: safe areas, the
+// 46rem reading column at `sm`, the 6xl container on a pointer device. Keeping only the `sm`
+// rule left it narrower than a composer widened to `mouse:max-w-6xl`; dropping the gutters
+// made it overhang the input. Its test pins the mirror against `SessionScreen`.
 const FRAME =
-  'absolute bottom-full left-0 right-0 mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none';
+  'absolute bottom-full left-[max(0.875rem,env(safe-area-inset-left))] right-[max(0.875rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] mouse:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] mouse:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-6xl))/2_+_1.5rem))]';
 
 /** The one completion list used by both `@file` and `/command`. */
 export function ComposerSuggestions(props: ComposerSuggestionsProps) {
