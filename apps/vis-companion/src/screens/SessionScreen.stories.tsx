@@ -233,14 +233,27 @@ export const ReadingLayout: Story = {
     const column = transcript.firstElementChild!;
     const answer = transcript.querySelector('.bg-answer')!;
     const prose = transcript.querySelectorAll(
-      '.bg-answer p, .text-you-message-foreground, .text-thinking p, .text-vis-message p',
+      '.bg-answer p, .text-you-message-foreground, .text-vis-message p, .text-thinking p',
     );
     await expect(prose.length).toBeGreaterThan(2);
-    for (const element of [...prose, composer]) {
+    const reading = transcript.querySelectorAll(
+      '.bg-answer p, .text-you-message-foreground, .text-vis-message p',
+    );
+    for (const element of [...reading, composer]) {
       const style = getComputedStyle(element);
       await expect(style.fontFamily).toBe(getComputedStyle(title).fontFamily);
       await expect(style.fontSize).toBe(pointer ? getComputedStyle(title).fontSize : '11px');
       await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
+    }
+    // The THINKING trace is a quiet aside: it keeps the ui step on every
+    // surface, one step below the reading scale the answer grows to on pointer.
+    const trace = transcript.querySelectorAll('.text-thinking p');
+    await expect(trace.length).toBeGreaterThan(0);
+    for (const element of trace) {
+      const style = getComputedStyle(element);
+      await expect(style.fontFamily).toBe(getComputedStyle(title).fontFamily);
+      await expect(style.fontSize).toBe('11px');
+      await expect(style.lineHeight).toBe('16px');
     }
     const cap = pointer ? 1152 : 768;
     await expect(column.getBoundingClientRect().width).toBe(Math.min(cap, transcript.clientWidth));

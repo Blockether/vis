@@ -1797,8 +1797,11 @@ export const ThinkingBand = memo(function ThinkingBand({
   return (
     // A step's reasoning and code share one edge with no margin between them.
     // Standalone bands retain their spacing among other message blocks.
+    // The trace is a quiet aside: it keeps the ui type step on every surface
+    // instead of matching the answer body's mouse:text-title, where quiet ink
+    // would read as loud type.
     <section
-      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking mouse:text-title ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
+      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
     >
       {collapsible && (
         <Disclosure
@@ -1814,9 +1817,13 @@ export const ThinkingBand = memo(function ThinkingBand({
           </span>
         </Disclosure>
       )}
+      {/* Reasoning streams one sentence per line, so nearly every line renders
+          as its own paragraph and the shared compact gap (my-2) would double
+          the band's vertical rhythm; halve it here. The collapsed peek holds
+          REASONING_PREVIEW_LINES rows at this step's 16px line box. */}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} min-w-0 italic`}
+        className={`${collapsible && !expanded ? 'max-h-[3rem] overflow-hidden' : ''} min-w-0 italic [&_p]:my-1`}
       >
         <Markdown compact hardBreaks>
           {normalized}
