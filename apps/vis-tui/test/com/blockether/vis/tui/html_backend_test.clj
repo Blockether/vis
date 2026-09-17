@@ -295,13 +295,24 @@
       (click! ":#band")
       (click! ":#band")
       (is (= #{"BODY_0"} (bodies)))
-      (is (true? (:collapsed? (region ":0:lint-1:section:0"))))
+      ;; A collapsed run exposes nothing nested, not even its section header.
+      (is (nil? (region ":0:lint-1:section:0")))
       ;; And a run the reader collapsed stays collapsed the next time Activity opens.
       (click! ":0:lint-0")
       (click! ":#band")
       (click! ":#band")
       (is (empty? (bodies)))
-      (is (true? (:collapsed? (region ":0:lint-0")))))))
+      (is (true? (:collapsed? (region ":0:lint-0"))))
+      ;; Nested content folds away with the run that holds it, and opening the run
+      ;; again restores exactly the disclosures the reader left inside it.
+      (click! ":0:lint-1")
+      (click! ":0:lint-1:section:0")
+      (is (= #{"BODY_1"} (bodies)))
+      (click! ":0:lint-1")
+      (is (empty? (bodies)))
+      (is (nil? (region ":0:lint-1:section:0")))
+      (click! ":0:lint-1")
+      (is (= #{"BODY_1"} (bodies))))))
 
 (deftest result-first-html-native-parity-test
   (doseq [cols [40 80 120]]

@@ -9083,7 +9083,9 @@ print(paths)"
                                                        "summary_format" "markdown"}]}}]}
                                   100
                                   "links")]
-                     (expect (= #{"https://example.com/root" "https://example.com/section"}
+                     (expect (= (if open?
+                                  #{"https://example.com/root" "https://example.com/section"}
+                                  #{"https://example.com/root"})
                                 (set (map :url (mapcat #(get-in % [:meta :links]) entries)))))))))
 
 (defdescribe
@@ -9190,7 +9192,9 @@ print(paths)"
                               :when (= :url (:kind hit))]
 
                           [col row hit])]
-               (expect (= #{"https://example.com/root" "https://example.com/section"}
+               (expect (= (if open?
+                            #{"https://example.com/root" "https://example.com/section"}
+                            #{"https://example.com/root"})
                           (set (map #(get-in % [2 :url]) hits))))
                (doseq [[col row hit] hits]
                  (let [cell (.getBackCharacter screen (int col) (int row))]
@@ -9209,8 +9213,9 @@ print(paths)"
 (defdescribe
   activity-presentation-disclosure-test
   (it
-    "discloses each section independently while keeping summaries visible"
+    "discloses each section independently inside the row disclosure"
     ;; Regression #230: opening the overview must not expand every long body.
+    ;; Regression #270: collapsing the row folds its section index away with it.
     (let [presentation
           {"headline" "Read session"
            "summary" "3 turns"
@@ -9257,17 +9262,19 @@ print(paths)"
                                (str/includes? ":section:"))
                       entries)]
 
-          (doseq [summary ["3 turns" "Full requests" "One failure" "No retries"]]
-            (expect (str/includes? text summary)))
+          (expect (str/includes? text "3 turns"))
+          (doseq [summary ["Full requests" "One failure" "No retries"]]
+            (expect (= root-open? (str/includes? text summary))))
           (expect (= root-open? (str/includes? text "Overview metrics")))
-          (expect (= request-open? (str/includes? text "Complete request")))
-          (expect (= failure-open? (str/includes? text "Complete failure")))
-          (expect (= ["sections:session:section:0" "sections:session:section:1"]
+          (expect (= (and root-open? request-open?) (str/includes? text "Complete request")))
+          (expect (= (and root-open? failure-open?) (str/includes? text "Complete failure")))
+          (expect (= (if root-open? ["sections:session:section:0" "sections:session:section:1"] [])
                      (mapv #(get-in % [:meta :node-id]) section-heads)))
-          (doseq [heading ["Turn details" "Failure details" "Empty details"]]
-            (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
-                                             entries))]
-              (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index)))))))))))
+          (when root-open?
+            (doseq [heading ["Turn details" "Failure details" "Empty details"]]
+              (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
+                                               entries))]
+                (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index))))))))))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"

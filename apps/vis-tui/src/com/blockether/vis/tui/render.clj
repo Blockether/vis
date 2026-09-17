@@ -5692,7 +5692,7 @@
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
   (boolean (or (seq (activity-field presentation :content))
-               (and (= "ls" (:operation row)) (seq (activity-field presentation :sections)))
+               (seq (activity-field presentation :sections))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -6568,8 +6568,7 @@
                                                               (= :failed state)))
                                                      (conj detail-row)
 
-                                                     (and (seq sections)
-                                                          (or open? (not= "ls" (:operation row))))
+                                                     (and open? (seq sections))
                                                      (into (activity-section-entries
                                                              sections
                                                              id
