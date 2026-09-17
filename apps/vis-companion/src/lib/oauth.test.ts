@@ -25,6 +25,13 @@ function gateway() {
     cancel: vi.fn().mockResolvedValue(undefined),
   };
 }
+type DesktopWindow = Window & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } };
+/** The Pake desktop window: `window.open` there is Pake's rewrite, not a browser. */
+function stubDesktopShell() {
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  (window as DesktopWindow).__TAURI__ = { core: { invoke } };
+  return invoke;
+}
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(window, 'open').mockReturnValue(null);
@@ -33,6 +40,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  delete (window as DesktopWindow).__TAURI__;
 });
 
 it('opens the browser at once and settles through polling', async () => {
@@ -171,4 +179,22 @@ it('closes a reserved tab the flow can never use', async () => {
 
 it('reserves nothing when the browser refuses the popup', () => {
   expect(reserveAuthTab()).toBeUndefined();
+});
+
+// Regression, user report: signing in to a provider from the Pake desktop app opened the
+// provider's page INSIDE Vis. Pake rewrites `window.open` and navigates an authorization URL
+// in the app's own window; only its shell channel reaches the system browser.
+it('hands sign-in to the system browser inside the desktop shell', async () => {
+  const invoke = stubDesktopShell();
+  const watcher = watchAuth(flow, gateway(), vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('plugin:shell|open', { path: flow.url });
+  expect(window.open).not.toHaveBeenCalled();
+  watcher.stop();
+});
+
+it('reserves no tab inside the desktop shell, where an empty open reloads the app', () => {
+  stubDesktopShell();
+  expect(reserveAuthTab()).toBeUndefined();
+  expect(window.open).not.toHaveBeenCalled();
 });

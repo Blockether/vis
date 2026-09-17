@@ -7,8 +7,24 @@
 import type { AuthVerdict, SignInFlow } from './types';
 import { Capacitor } from '@capacitor/core';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
+/**
+ * The desktop app is this same bundle inside a Pake (Tauri) window, where `window.open` is
+ * not a browser: Pake replaces it, recognizes an authorization URL and navigates the CURRENT
+ * window, so a provider's sign-in page takes over Vis. Pake grants the page `shell:allow-open`
+ * — the channel its own external links use — and that one reaches the system browser.
+ */
+type ShellInvoke = (command: string, payload: { path: string }) => Promise<unknown>;
+type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: ShellInvoke } } };
+function desktopShell(): ShellInvoke | undefined {
+  if (typeof window === 'undefined') return;
+  const invoke = (window as DesktopHost).__TAURI__?.core?.invoke;
+  return typeof invoke === 'function' ? invoke : undefined;
+}
 export const openAuthUrl = (url: string): void => {
-  window.open(url, '_blank', 'noopener,noreferrer');
+  const shell = desktopShell();
+  // A refused open leaves the flow on screen with its instructions and manual return.
+  if (shell) void shell('plugin:shell|open', { path: url }).catch(() => {});
+  else window.open(url, '_blank', 'noopener,noreferrer');
 };
 /** A browser tab claimed inside the user's tap, navigated once the gateway has issued the URL. */
 export interface AuthTab {
@@ -18,10 +34,11 @@ export interface AuthTab {
 /**
  * WKWebView and desktop popup blockers drop a `window.open` that runs after an `await`;
  * only a synchronous open inside the gesture survives. Native hosts hand the URL to the
- * loopback receiver instead and get nothing here.
+ * loopback receiver instead and get nothing here, and the Pake desktop window has nothing
+ * to reserve: an empty `window.open` there reloads the app instead of opening a tab.
  */
 export function reserveAuthTab(): AuthTab | undefined {
-  if (typeof window === 'undefined' || Capacitor.isNativePlatform()) return;
+  if (typeof window === 'undefined' || Capacitor.isNativePlatform() || desktopShell()) return;
   let tab: Window | null = null;
   try {
     tab = window.open('', '_blank');
