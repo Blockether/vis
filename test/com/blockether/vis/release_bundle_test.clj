@@ -225,7 +225,7 @@
 (defn- with-native-install-fixture
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
   [{:keys [installer? installed? missing-worker? missing-tui? track previous-track prepare!
-           build-commit extra-env target]} f]
+           build-commit extra-env target desktop desktop-fail?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -259,6 +259,9 @@
         tui-archive
         (io/file root "tui.tar.gz")
 
+        desktop-dir
+        (io/file home ".vis/install/desktop/linux-x64")
+
         env
         {"HOME" (.getAbsolutePath home)
          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
@@ -266,7 +269,8 @@
          "PATH" (str (.getAbsolutePath tools) ":" (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "VIS_TEST_URLS" (.getAbsolutePath urls)
          "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
-         "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)}
+         "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)
+         "VIS_TEST_DESKTOP_FAIL" (if desktop-fail? "1" "0")}
 
         env
         (merge env extra-env)]
@@ -276,6 +280,11 @@
         (let [track-file (io/file (get env "VIS_HOME") "install" "track")]
           (io/make-parents track-file)
           (spit track-file (str previous-track "\n"))))
+      (when desktop
+        (let [app (io/file desktop-dir desktop "Vis.AppImage")]
+          (io/make-parents app)
+          (write-executable! app "#!/usr/bin/env bash\necho installed-desktop\n")
+          (spit (io/file desktop-dir "current") (str desktop "\n"))))
       (doseq [file [launcher (io/file payload "vis-agent")]]
         (io/copy (io/file "bin/vis-agent") file)
         (.setExecutable ^java.io.File file true))
@@ -326,9 +335,13 @@
               "/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"))
           "  */releases/latest|*/releases/tags/v9.9.9) printf '%s' '"
           "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz\"},"
+          "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-companion-9.9.9-linux-x64.AppImage\"},"
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
           "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
+          "  */vis-companion-9.9.9-linux-x64.AppImage)\n"
+          "    [[ ${VIS_TEST_DESKTOP_FAIL:-0} != 1 ]] || exit 22\n"
+          "    printf '#!/usr/bin/env bash\\necho desktop-app\\n' > \"$dest\" ;;\n"
           "  *) echo 'unexpected release URL' >&2; exit 22 ;;\nesac\n"))
       (let [args
             (if installer?
@@ -349,6 +362,7 @@
              :native native
              :launcher launcher
              :env env
+             :desktop desktop-dir
              :urls (if (.exists urls) (slurp urls) ""))))
       (finally (delete-tree! root)))))
 
@@ -2228,6 +2242,47 @@
                                 (expect (str/includes? output "dev-source-one") output)
                                 (expect (not (str/includes? (slurp calls) "curl ")))
                                 (expect (not (.exists track))))))))
+
+;; Regression, session bb18c9e4-c74e-4bea-a8ba-e710652ae36a: a native update
+;; installed a new engine while `vis-agent desktop` kept opening the app first
+;; downloaded, because only the desktop command ever refreshed it.
+(defdescribe desktop-engine-update-test
+             (it "refreshes an installed desktop app with the engine and keeps the previous one"
+                 (with-native-install-fixture
+                   {:installed? true :desktop "9.8.0"}
+                   (fn [{:keys [exit output desktop urls]}]
+                     (expect (zero? exit) output)
+                     (expect (str/includes? output "updated the desktop app: 9.8.0 → 9.9.9") output)
+                     (expect (str/includes? urls "vis-companion-9.9.9-linux-x64.AppImage") urls)
+                     (expect (= "9.9.9\n" (slurp (io/file desktop "current"))))
+                     (expect (.canExecute (io/file desktop "9.9.9/Vis.AppImage")))
+                     ;; A running app keeps its files.
+                     (expect (.exists (io/file desktop "9.8.0/Vis.AppImage"))))))
+             (it "downloads nothing when the installed desktop app is already current"
+                 (with-native-install-fixture
+                   {:installed? true :desktop "9.9.9"}
+                   (fn [{:keys [exit output desktop urls]}]
+                     (expect (zero? exit) output)
+                     (expect (str/includes? output "desktop app is current: 9.9.9") output)
+                     (expect (not (str/includes? urls "vis-companion")) urls)
+                     (expect (= "9.9.9\n" (slurp (io/file desktop "current")))))))
+             (it "installs no desktop app for an installation that never had one"
+                 (with-native-install-fixture
+                   {:installed? true}
+                   (fn [{:keys [exit output desktop urls]}]
+                     (expect (zero? exit) output)
+                     (expect (not (str/includes? output "desktop")) output)
+                     (expect (not (str/includes? urls "vis-companion")) urls)
+                     (expect (not (.exists ^java.io.File desktop))))))
+             (it "keeps the installed app and the engine update when the desktop refresh fails"
+                 (with-native-install-fixture
+                   {:installed? true :desktop "9.8.0" :desktop-fail? true}
+                   (fn [{:keys [exit output desktop]}]
+                     (expect (zero? exit) output)
+                     (expect (str/includes? output "installed the release track") output)
+                     (expect (str/includes? output "kept the installed app 9.8.0") output)
+                     (expect (= "9.8.0\n" (slurp (io/file desktop "current"))))
+                     (expect (not (.exists (io/file desktop "9.9.9"))))))))
 
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.

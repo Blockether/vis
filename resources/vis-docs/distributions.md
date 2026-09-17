@@ -209,11 +209,13 @@ disk image into your Vis cache. On Linux, it runs the AppImage in the foreground
 with built-in extraction, so FUSE is not required; you still need a graphical
 desktop and the system libraries required by the app.
 
-Later release launches reuse the cached app without contacting GitHub. `--update`
-checks for a newer stable version and downloads only when that version is not
-cached. Failed downloads or installation steps leave the previously selected app
-intact; retry the command, or omit `--update` to open the existing copy. A missing
-cached executable is downloaded again automatically.
+Later release launches reuse the cached app without contacting GitHub. `vis-agent
+update` refreshes an installed app together with the engine, so the desktop you open
+matches the runtime you just installed; it never installs an app you do not have.
+`--update` checks for a newer stable version and downloads only when that version is
+not cached. Failed downloads or installation steps leave the previously selected app
+intact, and an engine update still succeeds: retry the command, or omit `--update` to
+open the existing copy. A missing cached executable is downloaded again automatically.
 
 ### Dev: build from source
 
