@@ -138,7 +138,13 @@ export const Running: Story = {
     await expect(controls.getByText(/Compile completed/)).toBeInTheDocument();
     await userEvent.click(controls.getByRole('button', { name: 'Build log' }));
     await expect(controls.queryByText('Compile completed')).not.toBeInTheDocument();
-    await userEvent.click(controls.getByRole('button', { name: 'Interrupt' }));
+    // The interrupt used to sit flush against the run's top border, one hairline from
+    // the activity above it; it needs air of its own before the thumb reaches for it.
+    const interrupt = controls.getByRole('button', { name: 'Interrupt' });
+    await expect(
+      interrupt.getBoundingClientRect().top - liveFrame.getBoundingClientRect().top,
+    ).toBeGreaterThanOrEqual(6);
+    await userEvent.click(interrupt);
     await expect(
       controls.getByRole('textbox', { name: 'Why are you stopping Jenkins build pool?' }),
     ).toBeInTheDocument();

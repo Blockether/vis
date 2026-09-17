@@ -170,16 +170,14 @@ function stepInk(tone: LiveTone): string {
 }
 
 /**
- * A rule is PUNCTUATION, not wallpaper. A line between every node turned the panel
- * into a ledger: a heading, the sentence under it, two links and a closed drawer
- * each arrived in their own banded row, and the rule that actually says something —
- * the one fencing a table off from the prose around it — read like all the others.
- * The terminal draws a line where the view ASKS for one and along a table's own
- * rails; the app draws the same two, and spacing carries everything else.
+ * Rules FENCE the blocks of a run. A status line, a meter and a table are separate
+ * readings, and in the embedded card they stack close enough that spacing alone
+ * lets them run together; a hairline between two nodes keeps each one its own row.
+ * A divider is a rule the view ASKED for, so neither side of one is ruled twice.
  */
 function rowRule(previous: LiveNode | undefined, node: LiveNode): string {
   if (!previous || previous.type === 'divider' || node.type === 'divider') return '';
-  return previous.type === 'table' || node.type === 'table' ? 'border-t border-dialog-edge' : '';
+  return 'border-t border-dialog-edge';
 }
 
 /**
@@ -1114,8 +1112,8 @@ export function LiveViewPanel({
         <header
           className={
             embedded
-              ? 'flex min-w-0 items-center gap-2 px-(--live-view-inset)'
-              : `flex items-start gap-2 px-(--live-view-inset) ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
+              ? `flex min-w-0 items-center gap-2 px-(--live-view-inset) pt-2 ${view.description ? '' : 'border-b border-dialog-edge pb-2'}`
+              : 'flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-(--live-view-inset) py-2.5'
           }
         >
           {embedded ? (
@@ -1155,7 +1153,7 @@ export function LiveViewPanel({
           )}
         </header>
         {embedded && view.description && (
-          <p className="px-(--live-view-inset) pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
+          <p className="border-b border-dialog-edge px-(--live-view-inset) pb-2.5 font-mono text-ui text-dialog-hint mouse:text-meta">
             <InlineMarkdown>{view.description}</InlineMarkdown>
           </p>
         )}
@@ -1199,7 +1197,7 @@ export function LiveViewPanel({
             {error}
           </p>
         )}
-        <ul className={view.description ? '[&>li:first-child]:pt-0' : ''}>
+        <ul>
           {view.nodes.map((node, index) => (
             // Table cells own their padding; an outer inset makes the first and last
             // rows uneven relative to the internal separators. Keep labelled headings inset.

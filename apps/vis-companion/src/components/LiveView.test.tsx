@@ -176,14 +176,15 @@ describe('a live view on the phone', () => {
     expect(name.parentElement?.textContent).toBe('Failure · Run native build');
   });
 
-  // A rule is punctuation, not wallpaper: sentences ride one band and the line that
-  // survives is the one fencing a table off from the prose around it.
-  it('rules a table off and leaves ordinary rows to spacing', () => {
+  // A rule fences one block of a run off from the next. A divider is a rule the view
+  // ASKED for, so the rows on either side of one are not ruled a second time.
+  it('rules the blocks of a run apart without doubling a divider', () => {
     const view: LiveView = {
       ...opened(),
       nodes: [
         { id: 'queued', type: 'paragraph', text: 'Build queued.' },
         { id: 'left', type: 'paragraph', text: 'Two jobs left.' },
+        { id: 'break', type: 'divider' },
         {
           id: 'hosts',
           type: 'table',
@@ -202,8 +203,9 @@ describe('a live view on the phone', () => {
     const rows = [...document.querySelectorAll('section > ul > li')];
     expect(rows.map((one) => one.className.includes('border-t'))).toEqual([
       false,
-      false,
       true,
+      false,
+      false,
       true,
     ]);
   });

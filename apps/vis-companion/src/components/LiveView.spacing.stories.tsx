@@ -16,19 +16,17 @@ const meta = {
       nodes: [{ id: 'status', type: 'status', text: 'Watching', tone: 'running' }],
     },
   },
-  // Regression #220: no blank line before the description, exactly one after it.
+  // Regression #220: no blank line before the description. The rule under the header
+  // closes the title block, and the body starts with the same air the rule sits on.
   play: async ({ canvas }) => {
     const title = canvas.getByText('Release checks');
     const description = canvas.getByText('Three jobs');
-    const node = title.closest('section')!.querySelector('ul > li')!;
-    const line = parseFloat(getComputedStyle(description).lineHeight);
+    const header = title.closest('header')!;
     await expect(description.getBoundingClientRect().top).toBe(
       title.getBoundingClientRect().bottom,
     );
-    await expect(
-      node.getBoundingClientRect().top - description.getBoundingClientRect().bottom,
-    ).toBe(line);
-    await expect(getComputedStyle(node).paddingTop).toBe('0px');
+    await expect(getComputedStyle(header).borderBottomWidth).toBe('1px');
+    await expect(getComputedStyle(header).paddingBottom).toBe(getComputedStyle(header).paddingTop);
   },
 } satisfies Meta<typeof LiveViewPanel>;
 
