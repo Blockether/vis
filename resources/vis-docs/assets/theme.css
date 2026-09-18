@@ -29,6 +29,8 @@
   --r-sm: 0;
   --measure: 44rem;
   --maxw: 88rem;
+  --side: 16rem;
+  --rail: 15rem;
   --font: 'JetBrains Mono', monospace;
   --text-body: 0.9375rem;
   --text-small: 0.8125rem;
@@ -165,7 +167,7 @@ a:hover {
   max-width: var(--maxw);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 16rem minmax(0, 1fr) 15rem;
+  grid-template-columns: var(--side) minmax(0, 1fr) var(--rail);
   gap: 0;
 }
 /* sidebar */
@@ -879,6 +881,24 @@ button.primary:hover {
   .search-open {
     min-width: 2.75rem;
     min-height: 2.75rem;
+  }
+}
+/* desktop: the search box spans the content column, between the sidebar and the rail */
+@media (min-width: 1101px) {
+  .top .search {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(max(0px, (100% - var(--maxw)) / 2) + var(--side));
+    right: calc(max(0px, (100% - var(--maxw)) / 2) + var(--rail));
+  }
+  /* Taking the box out of the row leaves the free space to the header icons. */
+  .top .center-link,
+  .top .gh {
+    margin-left: auto;
+  }
+  .top .center-link ~ .gh {
+    margin-left: 0;
   }
 }
 /* tablet: drop the right rail */

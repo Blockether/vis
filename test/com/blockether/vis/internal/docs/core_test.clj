@@ -95,7 +95,7 @@
                                    (str "<script type=\"module\" src=\""
                                         prefix
                                         "search-init.js\"></script>")))))))
-  (it "grows the header search across the row, with no spacer to strand it"
+  (it "grows the header search across narrower rows, with no spacer to strand it"
       (let [{:keys [pages] :as site}
             (docs/collect)
 
@@ -121,6 +121,34 @@
           (expect (not (str/includes? header "class=\"spacer\"")))
           (expect (str/includes? search "flex: 1 1 auto"))
           (expect (not (str/includes? search "max-width"))))))
+  (it "fits the desktop search box to the content column, between sidebar and rail"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            page
+            (first pages)]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [css
+                      (rendered-theme (docs/page-html site page mode) mode)
+
+                      desktop
+                      (second (re-find
+                                #"(?s)@media\s*\(min-width: 1101px\).*?\.top \.search\s*\{([^}]+)\}"
+                                css))]]
+
+          ;; The box is pinned to the shell's middle column, so it measures exactly the
+          ;; content a reader sees instead of the whole header row.
+          (expect (str/includes? css
+                                 "grid-template-columns: var(--side) minmax(0, 1fr) var(--rail);"))
+          (expect (str/includes? desktop "position: absolute"))
+          (expect (str/includes? desktop "+ var(--side)"))
+          (expect (str/includes? desktop "+ var(--rail)"))
+          ;; Nothing grows in the row any more, so the icons hold the right edge.
+          (expect (re-find #"\.top \.center-link,\s+\.top \.gh\s*\{\s*margin-left: auto;" css))
+          (expect (re-find #"\.top \.center-link ~ \.gh\s*\{\s*margin-left: 0;" css)))))
   (it
     "collapses the phone header to a magnifier that opens the box as the row below"
     (let [{:keys [pages] :as site}
