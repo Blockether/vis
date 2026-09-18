@@ -1,0 +1,68 @@
+name: Pages redirect
+
+# The Vis documentation is served from https://vis.blockether.com/ (apps/vis-docs,
+# deployed by docs.yml). The GitHub Pages project site at
+# https://blockether.github.io/vis/ still answered with an old documentation build,
+# so this workflow replaces it with a redirect: the published site is exactly
+# .github/pages-redirect/, and no documentation is built or stored on GitHub Pages.
+#
+# index.html is also published as 404.html, so every path under the old project URL
+# lands on https://vis.blockether.com/ instead of a GitHub 404 page.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/pages-redirect/**'
+      - '.github/workflows/pages-redirect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-redirect
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@v6
+      - name: Collect the redirect site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp .github/pages-redirect/index.html _site/index.html
+          cp .github/pages-redirect/index.html _site/404.html
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
+      - name: Check the published redirect
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            body="$(curl -fsSL --max-time 30 "$PAGE_URL" || true)"
+            case "$body" in
+              *'https://vis.blockether.com/'*)
+                echo "$PAGE_URL redirects to https://vis.blockether.com/ (attempt $attempt)"
+                exit 0
+                ;;
+            esac
+            sleep 15
+          done
+          echo "::error::$PAGE_URL did not serve the redirect to https://vis.blockether.com/"
+          exit 1
