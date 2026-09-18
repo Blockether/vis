@@ -20,6 +20,7 @@ import {
   searchOrder,
   searchTally,
   scopedSessions,
+  sessionInputCount,
   sessionIsLive,
   sessionOrder,
   timeLabel,
@@ -43,6 +44,21 @@ function session(id: string, extra: Partial<Session> = {}): Session {
     ...extra,
   };
 }
+
+// Regression, user report (paraphrased: the INPUT NEEDED mark does not go away
+// when I answer): a session parked on TWO requests carried one boolean, so
+// answering the first of them changed nothing the reader could see.
+describe('open input requests', () => {
+  it('counts the requests the gateway reports', () => {
+    const parked = session('s', { is_awaiting_input: true, awaiting_input_count: 2 });
+    expect(sessionInputCount(session('s'))).toBe(0);
+    expect(sessionInputCount(parked)).toBe(2);
+  });
+
+  it('still counts a parked row from a gateway that sends no count', () => {
+    expect(sessionInputCount(session('s', { is_awaiting_input: true }))).toBe(1);
+  });
+});
 
 describe('canonical session liveness', () => {
   it('never infers a running turn from display status', () => {

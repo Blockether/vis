@@ -41,6 +41,31 @@ describe('a session waiting on a human', () => {
     expect(screen.getAllByText('INPUT NEEDED')).toHaveLength(1);
   });
 
+  // Regression, user report (paraphrased: answering the form does not clear INPUT
+  // NEEDED): two open requests rode ONE boolean, so answering the first left the
+  // row reading exactly as it had before the answer, naming no second question.
+  it('counts the open requests, so answering one of them shows', async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({
+              id: 's1',
+              title: 'Parked',
+              live: true,
+              is_awaiting_input: true,
+              awaiting_input_count: 2,
+            }),
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+
+    await screen.findByText('Parked');
+    expect(within(row('Parked')).getByText('INPUT NEEDED ×2')).toBeInTheDocument();
+  });
+
   it('finds the parked row by what it is waiting for', async () => {
     const view = renderSessionsScreen({
       machines: [

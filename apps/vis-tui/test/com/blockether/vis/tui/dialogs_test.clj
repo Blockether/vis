@@ -1643,9 +1643,11 @@
                           "session_id" "a"
                           "is_live" true
                           "is_awaiting_input" true
+                          "awaiting_input_count" 2
                           "current_turn_id" "t-7"})]
 
         (expect (true? (get (first after) "is_awaiting_input")))
+        (expect (= 2 (get (first after) "awaiting_input_count")))
         (expect (true? (get (first after) "live")))
         (expect (= "t-7" (get (first after) "current_turn_id")))
         (expect (= (second held) (second after)))))
@@ -2424,7 +2426,15 @@
                (row nil
                     {"id" "s-parked" "title" "Deploy" "turn_count" 3 "is_awaiting_input" true}))))
         (expect (true? (:awaiting-input?
-                         (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))))
+                         (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))
+        ;; TWO open requests used to read exactly like one, so answering the
+        ;; first left the very same badge standing, naming nothing.
+        (expect (= "! input needed ×2"
+                   (:status (row nil
+                                 {"id" "s-parked"
+                                  "title" "Deploy"
+                                  "is_awaiting_input" true
+                                  "awaiting_input_count" 2}))))))
   (it "leaves an unparked row's status exactly as it was"
       (let [row (var-get #'dlg/navigator-session-row)]
         (expect (= "3 turns" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))

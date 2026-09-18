@@ -925,10 +925,8 @@
    Carries no `seq`/`ts`: `publish-fleet!` stamps those, so this stays a function
    of its arguments and a test can state the contract without a clock."
   [before after]
-  (let [idle {"is_live" false
-              "is_awaiting_input" false
-              "awaiting_input_count" 0
-              "current_turn_id" nil}]
+  (let [idle
+        {"is_live" false "is_awaiting_input" false "awaiting_input_count" 0 "current_turn_id" nil}]
     (into []
           (keep (fn [sid]
                   (let [was (get before sid idle)
@@ -5029,11 +5027,11 @@
                  ;; that will move it is the operator. Cross-process (see
                  ;; `bus/waiting-requests`), so the phone, the TUI picker and this
                  ;; gateway's own list all say INPUT NEEDED about the same session.
-                  :is_awaiting_input (bus/session-waiting? sid)
-                  ;; …and HOW MANY. One boolean for N open requests is why
-                  ;; answering one of two left INPUT NEEDED lit with nothing
-                  ;; saying a second request was still parked behind it.
-                  :awaiting_input_count (bus/session-waiting-count sid)
+                 :is_awaiting_input (bus/session-waiting? sid)
+                 ;; …and HOW MANY. One boolean for N open requests is why
+                 ;; answering one of two left INPUT NEEDED lit with nothing
+                 ;; saying a second request was still parked behind it.
+                 :awaiting_input_count (bus/session-waiting-count sid)
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
                  :answer_count (long (or (:answer-count stats) 0))

@@ -1298,7 +1298,7 @@
          ;; The question is the rule's own label — `── Deploy? ──` — so the first
          ;; row is chrome and every row under it is the form.
          (when (>= (long sep-row) (long top-limit))
-            (tr/draw-rule! g region sep-row (band-label form (long (or queued 0)))))
+           (tr/draw-rule! g region sep-row (band-label form (long (or queued 0)))))
          (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
          (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
            (tr/draw-rule! g region hint-rule-at))

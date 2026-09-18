@@ -3420,8 +3420,13 @@
       ;; past the first message row, so the operator still sees WHAT they are
       ;; answering. It paints last and owns the text cursor while it is open.
       (when-let [human-form (:human-input db)]
-         (if-let [pos (hi/paint! g cols rows human-form messages-top composer-h
-                                 (count (:human-input-queue db)))]
+        (if-let [pos (hi/paint! g
+                                cols
+                                rows
+                                human-form
+                                messages-top
+                                composer-h
+                                (count (:human-input-queue db)))]
           (frame/set-cursor! screen pos)
           (frame/set-cursor! screen nil)))
       ;; Only an explicitly opened viewer paints the transient. Live events and

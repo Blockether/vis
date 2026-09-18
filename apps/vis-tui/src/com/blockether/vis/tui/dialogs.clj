@@ -5006,13 +5006,13 @@
         ;; never a local guess: a run parked on an unanswered human-input request
         ;; is normally parked in ANOTHER process, and this list is where its
         ;; operator goes looking for it.
-         awaiting-input?
-         (true? (get session "is_awaiting_input"))
+        awaiting-input?
+        (true? (get session "is_awaiting_input"))
 
-         ;; HOW MANY requests it is parked on, so answering one of two visibly
-         ;; drops the row from ×2 to ×1 instead of leaving the same badge lit.
-         awaiting-count
-         (long (or (get session "awaiting_input_count") (if awaiting-input? 1 0)))
+        ;; HOW MANY requests it is parked on, so answering one of two visibly
+        ;; drops the row from ×2 to ×1 instead of leaving the same badge lit.
+        awaiting-count
+        (long (or (get session "awaiting_input_count") (if awaiting-input? 1 0)))
 
         live?
         (true? (get session "live"))]

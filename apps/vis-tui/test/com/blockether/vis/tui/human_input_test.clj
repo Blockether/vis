@@ -2068,3 +2068,27 @@
         ;; never reaches either of them
         (expect (< (long (str/index-of ring-row "│")) (long (str/index-of ring-row "▎"))))
         (expect (< (long (str/index-of ring-row "▎")) (long (str/last-index-of ring-row "│")))))))
+
+(defdescribe
+  band-queue-hint-test
+  "What the band says when MORE requests are parked behind the open one. A second
+   request used to be invisible: the operator answered the form in front of them,
+   the band came straight back with another question, and every INPUT NEEDED badge
+   outside this dialog read exactly as it had before the answer."
+  (it "leaves the rule alone while this is the only request"
+      (expect (= "Deploy" (hi/band-label (hi/init-form (request)) 0))))
+  (it "names how many more are waiting"
+      (expect (= "Deploy · 2 more waiting" (hi/band-label (hi/init-form (request)) 2))))
+  (it "still counts them when the request asked no question of its own"
+      (expect (= "1 more waiting" (hi/band-label (hi/init-form (assoc (request) :title "")) 1))))
+  (it "paints that count onto the band's own rule"
+      (let [{:keys [screen g]}
+            (virtual-screen)
+
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)) 1 tr/prompt-rows 1)
+
+            rows
+            (mapv #(screen-row screen %) (range 30))]
+
+        (expect (some #(str/includes? % "1 more waiting") rows)))))
