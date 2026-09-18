@@ -305,8 +305,9 @@ it('replaces the pencil with the drawing check in the same footer slot', () => {
 });
 
 // Regression, user report: pressing Save on an untouched shared picture started a
-// full-resolution PNG encode. On a phone photo WebKit could stay in "Preparing image"
-// with the whole app unresponsive even though there were no edited pixels to keep.
+// full-resolution PNG encode. On a phone photo WebKit could hang on it with the whole
+// app unresponsive even though there were no edited pixels to keep. The stubbed canvas
+// makes any encode fail loudly, so an empty status line is the proof none was started.
 it('closes an untouched pending image without preparing a replacement', async () => {
   const applied = vi.fn();
   const closed = vi.fn();
@@ -326,9 +327,7 @@ it('closes an untouched pending image without preparing a replacement', async ()
 
   expect(applied).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledOnce();
-  expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain(
-    'Preparing image',
-  );
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
 });
 // Regression: the CSS transition meant for button/reset snaps also applied
 // while a finger was dragging the picture every frame, fighting the direct

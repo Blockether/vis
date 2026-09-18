@@ -590,9 +590,10 @@ export function ImageViewer({
   }
 
   /**
-   * Every finished action is the same three steps — say what is happening, do
-   * it, say how it went — so they are said once, and each caller only supplies
-   * the work and the sentence to fall back to.
+   * Every finished action is the same two steps — do it, then say how it went —
+   * so they are said once, and each caller only supplies the work and the
+   * sentence to fall back to. The line is emptied first so the previous action's
+   * result cannot be read as this one's; the work itself says nothing.
    */
   async function run(
     kind: 'copy' | 'share' | 'apply',
@@ -600,7 +601,7 @@ export function ImageViewer({
     work: (blob: Blob) => Promise<string>,
   ) {
     setBusy(kind);
-    setStatus('Preparing image…');
+    setStatus('');
     try {
       setStatus(await work(await editedImage()));
     } catch (cause) {
