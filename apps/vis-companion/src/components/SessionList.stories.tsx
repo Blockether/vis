@@ -239,9 +239,10 @@ export const Stopped: Story = {
   },
   args: { session: STOPPED_SESSION },
   play: async ({ canvas, canvasElement }) => {
-    await expect(canvas.getByText('stopped')).toBeVisible();
+    await expect(canvas.getByText('STOPPED')).toBeVisible();
     await expect(canvas.queryByText('2 new')).not.toBeInTheDocument();
-    await expect(canvas.getByText('STOPPED')).toBeInTheDocument();
+    // One mark, not two: the status mark alone says the turn was cut off.
+    await expect(canvas.queryByText('stopped')).not.toBeInTheDocument();
     const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
     await expect(dot).toHaveClass('bg-err');
     // Solid, never pulsing: an interrupted session is the opposite of a live one.

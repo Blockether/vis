@@ -146,7 +146,8 @@ export const SessionRow = memo(function SessionRow({
   // mark on purpose, so the flag is BOUNDED: it reports something you have not
   // seen, and opening the session retires it exactly the way it retires "new".
   // Ungated it would sit on the row until that session's next turn, which for an
-  // abandoned session never comes.
+  // abandoned session never comes. The row wears it ONCE, in the status mark on the
+  // right; the flags column stays quiet so a cut-off row never carries two STOPPED labels.
   const stopped = !live && sessionWasInterrupted(session) && unread > 0;
   const status = statusLabel(session, stopped);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
@@ -359,21 +360,12 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* Stopped, unread and unsent-message flags share one aligned column. */}
+                {/* Unread and unsent-message flags share one aligned column. */}
                 <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip @3xl:col-start-auto @3xl:row-start-auto">
-                  {stopped ? (
-                    <span
-                      className="shrink-0 border border-err-edge bg-err-surface px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-err-ink"
-                      title="This session's last turn was cut off before it could finish"
-                    >
-                      stopped
+                  {!stopped && unread > 0 && (
+                    <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
+                      {unread > 1 ? `${unread} new` : 'new'}
                     </span>
-                  ) : (
-                    unread > 0 && (
-                      <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
-                        {unread > 1 ? `${unread} new` : 'new'}
-                      </span>
-                    )
                   )}
                   {hasUnsent && (
                     <span

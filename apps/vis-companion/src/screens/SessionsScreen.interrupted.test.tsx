@@ -29,9 +29,10 @@ describe('a session whose last turn was cut off', () => {
     });
     restore = view.restore;
 
-    expect(await screen.findByText('stopped')).toBeInTheDocument();
+    expect(await screen.findByText('STOPPED')).toBeInTheDocument();
     expect(screen.queryByText('new')).not.toBeInTheDocument();
-    expect(screen.getByText('STOPPED')).toBeInTheDocument();
+    // One mark per row: a chip beside the title used to repeat the status mark.
+    expect(screen.queryByText('stopped')).not.toBeInTheDocument();
 
     const dot = view.container.querySelector('[data-session-status-dot]');
     expect(dot?.className).toContain('bg-err');
@@ -55,13 +56,12 @@ describe('a session whose last turn was cut off', () => {
     });
     restore = view.restore;
 
-    expect(await screen.findByText('stopped')).toBeInTheDocument();
+    expect(await screen.findByText('STOPPED')).toBeInTheDocument();
 
     await act(async () => {
       markSessionRead('s-clears', 3);
     });
 
-    expect(screen.queryByText('stopped')).not.toBeInTheDocument();
     expect(screen.queryByText('STOPPED')).not.toBeInTheDocument();
   });
 
@@ -79,7 +79,7 @@ describe('a session whose last turn was cut off', () => {
     restore = view.restore;
 
     expect(await screen.findByText('A session')).toBeInTheDocument();
-    expect(screen.queryByText('stopped')).not.toBeInTheDocument();
+    expect(screen.queryByText('STOPPED')).not.toBeInTheDocument();
     expect(screen.getByText('IDLE')).toBeInTheDocument();
   });
 
@@ -105,6 +105,6 @@ describe('a session whose last turn was cut off', () => {
     restore = view.restore;
 
     expect(await screen.findByText('LIVE')).toBeInTheDocument();
-    expect(screen.queryByText('stopped')).not.toBeInTheDocument();
+    expect(screen.queryByText('STOPPED')).not.toBeInTheDocument();
   });
 });
