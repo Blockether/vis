@@ -111,3 +111,7 @@ own_your_harness.pptx
 
 # Voice assets built by bin/export-pocket-tts — release payloads, never sources.
 /dist/
+
+# Call journal written by the e2e schema-probe fixture when it runs from this
+# checkout instead of a temporary workspace.
+/schema-calls.jsonl
