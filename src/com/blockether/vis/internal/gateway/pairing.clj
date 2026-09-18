@@ -9,7 +9,8 @@
   Tailscale fits naturally: if a 100.64.0.0/10 interface is present we prefer it
   over LAN addresses, otherwise we fall back to site-local IPv4 addresses."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.wire :as wire])
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.util :as util])
   (:import (com.google.zxing BarcodeFormat EncodeHintType)
            (com.google.zxing.qrcode QRCodeWriter)
            (java.io File)
@@ -113,7 +114,7 @@
   guess, never an invitation to the ISP's router."
   []
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         cached
         @default-route-cache]
