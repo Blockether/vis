@@ -589,9 +589,10 @@ export function ManageProjectsSheet({
 
           {folder !== null && (
             <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
-              <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
-                +
-              </span>
+              {/* The line that names the new folder leads with the MARK of the cell that
+              opened it. It led with a `+` typed into the band — a glyph standing in for
+              an icon, one row under the very cell that draws that icon properly. */}
+              <FolderPlusIcon className="text-accent-ink" />
               <Input
                 autoFocus
                 value={folder}

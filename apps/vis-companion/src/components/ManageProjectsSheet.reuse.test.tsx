@@ -407,6 +407,12 @@ describe('the path band', () => {
 
     expect(naming).toBeVisible();
     expect(heights(naming!)).toEqual(['h-11', 'mouse:h-9']);
+
+    // Regression, user report ("we have an icon library, use it"): the line led with a
+    // `+` typed into the band. It leads with the MARK of the cell that opened it — one
+    // drawn icon, and not one glyph of type anywhere on the line.
+    expect(naming!.querySelectorAll('svg')).toHaveLength(1);
+    expect(naming!.textContent).toBe('');
   });
 
   // Regression, user report: the two project verbs were docked below the folder list,
