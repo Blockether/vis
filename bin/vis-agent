@@ -919,6 +919,29 @@ Usage: vis-agent update [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
 EOF
 }
 
+# ── Git dependency preparation ───────────────────────────────────────────────
+# A `:deps/prep-lib` git dependency compiles its own JVM bridge, and tools.deps
+# refuses to build a classpath before that happened: every `clojure -M:vis` in an
+# unprepared checkout dies with "The following libs must be prepared before use".
+# `prep` itself skips the work when the :ensure path is already there — but
+# finding that out costs a JVM start, measured at 1.03s on EVERY vis-agent
+# invocation, for a step that does nothing after the first. So the answer is
+# remembered against the thing that invalidates it: the dependency set. A changed
+# deps.edn (a bumped pin, a new library) is a different stamp and preps again.
+ensure_source_prepared() {
+  local source_root="$1" stamp="" marker
+  if command -v shasum >/dev/null 2>&1; then
+    stamp="$(shasum -a 256 "$source_root/deps.edn" 2>/dev/null | cut -d' ' -f1)"
+  fi
+  marker="$vis_home/run/prepped-${stamp:-none}"
+  [[ -z "$stamp" || ! -f "$marker" ]] || return 0
+  ( cd "$source_root" && clojure -X:deps prep ) >&2 || return 1
+  if [[ -n "$stamp" ]]; then
+    mkdir -p "$vis_home/run" 2>/dev/null || true
+    : > "$marker" 2>/dev/null || true
+  fi
+}
+
 # Release an IDLE managed gateway BEFORE replacing the runtime, using the client that
 # started it and therefore still speaks its protocol. Doing this after the install made
 # a protocol-3 client ask a protocol-2 gateway to stop; the safety query itself was
@@ -938,6 +961,10 @@ release_stale_gateway() {
     jvm)
       source_root="$(find_jvm_source 2>/dev/null || true)"
       [[ -n "$source_root" ]] || return 0
+      # An unprepared checkout would answer this stop with a classpath error instead
+      # of releasing the gateway, so prepare it first; the launch path below reuses
+      # the same marker and does not pay for it twice.
+      ensure_source_prepared "$source_root" || return 0
       ( cd "$source_root" && clojure -M:vis gateway stop --if-idle ) || true
       ;;
   esac
@@ -1372,24 +1399,7 @@ fi
 # prep output; tools.deps skips work whose :deps/prep-lib :ensure path exists.
 measure_log "exec cold clojure -M:vis from $source_root"
 cd "$source_root"
-# `prep` compiles a git dependency's own JVM bridge, and tools.deps skips the work
-# when the :ensure path is already there — but finding that out costs a JVM start,
-# measured at 1.03s on EVERY vis-agent invocation, for a step that does nothing
-# after the first. So the answer is remembered against the thing that invalidates
-# it: the dependency set. A changed deps.edn (a bumped pin, a new library) is a
-# different stamp and preps again.
-vis_prep_stamp=""
-if command -v shasum >/dev/null 2>&1; then
-  vis_prep_stamp="$(shasum -a 256 "$source_root/deps.edn" 2>/dev/null | cut -d' ' -f1)"
-fi
-vis_prep_marker="$vis_home/run/prepped-${vis_prep_stamp:-none}"
-if [[ -z "$vis_prep_stamp" || ! -f "$vis_prep_marker" ]]; then
-  clojure -X:deps prep >&2 || exit 1
-  if [[ -n "$vis_prep_stamp" ]]; then
-    mkdir -p "$vis_home/run" 2>/dev/null || true
-    : > "$vis_prep_marker" 2>/dev/null || true
-  fi
-fi
+ensure_source_prepared "$source_root" || exit 1
 # The classpath tools.deps caches names this project's own roots RELATIVELY
 # (`src`, `resources`, …), and the JVM resolves a relative classpath entry
 # against `user.dir` — which the launch below deliberately points at the

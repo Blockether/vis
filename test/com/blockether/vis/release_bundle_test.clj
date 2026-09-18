@@ -172,7 +172,7 @@
             (str
               "#!/usr/bin/env bash\n" "set -euo pipefail\n"
               "head=\"$(\"$VIS_TEST_REAL_GIT\" -C \"$VIS_HOME/install/src\" rev-parse HEAD)\"\n"
-              "printf '%s\\n' \"$head\" >> \"$VIS_TEST_CLOJURE_CALLS\"\n"
+              "printf '%s %s\\n' \"$head\" \"$*\" >> \"$VIS_TEST_CLOJURE_CALLS\"\n"
               "if [[ \"$head\" != \"$VIS_TEST_OLD\" ]]; then\n"
               "  printf '%s\\n' 'vis-agent: fatal error - Update the gateway - protocol mismatch' >&2\n"
               "  exit 1\n" "fi\n"))
@@ -555,10 +555,27 @@
         {}
         (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
           (expect (zero? exit) output)
-          (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+          (expect (= (str old-commit " -M:vis gateway stop --if-idle")
+                     (last (str/split-lines (slurp clojure-calls))))
+                  output)
           (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
           (expect (not (str/includes? output "Update the gateway")) output)
           (expect (not (str/includes? output "leaving 1 commit behind")) output))))
+  ;; Regression: a dev update asked the old gateway to stop with a bare
+  ;; `clojure -M:vis` inside a checkout whose `:deps/prep-lib` Git dependency was
+  ;; never prepared. tools.deps refused to build that classpath, `|| true` swallowed
+  ;; the failure, and every update printed "must be prepared before use" while the
+  ;; stale gateway kept running.
+  (it "prepares the old source before asking its gateway to stop"
+      (with-source-update-fixture
+        {}
+        (fn [{:keys [exit output old-commit clojure-calls]}]
+          (expect (zero? exit) output)
+          (expect (= [(str old-commit " -X:deps prep")
+                      (str old-commit " -M:vis gateway stop --if-idle")]
+                     (str/split-lines (slurp clojure-calls)))
+                  output)
+          (expect (not (str/includes? output "must be prepared before use")) output))))
   ;; #195: dev must stop for the same local changes as release and beta.
   (it "leaves dirty managed source in place and requires manual attention before updating dev"
       (with-source-update-fixture
@@ -609,7 +626,9 @@
           {:pack-index pack-index}
           (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
             (expect (zero? exit) output)
-            (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+            (expect (= (str old-commit " -M:vis gateway stop --if-idle")
+                       (last (str/split-lines (slurp clojure-calls))))
+                    output)
             (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
             (expect (not (str/includes? output "error:")) output)
             (expect (= (not= :healthy pack-index) (str/includes? output "rebuilding pack index"))
