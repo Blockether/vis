@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.9] - 2026-09-18
+
+### Added
+- Choose the address a pairing link advertises, with `--advertise`, `VIS_GATEWAY_ADVERTISE` or the
+  gateway configuration file, and offer the router this machine routes through as a last fallback so
+  a port-forwarded phone can still reach Vis.
+- Search the manual from the site header, and behind a magnifier on phones.
+- Send desktop alerts from the macOS app.
+- Deny read or write access to chosen paths in the Python sandbox jail (#263).
+- Attach CSV files and files dropped on the composer, and read a CSV artifact as a table in the
+  transcript (#261).
+- Mark sessions the gateway stopped mid-turn, and group adjacent transcript failures under one band.
+- Record where a local Python worker hung when Vis retires it.
+
+### Fixed
+- Answer `GET /v1/capabilities` even when a network interface refuses to describe itself, which left
+  Linux clients unable to connect at all.
+- Advertise only the bound host in a pairing link, so a phone is never handed an address the gateway
+  does not answer on.
+- Search live logs whose node id contains a slash, and count the input requests a run is waiting on,
+  in both the app and the TUI.
+- Show a live run as one band inside its message, with controls that stay reachable, and keep settled
+  runs out of the artifacts gallery.
+- Open Activity groups and steps predictably, fold nested sections with their run, number grouped
+  runs and compact a clean lint result (#268, #270).
+- Keep jail deny rules covering files created later, and run the JDK a call selects in every child
+  process (#263, #264). An omitted `jail.enabled` now means the jail is off, and deny rules are
+  allowed either way.
+- Pin the typed-signature runtime the Python sandbox loads, so signatures keep working (#273).
+- Wake an idle Council peer when a message pings it explicitly.
+- Open the TUI when no provider is configured yet, keep ordered-list numbering across fenced steps,
+  and keep a formatted block's source beside its result (#269).
+- Report a failed patch as a parse error or as stale anchors, never one as the other (#265).
+- Open provider sign-in and clicked links in the system browser, and refresh an installed desktop app
+  during an update.
+- Ask for microphone and camera permission in the macOS app.
+- Keep a cancelled turn's code and partial answer in the conversation.
+
 ### Changed
 - Sign in to GitHub Copilot through a single provider entry. The individual, business and enterprise
   choices are gone; Vis reads your seat plan from GitHub after you sign in.
@@ -6316,7 +6354,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.9...HEAD
+[v0.2.9]: https://github.com/Blockether/vis/compare/v0.2.8...v0.2.9
 [v0.2.8]: https://github.com/Blockether/vis/compare/v0.2.7...v0.2.8
 [v0.2.7]: https://github.com/Blockether/vis/compare/v0.2.6...v0.2.7
 [v0.2.6]: https://github.com/Blockether/vis/compare/v0.2.5...v0.2.6
