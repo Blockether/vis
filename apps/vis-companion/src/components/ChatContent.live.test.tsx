@@ -9,16 +9,18 @@ import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
-it('frames the embedded live view as a bordered box on its shared background', () => {
+// User report (screenshot): the embedded run stood in a box of its own. It is a BAND now, the
+// way the terminal prints it — no frame, no inset, and the row rhythm CODE and ACTIVITY keep.
+it('renders the embedded live view as a borderless band on its shared background', () => {
   const view = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
   const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
-  expect(panel).toHaveClass('border', 'border-dialog-hint');
-  expect(panel).not.toHaveClass('border-y', 'px-3');
-  // The box is inset by the message card's own padding and owns no vertical gap of its
-  // own: CODE, ACTIVITY and RUN keep one rhythm down the card.
+  expect(panel).not.toHaveClass('border', 'border-dialog-hint', 'border-y', 'px-3');
+  // The band owns no vertical gap of its own: CODE, ACTIVITY and RUN keep one rhythm down the card.
   expect(panel).not.toHaveClass('mt-3', 'pt-3');
   expect(panel).not.toHaveClass('bg-panel');
-  expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
+  const header = panel?.querySelector('header');
+  expect(header).not.toHaveClass('bg-panel-2', 'px-(--live-view-inset)');
+  expect(header).toHaveClass('min-h-11', 'mouse:min-h-7');
 });
 
 // THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A run painted in place stood taller
@@ -156,7 +158,7 @@ it.each([
     const group = title.closest('[data-execution-group]');
     expect(group).toHaveClass('bg-code');
     expect(group).not.toHaveClass('border');
-    expect(title.closest('.border')).toBe(title.closest('section'));
+    expect(title.closest('.border')).toBeNull();
   },
 );
 
@@ -388,7 +390,8 @@ it('renders RUN beside Activity and opens it without folding the preview', () =>
   const activitySection = mounted.getByText('ACTIVITY').closest('[data-execution-activity]');
   expect(run?.parentElement).toBe(activitySection?.parentElement);
   expect(run?.closest('[data-execution-activity]')).toBeNull();
-  expect(run?.querySelector('header')).toHaveClass('px-(--live-view-inset)');
+  // The band stands in the card's own column, with no inset ACTIVITY does not have.
+  expect(run?.querySelector('header')).not.toHaveClass('px-(--live-view-inset)');
   expect(mounted.getByText('RUN')).toBeVisible();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -434,8 +437,8 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
   expect(first?.parentElement).not.toHaveClass('border');
-  expect(first?.closest('.border')).toBe(first);
-  expect(second?.closest('.border')).toBe(second);
+  expect(first?.closest('.border')).toBeNull();
+  expect(second?.closest('.border')).toBeNull();
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 

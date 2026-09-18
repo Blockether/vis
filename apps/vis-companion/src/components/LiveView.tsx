@@ -1123,9 +1123,12 @@ export function LiveViewPanel({
   };
   return (
     <>
+      {/* Embedded, a run is a band like the TUI draws it: no frame of its own, the
+          execution group's column, and the same row rhythm as the CODE and ACTIVITY
+          bands beside it. Only the standalone dialog keeps a frame. */}
       <section
-        className={`live-view-panel min-w-0 overflow-hidden border ${
-          embedded ? 'border-dialog-hint' : 'border-dialog-edge bg-panel'
+        className={`live-view-panel min-w-0 overflow-hidden ${
+          embedded ? '' : 'border border-dialog-edge bg-panel'
         }`}
         data-execution-run={embedded || undefined}
         role={isSettled ? undefined : 'status'}
@@ -1134,7 +1137,7 @@ export function LiveViewPanel({
         <header
           className={
             embedded
-              ? 'flex min-w-0 items-center gap-2 px-(--live-view-inset) py-2'
+              ? 'flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7'
               : 'flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-(--live-view-inset) py-2.5'
           }
         >
@@ -1179,7 +1182,9 @@ export function LiveViewPanel({
         </header>
         {!isSettled && isArmed && onInterrupt && (
           <form
-            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-dialog-edge px-(--live-view-inset) py-2 ${embedded ? 'border-t' : 'border-b bg-panel-2'}`}
+            className={`flex flex-wrap items-center gap-x-2 gap-y-5 py-2 ${
+              embedded ? '' : 'border-b border-dialog-edge bg-panel-2 px-(--live-view-inset)'
+            }`}
             onSubmit={(event) => {
               event.preventDefault();
               sendStop(onInterrupt);
@@ -1214,7 +1219,9 @@ export function LiveViewPanel({
         )}
         {error && (
           <p
-            className={`border-dialog-edge px-(--live-view-inset) py-2 font-mono text-chip text-err ${embedded ? 'border-t' : 'border-b'}`}
+            className={`py-2 font-mono text-chip text-err ${
+              embedded ? '' : 'border-b border-dialog-edge px-(--live-view-inset)'
+            }`}
           >
             {error}
           </p>

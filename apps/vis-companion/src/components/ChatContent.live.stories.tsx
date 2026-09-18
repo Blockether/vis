@@ -89,7 +89,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// ACTIVITY stands outside the live RUN, which is a bordered box of its own inside the card.
+// ACTIVITY stands outside the live RUN, which is a band of its own on the shared surface.
 async function expectLiveFrame(element: Element) {
   const frame = element.closest<HTMLElement>('[data-execution-run]')!;
   const group = element.closest<HTMLElement>('[data-execution-group]')!;
@@ -97,24 +97,28 @@ async function expectLiveFrame(element: Element) {
   await expect(frame).not.toBeNull();
   await expect(frame.contains(activity)).toBe(false);
   await expect(activity.closest('.border')).toBeNull();
-  // Regression: CODE, ACTIVITY and RUN keep one rhythm down the card — the run owns no gap
-  // of its own, so its top border is all that sits between it and the activity.
+  // Regression, user report (screenshot): the run stood in a bordered box on a rhythm no other
+  // band shared. CODE, ACTIVITY and RUN are one column of unframed bands, the way the terminal
+  // prints them — the run owns no frame and no gap of its own.
   await expect(frame.getBoundingClientRect().top).toBe(activity.getBoundingClientRect().bottom);
   const style = getComputedStyle(frame);
   await expect(style.marginTop).toBe('0px');
   await expect(style.paddingTop).toBe('0px');
   for (const side of ['top', 'right', 'bottom', 'left']) {
-    await expect(style.getPropertyValue(`border-${side}-width`)).toBe('1px');
+    await expect(style.getPropertyValue(`border-${side}-width`)).toBe('0px');
     await expect(getComputedStyle(group).getPropertyValue(`border-${side}-width`)).toBe('0px');
   }
-  await expect(frame).toHaveClass('border-dialog-hint');
-  await expect(style.borderRadius).toBe('0px');
-  // The box stands INSIDE the card's own padding — it used to bleed through it to the edges.
+  // The band keeps the card's own column: it begins and ends where the activity beside it does,
+  // inside the card's padding — it used to bleed through that padding to the edges.
+  const band = frame.getBoundingClientRect();
+  const beside = activity.getBoundingClientRect();
+  await expect(band.left).toBeCloseTo(beside.left, 0);
+  await expect(band.right).toBeCloseTo(beside.right, 0);
   const card = group.getBoundingClientRect();
-  await expect(frame.getBoundingClientRect().left).toBeGreaterThan(card.left);
-  await expect(frame.getBoundingClientRect().right).toBeLessThan(card.right);
-  await expect(frame.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
-  await expect(frame.getBoundingClientRect().right).toBeLessThanOrEqual(innerWidth);
+  await expect(band.left).toBeGreaterThan(card.left);
+  await expect(band.right).toBeLessThan(card.right);
+  await expect(band.left).toBeGreaterThanOrEqual(0);
+  await expect(band.right).toBeLessThanOrEqual(innerWidth);
   return frame;
 }
 
@@ -125,7 +129,7 @@ export const Running: Story = {
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;
-    await expect(title.closest('.border')).toBe(liveFrame);
+    await expect(title.closest('.border')).toBeNull();
     const controls = within(activitySurface);
     await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
     await expect(controls.getByText('RUN')).toBeInTheDocument();
@@ -137,12 +141,12 @@ export const Running: Story = {
     // The transcript STATES the run: its newest status, and no log painted in place.
     await expect(controls.getByText('Waiting for integration tests')).toBeVisible();
     await expect(controls.queryByRole('button', { name: 'Build log' })).toBeNull();
-    // The interrupt used to sit flush against the run's top border, one hairline from
-    // the activity above it; it needs air of its own before the thumb reaches for it.
+    // The interrupt rides the run's own band, centred in the row rather than padded away from
+    // a frame: 44px under a thumb, the same 28px CODE and ACTIVITY keep under a pointer.
     const interrupt = controls.getByRole('button', { name: 'Interrupt' });
-    await expect(
-      interrupt.getBoundingClientRect().top - liveFrame.getBoundingClientRect().top,
-    ).toBeGreaterThanOrEqual(6);
+    const row = liveFrame.querySelector('header')!.getBoundingClientRect();
+    const key = interrupt.getBoundingClientRect();
+    await expect(key.top - row.top).toBeCloseTo(row.bottom - key.bottom, 0);
     await userEvent.click(interrupt);
     await expect(
       controls.getByRole('textbox', { name: 'Why are you stopping Jenkins build pool?' }),
@@ -173,6 +177,23 @@ export const RunningPhone: Story = {
 export const RunningTablet: Story = {
   ...Running,
   globals: { viewport: { value: 'tablet', isRotated: false } },
+};
+
+// Regression, user report (screenshot): the live run sat in a bordered box on a rhythm of its
+// own. The three bands of an execution are one column — the step from ACTIVITY down to RUN is
+// the step from CODE down to ACTIVITY.
+export const BandRhythm: Story = {
+  args: { showCode: true },
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvas }) => {
+    const code = canvas.getByText('CODE').getBoundingClientRect();
+    const activity = canvas.getByText('ACTIVITY').getBoundingClientRect();
+    const run = canvas.getByText('RUN').getBoundingClientRect();
+    await expect(run.top - activity.bottom).toBeGreaterThan(0);
+    await expect(run.top - activity.bottom).toBeCloseTo(activity.top - code.bottom, 0);
+    await expect(activity.left).toBeCloseTo(code.left, 0);
+    await expect(run.left).toBeCloseTo(activity.left, 0);
+  },
 };
 
 export const Unmatched: Story = { args: { liveViews: [{ ...view, owner: undefined }] } };

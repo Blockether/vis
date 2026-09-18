@@ -50,20 +50,23 @@ const client = new Proxy(baseClient, {
   },
 });
 
-// The run is a BOX, not a pair of rules: bordered on every side, inset by its message card's own
-// padding, with every row stopping at the box's content edges. A phone pane and a wide desktop
-// pane both keep it inside the reading column, and the opened dialog shows the same box.
+// Embedded, the run is a BAND: unframed, on the message card's own column, with the card's
+// padding between it and the reading column. The run's own screen still shows it as a BOX —
+// bordered on every side, with every row stopping at the box's content edges. A phone pane and a
+// wide desktop pane both keep the run inside the reading column.
 async function expectRunBox(panel: Element, column: HTMLElement) {
+  const embedded = panel.hasAttribute('data-execution-run');
   const bounds = column.getBoundingClientRect();
   const columnStyle = getComputedStyle(column);
   const inner = bounds.left + column.clientLeft;
   const left = inner + parseFloat(columnStyle.paddingLeft);
   const right = inner + column.clientWidth - parseFloat(columnStyle.paddingRight);
   const style = getComputedStyle(panel);
-  await expect(style.borderLeftWidth).toBe('1px');
-  await expect(style.borderRightWidth).toBe('1px');
-  await expect(style.borderTopWidth).toBe('1px');
-  await expect(style.borderBottomWidth).toBe('1px');
+  const edge = embedded ? '0px' : '1px';
+  await expect(style.borderLeftWidth).toBe(edge);
+  await expect(style.borderRightWidth).toBe(edge);
+  await expect(style.borderTopWidth).toBe(edge);
+  await expect(style.borderBottomWidth).toBe(edge);
   const box = panel.getBoundingClientRect();
   // `clientWidth` is a rounded integer, so a column of fractional width — a dialog filling
   // two thirds of a desk — puts its true content edge up to a pixel from the one measured
@@ -85,9 +88,19 @@ async function expectRunBox(panel: Element, column: HTMLElement) {
     await expect(box.left).toBeGreaterThan(cardBox.left);
     await expect(box.right).toBeLessThan(cardBox.right);
   }
-  const header = panel.querySelector('header')!;
-  await expect(parseFloat(getComputedStyle(header).paddingLeft)).toBeGreaterThanOrEqual(12);
-  await expect(parseFloat(getComputedStyle(header).paddingRight)).toBeGreaterThanOrEqual(12);
+  const headerElement = panel.querySelector('header')!;
+  const header = headerElement.getBoundingClientRect();
+  if (embedded) {
+    // A band clears the notch through the reading column, exactly as ACTIVITY does: it begins and
+    // ends where the activity beside it does instead of insetting itself a second time.
+    const activity = card!.querySelector('[data-execution-activity]')!.getBoundingClientRect();
+    await expect(header.left).toBeCloseTo(activity.left, 0);
+    await expect(header.right).toBeCloseTo(activity.right, 0);
+  } else {
+    const headerStyle = getComputedStyle(headerElement);
+    await expect(parseFloat(headerStyle.paddingLeft)).toBeGreaterThanOrEqual(12);
+    await expect(parseFloat(headerStyle.paddingRight)).toBeGreaterThanOrEqual(12);
+  }
   await expect(column.scrollWidth).toBe(column.clientWidth);
 }
 
@@ -157,7 +170,6 @@ export const Landscape: Story = {
     const column = viewport.firstElementChild as HTMLElement;
     const panel = title.closest('section')!;
     // Browser emulation has no notch; exercise both asymmetric safe-area directions.
-    panel.style.setProperty('--live-view-inset', '59px');
     for (const [left, right] of [
       ['59px', '24px'],
       ['24px', '59px'],
@@ -167,7 +179,8 @@ export const Landscape: Story = {
       await expectRunBox(panel, column);
       await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     }
-    await expect(getComputedStyle(panel.querySelector('header')!).paddingLeft).toBe('59px');
+    // A band has no inset of its own: the notch is cleared by the reading column it sits in.
+    await expect(getComputedStyle(panel.querySelector('header')!).paddingLeft).toBe('0px');
     // The picture — and the safe area it must clear — belongs to the run's own screen now.
     await userEvent.click(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
     const page = within(document.body);
