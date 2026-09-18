@@ -279,13 +279,22 @@ def _job_id(job, index=0):
 
 
 def _job_groups(jobs):
-    """Repeated GitHub `parent / variant` names become one collapsible table branch."""
-    prefixes = []
+    """A GitHub `parent / variant` name becomes one collapsible table branch.
+
+    A parent with a single leg branches too. When it did not, one table carried
+    two shapes: folded matrices beside flat rows like `lint / clj-kondo`, which
+    were then the only rows still repeating a parent nobody could fold away.
+    """
+    groups = []
     for job in jobs:
         name = str(job.get("name") or "")
-        prefixes.append(name.rsplit(" / ", 1)[0] if " / " in name else None)
-    counts = Counter(prefix for prefix in prefixes if prefix)
-    return [prefix if prefix and counts[prefix] > 1 else None for prefix in prefixes]
+        groups.append(name.rsplit(" / ", 1)[0] if " / " in name else None)
+    return groups
+
+
+def _branch_label(group, size):
+    """The branch's own line: the parent, then how many legs its fold hides."""
+    return f"{group} · {size} variant{'' if size == 1 else 's'}"
 
 
 def default_selected_ids(jobs):
@@ -633,7 +642,7 @@ def run_shape(payload, selected_ids=None, now=None):
                 ],
                 "tone": job_tone,
                 **(
-                    {"branch": f"{group} · {group_sizes[group]} variants"}
+                    {"branch": _branch_label(group, group_sizes[group])}
                     if group
                     else {}
                 ),

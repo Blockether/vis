@@ -677,12 +677,6 @@ function TableRows({
   const isSelectable = node.is_selectable && Boolean(onSelect);
   const { valueAt, detailAt } = tableShape(node);
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
-  const grouped = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of rows)
-      if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
-    return counts;
-  }, [rows]);
   /**
    * A branch stays SHUT until the reader opens it. Opening the branches that held
    * the live selection sounded helpful and was not: `watch` selects every running
@@ -694,7 +688,9 @@ function TableRows({
   const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    const group = row.branch && (grouped.get(row.branch) ?? 0) > 1 ? row.branch : undefined;
+    // A declared branch is the producer's own grouping: one leg folds like five, so a
+    // table never mixes folded parents with flat rows that still repeat their parent.
+    const group = row.branch || undefined;
     if (group && !seen.has(group)) {
       seen.add(group);
       visible.push({ kind: 'group', label: group });

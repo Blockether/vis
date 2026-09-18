@@ -146,9 +146,11 @@ def test_a_poll_reads_as_the_seven_answers():
     # and the parent says how many legs it has so the reader knows what the fold hides.
     assert shape["rows"][0]["branch"] == "tests · 3 variants"
     assert shape["rows"][1]["branch"] == "tests · 3 variants"
-    assert "branch" not in next(
-        row for row in shape["rows"] if row["cells"][0] == "lint / clj-kondo"
-    )
+    # Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with one leg
+    # stayed flat, so `lint / clj-kondo` sat unfolded among the folded matrices and was
+    # the only row still saying its parent. Every parent branches, one leg or five.
+    lint = next(row for row in shape["rows"] if row["id"] == "95742028809")
+    assert (lint["branch"], lint["cells"][0]) == ("lint · 1 variant", "clj-kondo")
     # The row under a group says only the variant: the group above it already said the rest.
     assert shape["rows"][0]["cells"][0] == "macos-latest"
     # Every concurrently running job is selected; the elapsed column waits for its end.

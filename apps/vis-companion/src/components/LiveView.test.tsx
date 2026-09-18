@@ -251,13 +251,19 @@ describe('selecting a table row', () => {
     fireEvent.click(spelled[spelled.length - 1]);
     expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
   });
+  /** The hosts table of a view, which sits one level down when the view groups it. */
+  const hostsTable = (view: LiveView) => {
+    const node = view.nodes
+      .flatMap((one) => (one.type === 'group' ? one.fields : [one]))
+      .find((one) => one.id === 'hosts');
+    if (!node || node.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    return node;
+  };
+
   /** One matrix parent with two variants, beside a job that stands alone. */
   const matrixView = (selectedIds: string[]): LiveView => {
     const view = selectableView();
-    const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
-      .find((node) => node.id === 'hosts');
-    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    const hosts = hostsTable(view);
     hosts.rows = [
       {
         id: 'ios',
@@ -291,6 +297,26 @@ describe('selecting a table row', () => {
     expect(parent.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeVisible();
     expect(screen.getByText('Android')).toBeVisible();
+  });
+  // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
+  // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
+  // rows were the only ones still repeating their parent's name.
+  it('folds a parent that has one leg like every other parent', () => {
+    const view = matrixView([]);
+    const hosts = hostsTable(view);
+    hosts.rows = [
+      ...hosts.rows.slice(0, 2),
+      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', branch: 'Lint · 1 variant' },
+    ];
+    paint({ view, onSelect: vi.fn() });
+
+    const parent = screen.getByRole('button', { name: 'Lint' });
+    expect(parent.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText('1 variant')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Select Publish docs' })).toBeNull();
+
+    fireEvent.click(parent);
+    expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
   });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: every poll re-sent the
   // running jobs as the selection, which sprang open the branch the reader had closed.

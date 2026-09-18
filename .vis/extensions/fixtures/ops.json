@@ -84,8 +84,9 @@
             {
               "id": "95742028809",
               "tone": "ok",
+              "branch": "lint · 1 variant",
               "cells": [
-                "lint / clj-kondo",
+                "clj-kondo",
                 "success",
                 "44s"
               ]
