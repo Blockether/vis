@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, requestInterceptor, VirtualConsole } from 'jsdom';
+import { pdocInterpreter, sdkPython } from './python-api.mjs';
 import { origin } from './web/discovery.js';
 
 const prefix = '/python-sdk-api/';
@@ -25,16 +26,29 @@ test('extension publication installs SDK docs dependencies before building', () 
   expect(workflow.slice(install, verify)).toMatch(/working-directory:\s+\.(?:\r?\n|$)/);
 });
 
+test('the reference build uses pdoc from the checkout, or a disposable uv environment', () => {
+  expect(pdocInterpreter('python3', true, true)).toEqual(['python3']);
+  const fallback = pdocInterpreter('python3', false, true);
+  expect(fallback.slice(0, 4)).toEqual(['uv', 'run', '--no-project', '--with']);
+  expect(fallback.at(-2)).toMatch(/packages\/vis-agent\[docs\]$/);
+  expect(fallback.at(-1)).toBe('python');
+  expect(() => pdocInterpreter('python3', false, false)).toThrow(
+    "python -m pip install './packages/vis-agent[docs]'",
+  );
+});
+
 test('pdoc documents public modules, re-exports and typed methods from the SDK checkout', () => {
   expect(files).toContain('index.html');
   expect(files).toContain('blockether/vis/extension.html');
   expect(files).toContain('blockether/vis/activity.html');
   expect(files).toContain('blockether/vis/views.html');
   expect(files.some((file) => /(^|\/)_[^/]+/.test(file))).toBe(false);
+  const [command, ...pythonArgs] = sdkPython();
   const exports = JSON.parse(
     execFileSync(
-      process.env.PYTHON || 'python3',
+      command,
       [
+        ...pythonArgs,
         '-c',
         'import json; import blockether.vis.engine as engine; print(json.dumps(engine.__all__))',
       ],

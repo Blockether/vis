@@ -5,12 +5,47 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { metadataHead } from './web/discovery.js';
 
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+// pdoc is pinned by the SDK's `docs` extra, so uv installs the same generator this
+// repository already documents, instead of a second pin kept here.
+const sdkDocsRequirement =
+  fileURLToPath(new URL('../../packages/vis-agent', import.meta.url)) + '[docs]';
+
+const canRun = (command, args) => {
+  try {
+    execFileSync(command, args, { cwd: repoRoot, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Run pdoc with the interpreter that has it, or borrow a disposable uv environment. */
+export function pdocInterpreter(python, hasPdoc, hasUv) {
+  if (hasPdoc) return [python];
+  if (hasUv) return ['uv', 'run', '--no-project', '--with', sdkDocsRequirement, 'python'];
+  throw new Error(
+    `${python} cannot import pdoc. Install the pinned generator with ` +
+      `python -m pip install './packages/vis-agent[docs]', point PYTHON at an interpreter ` +
+      'that has it, or install uv so the build can borrow a disposable environment.',
+  );
+}
+
+/** The command that generates the SDK reference: interpreter plus any prefix arguments. */
+export function sdkPython() {
+  const python = process.env.PYTHON || 'python3';
+  const hasPdoc = canRun(python, ['-c', 'import pdoc']);
+  return pdocInterpreter(python, hasPdoc, canRun('uv', ['--version']));
+}
+
 /** Generate the public SDK reference from this checkout, without starting Vis. */
 export async function buildPythonApi(dist) {
   const output = new URL('python-sdk-api/', dist);
+  const [command, ...pythonArgs] = sdkPython();
   execFileSync(
-    process.env.PYTHON || 'python3',
+    command,
     [
+      ...pythonArgs,
       '-m',
       'pdoc',
       'blockether.vis',
@@ -28,7 +63,7 @@ export async function buildPythonApi(dist) {
       '/favicon.ico',
     ],
     {
-      cwd: fileURLToPath(new URL('../../', import.meta.url)),
+      cwd: repoRoot,
       env: {
         ...process.env,
         PYTHONPATH: fileURLToPath(new URL('../../packages/vis-agent/src/', import.meta.url)),

@@ -110,7 +110,9 @@ clojure -X:deps prep
 ```
 
 The build uses `python3` from `PATH`; set `PYTHON` to choose another interpreter with
-these dependencies installed. Then, from this directory:
+these dependencies installed. When neither has pdoc, the build generates the reference in a
+disposable [uv](https://docs.astral.sh/uv/) environment built from the same pinned extra.
+Then, from this directory:
 
 ```sh
 npm ci
