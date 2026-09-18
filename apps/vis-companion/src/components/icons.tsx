@@ -243,7 +243,7 @@ export function VoiceLoopIcon({ className }: { className?: string }) {
   return <Mark icon={MicVocal} className={className} />;
 }
 
-/** Take back the most recent drawing stroke. */
+/** Take back what was just started — a drawing stroke, a line opened in a band. */
 export function UndoIcon({ className }: { className?: string }) {
   return <Mark icon={Undo2} className={className} />;
 }

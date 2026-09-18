@@ -415,6 +415,24 @@ describe('the path band', () => {
     expect(naming!.textContent).toBe('');
   });
 
+  // Regression, user report: while a folder is being named from the start flow's own
+  // `New project`, the cell that leaves the LINE wore this app's close stroke — a plus
+  // turned 45° — one cell away from the band's ✕ that leaves the PANEL. Two identical
+  // crosses side by side meaning different things. Taking the line back is an UNDO.
+  it('cancels the new-folder line with its own mark, never a second close', async () => {
+    sheet({ isAdding: true });
+    await screen.findByRole('button', { name: /tools/ });
+    await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const close = screen.getByRole('button', { name: /^Close new project/ });
+
+    expect(cancel.textContent).toBe('');
+    expect(cancel.querySelectorAll('svg')).toHaveLength(1);
+    expect(cancel.querySelector('svg')!.innerHTML).not.toBe(close.querySelector('svg')!.innerHTML);
+    expect(cancel.querySelector('svg')!.getAttribute('class')).not.toContain('rotate-45');
+  });
+
   // Regression, user report: the two project verbs were docked below the folder list,
   // where a phone could hide them instead of keeping them with the task they commit.
   it('keeps both project verbs in the task heading, never in a footer', async () => {

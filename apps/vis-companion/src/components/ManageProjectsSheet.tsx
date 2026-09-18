@@ -31,6 +31,7 @@ import {
   PlusIcon,
   ProjectsIcon,
   TrashIcon,
+  UndoIcon,
 } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
@@ -388,7 +389,9 @@ export function ManageProjectsSheet({
   // more phrases beside it read as a second one. Each cell draws what it does — a
   // folder taking the add stroke, the tick that commits — and keeps its verb as the
   // name a screen reader speaks and a pointer sees. Naming a folder turns that add
-  // stroke into this app's close stroke: the cell that opened the line takes it back.
+  // stroke into an UNDO: the cell that opened the line takes it back. It wore this
+  // app's close stroke — a plus turned 45° — and in the `isAdding` step that stood two
+  // identical crosses one cell apart, one leaving the LINE and one leaving the PANEL.
   const projectCells = (
     <>
       <BandButton
@@ -396,7 +399,7 @@ export function ManageProjectsSheet({
         disabled={saving || !here || alreadyProject}
         onClick={() => setFolder(folder === null ? '' : null)}
       >
-        {folder === null ? <FolderPlusIcon /> : <PlusIcon className="rotate-45" />}
+        {folder === null ? <FolderPlusIcon /> : <UndoIcon />}
       </BandButton>
       <BandButton
         isPrimary
