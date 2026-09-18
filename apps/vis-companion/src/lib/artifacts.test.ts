@@ -5,6 +5,7 @@ import {
   artifactMedia,
   artifactTotalLabel,
   attachmentBytes,
+  attachmentIsArtifact,
   attachmentIsAudio,
   attachmentIsDoc,
   attachmentIsImage,
@@ -134,8 +135,6 @@ describe('attachment classification', () => {
       true,
     );
     expect(attachmentIsLive({ index: 0, filename: 'notes.live.ndjson' })).toBe(false);
-    expect(artifactKind(run)).toBe('live');
-    expect(artifactMedia(run)).toBe('RUN');
     expect(attachmentIsDoc(run)).toBe(false);
     expect(attachmentIsPlayable(run)).toBe(false);
   });
@@ -234,6 +233,34 @@ describe('collecting what a session produced', () => {
     expect(list.find((entry) => entry.name === 'revenue.png')?.attachmentId).toBe('att-revenue');
   });
 
+  // Regression, user request: a settled run was listed in the artifacts sheet as well as
+  // in the transcript, which already holds the run where it happened. The gallery carries
+  // what a turn PRODUCED, so a run stays one thing in one place.
+  it('leaves a settled run to the transcript, from either source', () => {
+    const record: IterationAttachment = {
+      index: 1,
+      attachment_id: 'att-run',
+      iteration_id: 'i1',
+      filename: 'release.live.ndjson',
+      media_type: LIVE_ARTIFACT_MEDIA,
+      size: 4096,
+    };
+    const held: TranscriptTurn[] = [
+      {
+        turn_id: 't1',
+        iterations: [
+          { id: 'i1', attachments: [...(turns[0].iterations?.[0].attachments ?? []), record] },
+        ],
+      },
+    ];
+    expect(attachmentIsArtifact(record)).toBe(false);
+    expect(collectArtifacts(held).map((entry) => entry.name)).toEqual([
+      'notes.csv',
+      'revenue.png',
+    ]);
+    expect(artifactsFromIndex([{ ...record, turn: 1 }])).toEqual([]);
+  });
+
   // The gallery no longer has to exclude host Activity receipts: protocol 7 files
   // none, so there is nothing of the sort for `collectArtifacts` to meet.
   it('finds the exact cut named by an attachment link', () => {
@@ -282,8 +309,8 @@ describe('collecting what a session produced', () => {
     const covered = new Set(
       ARTIFACT_FILTERS.filter((filter) => filter.label !== 'All').flatMap((filter) => filter.kinds),
     );
-    expect([...covered].sort()).toEqual(['audio', 'doc', 'file', 'image', 'live', 'video']);
-    expect(ARTIFACT_FILTERS[0].kinds).toEqual(['image', 'video', 'audio', 'live', 'doc', 'file']);
+    expect([...covered].sort()).toEqual(['audio', 'doc', 'file', 'image', 'video']);
+    expect(ARTIFACT_FILTERS[0].kinds).toEqual(['image', 'video', 'audio', 'doc', 'file']);
   });
 });
 

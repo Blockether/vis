@@ -144,6 +144,20 @@ export const LIVE_ARTIFACT_MEDIA = 'application/vnd.vis.live+ndjson';
 export function attachmentIsLive(attachment: Partial<IterationAttachment>): boolean {
   return baseMedia(attachment.media_type) === LIVE_ARTIFACT_MEDIA;
 }
+
+/**
+ * Whether an attachment belongs in the artifact gallery at all.
+ *
+ * A settled run does not. The transcript already keeps it where it happened — the
+ * row that says what ran and opens its record (`LiveRunRow`) — so the gallery
+ * listing it again was one thing in two places, under the filename the engine
+ * sealed it with rather than the name of the run. The rail carries what a turn
+ * PRODUCED; what the turn DID stays in the transcript.
+ */
+export function attachmentIsArtifact(attachment: Partial<IterationAttachment>): boolean {
+  return !attachmentIsLive(attachment);
+}
+
 // A still, a clip and a recording belong to the SAME rail: each is something the
 // user asked to SEE or HEAR, so each plays where it was made. Everything else is
 // a recorded file.
@@ -161,18 +175,18 @@ export function attachmentBytes(bytes?: number): string {
 }
 
 /**
- * The six things an artifact can BE, in the order of how much the app can do
+ * The five things an artifact can BE, in the order of how much the app can do
  * with one: a picture it can zoom and draw on, a clip it can play, a recording it
- * can play but never show, a settled live view it can re-open and page the log of,
- * a document it can read in a sandboxed frame, and a file it can only name.
+ * can play but never show, a document it can read in a sandboxed frame, and a
+ * file it can only name. A settled run is none of them — see
+ * [[attachmentIsArtifact]] — because the transcript is where a run belongs.
  */
-export type ArtifactKind = 'image' | 'video' | 'audio' | 'live' | 'doc' | 'file';
+export type ArtifactKind = 'image' | 'video' | 'audio' | 'doc' | 'file';
 
 export function artifactKind(attachment: IterationAttachment): ArtifactKind {
   if (attachmentIsImage(attachment)) return 'image';
   if (attachmentIsVideo(attachment)) return 'video';
   if (attachmentIsAudio(attachment)) return 'audio';
-  if (attachmentIsLive(attachment)) return 'live';
   if (attachmentIsDoc(attachment)) return 'doc';
   return 'file';
 }
@@ -185,7 +199,6 @@ export function artifactKind(attachment: IterationAttachment): ArtifactKind {
  * at all.
  */
 export function artifactMedia(attachment: Partial<IterationAttachment>): string {
-  if (attachmentIsLive(attachment)) return 'RUN';
   const extension = (attachment.filename ?? '').split('.').pop() ?? '';
   if (extension && /^[a-z0-9]{1,5}$/i.test(extension)) return extension.toUpperCase();
   const subtype = (attachment.media_type ?? '').split(';')[0].split('/').pop()?.split('+').pop();
@@ -271,6 +284,7 @@ export function collectArtifacts(turns: TranscriptTurn[], earlier = 0): SessionA
     for (const iteration of turn.iterations ?? []) {
       const iterationId = iteration.id ?? '';
       for (const attachment of iteration.attachments ?? []) {
+        if (!attachmentIsArtifact(attachment)) continue;
         list.push(toArtifact(attachment, { turn: ordinal, iterationId }));
       }
     }
@@ -292,6 +306,7 @@ export function collectArtifacts(turns: TranscriptTurn[], earlier = 0): SessionA
  */
 export function artifactsFromIndex(rows: SessionArtifactRow[]): SessionArtifact[] {
   return rows
+    .filter(attachmentIsArtifact)
     .map((row) =>
       toArtifact(row, {
         turn: row.turn ?? 0,
@@ -437,10 +452,9 @@ export function withSavedAttachment(
  * sheet loudly instead of only from one chip.
  */
 export const ARTIFACT_FILTERS: { label: string; kinds: ArtifactKind[] }[] = [
-  { label: 'All', kinds: ['image', 'video', 'audio', 'live', 'doc', 'file'] },
+  { label: 'All', kinds: ['image', 'video', 'audio', 'doc', 'file'] },
   { label: 'Pictures', kinds: ['image', 'video'] },
   { label: 'Recordings', kinds: ['audio'] },
-  { label: 'Runs', kinds: ['live'] },
   { label: 'Documents', kinds: ['doc'] },
   { label: 'Files', kinds: ['file'] },
 ];

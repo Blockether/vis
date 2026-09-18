@@ -206,7 +206,7 @@ describe('every control is drawn in the gallery', () => {
     AnnotationLayer: './MarkdownArtifact.stories.tsx',
     ChatContent: './LiveView.stories.tsx',
     HumanInputPrompt: '../dev/humanInput.stories.tsx',
-    LiveArtifact: './ArtifactsSheet.stories.tsx',
+    LiveArtifact: './ChatContent.live.stories.tsx',
     PdfArtifact: './DocArtifact.stories.tsx',
     SessionNavigator: './ui.stories.tsx',
   };

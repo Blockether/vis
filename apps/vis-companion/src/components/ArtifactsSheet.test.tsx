@@ -107,18 +107,6 @@ const table = artifact({
   iterationId: 'i6',
 });
 
-const run = artifact({
-  key: 'i5:0',
-  kind: 'live',
-  name: 'fleet-scan.live.ndjson',
-  media: 'RUN',
-  mediaType: 'application/vnd.vis.live+ndjson',
-  size: 12800,
-  sizeLabel: '12.5KB',
-  turn: 3,
-  iterationId: 'i5',
-});
-
 const sheet = (artifacts: SessionArtifact[]) => {
   const shell = globalThis.document.createElement('div');
   shell.setAttribute('data-viewport-shell', '');
@@ -464,23 +452,12 @@ describe('the artifacts sheet', () => {
     expect(save.querySelectorAll('svg')).toHaveLength(1);
   });
 
-  // A settled live view is the one recorded file the app can PAINT, so its tile is
-  // a control — and its plate says RUN, because a finished run is not a live one.
-  it('opens a settled run instead of calling a finished one live', () => {
-    const html = sheet([run]);
-    expect(html).toContain(
-      'aria-label="Open fleet-scan.live.ndjson, RUN, 12.5KB, produced in turn 3"',
-    );
-    expect(text(html)).toContain('RUN');
-    expect(text(html)).not.toContain('LIVE');
-  });
-
   it('draws a filter with nothing behind it disabled, never hidden', () => {
     const html = sheet([document]);
     expect(html).toContain('aria-label="Pictures, 0 artifacts"');
     expect(html).toContain('aria-label="Documents, 1 artifacts"');
-    // The strip keeps its shape: a disabled chip is still one of six chips.
-    expect(html.match(/aria-pressed=/g)).toHaveLength(6);
+    // The strip keeps its shape: a disabled chip is still one of five chips.
+    expect(html.match(/aria-pressed=/g)).toHaveLength(5);
     expect(html).toContain('disabled=""');
   });
 
@@ -499,8 +476,8 @@ describe('the artifacts sheet', () => {
     expect(html).toContain('aria-label="Open q3-report.pdf, PDF, 1.0KB');
     expect(html).toContain('aria-label="Open build.log, LOG, 1.0KB');
     expect(html.match(/<button/g)).toHaveLength(
-      // close + six filters + three artifact tiles
-      10,
+      // close + five filters + three artifact tiles
+      9,
     );
   });
 
