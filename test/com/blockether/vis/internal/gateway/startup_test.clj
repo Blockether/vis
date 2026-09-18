@@ -90,13 +90,25 @@
              :get
              "/healthz")))
           (let
-           [caps
+           [response
             (timed
              :first-speech-capabilities
-             #((requiring-resolve 'com.blockether.vis.internal.gateway.client/capabilities)))]
+             #((requiring-resolve 'com.blockether.vis.internal.gateway.client/request!)
+               :get
+               "/v1/capabilities")) body (str (:body response)) caps
+            (when
+             (= 200 (:status response))
+             ((requiring-resolve 'com.blockether.vis.contract.wire/parse-json) body))]
            (swap!
             result
             assoc
+            :capabilities-status
+            (:status response)
+            ;; A refusal empties every feature below it. The body says why, and without
+            ;; it a red assertion on a machine nobody can attach to names only the
+            ;; symptom it left behind.
+            :capabilities-error
+            (when-not (= 200 (:status response)) (subs body 0 (min 400 (count body))))
             :speech-features
             (into
              {}
@@ -249,6 +261,7 @@
     (let [result (cold-start! (inc n))]
       (println "Gateway startup" (pr-str (dissoc result :loaded-namespaces)))
       (is (= 200 (:health-status result)))
+      (is (= 200 (:capabilities-status result)) (str "capabilities: " (:capabilities-error result)))
       (when (System/getProperty "vis.startup.jar") (is (:aot? result)))
       (is (= (str (:home result) "/.vis/native/sqlite") (:sqlite-tmpdir result)))
       (is (every? (set (:extensions result))
