@@ -8717,7 +8717,7 @@
                            (let [k "watermark-test/fresh"]
                              (swap! env-cache assoc k (new-cache-entry {}))
                              (try
-                               ;; not idle (just touched) + default 15m TTL: a
+                               ;; not idle (just touched) + default 3m TTL: a
                                ;; normal sweep keeps it ...
                                (with-redefs [lp/memory-pressure? (constantly false)]
                                  (reap-idle-envs!)

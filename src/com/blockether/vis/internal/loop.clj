@@ -12197,14 +12197,14 @@
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's Python session is disposed by the
    background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
-   sweep. Default 15 min.
+   sweep. Default 3 min.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
   (delay (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
                      str/trim
                      parse-long)
-             (* 15 60 1000))))
+             (* 3 60 1000))))
 
 (def ^:private env-cache-max
   "Soft cap on resident session envs. After the TTL sweep, if the cache still
