@@ -11,16 +11,22 @@
    The matching TUI half — one request driving the terminal dialog and this
    bridge at the same time — is the standalone app suite under `apps/vis-tui/test`."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [reitit.ring :as ring]
+            [ring.adapter.jetty9 :as jetty])
+  (:import [java.net URLEncoder]
+           [org.eclipse.jetty.server Server ServerConnector]))
 
 (defn- spec
   [& {:as overrides}]
@@ -734,16 +740,17 @@
                  (is (= ["tail"] (mapv #(get % "id") (get answered "nodes"))))))
              (testing "and scrolls back through output whose patches it never received"
                (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
-                                        :query-params {"from" "5" "limit" "3"}}))]
+                                       {:path-params {:sid sid :view-id view-id}
+                                        :query-params {"node" "tail" "from" "5" "limit" "3"}}))]
                  (is (= "tail" (get body "node_id")))
                  (is (= 5 (get body "from")))
                  (is (= 20 (get body "total")))
                  (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
              (testing "search pages use match offsets and retain original line numbers"
                (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
-                                        :query-params {"query" "LINE 1" "from" "1" "limit" "2"}}))]
+                                       {:path-params {:sid sid :view-id view-id}
+                                        :query-params
+                                        {"node" "tail" "query" "LINE 1" "from" "1" "limit" "2"}}))]
                  (is (= 11 (get body "matched")))
                  (is (= 20 (get body "total")))
                  (is (= [10 11] (get body "line_numbers")))
@@ -766,17 +773,80 @@
                (is (= 404 (:status (view-action-response sid view-id {:action "interrupt"})))))
              (testing "and its record still answers, which is what makes a finished log readable"
                (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
+                                       {:path-params {:sid sid :view-id view-id}
+                                        :query-params {"node" "tail"}}))]
                  (is (= 20 (get body "total")))
                  (is (= 20 (count (get body "lines"))))))
              (testing "a closed record remains searchable"
                (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
-                                        :query-params {"query" "LINE 20"}}))]
+                                       {:path-params {:sid sid :view-id view-id}
+                                        :query-params {"node" "tail" "query" "LINE 20"}}))]
                  (is (= ["line 20"] (get body "lines")))
                  (is (= [20] (get body "line_numbers")))
                  (is (= 1 (get body "matched")))))
              (finally (hi/close-live! view-id)))))))
+
+(deftest a-log-node-named-like-a-path-still-answers-over-http-test
+  (testing "the node rides the query string: a `/` in a node id is no route business"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              ;; A Jenkins job is `folder/job`; a surface that keys its log by the job
+              ;; name used to leave the record unreachable — the gateway refused the
+              ;; encoded separator inside a path segment before any route matched.
+              node-id
+              "glms-tests/glms-test-data#6064 · console"
+
+              view
+              (hi/open-live! {:title "CI" :session-id sid :nodes [{:id node-id :type "log"}]})
+
+              view-id
+              (:id view)
+
+              ;; The real server's query parsing around the real router: the whole
+              ;; HTTP path, with Jetty's own URI checks in front of it.
+              gateway
+              (jetty/run-jetty
+                ((rv 'wrap-scoped-params) (ring/ring-handler ((rv 'router) nil [])) [])
+                {:host "127.0.0.1" :port 0 :join? false})
+
+              port
+              (.getLocalPort ^ServerConnector (first (.getConnectors ^Server gateway)))
+
+              log-page
+              (fn [& {:as params}]
+                (let [response (client/request!
+                                 :get
+                                 (str "/v1/sessions/" sid
+                                      "/views/live/" view-id
+                                      "/log?"
+                                      (str/join
+                                        "&"
+                                        (map (fn [[k v]]
+                                               (str k "=" (URLEncoder/encode (str v) "UTF-8")))
+                                             params)))
+                                 {:timeout-ms 2000})]
+                  {:status (:status response) :json (wire/parse-json (:body response))}))]
+
+          (try (hi/patch-live! view-id
+                               [{:op "append"
+                                 :node-id node-id
+                                 :lines ["Started by user" "Building" "Finished: SUCCESS"]}])
+               (with-redefs-fn {#'client/ensure-gateway! (constantly {:host "127.0.0.1" :port port})
+                                #'client/ensure-client! (constantly "test-client")}
+                 (fn []
+                   (let [{:keys [status json]} (log-page "node" node-id "query" "finished")]
+                     (is (= 200 status) (pr-str json))
+                     (is (= node-id (get json "node_id")))
+                     (is (= ["Finished: SUCCESS"] (get json "lines")))
+                     (is (= [3] (get json "line_numbers")))
+                     (is (= 3 (get json "total"))))
+                   (testing "a page without a node is a bad request, not a mystery 404"
+                     (is (= 400 (:status (log-page "query" "finished")))))))
+               (finally (.stop ^Server gateway) (hi/close-live! view-id))))))))
 
 ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: tapping a CI job
 ;; had no engine action, so the visible selection and the log could never follow the tap.

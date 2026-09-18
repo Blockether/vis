@@ -332,8 +332,9 @@ output is focused moves focus to search. Without a record loader, the panel
 explicitly limits search to loaded lines. In the TUI, an empty query browses the
 record, Enter opens a full wrapped line, and Escape cancels an in-flight read.
 
-The existing `GET /v1/sessions/:sid/views/live/:view-id/log/:node-id` route accepts
-`query`, `from` and `limit`. `from` is a zero-based match offset; an empty query
+The existing `GET /v1/sessions/:sid/views/live/:view-id/log` route names the log node in
+its `node` query parameter (node ids may hold `/`, which a path segment cannot carry) and
+accepts `query`, `from` and `limit`. `from` is a zero-based match offset; an empty query
 matches all lines. The response includes `lines`, `line_numbers`, `matched` and
 `total`. The gateway caps pages at the default log-window size; it streams the
 record and retains only the requested result page. Styled pages also include

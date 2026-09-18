@@ -1181,6 +1181,24 @@
   ^long [^long row-w]
   (max 1 (- row-w 3)))
 
+(defn band-label
+  "The text on the band's opening rule: the request's own question, plus how many
+   MORE requests are queued behind it.
+
+   Two parked requests used to paint exactly like one. The operator answered the
+   form in front of them, the band came straight back with another question, and
+   nothing on screen said that was the SECOND request — which is what makes an
+   INPUT NEEDED badge look stuck. `queued` is the depth of this tab's
+   `:human-input-queue`."
+  [form ^long queued]
+  (let [title
+        (not-empty (str (get-in form [:request :title])))
+
+        more
+        (when (pos? queued) (str queued " more waiting"))]
+
+    (if (and title more) (str title " · " more) (or title more))))
+
 (defn paint!
   "Draw the human-input band for `form` INSIDE the session's own frame. Returns
    the `TerminalPosition` the caller should place the terminal cursor at (the
@@ -1221,12 +1239,17 @@
    The action bar is PINNED under a blank row of its own: only the fields scroll
    under it, so the `Submit` and `Cancel` caps stay on screen for a form of any
    length, and the row of air above them keeps the caps from growing out of
-   whatever field the scroll happens to end on."
-  ([g cols rows form] (paint! g cols rows form 1 tr/prompt-rows))
-  ([g cols rows form content-top] (paint! g cols rows form content-top tr/prompt-rows))
+   whatever field the scroll happens to end on.
+
+   `queued` is how many MORE requests wait behind this one, and the rule's own
+   label says so ([[band-label]]): a second parked request is otherwise invisible
+   until this one is answered and the band silently refills with it."
+  ([g cols rows form] (paint! g cols rows form 1 tr/prompt-rows 0))
+  ([g cols rows form content-top] (paint! g cols rows form content-top tr/prompt-rows 0))
   ;; NOTE: no primitive hints on these arities — Clojure caps primitive-taking fns
   ;; at four arguments — so the sizes are coerced inside the `let` instead.
-  ([g cols rows form content-top prompt-h]
+  ([g cols rows form content-top prompt-h] (paint! g cols rows form content-top prompt-h 0))
+  ([g cols rows form content-top prompt-h queued]
    (let [{:keys [left inner-w] :as region}
          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
      ;; A band is not a dialog: it lies on the LIVE transcript and wears the
@@ -1275,7 +1298,7 @@
          ;; The question is the rule's own label — `── Deploy? ──` — so the first
          ;; row is chrome and every row under it is the form.
          (when (>= (long sep-row) (long top-limit))
-           (tr/draw-rule! g region sep-row (get-in form [:request :title])))
+            (tr/draw-rule! g region sep-row (band-label form (long (or queued 0)))))
          (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
          (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
            (tr/draw-rule! g region hint-rule-at))

@@ -4194,10 +4194,12 @@ export class GatewayClient {
     search = '',
     signal?: AbortSignal,
   ): Promise<LiveLogPage> {
-    const query = `?from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}&query=${encodeURIComponent(search)}`;
+    // The node rides the query string: node ids are free text a surface chose and may
+    // hold `/`, which the gateway refuses inside a path segment.
+    const query = `?node=${encodeURIComponent(nodeId)}&from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}&query=${encodeURIComponent(search)}`;
     return this.request<LiveLogPage>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/log/${encodeURIComponent(nodeId)}${query}`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/log${query}`,
       undefined,
       signal,
     );

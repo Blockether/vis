@@ -1530,9 +1530,10 @@ it('encodes literal log search and retains bounded match offsets', async () => {
   vi.stubGlobal('fetch', fetchMock);
   const { GatewayClient } = await import('./gateway');
   const client = new GatewayClient(conn);
-  expect(await client.liveViewLog('s1', 'v1', 'log', 200, 200, '[disk]&Ł')).toEqual(page);
+  expect(await client.liveViewLog('s1', 'v1', 'jobs/glms#6064', 200, 200, '[disk]&Ł')).toEqual(page);
   const url = new URL(String(fetchMock.mock.calls[0][0]));
-  expect(url.pathname).toBe('/v1/sessions/s1/views/live/v1/log/log');
+  expect(url.pathname).toBe('/v1/sessions/s1/views/live/v1/log');
+  expect(url.searchParams.get('node')).toBe('jobs/glms#6064');
   expect(url.searchParams.get('query')).toBe('[disk]&Ł');
   expect(url.searchParams.get('from')).toBe('200');
   expect(url.searchParams.get('limit')).toBe('200');

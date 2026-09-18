@@ -376,13 +376,17 @@
           (when (empty? query) (is (= (+ (long heading-col) 2) (.getColumn cursor)))))))))
 
 (deftest log-search-client-encodes-literal-query-test
+  ;; A Jenkins job is `folder/job`: the node id rides the query string, where an
+  ;; encoded `/` is ordinary text instead of a path separator the gateway refuses.
   (let [called (atom nil)]
     (with-redefs-fn {#'client/send-json! (fn [& args]
                                            (reset! called args)
                                            {"matched" 0})}
-      #(client/live-view-log "sid" "view" "a" 200 200 "[disk]&Ł"))
+      #(client/live-view-log "sid" "view" "jobs/glms#6064 · console" 200 200 "[disk]&Ł"))
     (is (= ["GET"
-            "/v1/sessions/sid/views/live/view/log/a?from=200&limit=200&query=%5Bdisk%5D%26%C5%81"]
+            (str "/v1/sessions/sid/views/live/view/log"
+                 "?node=jobs%2Fglms%236064+%C2%B7+console"
+                 "&from=200&limit=200&query=%5Bdisk%5D%26%C5%81")]
            @called))))
 
 (deftest styled-log-wire-patches-and-receipts-test
@@ -535,3 +539,21 @@
                  (str/replace markdown "<!-- vis:divider 1 -->\n---" invalid))
                false
                (catch clojure.lang.ExceptionInfo _ true))))))
+
+(deftest scrollbar-belongs-to-the-open-log-test
+  ;; The band's scrollbar starts on the log's own row — the one carrying Search —
+  ;; and measures the log alone, never the prose and status rows above it.
+  (let [rows [{:node-id "p"} {:node-id "q"} {:node-id "a" :search-label "Search A"} {:node-id "a"}
+              {:node-id "a"} {:node-id "a"} {:node-id "b"}]]
+    (is (nil? (lv/log-span [{:node-id "p"} {:node-id "q"}])))
+    (is (= [2 6] (lv/log-span rows)))
+    ;; Four body rows from the top, the body at row 10: the bar starts two rows
+    ;; down and tracks the two log rows on screen out of four.
+    (is (= {:row 12 :track 2 :total 4 :start 0} (#'lv/bar-shape rows 0 4 10)))
+    ;; Scrolled one row into the log: the bar starts at the body top.
+    (is (= {:row 10 :track 3 :total 4 :start 1} (#'lv/bar-shape rows 3 3 10)))
+    ;; The whole log fits: no bar at all.
+    (is (nil? (#'lv/bar-shape rows 0 7 10)))
+    ;; Without an open log the body itself is the scrolled thing.
+    (is (= {:row 10 :track 1 :total 2 :start 0}
+           (#'lv/bar-shape [{:node-id "p"} {:node-id "q"}] 0 1 10)))))

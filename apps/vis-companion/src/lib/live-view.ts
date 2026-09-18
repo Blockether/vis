@@ -288,7 +288,7 @@ export interface LiveView {
 }
 
 /**
- * One page of a log node's RECORD, as `GET …/views/live/:view/log/:node`
+ * One page of a log node's RECORD, as `GET …/views/live/:view/log?node=…`
  * answers it. The section shows a WINDOW; this is how the operator walks back
  * past it without the phone ever holding the whole run.
  */

@@ -316,6 +316,19 @@ export function sessionNeedsInput(session: Session): boolean {
 }
 
 /**
+ * HOW MANY unanswered requests the session is parked on — 0 when none.
+ *
+ * The flag alone cannot say that answering one of two moved anything, which is
+ * exactly the report: the badge stayed lit and nothing named the second request.
+ * Older gateways send no count, so a parked row without one still counts as 1.
+ */
+export function sessionInputCount(session: Session): number {
+  const open = session.awaiting_input_count;
+  if (typeof open === 'number' && Number.isFinite(open)) return Math.max(0, Math.trunc(open));
+  return sessionNeedsInput(session) ? 1 : 0;
+}
+
+/**
  * Did this session's last turn get cut off? A cancel, or a gateway that died
  * mid-answer and swept the turn on its next start. Paired with an unread mark it
  * is what tells the reader a session stopped rather than finished.

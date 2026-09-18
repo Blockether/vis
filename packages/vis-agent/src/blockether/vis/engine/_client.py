@@ -1859,12 +1859,16 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
     ) -> JSONValue:
-        """GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — json response."""
+        """GET /v1/sessions/:sid/views/live/:view-id/log — json response.
+
+        The node rides the query string: node ids are free text a surface chose
+        and may hold ``/``, which a path segment cannot carry.
+        """
         response = self._request(
             "GET",
-            "/v1/sessions/:sid/views/live/:view-id/log/:node-id",
-            path={"sid": sid, "view-id": view_id, "node-id": node_id},
-            query=query,
+            "/v1/sessions/:sid/views/live/:view-id/log",
+            path={"sid": sid, "view-id": view_id},
+            query={"node": node_id, **(query or {})},
             timeout=timeout,
         )
         return response.json()

@@ -1349,6 +1349,53 @@
           found (clamp (long found) 0 limit)
           :else (clamp (long (or (:offset pane) 0)) 0 limit))))
 
+(defn log-span
+  "The rows the first open log owns in `rows`, as `[from to)`: its own row — the
+   one carrying Search — through the last line under it. Nil without an open log.
+
+   The band's scrollbar belongs to that log. It starts where the log starts, never
+   over the prose and status rows above it, and measures the log alone: those
+   rows are what a watched run keeps adding to, and what the eye scrolls."
+  [rows]
+  (let [rows
+        (vec rows)
+
+        from
+        (first (keep-indexed (fn [idx row]
+                               (when (:search-label row) idx))
+                             rows))]
+
+    (when from
+      (let [node-id (:node-id (rows from))]
+        [from
+         (loop [idx (inc (long from))]
+           (if (and (< idx (count rows)) (= node-id (:node-id (rows idx))))
+             (recur (inc idx))
+             idx))]))))
+
+(defn- bar-shape
+  "Where the band's scrollbar goes and what it measures, or nil when nothing
+   overflows: `:row` and `:track` place it beside the rows painted from `start`,
+   `body-visible` of them from `body-row`.
+
+   With an open log the bar is the log's: the track runs from the log's own row
+   down the lines painted under it, and the thumb says how much of the log is on
+   screen. Without one the whole body is the scrolled thing, and the bar spans it."
+  [rows-plan ^long start ^long body-visible ^long body-row]
+  (if-let [[from to] (log-span rows-plan)]
+    (let [from (long from)
+          to (long to)
+          first-row (max from start)
+          last-row (min to (+ start body-visible))]
+
+      (when (and (< first-row last-row) (> (- to from) (- last-row first-row)))
+        {:row (+ body-row (- first-row start))
+         :track (- last-row first-row)
+         :total (- to from)
+         :start (- first-row from)}))
+    (when (> (count rows-plan) body-visible)
+      {:row body-row :track body-visible :total (count rows-plan) :start start})))
+
 ;;; ── Chrome ──────────────────────────────────────────────────────────────────
 
 (defn- title-line
@@ -1587,6 +1634,25 @@
 
 (def ^:private ^:dynamic *hit-row-offset* 0)
 
+(defn- bar-col
+  "The band's scrollbar lane: one column of margin inside the right rail, because
+   the last column there is the lane the TRANSCRIPT draws its own bar in, and two
+   bars sharing one lane read as a single scrollbar fighting itself."
+  ^long [^long left ^long inner-w]
+  (dec (+ left inner-w)))
+
+(def ^:private search-air
+  "Columns a Search control keeps clear of the scrollbar lane. The open log's bar
+   starts on the very row that carries Search, so the control stands off the
+   thumb instead of leaning on it."
+  4)
+
+(defn- search-col
+  "Where a Search control starts, given the band's [[bar-col]]: the same column on
+   the log's own row and on the heading that stands in for it."
+  ^long [^long bar-col]
+  (- bar-col (long search-air) (long (p/display-width " Search "))))
+
 (defn- register-link!
   "Register a link cell with the transcript's existing URL/path opener."
   [left row width {:keys [target-kind target]}]
@@ -1639,11 +1705,21 @@
     (let [width
           (max 0 (- (long inner-w) 3))
 
+          ;; This body is two columns narrower than the band's interior, so the
+          ;; scrollbar lane sits past its right edge; Search keeps its air from it.
+          col
+          (search-col (bar-col (long left) (+ (long inner-w) 2)))
+
+          ;; Three columns of air between the title and Search — and Search only
+          ;; where a title still reads beside it once ellipsized.
+          beside-w
+          (- col (long left) 3)
+
           search?
-          (and (:search-label entry) (>= width 12))
+          (and (:search-label entry) (>= beside-w 3))
 
           title-w
-          (if search? (- width 9) width)
+          (if search? beside-w width)
 
           hit-row
           (+ (long row) (long *hit-row-offset*))]
@@ -1662,17 +1738,16 @@
                   :node-id (:node-id entry)
                   :enabled? true})
       (when search?
-        (let [col (+ (long left) 2 (- width 8))]
-          (components/button! g
-                              col
-                              row
-                              " Search "
-                              :live-log-search
-                              {:extra {:bounds {:row hit-row :col col :width 8}
-                                       :view-id view-id
-                                       :node-id (:node-id entry)
-                                       :item-id :search
-                                       :label (:search-label entry)}}))))
+        (components/button! g
+                            col
+                            row
+                            " Search "
+                            :live-log-search
+                            {:extra {:bounds {:row hit-row :col col :width 8}
+                                     :view-id view-id
+                                     :node-id (:node-id entry)
+                                     :item-id :search
+                                     :label (:search-label entry)}})))
 
     :log-search-page
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
@@ -1932,10 +2007,11 @@
         width
         (long (p/display-width label))
 
-        ;; One column of air from the fold control, itself inset one column from the
-        ;; interior's right edge.
+        ;; The same column as the Search on the log's own row, clear of the bar lane
+        ;; and of the fold control, itself inset one column from the interior's
+        ;; right edge.
         col
-        (- (+ (long left) (long inner-w)) 4 width)]
+        (search-col (bar-col (long left) (long inner-w)))]
 
     (when (> col (inc (long left)))
       (components/button!
@@ -2178,18 +2254,20 @@
                                  {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
                                  {:text "▏" :fg t/dialog-hint-key}])))
            (dialogs/draw-hint-bar! g left hint-at inner-w (hint front others))
-           ;; The bar keeps one column of margin inside the right rail: the last
-           ;; column there is the lane the TRANSCRIPT draws its own bar in, and two
-           ;; bars sharing one lane read as a single scrollbar fighting itself.
-           (when (> total body-visible)
+           ;; With an open log the bar is the log's own: it starts on the log's row,
+           ;; beside Search, and measures the log alone.
+           (when-let [{:keys [row track total start]} (bar-shape rows-plan
+                                                                 start
+                                                                 body-visible
+                                                                 (+ (long body-top)
+                                                                    (count collapsed)))]
              (ScrollBar/draw g
                              Direction/VERTICAL
-                             (TerminalPosition. (int (dec (+ left inner-w)))
-                                                (int (+ (long body-top) (count collapsed))))
-                             (int body-visible)
+                             (TerminalPosition. (int (bar-col left inner-w)) (int row))
+                             (int track)
                              (int total)
-                             (int body-visible)
-                             (when (some? start) (Integer/valueOf (int start)))
+                             (int track)
+                             (Integer/valueOf (int start))
                              t/border-fg
                              t/dialog-bg
                              t/dialog-hint-key

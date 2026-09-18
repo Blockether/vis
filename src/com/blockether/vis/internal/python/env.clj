@@ -645,8 +645,9 @@
   (set-python-binding-meta! session sym "__vis_docs__" text))
 
 (defn set-python-binding-signature!
-  "The declared parameter list of `sym`, what `inspect.signature` reports through
-   the deferred wrapper's `__wrapped__`."
+  "The declared signature text of `sym`, what `inspect.signature` and
+   `typing.get_type_hints` report through the deferred wrapper's `__wrapped__`
+   and `__annotations__`."
   [session sym signature]
   (set-python-binding-meta! session sym "__vis_sigs__" signature))
 
@@ -933,7 +934,7 @@
                 (or (not-empty (str (get calls nm)))
                     (not-empty (str (:call document)))
                     (when-let [sig (get sigs nm)]
-                      (str nm "(" sig ")"))
+                      (str nm sig))
                     (not-empty (str (get def-calls nm))))]
 
             (cond-> {:name nm
@@ -1013,11 +1014,11 @@
    "fold_session(key, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. The key is a STRING: \"t2/i5\" one step · \"t2\" a whole turn · \"t2/i1-i56\" a range · \"-t2/i56\" everything through it · \"t2/i5-\" everything since it · comma-separate several, disjoint ranges included (\"t1/i61-i98, t3/i111-i135, t4\" is ONE fold); a token that is not a step key, or that matches no settled step, is refused by name. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate."})
 
 (def ^:private introspection-signatures
-  {'apropos "pattern=''"
-   'doc "target=None"
-   'gather "*awaitables, return_exceptions=False"
-   'defs "name=None, *, pattern=None, limit=20, offset=0, details=False"
-   'fold-session "key, gist=None"})
+  {'apropos "(pattern='')"
+   'doc "(target=None)"
+   'gather "(*awaitables, return_exceptions=False)"
+   'defs "(name=None, *, pattern=None, limit=20, offset=0, details=False)"
+   'fold-session "(key, gist=None)"})
 
 (defn- discovery-tool
   "Wrap a discovery call; its error hook shortens regex diagnostics only."

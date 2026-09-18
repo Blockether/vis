@@ -361,10 +361,11 @@ tool or its permissions.
 
 The registered signature and resolved type metadata are authoritative for invocation
 shape. `doc()` renders that same contract: signature, parameter kinds, required/default
-status, return type and fields, mutation tag, and semantic description. A method with
-no arguments has an empty `signature` string and is rendered as `name()`; that does
-not mean metadata is missing. A short semantic docstring is sufficient—do not repeat
-the signature, defaults or full return schema in it.
+status, return type and fields, mutation tag, and semantic description. The `signature`
+text is the full Python signature, for example `(name: str, /, *, loud: bool = ...) -> 'Results'`;
+a method with no arguments has the signature `()`. That does not mean metadata is
+missing. A short semantic docstring is sufficient—do not repeat the signature, defaults
+or full return schema in it.
 
 When you know the callable but need its arguments, start with
 `import inspect; print(inspect.signature(tool))`. Read `doc("tool")` when you need
@@ -419,9 +420,10 @@ also described without exporting values or running factories.
 | --- | --- |
 | `tool.contract` | Portable parameter/result types, fields and documented meaning |
 | `doc("tool")` | Human-readable rendering of that contract |
-| `inspect.signature(tool)` | Names and parameter kinds; `None` or `Ellipsis` defaults; no type annotations |
-| `tool.__annotations__`, `typing.get_type_hints(tool)` | Empty dictionaries, not a supported type-discovery API |
-| `tool.__signature__` | Not supplied |
+| `inspect.signature(tool)` | Names, parameter kinds and annotations; `None` or `Ellipsis` defaults; the return annotation when declared |
+| `tool.__annotations__` | Annotation objects resolved statically from the signature text: builtins, `typing` and `collections.abc` names, unions and subscripts become the real objects; record, opaque and unresolved names stay quoted forward-reference strings such as `'Results'` |
+| `typing.get_type_hints(tool)` | Resolves the same annotations; pass `localns` for forward-reference strings, otherwise it raises `NameError` for them |
+| `tool.__signature__` | Not supplied; `inspect` follows `tool.__wrapped__` |
 
 Engine-provided tools also expose registered option keys as keyword-only parameters.
 For example, `inspect.signature(council.publish)` names the required `kind` argument,

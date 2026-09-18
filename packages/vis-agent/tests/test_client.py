@@ -488,7 +488,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             expected_path = "/".join(
                 "example" if p.startswith(":") else p for p in words[1].split("/")
             )
-            assert calls[-1][1] == expected_path
+            assert calls[-1][1].split("?")[0] == expected_path
             seen.add((words[0], words[1]))
     # Council intentionally lives on a session-bound handle rather than raw client mutations.
     entry = {

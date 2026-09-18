@@ -918,6 +918,8 @@ export function SessionsScreen({
         update = {
           live: event.is_live,
           is_awaiting_input: event.is_awaiting_input === true,
+          awaiting_input_count:
+            typeof event.awaiting_input_count === 'number' ? event.awaiting_input_count : 0,
           current_turn_id: typeof event.current_turn_id === 'string' ? event.current_turn_id : null,
         };
       } else if (typeof event.title === 'string' && event.title.length > 0) {

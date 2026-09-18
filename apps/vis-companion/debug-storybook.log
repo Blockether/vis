@@ -1,0 +1,21 @@
+[20:03:29.623] [INFO] storybook v10.5.10
+[20:03:30.057] [DEBUG] Getting package.json info for /Users/fierycod/vis/apps/vis-companion/package.json...
+[20:03:30.228] [DEBUG] Could not determine @babel/preset-env version in use. In case of runtime errors with @babel/preset-env, you may need to set the babelRemoveBugfixes feature flag in your `main.ts` file.
+[20:03:30.614] [INFO] Starting...
+[20:03:30.669] [DEBUG] Starting preview..
+[20:03:30.830] [DEBUG] Change detection enabled.
+[20:03:30.830] [DEBUG] Change detection: snapshotting Vite resolve config (restart required if vite.config.ts changes)
+[20:03:30.830] [DEBUG] Change detection: ignored 12 regex alias(es); related modules tracked as opaque-leaf.
+[20:03:30.830] [DEBUG] ChangeDetectionResolverFactory: skipped regex aliases [/^@storybook\/global$/, /^storybook\/test$/, /^storybook\/actions$/, /^storybook\/preview-api$/, /^storybook\/internal\/channels$/, /^storybook\/internal\/client-logger$/, /^storybook\/internal\/core-events$/, /^storybook\/internal\/preview-errors$/, /^storybook\/internal\/types$/, /^storybook\/internal\/preview-api$/, /^\/?@vite\/env/, /^\/?@vite\/client/]
+[20:03:30.833] [ERROR] [38;2;241;97;97mError: listen EADDRINUSE: address already in use 127.0.0.1:6006[39m
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at node:net:2206:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+[20:03:30.833] [WARN] Broken build, fix the error above.
+You may need to refresh the browser.
+[20:03:30.939] [DEBUG] ChangeDetectionResolverFactory: '@radix-ui/react-select' from '/Users/fierycod/vis/apps/vis-companion/src/components/ui.tsx' unresolved ("." is not exported under the conditions ["storybook", "stories", "test", "module", "browser", "development|production"] from package /Users/fierycod/vis/apps/vis-companion/node_modules/@radix-ui/react-select (see exports field in /Users/fierycod/vis/apps/vis-companion/node_modules/@radix-ui/react-select/package.json))
+[20:03:30.939] [DEBUG] Could not resolve @radix-ui/react-select from /Users/fierycod/vis/apps/vis-companion/src/components/ui.tsx
+[20:03:30.960] [DEBUG] ChangeDetectionResolverFactory: '@cantoo/pdf-lib' from '/Users/fierycod/vis/apps/vis-companion/src/lib/pdf-annotate.ts' unresolved ("." is not exported under the conditions ["storybook", "stories", "test", "module", "browser", "development|production"] from package /Users/fierycod/vis/apps/vis-companion/node_modules/@cantoo/pdf-lib (see exports field in /Users/fierycod/vis/apps/vis-companion/node_modules/@cantoo/pdf-lib/package.json))
+[20:03:30.960] [DEBUG] Could not resolve @cantoo/pdf-lib from /Users/fierycod/vis/apps/vis-companion/src/lib/pdf-annotate.ts
+[20:03:30.982] [DEBUG] Change detection graph built: 55 stories, 212 deps tracked, 151ms

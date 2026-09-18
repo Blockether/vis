@@ -36,7 +36,7 @@
       (is (= 'update_goal (:ext.symbol/symbol entry)))
       (is (false? (get-in entry [:ext.symbol/activity :show-start])))
       (is (some #{entry} (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))
-      (is (= "goal_id, version, status, reason" (extension/symbol-signature entry)))
+      (is (= "(goal_id, version, status, reason)" (extension/symbol-signature entry)))
       (is (every? :required? (:ext.symbol/params entry)))
       (is (str/includes? (extension/symbol-doc-text entry) "mixed calls are supported"))
       (is (extension/tool-result? result))

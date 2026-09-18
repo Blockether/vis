@@ -3,6 +3,13 @@ import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
 import { Button, DialogFrame, Modal } from './ui';
 
+// HOW MANY answers the subagent is waiting for. One badge for two open requests
+// is what made answering the first of them look like nothing had happened.
+function inputLabel(agent: Subagent): string {
+  const open = agent.pending_input_count ?? 1;
+  return open > 1 ? `Needs your input ×${open}` : 'Needs your input';
+}
+
 const STATUS: Record<Subagent['status'], string> = {
   queued: 'Queued',
   running: 'Running',
@@ -44,7 +51,7 @@ export function AgentTeamView({
           <li key={agent.session_id} className="space-y-2 py-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-ui text-dialog-hint">
-                {agent.pending_input ? 'Needs your input' : STATUS[agent.status]}
+                {agent.pending_input ? inputLabel(agent) : STATUS[agent.status]}
               </span>
               <span className="text-ui text-dialog-hint">
                 {agent.iterations_used} / {agent.iteration_budget} iterations

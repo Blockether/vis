@@ -1082,7 +1082,7 @@
           "response": "json"
         }
       },
-      "path": "/v1/sessions/:sid/views/live/:view-id/log/:node-id"
+      "path": "/v1/sessions/:sid/views/live/:view-id/log"
     },
     {
       "audience": "sdk",

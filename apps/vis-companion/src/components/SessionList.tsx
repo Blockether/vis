@@ -21,7 +21,13 @@ import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages'
 import type { PendingAttachment } from '../lib/attachments';
 import { unreadTurnCount, useReadMarks } from '../lib/unread';
 import { isFavorite } from '../lib/favorites';
-import { sessionIsLive, sessionNeedsInput, sessionWasInterrupted, timeLabel } from '../lib/fleet';
+import {
+  sessionInputCount,
+  sessionIsLive,
+  sessionNeedsInput,
+  sessionWasInterrupted,
+  timeLabel,
+} from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
 
 // Same frames as the session transcript's spinner and the TUI's
@@ -774,7 +780,12 @@ export function shortId(id: string): string {
 function statusLabel(session: Session, stopped: boolean): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
-  if (sessionNeedsInput(session)) return 'INPUT NEEDED';
+  if (sessionNeedsInput(session)) {
+    // …and HOW MANY are open: answering one of two has to show, or the badge
+    // reads exactly the same as it did before the answer.
+    const open = sessionInputCount(session);
+    return open > 1 ? `INPUT NEEDED ×${open}` : 'INPUT NEEDED';
+  }
   if (sessionIsLive(session)) return 'LIVE';
   if (stopped) return 'STOPPED';
   if (session.status === 'suspended') return 'WAITING';

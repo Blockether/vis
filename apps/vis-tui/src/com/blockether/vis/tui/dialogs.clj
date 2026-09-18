@@ -5006,8 +5006,13 @@
         ;; never a local guess: a run parked on an unanswered human-input request
         ;; is normally parked in ANOTHER process, and this list is where its
         ;; operator goes looking for it.
-        awaiting-input?
-        (true? (get session "is_awaiting_input"))
+         awaiting-input?
+         (true? (get session "is_awaiting_input"))
+
+         ;; HOW MANY requests it is parked on, so answering one of two visibly
+         ;; drops the row from ×2 to ×1 instead of leaving the same badge lit.
+         awaiting-count
+         (long (or (get session "awaiting_input_count") (if awaiting-input? 1 0)))
 
         live?
         (true? (get session "live"))]
@@ -5021,7 +5026,9 @@
      :position (get session "project_position")
      :dir work-dir
      :work-dir work-dir
-     :status (cond awaiting-input? "! input needed"
+     :status (cond awaiting-input? (if (> awaiting-count 1)
+                                     (str "! input needed ×" awaiting-count)
+                                     "! input needed")
                    (and active? live?) "● focused · live"
                    live? "● live"
                    active? "● focused"
@@ -5129,6 +5136,7 @@
                   (assoc row
                     "live" (true? (get frame "is_live"))
                     "is_awaiting_input" (true? (get frame "is_awaiting_input"))
+                    "awaiting_input_count" (long (or (get frame "awaiting_input_count") 0))
                     "current_turn_id" (get frame "current_turn_id")))))
             held))))
 

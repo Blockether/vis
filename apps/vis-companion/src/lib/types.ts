@@ -67,6 +67,8 @@ export interface Subagent {
   model?: string | null;
   routing_locked?: boolean;
   pending_input?: boolean;
+  /** How many unanswered requests it is parked on — 0 or absent when none. */
+  pending_input_count?: number;
   usage?: SessionUsage | null;
 }
 
@@ -107,6 +109,13 @@ export interface Session {
    * nothing will move it but an answer.
    */
   is_awaiting_input?: boolean;
+  /**
+   * HOW MANY of those requests are open. One badge for two parked requests is
+   * what made answering the first one look like it changed nothing: the flag
+   * above stayed true, so the row kept saying INPUT NEEDED with nothing telling
+   * the reader a second question was still waiting behind it.
+   */
+  awaiting_input_count?: number;
   /**
    * The session's NEWEST turn ended without finishing — the operator cancelled it,
    * or a gateway died with it running and the next start swept it. The gateway owns
@@ -1175,6 +1184,8 @@ export interface SseEvent {
   is_live?: boolean;
   /** `session.status` only: the run is PARKED on an unanswered human-input request. */
   is_awaiting_input?: boolean;
+  /** `session.status` only: HOW MANY requests are open, so a badge can count down. */
+  awaiting_input_count?: number;
   /**
    * `subscription.ready` only: newest 1-based iteration in the replay that
    * follows this control frame. The UI paints this head before backfilling.

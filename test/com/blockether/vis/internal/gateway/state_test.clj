@@ -5696,9 +5696,15 @@
                        #'bus/waiting-requests (constantly {"s2" [{"id" "r1"}]})}
         (fn []
           (let [snapshot (state/fleet-snapshot)]
-            (expect (= {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}
+            (expect (= {"is_live" true
+                        "is_awaiting_input" false
+                        "awaiting_input_count" 0
+                        "current_turn_id" "t1"}
                        (get snapshot "s1")))
-            (expect (= {"is_live" false "is_awaiting_input" true "current_turn_id" nil}
+            (expect (= {"is_live" false
+                        "is_awaiting_input" true
+                        "awaiting_input_count" 1
+                        "current_turn_id" nil}
                        (get snapshot "s2")))))))
   (it "says nothing at all while no session changed"
       (let [snapshot {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}]
@@ -5709,29 +5715,47 @@
                    "session_id" "s1"
                    "is_live" true
                    "is_awaiting_input" false
+                   "awaiting_input_count" 0
                    "current_turn_id" "t1"}]
                  (state/fleet-status-frames
                    {}
-                   {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}))))
+                   {"s1" {"is_live" true
+                          "is_awaiting_input" false
+                          "awaiting_input_count" 0
+                          "current_turn_id" "t1"}}))))
   (it "spells out the session that left both indexes, because absence cannot be painted"
       (expect (= [{"schema" 1
                    "type" "session.status"
                    "session_id" "s1"
                    "is_live" false
                    "is_awaiting_input" false
+                   "awaiting_input_count" 0
                    "current_turn_id" nil}]
                  (state/fleet-status-frames
-                   {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}
+                   {"s1" {"is_live" true
+                          "is_awaiting_input" false
+                          "awaiting_input_count" 0
+                          "current_turn_id" "t1"}}
                    {}))))
   (it "reports the run that parked on a human without repeating the sessions around it"
       (let [frames (state/fleet-status-frames
-                     {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}
-                      "s2" {"is_live" true "is_awaiting_input" false "current_turn_id" "t2"}}
-                     {"s1" {"is_live" true "is_awaiting_input" true "current_turn_id" "t1"}
-                      "s2" {"is_live" true "is_awaiting_input" false "current_turn_id" "t2"}})]
+                     {"s1" {"is_live" true "is_awaiting_input" false "awaiting_input_count" 0 "current_turn_id" "t1"}
+                      "s2" {"is_live" true "is_awaiting_input" false "awaiting_input_count" 0 "current_turn_id" "t2"}}
+                     {"s1" {"is_live" true "is_awaiting_input" true "awaiting_input_count" 1 "current_turn_id" "t1"}
+                      "s2" {"is_live" true "is_awaiting_input" false "awaiting_input_count" 0 "current_turn_id" "t2"}})]
         (expect (= 1 (count frames)))
         (expect (= "s1" (get (first frames) "session_id")))
-        (expect (true? (get (first frames) "is_awaiting_input"))))))
+        (expect (true? (get (first frames) "is_awaiting_input")))))
+  (it "counts the open requests down as they are answered, not just the demand"
+      ;; Two parked requests and one answered: the flag stays true, so a feed
+      ;; carrying only the flag reported NOTHING and every badge kept reading
+      ;; exactly as it had — the report this test pins.
+      (let [frames (state/fleet-status-frames
+                     {"s1" {"is_live" true "is_awaiting_input" true "awaiting_input_count" 2 "current_turn_id" "t1"}}
+                     {"s1" {"is_live" true "is_awaiting_input" true "awaiting_input_count" 1 "current_turn_id" "t1"}})]
+        (expect (= 1 (count frames)))
+        (expect (true? (get (first frames) "is_awaiting_input")))
+        (expect (= 1 (get (first frames) "awaiting_input_count"))))))
 
 (defdescribe
   fleet-watch-initial-status-test

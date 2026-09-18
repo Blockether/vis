@@ -3757,23 +3757,29 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- live-view-log-handler
-  "GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — one bounded page.
-   `query` is literal and case-insensitive; `from` is a zero-based match offset,
-   `limit` bounds returned lines. Answers counts and original line numbers from
-   the durable record, including after the view has closed."
+  "GET /v1/sessions/:sid/views/live/:view-id/log?node=… — one bounded page.
+   `node` names the log node: a query parameter, never a path segment, because
+   node ids are free text a surface chose (a Jenkins job is `folder/job`) and a
+   `/` inside a path segment is refused before any route matches. `query` is
+   literal and case-insensitive; `from` is a zero-based match offset, `limit`
+   bounds returned lines. Answers counts and original line numbers from the
+   durable record, including after the view has closed."
   [request]
   (let [sid
         (path-sid request)
 
         view-id
-        (path-view-id request)]
+        (path-view-id request)
+
+        node-id
+        (get-in request [:query-params "node"])]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
           (nil? view-id) (view-404 (get-in request [:path-params :view-id]))
+          (str/blank? node-id) (error-response 400 :invalid-request "node must name a log node")
           :else (json-response (gw-view/live-log-range sid
                                                        view-id
-                                                       (str (get-in request
-                                                                    [:path-params :node-id]))
+                                                       node-id
                                                        (query-long request "from")
                                                        (query-long request "limit")
                                                        (get-in request [:query-params "query"]))))))
@@ -4657,7 +4663,7 @@
         [(sid-route "/release") {:post release-session-handler}]
         [(sid-route "/views/input") {:get list-input-views-handler}]
         [(sid-route "/views/live") {:get list-live-views-handler}]
-        [(sid-route "/views/live/:view-id/log/:node-id") {:get live-view-log-handler}]
+        [(sid-route "/views/live/:view-id/log") {:get live-view-log-handler}]
         [(sid-route "/views/:view-id/actions") {:post view-action-handler}]
         [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]

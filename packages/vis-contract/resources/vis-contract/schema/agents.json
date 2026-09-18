@@ -177,6 +177,10 @@
         "pending_input": {
           "type": "boolean"
         },
+        "pending_input_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "usage": {
           "type": [
             "object",

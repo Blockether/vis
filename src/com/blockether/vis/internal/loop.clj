@@ -11459,9 +11459,10 @@
               (env/set-python-binding-doc! python-context
                                            target
                                            (extension/symbol-doc-text (get by-sym sym)))
-              ;; ...and its declared parameter list, so `inspect.signature` /
-              ;; `help` on an aliased tool answer with real parameters
-              ;; instead of the async trampoline's own `(*a, **k)`.
+              ;; ...and its declared signature, so `inspect.signature` / `help` /
+              ;; `typing.get_type_hints` on an aliased tool answer with real
+              ;; parameters and annotations instead of the async trampoline's
+              ;; own `(*a, **k)`.
               (env/set-python-binding-signature! python-context
                                                  target
                                                  (extension/symbol-signature (get by-sym sym)))

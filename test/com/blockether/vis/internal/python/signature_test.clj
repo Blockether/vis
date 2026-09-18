@@ -62,7 +62,7 @@
                  "for name, probe in signature_probes.items():\n"
                  "    fn = globals()[probe['binding']]\n"
                  "    actual = inspect.signature(fn)\n"
-                 "    expected = '(' + probe['signature'].replace('...', 'Ellipsis') + ')'\n"
+                 "    expected = probe['signature'].replace('...', 'Ellipsis')\n"
                  "    assert str(actual) == expected, (name, str(actual), expected)\n"
                  "    observed[name] = actual.parameters\n"
                  "publish = observed['council.publish']\n"
@@ -95,14 +95,14 @@
         [ctx
          {'signature_refresh.probe (fn [& _]
                                      nil)} nil {:worker? worker?}]
-        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "value")
+        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value)")
         (let [answer (ep/run-python-block ctx
                                           (str
                                             "import inspect\n" "kept = signature_refresh.probe\n"
                                             "original = kept.__wrapped__\n"
                                             "assert str(inspect.signature(kept)) == '(value)'\n"))]
           (expect (nil? (:error answer)) (pr-str answer)))
-        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "value, *, repeat=...")
+        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value, *, repeat=...)")
         (let [answer (ep/run-python-block
                        ctx
                        (str "assert kept is signature_refresh.probe\n"
@@ -198,6 +198,49 @@
                  "print('equivalent')\n"))]
             (expect (nil? (:error answer)) (pr-str answer))
             (expect (= "equivalent\n" (:stdout answer)))))))))
+
+(defdescribe
+  typed-extension-signature-test
+  ;; #273: Python extension annotations were dropped at the sandbox boundary, so
+  ;; `inspect.signature` and `__annotations__` showed untyped parameters.
+  (it
+    "resolves annotated signature text into inspectable types in local and worker sandboxes"
+    (doseq [worker? [false true]]
+      (tpc/with-own
+        [ctx
+         {'typed_probe (fn [& args]
+                         (str "called:" (count args)))} nil {:worker? worker?}]
+        (ep/set-python-binding-signature!
+          ctx
+          'typed_probe
+          "(name: str, /, *args: int, loud: bool = ..., note: str | None = None, **opts: Any) -> 'Results'")
+        (let
+          [answer
+           (ep/run-python-block
+             ctx
+             (str
+               "import inspect\n"
+               "import typing\n" "sig = inspect.signature(typed_probe)\n"
+               "assert str(sig) == \"(name: str, /, *args: int, loud: bool = Ellipsis, note: str | None = None, **opts: Any) -> 'Results'\", str(sig)\n"
+               "assert sig.parameters['name'].kind is inspect.Parameter.POSITIONAL_ONLY\n"
+               "assert sig.parameters['name'].annotation is str\n"
+               "assert sig.parameters['loud'].default is Ellipsis\n"
+               "assert sig.return_annotation == 'Results'\n" "notes = typed_probe.__annotations__\n"
+               "assert notes['name'] is str and notes['args'] is int and notes['loud'] is bool, notes\n"
+               "assert notes['note'] == (str | None), notes['note']\n"
+               "assert notes['opts'] is typing.Any, notes['opts']\n"
+               "assert notes['return'] == 'Results', notes['return']\n"
+               "try:\n" "    typing.get_type_hints(typed_probe)\n"
+               "except NameError as exc:\n" "    assert 'Results' in str(exc), exc\n"
+               "else:\n"
+               "    raise AssertionError('unresolved record name must stay a forward reference')\n"
+               "class Results: pass\n"
+               "hints = typing.get_type_hints(typed_probe, localns={'Results': Results})\n"
+               "assert hints['return'] is Results and hints['note'] == typing.Optional[str], hints\n"
+               "called = await typed_probe('x', loud=True)\n"
+               "assert called == 'called:2', called\n" "print('typed')\n"))]
+          (expect (nil? (:error answer)) (pr-str answer))
+          (expect (= "typed\n" (:stdout answer))))))))
 
 (defdescribe
   shell-method-signature-test

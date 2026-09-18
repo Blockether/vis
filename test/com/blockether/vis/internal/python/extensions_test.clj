@@ -5141,9 +5141,29 @@ vis.register_extension(vis.Extension(
                      ctx
                      (str
                        "import json, inspect, typing\n"
-                       "assert greet.hello.__annotations__ == {}\n"
-                       "assert typing.get_type_hints(greet.hello) == {}\n"
+                       ;; #273: the wrapped method's annotations reach the sandbox as static types.
+                       "sig = inspect.signature(greet.hello)\n"
+                       "assert str(sig) == "
+                       (pr-str
+                         (if (zero? iteration)
+                           "(name: str, /, *, loud: bool = Ellipsis, note: str | None = None) -> 'Results'"
+                           (str "(name: str, /, *, loud: bool = Ellipsis, note: str | None = None, "
+                                "repeat: int = Ellipsis) -> 'Results'")))
+                       ", str(sig)\n"
+                       "assert sig.parameters['name'].kind is inspect.Parameter.POSITIONAL_ONLY\n"
+                       "assert sig.parameters['name'].annotation is str\n"
+                       "assert sig.parameters['note'].annotation == (str | None)\n"
+                       "assert sig.return_annotation == 'Results'\n"
+                       "notes = greet.hello.__annotations__\n"
+                       "assert notes['name'] is str and notes['loud'] is bool, notes\n"
+                       "assert notes['note'] == (str | None) and notes['return'] == 'Results', notes\n"
+                       (when (pos? iteration) "assert notes['repeat'] is int, notes\n")
                        "assert getattr(greet.hello, '__signature__', None) is None\n"
+                       "try:\n    typing.get_type_hints(greet.hello)\n"
+                       "except NameError as exc:\n    assert 'Results' in str(exc), exc\n"
+                       "else:\n    raise AssertionError('record names must stay forward references')\n"
+                       "hints = typing.get_type_hints(greet.hello, localns={'Results': dict})\n"
+                       "assert hints['return'] is dict and hints['note'] == typing.Optional[str], hints\n"
                        "assert greet.hello.contract['tag'] == 'mutation'\n"
                        "assert greet.hello.contract['returns']['fields'][0]['type']['variadic'] is True\n"
                        "assert 'tuple[Result, ...]' in doc('greet.hello')\n"
@@ -5160,13 +5180,6 @@ vis.register_extension(vis.Extension(
                        "assert "
                        (pr-str (if (zero? iteration) "Greeting text." "Reloaded greeting text."))
                        " in doc('greet.hello')\n"
-                       "assert str(inspect.signature(greet.hello)) == "
-                       (pr-str (if (zero? iteration)
-                                 "(name, /, *, loud=Ellipsis, note=None)"
-                                 "(name, /, *, loud=Ellipsis, note=None, repeat=Ellipsis)"))
-                       "\n"
-                       "assert inspect.signature(greet.hello).return_annotation is inspect.Signature.empty\n"
-                       "assert all(p.annotation is inspect.Parameter.empty for p in inspect.signature(greet.hello).parameters.values())\n"
                        "value = await greet.hello('Ada', loud=True)\n"
                        ;; Regression #240: subscription survives the real extension boundary and reload.
                        "assert value['items'] is value.items\n"

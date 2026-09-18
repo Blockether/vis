@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import blockether.vis.extension as vis
 import pytest
@@ -17,6 +18,9 @@ class Reading:
     elapsed_s: Annotated[float | None, "Seconds, or None when not measured."]
     labels: list[str] = field(default_factory=lambda: pytest.fail("factory ran"))
 
+
+class Opaque:
+    """Not a dataclass: crosses the boundary as an opaque name."""
 
 def measure(
     target: str,
@@ -55,6 +59,42 @@ def test_contract_covers_python_shape_without_executing_defaults_or_tools():
     assert vis.Symbol(measure, name="probe").contract["name"] == "probe"
 
 
+def test_signature_text_is_static_source_with_annotations():
+    # #273: the signature reads as `inspect.signature` prints it — parameters,
+    # annotations and return, defaults masked — so a sandbox can stamp it onto
+    # the bound tool and `inspect`/`typing` there answer the declared types.
+    contract = vis.Symbol(measure, name="probe").contract
+    assert contract["signature"] == (
+        "(target: str, /, *labels: str, timeout_s: float | None = None,"
+        " **options: bool) -> 'Reading'"
+    )
+
+    def shapes(
+        flag: Literal["a", 1, True, None],
+        pair: tuple[int, ...],
+        table: dict[str, list[Reading]],
+        raw: Opaque,
+        anything: Any,
+        plain,
+        count: int = 3,
+    ) -> Reading | None:
+        """Cover every portable type kind."""
+        pytest.fail("tool ran")
+
+    signature = vis.Symbol(shapes).contract["signature"]
+    assert signature == (
+        "(flag: Literal['a', 1, True, None], pair: tuple[int, ...],"
+        " table: dict[str, list['Reading']], raw: 'Opaque', anything: Any,"
+        " plain, count: int = ...) -> 'Reading' | None"
+    )
+    # Only builtins and typing forms appear unquoted: every other name is a
+    # forward reference the sandbox never evaluates.
+    tree = ast.parse(f"def shapes{signature}: pass")
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert names == {"Literal", "tuple", "int", "dict", "str", "list", "Any"}
+    assert "Reading" in ast.unparse(tree.body[0].returns)
+
+
 def test_default_values_and_annotation_expressions_are_not_evaluated_or_exported():
     class Secret:
         def __repr__(self):
@@ -72,7 +112,7 @@ def test_default_values_and_annotation_expressions_are_not_evaluated_or_exported
     assert "not-for-discovery" not in encoded
     assert contract["returns"]["kind"] == "unresolved"
     assert contract["parameters"][0]["default_is_none"] is False
-    assert "token=..." in contract["signature"]
+    assert contract["signature"] == "(token=..., *, key=...) -> 'raise_if_evaluated()'"
 
 
 def test_nested_namespace_contract_uses_public_names_and_method_tags():

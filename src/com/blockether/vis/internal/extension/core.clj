@@ -1821,64 +1821,88 @@
     (run-op-after-hooks op env args (run-op-around op env f args))))
 
 (defn- folded-kwargs->positional
-  "Re-expand a folded kwargs dict for the DIRECT-python surface. When the agent
-   calls a symbol in a `python_execution` block with ALL-KEYWORD args
-   (`tool(id=…, n=…)`), CPython folds those kwargs into ONE trailing
-   dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
-   `[env id n]` would then receive the whole `{id n}` map in its `id` slot.
-   Re-expand that lone map
+  "Re-expand folded kwargs for the DIRECT-python surface. When the agent calls a
+   symbol in a `python_execution` block with KEYWORD args (`tool(id=…, n=…)`,
+   `cat(path, start=…, end=…)`), the host door appends them as ONE TRAILING dict
+   positional (see `internal.python.host`). A fixed-arity impl `[env id n]` would
+   then receive the whole `{id n}` map in its `id` slot, and `cat`'s
+   `[path start end]` the `{start end}` map in its `start` slot.
+   Re-expand that map
    into the positional args the symbol's `:call` SHAPE describes, so keyword and
    positional calls bind IDENTICALLY.
 
    Fires ONLY for the unambiguous folded-kwargs case: a MAP `:call` shape, a
-   single NON-empty map arg with all-string keys, every required `:pos` key
+   NON-empty trailing map with all-string keys, every still-unbound `:pos` key
    present, and no undeclared leftover keys unless the shape opts into `:rest`.
+   Args BEFORE that map bind the shape's leading parameters, so a MIXED call
+   (issue #274) reaches the same slots a positional one does. The trailing map is
+   read as keywords only when it is the LONE argument or the door MARKED it:
+   a genuine dict positional (`mcp_call(server, tool, {…})`) is data.
    Everything else — positional calls, function-valued shapes, tools with no
    `:call`, genuine single-map positionals — passes through untouched."
   [shape args]
-  (if (and (map? shape)
-           (= 1 (count args))
-           (map? (first args))
-           (seq (first args))
-           (every? string? (keys (first args))))
-    (let [m
-          (first args)
+  (let [argv
+        (vec args)
 
-          lead
-          (:lead-opt shape)
+        m
+        (peek argv)
 
-          pos
-          (vec (:pos shape))
+        keywords?
+        ;; Only the host door marks kwargs; a positional map stays data.
+        (or (= 1 (count argv))
+            (:com.blockether.vis.internal.python.host/keyword-arguments (meta m)))]
 
-          opt-pos
-          (vec (:opt-pos shape))
+    (if (and (map? shape) keywords? (map? m) (seq m) (every? string? (keys m)))
+      (let [leading
+            (subvec argv 0 (dec (count argv)))
 
-          rest-mode
-          (:rest shape)
-
-          opt-present
-          (take-while #(contains? m %) opt-pos)
-
-          consumed
-          (cond-> (set pos)
             lead
-            (conj lead)
+            (:lead-opt shape)
 
-            (seq opt-present)
-            (into opt-present))
+            pos
+            (vec (:pos shape))
 
-          leftover
-          (apply dissoc m consumed)]
+            opt-pos
+            (vec (:opt-pos shape))
 
-      (if (and (or lead (seq pos) (seq opt-pos))
-               (every? #(contains? m %) pos)
-               (or rest-mode (empty? leftover)))
-        (vec (concat (when (and lead (contains? m lead)) [(get m lead)])
-                     (map #(get m %) pos)
-                     (map #(get m %) opt-present)
-                     (when (and rest-mode (or (= rest-mode :always) (seq leftover))) [leftover])))
-        args))
-    args))
+            rest-mode
+            (:rest shape)
+
+            bound
+            ;; What the leading positionals already filled, in the shape's order.
+            (set (take (count leading) (concat (when lead [lead]) pos opt-pos)))
+
+            lead-open?
+            (boolean (and lead (not (bound lead))))
+
+            pos-open
+            (vec (remove bound pos))
+
+            opt-present
+            (take-while #(contains? m %) (remove bound opt-pos))
+
+            consumed
+            (cond-> (set pos-open)
+              lead-open?
+              (conj lead)
+
+              (seq opt-present)
+              (into opt-present))
+
+            leftover
+            (apply dissoc m consumed)]
+
+        (if (and (or lead (seq pos) (seq opt-pos))
+                 (every? #(contains? m %) pos-open)
+                 (or rest-mode (empty? leftover)))
+          (into leading
+                (concat (when (and lead-open? (contains? m lead)) [(get m lead)])
+                        (map #(get m %) pos-open)
+                        (map #(get m %) opt-present)
+                        (when (and rest-mode (or (= rest-mode :always) (seq leftover)))
+                          [leftover])))
+          args))
+      args)))
 
 (defn- invoke-symbol-wrapper*
   "Full invocation pipeline for an observed tool symbol entry:
@@ -2989,15 +3013,18 @@
     signature))
 
 (defn symbol-signature
-  "Python parameter list for ONE symbol entry. A portable Python contract wins;
-   otherwise :call or implementation arglists supply positionals and :params
-   supplies keyword-only options. Required options have no default; unknown
-   defaults use ... without inspecting host values.
+  "Python signature text for ONE symbol entry, as `inspect.signature` prints it:
+   the parenthesized parameter list and, when known, the return. A portable
+   Python contract wins and carries the declared annotations; otherwise :call or
+   implementation arglists supply untyped positionals and :params supplies
+   keyword-only options. Required options have no default; unknown defaults use
+   ... without inspecting host values.
 
    This describes the canonical named call, not every options-dictionary overload
    the dispatcher accepts. It is inspection metadata, never argument validation.
-   env-python ships it as __vis_sigs__; the deferred wrapper's __wrapped__ lets
-   inspect.signature and help show it instead of the trampoline's (*a, **k)."
+   env-python ships it as __vis_sigs__; the sandbox compiles it into the deferred
+   wrapper's __wrapped__ and __annotations__, so inspect.signature, help and
+   typing.get_type_hints show it instead of the trampoline's (*a, **k)."
   [entry]
   (when (:ext.symbol/fn entry)
     (or (get-in entry [:ext.symbol/contract "signature"])
@@ -3014,12 +3041,16 @@
                        (:rest shape)
                        (not= :never (:rest shape)))
                 (assoc shape :pos [])
-                shape)]
+                shape)
 
-          (option-keys-signature (or (when (map? shape) (call-shape-signature shape))
-                                     (arglists-signature (:ext.symbol/arglists entry)
-                                                         (boolean (:ext.symbol/inject-env? entry))))
-                                 params)))))
+              parameters
+              (option-keys-signature (or (when (map? shape) (call-shape-signature shape))
+                                         (arglists-signature (:ext.symbol/arglists entry)
+                                                             (boolean (:ext.symbol/inject-env?
+                                                                        entry))))
+                                     params)]
+
+          (when parameters (str "(" parameters ")"))))))
 
 (defn symbol-keys-line
   "`Keys: language · code (REQUIRED) · id` — the options-dict vocabulary from
@@ -3071,7 +3102,7 @@
     (when (util/non-blank-string? text) text)))
 
 (defn sandbox-symbol-signatures
-  "Map `{sandbox-symbol -> python-parameter-list}` for every engine-bound
+  "Map `{sandbox-symbol -> python-signature-text}` for every engine-bound
    callable across the registered extensions, from `symbol-signature`. The
    signature twin of `sandbox-symbol-docs`, seeded into the sandbox by
    `env-python/build-agent-context` and keyed the same way: by the BARE symbol,

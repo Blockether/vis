@@ -362,7 +362,31 @@
                               [{"id" "x"}])))
       ;; empty / multi-arg / non-map — never touched.
       (expect (= [] (folded->pos {:pos ["id"]} [])))
-      (expect (= ["x" {"n" 1}] (folded->pos {:pos ["id"]} ["x" {"n" 1}])))))
+      (expect (= ["x" {"n" 1}] (folded->pos {:pos ["id"]} ["x" {"n" 1}]))))
+  (it "keyword args bind after the leading positionals — issue #274"
+      ;; `cat(path, start=…, end=…)`: the door appends the MARKED kwargs dict, and
+      ;; the parameters the leading args did not fill take it — the same slots an
+      ;; all-keyword or all-positional call reaches.
+      (let [kw #(with-meta % {:com.blockether.vis.internal.python.host/keyword-arguments true})]
+        (expect (= ["data.yml" 1 35]
+                   (folded->pos {:pos ["path"] :opt-pos ["start" "end"]}
+                                ["data.yml" (kw {"start" 1 "end" 35})])))
+        (expect (= ["data.yml" 1]
+                   (folded->pos {:pos ["path"] :opt-pos ["start" "end"]}
+                                ["data.yml" (kw {"start" 1})])))
+        ;; an UNMARKED trailing dict is a genuine positional — an MCP tool's own args.
+        (expect (= ["linear" "get_issue" {"args" {"id" 7}}]
+                   (folded->pos {:pos ["server"] :opt-pos ["tool" "args"]}
+                                ["linear" "get_issue" {"args" {"id" 7}}])))
+        ;; a :rest shape keeps the trailing opts dict its impl already expects.
+        (expect (= ["python" {"cwd" "/tmp"}]
+                   (folded->pos {:lead-opt "language" :rest :always}
+                                ["python" (kw {"cwd" "/tmp"})])))
+        ;; a SKIPPED optional cannot be spread positionally, exactly as in the
+        ;; all-keyword case: the map passes through and the tool refuses it.
+        (expect (= ["data.yml" {"end" 35}]
+                   (folded->pos {:pos ["path"] :opt-pos ["start" "end"]}
+                                ["data.yml" (kw {"end" 35})]))))))
 
 ;; ── ONE context for the extension and the session (issue #104) ────────────────
 ;;
@@ -536,22 +560,22 @@
   ;; and no docstring, so `inspect.signature(run_tests)` / `help(run_tests)`
   ;; could not show a single parameter the host declares for it.
   (it "reads a Python parameter list off the declared :call shape"
-      (expect (= "language=None, **kwargs"
+      (expect (= "(language=None, **kwargs)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :call {:lead-opt "language"
                                                                  :rest :always}})))
-      (expect (= "server, tool=None, args=None"
+      (expect (= "(server, tool=None, args=None)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :call {:pos ["server"]
                                                                  :opt-pos ["tool" "args"]}}))))
   (it "falls back to the arglists, dropping the injected env and snake-casing"
-      (expect (= "command, opts=None, **kwargs"
+      (expect (= "(command, opts=None, **kwargs)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :arglists '([command] [command opts])})))
-      (expect (= "session_id=None, **kwargs"
+      (expect (= "(session_id=None, **kwargs)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :arglists '([] [session-id])})))
-      (expect (= "id"
+      (expect (= "(id)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :inject-env? true
                                                           :arglists '([env id])
@@ -565,9 +589,9 @@
   (it "answers the EMPTY parameter list for a tool that takes nothing"
       ;; `languages()`. nil here would leave the sandbox reporting the async
       ;; trampoline's `(*a, **k)` — arguments the tool actually refuses.
-      (expect (= ""
+      (expect (= "()"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn :arglists '([])})))
-      (expect (= ""
+      (expect (= "()"
                  (extension/symbol-signature
                    #:ext.symbol{:fn sample-channel-fn :inject-env? true :arglists '([env])}))))
   (it "exposes declared option keys, requiredness and masked defaults"
@@ -575,48 +599,55 @@
       (doseq [[entry expected]
               [[#:ext.symbol{:call {:pos ["content"] :rest :always}
                              :params [{:name "kind" :required? true} {:name "title"}]}
-                "content, *, kind, title=..., **kwargs"]
+                "(content, *, kind, title=..., **kwargs)"]
                [#:ext.symbol{:call {:lead-opt "language" :rest :always}
                              :params [{:name "language"} {:name "code" :required? true}
-                                      {:name "cwd"}]} "language=None, *, code, cwd=..., **kwargs"]
+                                      {:name "cwd"}]} "(language=None, *, code, cwd=..., **kwargs)"]
                [#:ext.symbol{:call {:pos [] :rest :always} :params [{:name "group_id"}]}
-                "*, group_id=..., **kwargs"]
+                "(*, group_id=..., **kwargs)"]
                [#:ext.symbol{:call {:pos ["options"] :rest :always}
                              :params [{:name "query"} {:name "paths"}]}
-                "*, query=..., paths=..., **kwargs"]
+                "(*, query=..., paths=..., **kwargs)"]
                [#:ext.symbol{:arglists '([command] [command opts])
                              :params [{:name "cwd"} {:name "env"}]}
-                "command, opts=None, *, cwd=..., env=..., **kwargs"]
+                "(command, opts=None, *, cwd=..., env=..., **kwargs)"]
                [#:ext.symbol{:arglists '([id] [id opts])
                              :params [{:name "id" :required? true} {:name "lines"}]}
-                "id, opts=None, *, lines=..., **kwargs"]]]
+                "(id, opts=None, *, lines=..., **kwargs)"]]]
         (expect (= expected
                    (extension/symbol-signature (assoc entry :ext.symbol/fn sample-channel-fn))))))
-  (it "does not add options to closed shapes or replace Python extension signatures"
-      (expect (= "message=None"
-                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
-                                                          :call {:lead-opt "message" :rest :never}
-                                                          :params [{:name "message"}]})))
-      (expect (= "name, /, *, loud=..., note=None"
-                 (extension/symbol-signature
-                   #:ext.symbol{:fn sample-channel-fn
-                                :contract {"signature" "name, /, *, loud=..., note=None"}
-                                :call {:pos ["options"] :rest :always}
-                                :params [{:name "ignored"}]}))))
+  (it
+    "does not add options to closed shapes or replace Python extension signatures"
+    (expect (= "(message=None)"
+               (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                        :call {:lead-opt "message" :rest :never}
+                                                        :params [{:name "message"}]})))
+    ;; #273: a Python contract's signature already carries its annotations and
+    ;; return; it ships verbatim.
+    (expect
+      (=
+        "(name: str, /, *, loud: bool = ..., note: str | None = None) -> 'Results'"
+        (extension/symbol-signature
+          #:ext.symbol{:fn sample-channel-fn
+                       :contract
+                       {"signature"
+                        "(name: str, /, *, loud: bool = ..., note: str | None = None) -> 'Results'"}
+                       :call {:pos ["options"] :rest :always}
+                       :params [{:name "ignored"}]}))))
   (it "signs the live registry's named options without duplicating leading arguments"
       (let [sigs (extension/sandbox-symbol-signatures)]
-        (expect (str/starts-with? (get sigs 'run_tests) "language=None, *, path=..."))
+        (expect (str/starts-with? (get sigs 'run_tests) "(language=None, *, path=..."))
         (expect (str/includes? (get sigs 'shell) "cwd=..."))
-        (expect (str/starts-with? (get sigs 'grep) "*, query=..., paths=..."))
-        (expect (str/starts-with? (get sigs 'council.publish) "content, *, kind, "))))
+        (expect (str/starts-with? (get sigs 'grep) "(*, query=..., paths=..."))
+        (expect (str/starts-with? (get sigs 'council.publish) "(content, *, kind, "))))
   (it "describes closed session and agent calls without imaginary keyword options"
       (let [sigs (extension/sandbox-symbol-signatures)]
-        (doseq [[sym expected] {'read-session "target=None"
-                                'get-session "target=None"
-                                'list-sessions "search=None"
-                                'council.subagents ""
-                                'council.cancel "session_id"
-                                '_shell-stop "id"}]
+        (doseq [[sym expected] {'read-session "(target=None)"
+                                'get-session "(target=None)"
+                                'list-sessions "(search=None)"
+                                'council.subagents "()"
+                                'council.cancel "(session_id)"
+                                '_shell-stop "(id)"}]
           (expect (= expected (get sigs sym)) (str sym)))
         (expect (str/includes? (get sigs '_shell-wait) "offset=..."))
         (expect (str/includes? (get sigs '_shell-type) "is_enter=..."))))

@@ -648,6 +648,7 @@
                              "view" {"id" rid}}
                             {:store? true}))
             (expect (= ["req-a" "req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
+            (expect (= 2 (bus/session-waiting-count sid)))
             (bus/publish! sid
                           {"schema" 1
                            "seq" 2
@@ -657,6 +658,10 @@
                            "view_id" "req-a"}
                           {:store? true})
             (expect (bus/session-waiting? sid))
+            ;; The flag alone cannot say that answering one of the two moved
+            ;; anything, which is exactly what a lit badge looked like. The
+            ;; COUNT is what a surface counts down.
+            (expect (= 1 (bus/session-waiting-count sid)))
             (expect (= ["req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))))))
   (it "drops the demand at the turn's terminal, answered or not"
       (with-temp-journal

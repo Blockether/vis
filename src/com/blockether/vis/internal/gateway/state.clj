@@ -889,8 +889,8 @@
 
 (defn fleet-snapshot
   "What the fleet is DOING right now: `{sid {\"is_live\" … \"is_awaiting_input\" …
-   \"current_turn_id\" …}}`, holding only sessions that are running or parked on a
-   human — its size is the busy fleet, never the store.
+   \"awaiting_input_count\" … \"current_turn_id\" …}}`, holding only sessions that
+   are running or parked on a human — its size is the busy fleet, never the store.
 
    Read from the cross-process markers (`bus/live-turns`, `bus/waiting-requests`),
    never from this registry: a sibling process's turn is mirrored here only once
@@ -904,10 +904,15 @@
         (bus/waiting-requests)]
 
     (reduce (fn [acc sid]
-              (assoc acc
-                sid {"is_live" (contains? live sid)
-                     "is_awaiting_input" (boolean (seq (get waiting sid)))
-                     "current_turn_id" (get live sid)}))
+              ;; The COUNT beside the flag: a session parked on two requests is
+              ;; down to one the moment the operator answers one of them, and a
+              ;; list that reads `true` both times cannot show that anything moved.
+              (let [pending (count (get waiting sid))]
+                (assoc acc
+                  sid {"is_live" (contains? live sid)
+                       "is_awaiting_input" (pos? pending)
+                       "awaiting_input_count" pending
+                       "current_turn_id" (get live sid)})))
             {}
             (into (set (keys live)) (keys waiting)))))
 
@@ -920,7 +925,10 @@
    Carries no `seq`/`ts`: `publish-fleet!` stamps those, so this stays a function
    of its arguments and a test can state the contract without a clock."
   [before after]
-  (let [idle {"is_live" false "is_awaiting_input" false "current_turn_id" nil}]
+  (let [idle {"is_live" false
+              "is_awaiting_input" false
+              "awaiting_input_count" 0
+              "current_turn_id" nil}]
     (into []
           (keep (fn [sid]
                   (let [was (get before sid idle)
@@ -5021,7 +5029,11 @@
                  ;; that will move it is the operator. Cross-process (see
                  ;; `bus/waiting-requests`), so the phone, the TUI picker and this
                  ;; gateway's own list all say INPUT NEEDED about the same session.
-                 :is_awaiting_input (bus/session-waiting? sid)
+                  :is_awaiting_input (bus/session-waiting? sid)
+                  ;; …and HOW MANY. One boolean for N open requests is why
+                  ;; answering one of two left INPUT NEEDED lit with nothing
+                  ;; saying a second request was still parked behind it.
+                  :awaiting_input_count (bus/session-waiting-count sid)
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
                  :answer_count (long (or (:answer-count stats) 0))
@@ -5087,6 +5099,7 @@
            (smodel/model-of db sid)
            {:routing_locked (persistance/db-routing-locked? db sid)
             :pending_input (bus/session-waiting? sid)
+            :pending_input_count (bus/session-waiting-count sid)
             :usage (session-usage-info sid)})))
 
 (defn- agent-list

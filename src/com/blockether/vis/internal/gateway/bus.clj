@@ -281,6 +281,16 @@
   [sid]
   (boolean (seq (get (waiting-requests) (str sid)))))
 
+(defn session-waiting-count
+  "HOW MANY unanswered human-input requests `sid` is parked on, across every vis
+   process on this machine — 0 when none.
+
+   A surface that knows only the boolean paints the same badge for one request
+   and for five, so answering one of two looks like it changed nothing. This is
+   what lets a row say `INPUT NEEDED ×2` and then drop it to `×1`."
+  [sid]
+  (count (get (waiting-requests) (str sid))))
+
 (defn- mark-waiting!
   "Announce that `sid` is blocked on `request` until somebody answers it. A
    marker left by a DEAD process is replaced rather than extended, so an

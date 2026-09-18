@@ -1241,13 +1241,15 @@
 
 (defn live-view-log
   "One page of a retained log, searched literally without case sensitivity.
-   `from` counts matches; the wire response includes original line numbers."
+   `from` counts matches; the wire response includes original line numbers.
+   The node rides the query string: a surface keys its logs by free text (a
+   Jenkins job is `folder/job`), and a `/` in a path segment never reaches a route."
   [sid view-id node-id from limit query]
   (send-json! "GET"
               (str "/v1/sessions/" (enc sid)
                    "/views/live/" (enc view-id)
-                   "/log/" (enc node-id)
-                   "?from=" from
+                   "/log?node=" (enc node-id)
+                   "&from=" from
                    "&limit=" limit
                    "&query=" (enc query))))
 

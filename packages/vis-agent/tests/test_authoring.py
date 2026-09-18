@@ -78,7 +78,7 @@ def test_documented_cross_module_wrapper_example(monkeypatch):
     tools = modules["tools"].Tools()
     contract = vis.Symbol(tools, name="tools").contract["members"][0]
     assert _contracts.validate("symbol", "callable", contract) == contract
-    assert contract["signature"] == "text=..."
+    assert contract["signature"] == "(text: str = ...) -> tuple['Result', ...]"
     result_type = contract["returns"]
     assert result_type["name"] == "tuple"
     assert result_type["variadic"] is True
@@ -170,7 +170,11 @@ def test_greeter_derives_call_shape_with_a_semantic_only_docstring(monkeypatch):
     document = catalog.help("greet.hello").text
     assert "Preserves capitalization unless uppercase is requested." in spec.description
     assert "False" not in spec.description
-    assert spec.signature == contract["signature"] == "name, *, uppercase=..."
+    assert (
+        spec.signature
+        == contract["signature"]
+        == "(name: str, *, uppercase: bool = ...) -> 'Greeting'"
+    )
     name, uppercase = spec.parameters
     assert name.required and name.type.name == "str"
     assert uppercase.kind == "keyword_only" and uppercase.type.name == "bool"
@@ -178,7 +182,7 @@ def test_greeter_derives_call_shape_with_a_semantic_only_docstring(monkeypatch):
     assert not uppercase.default_is_none
     assert spec.returns.name == "Greeting"
     assert [field.name for field in spec.returns.fields] == ["text", "characters"]
-    assert "greet.hello(name, *, uppercase=...)" in document
+    assert "greet.hello(name: str, *, uppercase: bool = ...) -> 'Greeting'" in document
     assert "Effect: observation" in document
     assert "uppercase: bool (keyword_only; default omitted)" in document
     assert "Returns: Greeting" in document

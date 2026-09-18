@@ -4778,36 +4778,41 @@
   ;; was named `from` — a Python KEYWORD — the signature stub would not compile,
   ;; so `inspect.signature(cat)` fell back to `(*a, **k)`. Calling the tool fn
   ;; directly, which is what every other cat/patch test does, sees neither.
-  (it "cat reads and patch writes from real Python, and both report their parameters"
-      (let [rel
-            (write-temp! "cat/sandbox.txt" "alpha\nbeta\ngamma\n")
+  (it
+    "cat reads and patch writes from real Python, and both report their parameters"
+    (let [rel
+          (write-temp! "cat/sandbox.txt" "alpha\nbeta\ngamma\n")
 
+          ctx
+          (:python-context (tpc/new-context (extension/builtin-sandbox-bindings (constantly nil))))
+
+          result
+          (ep/run-python-block
             ctx
-            (:python-context (tpc/new-context (extension/builtin-sandbox-bindings (constantly
-                                                                                    nil))))
+            (str "import inspect\n"
+                 "p = "
+                 (pr-str rel)
+                 "\n"
+                 "print(inspect.signature(cat))\n" "print(inspect.signature(patch))\n"
+                 "text = cat(p)\n" "print(text)\n"
+                 "w = cat(p, start=2, end=3)\n" "print('window:', ' | '.join(w.splitlines()))\n"
+                 "print(patch(p, [{'from': text.splitlines()[1].split('│ ')[0], "
+                 "'replace': 'BETA'}]))\n")
+            "t1/i2")
 
-            result
-            (ep/run-python-block
-              ctx
-              (str "import inspect\n"
-                   "p = "
-                   (pr-str rel)
-                   "\n"
-                   "print(inspect.signature(cat))\n" "print(inspect.signature(patch))\n"
-                   "text = cat(p)\n" "print(text)\n"
-                   "print(patch(p, [{'from': text.splitlines()[1].split('│ ')[0], "
-                   "'replace': 'BETA'}]))\n")
-              "t1/i2")
+          out
+          (str (:stdout result))]
 
-            out
-            (str (:stdout result))]
-
-        (expect (nil? (:error result)))
-        (expect (string/includes? out "(path, start=None, end=None)"))
-        (expect (string/includes? out "(path, edits)"))
-        (expect (re-find #"(?m)^1:[0-9a-f]{3}│ alpha$" out))
-        (expect (string/includes? out "→ 1 line"))
-        (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))
+      (expect (nil? (:error result)))
+      (expect (string/includes? out "(path, start=None, end=None)"))
+      (expect (string/includes? out "(path, edits)"))
+      (expect (re-find #"(?m)^1:[0-9a-f]{3}│ alpha$" out))
+      ;; Issue #274: the keyword bounds a block writes reach the same window
+      ;; `cat(p, 2, 3)` reads — the door's kwargs dict is re-expanded, not
+      ;; handed to `start` as an options map.
+      (expect (re-find #"(?m)^window: 2:[0-9a-f]{3}│ beta \| 3:[0-9a-f]{3}│ gamma$" out))
+      (expect (string/includes? out "→ 1 line"))
+      (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))
 
 ;; =============================================================================
 ;; `ls` ORDERING, and the two sources allowed to answer a listing.

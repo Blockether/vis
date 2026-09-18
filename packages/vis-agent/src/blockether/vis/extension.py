@@ -949,6 +949,8 @@ def _callable_contract(fn, name, tag, doc):
     parameters, safe = [], []
     for item in signature.parameters.values():
         has_default = item.default is not inspect.Parameter.empty
+        annotated = item.annotation is not inspect.Parameter.empty
+        spec = _contract_type(item.annotation, namespace)
         parameters.append(
             {
                 "name": item.name,
@@ -957,30 +959,72 @@ def _callable_contract(fn, name, tag, doc):
                 and item.kind not in (item.VAR_POSITIONAL, item.VAR_KEYWORD),
                 "has_default": has_default,
                 "default_is_none": item.default is None,
-                "type": _contract_type(item.annotation, namespace),
+                "type": spec,
             }
         )
         safe.append(
             item.replace(
-                annotation=inspect.Parameter.empty,
+                annotation=_AnnotationSource(_contract_type_source(spec))
+                if annotated
+                else inspect.Parameter.empty,
                 default=(None if item.default is None else ...)
                 if has_default
                 else inspect.Parameter.empty,
             )
         )
+    returns = _contract_type(signature.return_annotation, namespace)
+    # The signature text reads as `inspect.signature` prints it — parameters,
+    # annotations and return — with defaults masked, so a sandbox can stamp it
+    # onto the tool it binds and `inspect`/`typing` there answer the same facts.
+    portable = signature.replace(
+        parameters=safe,
+        return_annotation=_AnnotationSource(_contract_type_source(returns))
+        if signature.return_annotation is not inspect.Signature.empty
+        else inspect.Signature.empty,
+    )
     return {
         "version": 1,
         "name": name,
         "tag": tag,
         "description": doc,
-        "signature": str(
-            signature.replace(
-                parameters=safe, return_annotation=inspect.Signature.empty
-            )
-        )[1:-1].replace("=Ellipsis", "=..."),
+        "signature": str(portable)
+        .replace("=Ellipsis", "=...")
+        .replace("= Ellipsis", "= ..."),
         "parameters": parameters,
-        "returns": _contract_type(signature.return_annotation, namespace),
+        "returns": returns,
     }
+
+
+class _AnnotationSource(str):
+    """Annotation text that `inspect.Signature` prints as written, not quoted."""
+
+    __slots__ = ()
+
+    def __repr__(self):
+        return str.__str__(self)
+
+
+def _contract_type_source(spec):
+    """The annotation `spec` reads as in a signature: source text a sandbox can
+    read statically. Builtins, typing forms and generic origins keep their
+    names; every other name is quoted, a forward reference that is never
+    evaluated."""
+    arguments = spec.get("arguments", [])
+    if spec["kind"] == "literal":
+        return "Literal[" + ", ".join(repr(value) for value in spec["values"]) + "]"
+    if spec["kind"] == "union":
+        return " | ".join(_contract_type_source(a) for a in arguments)
+    if arguments:
+        return (
+            spec["name"]
+            + "["
+            + ", ".join(_contract_type_source(a) for a in arguments)
+            + (", ..." if spec.get("variadic") else "")
+            + "]"
+        )
+    if spec["kind"] in ("any", "null", "scalar"):
+        return spec["name"]
+    return repr(spec["name"])
 
 
 def _contract_type_text(spec, record_name=None):
@@ -1618,7 +1662,7 @@ class Catalog:
                         }
                     )
                 )
-                documents[name] = f"{name}({contract['signature']})\n\n{member['doc']}"
+                documents[name] = f"{name}{contract['signature']}\n\n{member['doc']}"
         entries = dict(tools)
         for name in tools:
             parts = name.split(".")
@@ -3965,7 +4009,7 @@ def _assert_catalog(
     for tool in tools:
         document = catalog.help(tool.name)
         assert document.tool == tool.name, (tool.name, "help name")
-        assert f"{tool.name}({tool.signature})" in document.text, (
+        assert f"{tool.name}{tool.signature}" in document.text, (
             tool.name,
             "help signature",
         )
