@@ -127,6 +127,14 @@
 
 (defn- sandbox-applicable? [] (and (pj/supported?) (not (runtime/jailed?))))
 
+(defn- pattern-enforcing-host?
+  "True where the OS takes a deny PATTERN as written, so a file created after the
+   snapshot is denied as soon as it exists. Seatbelt compiles the pattern into the
+   profile; bubblewrap binds mount points and has nothing to bind for a glob — the
+   platform split `jail.md` documents under \"Deny specific files\"."
+  []
+  (str/starts-with? (System/getProperty "os.name") "Mac"))
+
 (deftest native-spawn-is-off-by-default
   (let [dir (doto (io/file (System/getProperty "java.io.tmpdir")
                            (str "visjail-direct-" (System/nanoTime)))
@@ -658,10 +666,13 @@
                  (is (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))
                  ;; #263: this one appears AFTER the policy was built, so only the rule
                  ;; itself can cover it — reading it here is the leak the issue reported.
-                 (.mkdirs (io/file root "late"))
-                 (spit late "TOKEN=secret")
-                 (let [late-read (read-file late)]
-                   (is (not (zero? (:exit late-read))))
-                   (is (not (str/includes? (:out late-read) "TOKEN=secret"))))))))
+                 ;; Only a pattern-enforcing host answers for it; elsewhere the child keeps
+                 ;; exactly the paths the snapshot expanded, and Vis' own tools hold the rule.
+                 (when (pattern-enforcing-host?)
+                   (.mkdirs (io/file root "late"))
+                   (spit late "TOKEN=secret")
+                   (let [late-read (read-file late)]
+                     (is (not (zero? (:exit late-read))))
+                     (is (not (str/includes? (:out late-read) "TOKEN=secret")))))))))
          (finally (doseq [file (reverse (file-seq (io/file root)))]
                     (io/delete-file file true))))))
