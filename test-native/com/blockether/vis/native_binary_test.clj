@@ -1059,7 +1059,10 @@
                                    (.getAbsolutePath (io/file dir "sessions")) "--raw"
                                    "Run the supplied Python fixture and finish after its timeout."]
                                   420)
-                      reports (->> (file-seq (io/file dir ".vis/run"))
+                      ;; A worker's run directory IS its diagnostic log directory,
+                      ;; `~/.vis/logs/<UTC date>/pyext-*`, and the hang report is written
+                      ;; beside that worker's own log.
+                      reports (->> (file-seq (io/file dir ".vis/logs"))
                                    (filter #(= "hang.edn" (.getName ^File %))))]
 
                   (expect finished? "A GIL-held worker must not wedge the linked agent")

@@ -237,7 +237,7 @@
                                           "\n" (pr-str tool-results)
                                           "\n" (str/join "\n"
                                                          (for [^File file
-                                                               (file-seq (io/file dir ".vis/run"))
+                                                               (file-seq (io/file dir ".vis/logs"))
                                                                :when (= "worker.log"
                                                                         (.getName file))]
 
