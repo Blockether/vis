@@ -770,9 +770,15 @@ function TableRows({
                 onClick={isSelectable ? () => onSelect?.(node.id, [row.id]) : undefined}
               >
                 <td className="p-0 align-middle">
+                  {/* A ROW IS A BAND, NOT A TOUCH CELL. The regular row stands 48px tall so a
+                      thumb can land anywhere on it; on a desk that turned twenty variants into a
+                      column of boxes taller than the run's own header. The compact band is 36px
+                      under a thumb — its invisible slop still answers at 44px — and 32px under a
+                      pointer, the height the head and the branch rows beside it already keep. */}
                   {isSelectable ? (
                     <ListRow
                       inset="live-view"
+                      density="compact"
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
@@ -782,7 +788,7 @@ function TableRows({
                       </span>
                     </ListRow>
                   ) : (
-                    <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-2">
+                    <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
                       <ToneMark tone={row.tone} />
                       <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
                     </span>

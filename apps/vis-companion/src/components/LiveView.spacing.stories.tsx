@@ -156,8 +156,21 @@ const releaseJobs: Story = {
       await expect(getComputedStyle(rows[0]).backgroundColor).not.toBe(
         getComputedStyle(rows[1]).backgroundColor,
       );
+      // A ROW IS A BAND, NOT A TOUCH CELL (user report: on a desk the variants read as a column
+      // of boxes). Under a thumb the face still answers at 44px through its invisible slop; under
+      // a pointer it stands 32px, the height the head and the branch rows beside it keep.
+      const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
       for (const row of rows) {
-        await expect(row.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+        const height = row.getBoundingClientRect().height;
+        if (pointer) {
+          await expect(height).toBeGreaterThanOrEqual(28);
+          await expect(height).toBeLessThanOrEqual(36);
+        } else {
+          const face = row.querySelector('button')!;
+          await expect(parseFloat(getComputedStyle(face, '::after').height)).toBeGreaterThanOrEqual(
+            44,
+          );
+        }
       }
       const activated = canvas.getByRole('button', { name: 'Select Package Windows x64' });
       await userEvent.click(activated);
