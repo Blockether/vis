@@ -80,7 +80,7 @@ const TRANSCRIPTION_STATUS_LABEL: Record<string, string> = {
  * rather than inventing a fourth chevron for the same question.
  *
  * The words are painted as SPEECH QUOTED, not as code: curly quotes around them,
- * italic, and justified to the column. A memo is somebody talking, and what the row
+ * italic, and wrapped to the column. A memo is somebody talking, and what the row
  * owes the reader is that it is a quotation of the audio directly above it — the mono
  * code face said "machine output" about a sentence a person said. There is no mic
  * beside the player either: the control already announces itself as audio, and a glyph

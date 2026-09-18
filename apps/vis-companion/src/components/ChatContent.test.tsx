@@ -143,7 +143,7 @@ describe('provider failure card', () => {
   });
 });
 describe('spoken transcript', () => {
-  it('opens as justified transcript under a waveform you can seek', () => {
+  it('opens as a transcript under a waveform you can seek', () => {
     const html = renderToStaticMarkup(
       <ContentBlockView
         block={{
@@ -530,8 +530,9 @@ describe('Markdown tool card body', () => {
     }
     view.rerender(<Markdown compact>{content}</Markdown>);
     for (const element of view.container.querySelectorAll('p, li')) {
-      expect(element).toHaveClass('text-justify');
+      expect(element).toHaveClass('text-pretty');
       expect(element).not.toHaveClass('text-meta');
+      expect(element).not.toHaveClass('text-justify');
     }
   });
 
@@ -1734,7 +1735,7 @@ describe('a vis-doc fence', () => {
 
 // Reported from a phone: a table's first column was one atom wide — `manifest.edn`
 // painted as six stacked fragments and `THIRD_PARTY_MODELS.md` as eight. Inline
-// `code` carries `break-all` so the justifier has a stop inside an atom it cannot
+// `code` carries `break-all` so wrapping has a stop inside an atom it cannot
 // break, and in a table that makes the column's MIN-CONTENT one character: the auto
 // layout handed the file column 58px of a 366px bubble.
 describe('a markdown table', () => {
@@ -1753,9 +1754,9 @@ describe('a markdown table', () => {
     expect(text(markup)).toContain('manifest.edn');
   });
 
-  // Regression, user correction: the narrow-phone spacing fix forced every answer
-  // back to a ragged edge, removing the transcript's intended justified column.
-  it('fully justifies Markdown prose while every code surface stays left-aligned', () => {
+  // Regression, user request: the transcript is NOT a justified column. Prose reads
+  // flush left with a ragged right edge, and every code surface stays left-aligned.
+  it('leaves Markdown prose ragged-right while every code surface stays left-aligned', () => {
     const markdown = renderToStaticMarkup(
       <Markdown>
         {
@@ -1771,7 +1772,8 @@ describe('a markdown table', () => {
       expect(/<code class="[^"]*inline-block/.test(markup)).toBe(true);
       expect(/<code class="[^"]*text-left/.test(markup)).toBe(true);
     }
-    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
+    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(false);
+    expect(/<p class="[^"]*text-pretty/.test(markdown)).toBe(true);
     expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
     expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);
   });

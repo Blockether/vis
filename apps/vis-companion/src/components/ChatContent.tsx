@@ -93,9 +93,9 @@ import {
 } from '../lib/media-frame';
 import { MediaGrid, MediaPlate, MediaRecording, MediaTile, mediaMeta, mediaSummary } from './Media';
 
-// An inline formatting context inherits its paragraph's justification. Code is an
-// atomic value instead: its own box keeps authored spaces natural while still
-// wrapping multi-word commands within a narrow transcript column.
+// Inline code is an ATOMIC value rather than running words: its own box keeps the
+// authored spaces intact while still wrapping multi-word commands within a narrow
+// transcript column.
 const INLINE_CODE_CLASS =
   'mx-px inline-block max-w-full rounded-none bg-result-path px-0.5 py-px text-left font-mono font-medium text-result-path-foreground';
 // Transcript nodes the stream appends rise + fade in instead of popping into
@@ -531,7 +531,7 @@ export const Markdown = memo(function Markdown({
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
 }) {
   // Tool and activity prose stays on the same compact scale as its tables and code.
-  // Only transcript messages use the fully justified reading column.
+  // Only transcript messages use the full-size reading column.
   const runningText = nested ? 'text-meta text-left' : PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
@@ -1084,7 +1084,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
         em: ({ children: content }) => <em>{content}</em>,
         del: ({ children: content }) => <del>{content}</del>,
         // The code span inherits the line's font size while its own inline box
-        // keeps paragraph justification out of the authored value.
+        // keeps the authored value whole inside the paragraph.
         code: ({ children: code }) => <code className={INLINE_CODE_CLASS}>{code}</code>,
         a: ({ children: label, href }) =>
           href && /^https?:\/\//i.test(href) ? (
@@ -3875,9 +3875,9 @@ export const UserMessage = memo(function UserMessage({
       className={fill ? mediaTileContentClass : mediaContentClass}
     />
   );
-  // The bubble uses the same justified prose rule as answers. Its raw text can contain
+  // The bubble uses the same prose rule as answers. Its raw text can contain
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
-  // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
+  // the last-resort overflow guard while hyphenation keeps the rag even.
   return (
     <article className="mt-4 w-full">
       <div className="mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold text-you-role mouse:min-h-7">
