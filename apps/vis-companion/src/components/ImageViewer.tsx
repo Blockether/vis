@@ -866,16 +866,7 @@ export function ImageViewer({
           className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-dialog-hint"
           aria-live="polite"
         >
-          {status ||
-            (drawing
-              ? onApply
-                ? applyLabel === 'Save'
-                  ? 'Draw on the image, then use the check.'
-                  : `Draw on the image, then ${applyLabel}.`
-                : 'Draw on the image, then use the check to copy or share it.'
-              : gallery
-                ? `${step + 1} of ${gallery.length} · swipe for the next image, or press ← and →.`
-                : 'Pinch, scroll, or double-click to zoom, then Trim to keep just that.')}
+          {status || (gallery ? `${step + 1} of ${gallery.length}` : '')}
         </div>
       </div>
     </div>

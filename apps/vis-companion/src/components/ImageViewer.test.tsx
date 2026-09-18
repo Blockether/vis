@@ -178,7 +178,6 @@ describe('ImageViewer', () => {
     const trim = control('Trim to view');
     expect(trim.textContent).toBe('');
     expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('Trim');
 
     // jsdom gives every box a zero rect, which is exactly "the frame already
     // shows the whole picture" — the tap must explain itself, never crop.
@@ -250,14 +249,13 @@ describe('ImageViewer', () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
   });
 
-  // The promise under the buttons follows the control that is actually there:
-  // without `onApply`, the check only puts the pen down before copy or share.
-  it('says what the drawing check does, and only offers Apply when there is somewhere to apply it', () => {
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('to zoom');
+  // The line under the buttons reports status, not instructions: entering
+  // drawing mode leaves it empty, and Apply appears only where there is
+  // somewhere to apply it.
+  it('keeps the status line to status, and only offers Apply when there is somewhere to apply it', () => {
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
     act(() => control('Draw on image').click());
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
-      'Draw on the image, then use the check to copy or share it.',
-    );
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
 
     act(() =>
       root.render(
@@ -716,11 +714,9 @@ describe('a gallery in the viewer', () => {
     expect(title()).toBe('three.png');
   });
 
-  it('says where the reader stands and how to move', () => {
+  it('says where the reader stands', () => {
     open(0);
-    const hint = document.querySelector('[aria-live="polite"]')?.textContent;
-    expect(hint).toContain('1 of 3');
-    expect(hint).toContain('swipe');
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('1 of 3');
   });
 
   // A viewer with nowhere to step must not step: a lone picture sliding under the
