@@ -284,9 +284,6 @@ export const Marks: Story = {
               <IconButton label={`${variant} unavailable`} variant={variant} disabled>
                 <SettingsIcon />
               </IconButton>
-              <IconButton label={`${variant} row action`} variant={variant} edge fullCell>
-                <SettingsIcon />
-              </IconButton>
             </span>
           ),
         )}

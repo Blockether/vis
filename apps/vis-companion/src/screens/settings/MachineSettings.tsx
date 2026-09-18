@@ -900,8 +900,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             label="Add an MCP server"
             title="Add an MCP server"
             onClick={() => openForm(null)}
-            edge
-            fullCell
           >
             <PlusIcon className="size-4" />
           </IconButton>

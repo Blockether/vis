@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { expect, userEvent } from 'storybook/test';
-import { PlusIcon } from '../../components/icons';
+import { PencilIcon, PlusIcon } from '../../components/icons';
+import { SwipeActions } from '../../components/SwipeActions';
 import {
   ChoiceCell,
   IconButton,
@@ -161,7 +162,7 @@ export const HeaderOnlyPanels: Story = {
   },
 };
 
-/** Section actions end on one rail, even when a switch is the entire panel. */
+/** Section marks center on the row rail; a switch still ends on the gutter. */
 export const HeaderRhythm: Story = {
   args: { title: 'Machines', children: null },
   render: function Render(args) {
@@ -171,7 +172,7 @@ export const HeaderRhythm: Story = {
       <SettingsColumn
         {...args}
         action={
-          <IconButton variant="quiet" label="Add a machine" edge fullCell>
+          <IconButton variant="quiet" label="Add a machine">
             <PlusIcon className="size-4" />
           </IconButton>
         }
@@ -181,7 +182,7 @@ export const HeaderRhythm: Story = {
           <header>
             <SettingsHeader
               action={
-                <IconButton variant="quiet" label="Add a provider" edge fullCell>
+                <IconButton variant="quiet" label="Add a provider">
                   <PlusIcon className="size-4" />
                 </IconButton>
               }
@@ -191,6 +192,23 @@ export const HeaderRhythm: Story = {
               </Text>
             </SettingsHeader>
           </header>
+          {/* A row as the settings lists build it: the pressable half, then the
+              trailing cell every kebab in this dialog lives in. */}
+          <SwipeActions
+            label="tower"
+            actions={[
+              {
+                key: 'rename',
+                label: 'Rename',
+                icon: <PencilIcon className="size-4" />,
+                onSelect: () => {},
+              },
+            ]}
+          >
+            <div className="flex min-h-12 min-w-0 items-center gap-3 px-3 py-2 sm:px-4">
+              <Text variant="label">tower</Text>
+            </div>
+          </SwipeActions>
         </section>
         <SettingsPanel
           title="Notifications"
@@ -207,7 +225,7 @@ export const HeaderRhythm: Story = {
         <SettingsPanel
           title="MCP servers"
           action={
-            <IconButton variant="quiet" label="Add an MCP server" edge fullCell>
+            <IconButton variant="quiet" label="Add an MCP server">
               <PlusIcon className="size-4" />
             </IconButton>
           }
@@ -245,22 +263,29 @@ export const HeaderRhythm: Story = {
       await expect(title.left).toBe(headings[0].getBoundingClientRect().left);
     }
     const toggle = canvas.getByRole('switch', { name: 'Notifications from visgw: off' });
-    const actions = [
-      ...['Add a machine', 'Add a provider', 'Add an MCP server'].map((name) =>
-        canvas.getByRole('button', { name }),
-      ),
-      toggle,
-      canvas.getByRole('button', { name: 'Show diagnostics' }),
-    ];
-    // Regression, reported from a phone over this dialog: a switch, a plus and a chevron
-    // are three different widths, so their boxes never shared a centerline — they shared
-    // a 48px cell that stood one gutter inside the rail every row chevron ends on. The
-    // mark, not the box behind it, is what the eye reads down the column.
+    const adds = ['Add a machine', 'Add a provider', 'Add an MCP server'].map((name) =>
+      canvas.getByRole('button', { name }),
+    );
     const ink = (control: Element) => control.querySelector('svg') ?? control;
+    // Regression, reported over this dialog: the add marks were pinned to the band's
+    // own gutter, so each plus stood half a box closer to the paper's edge than the
+    // row menus under it — two centerlines down one column. A mark is read by its
+    // center, so the plus keeps the standard icon box and centers where every row's
+    // menu mark centers.
+    const menu = canvas.queryByRole('button', { name: 'Actions for tower' });
+    if (menu) {
+      const center = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return box.left + box.width / 2;
+      };
+      for (const add of adds) await expect(center(ink(add))).toBeCloseTo(center(ink(menu)), 1);
+    }
+    // A switch and a disclosure still END on the band's gutter: one right edge for
+    // the controls that carry a frame of their own.
     const rail = ink(toggle).getBoundingClientRect().right;
-    for (const action of actions)
-      await expect(ink(action).getBoundingClientRect().right).toBeCloseTo(rail, 1);
-    for (const action of actions.slice(0, 4)) {
+    const disclosure = canvas.getByRole('button', { name: 'Show diagnostics' });
+    await expect(ink(disclosure).getBoundingClientRect().right).toBeCloseTo(rail, 1);
+    for (const action of [...adds, toggle]) {
       const reach = getComputedStyle(action, '::after');
       const height = action.getBoundingClientRect().height;
       await expect(

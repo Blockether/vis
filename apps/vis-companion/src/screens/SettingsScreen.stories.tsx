@@ -328,13 +328,16 @@ export const Populated: Story = {
     }
     const notification = page.getByRole('switch', { name: /^Notifications from/ });
     const notificationBox = notification.getBoundingClientRect();
-    // The trailing mark ends on the dialog's rail whatever shape the control is, and the
-    // box behind it runs on into the gutter, so the target stays the whole band tall.
+    // The add actions ride the standard trailing icon box, so the box ends on the
+    // rail next to the switch and the glyph centers in it, matching the row
+    // action menus' kebabs.
     for (const name of ['Add a machine', 'Add an MCP server']) {
       const action = page.getByRole('button', { name });
+      const box = action.getBoundingClientRect();
       const mark = action.querySelector('svg')!.getBoundingClientRect();
-      await expect(mark.right).toBeCloseTo(notificationBox.right, 1);
-      await expect(action.getBoundingClientRect().height).toBe(pointer ? 40 : 44);
+      await expect(box.right).toBeCloseTo(notificationBox.right, 1);
+      await expect((mark.left + mark.right) / 2).toBeCloseTo((box.left + box.right) / 2, 1);
+      await expect(box.height).toBe(pointer ? 28 : 32);
     }
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);

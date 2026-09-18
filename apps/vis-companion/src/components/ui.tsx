@@ -222,8 +222,8 @@ const iconControlClass =
 
 /**
  * A named, borderless icon action. Variants change intent and ink, not framing.
- * The 32px / 28px layout box keeps a 44px touch target through invisible reach.
- * `edge` stretches into the row's trailing gutter without drawing a cell border.
+ * The 32px / 28px layout box keeps a 44px touch target through invisible reach,
+ * and its centered mark rides the same trailing rail a row's menu mark rides.
  * Over-content controls retain a square backing for contrast, never a circle.
  */
 export const IconButton = forwardRef<
@@ -234,27 +234,6 @@ export const IconButton = forwardRef<
     variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'remove';
     /** Passed through: a control over a thumbnail is not on a header's rhythm. */
     density?: 'default' | 'compact';
-    /**
-     * This button ENDS a list row, so it owns the row's trailing edge.
-     *
-     * A centred glyph in a box that stops at the gutter is not the same distance
-     * from the paper's edge as the glyph that starts the row: measured on the
-     * desktop list, the leading chevron's ink sat 19px inside the panel and the
-     * trailing `⋯`'s ink sat 30px, because the box respected the gutter and then
-     * centred a 12px glyph inside 28px of its own. The margins matched and the INK
-     * did not, which is the only one of the two an eye can see.
-     *
-     * So the gutter moves INSIDE the button: the box runs to the paper's edge and
-     * pads its glyph away from it by exactly `LIST_EDGE`. The ink is symmetric, and
-     * the target grows to the edge instead of leaving a dead 16px strip beside it.
-     */
-    edge?: boolean;
-    /**
-     * This is the row's ONE trailing action, so its column is the same 48px touch /
-     * 36px mouse cell as the `CloseButton` that ends the sheet above it. A row with a
-     * cluster of disclosure controls keeps the narrower gutter geometry instead.
-     */
-    fullCell?: boolean;
   }
 >(function IconButton(
   {
@@ -262,8 +241,6 @@ export const IconButton = forwardRef<
     className = '',
     variant = 'secondary',
     density = 'compact',
-    edge,
-    fullCell,
     children,
     disabled = false,
     onClick,
@@ -274,11 +251,14 @@ export const IconButton = forwardRef<
   ref,
 ) {
   const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
-  const box = edge
-    ? `h-auto justify-items-end self-stretch pl-0 pr-3 -mr-3 sm:pr-4 sm:-mr-4 ${
-        fullCell ? 'w-12 mouse:w-9' : 'min-w-10 sm:min-w-12 mouse:min-w-10'
-      }`
-    : 'size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:size-7 mouse:after:content-none';
+  // ONE BOX, ONE RAIL. A mark is read by its center, and the trailing rail the eye
+  // follows down a list is its row menus': a row keeps its gutter (`pr-3 sm:pr-4`)
+  // and then this same 32px/28px box, so a header mark that keeps the box centers
+  // on that rail at every width and pointer. A glyph pinned to the paper's edge
+  // instead stood half a box inside it — the settings headers' add marks, reported
+  // over that dialog as a cross that did not sit on the dots below it.
+  const box =
+    'size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:size-7 mouse:after:content-none';
   const ink = {
     primary: 'bg-transparent text-accent-ink enabled:hover:text-white',
     secondary: 'bg-transparent text-white enabled:hover:text-accent-ink',
@@ -1579,9 +1559,11 @@ export function SettingsHeader({
   const content = (
     <>
       {children}
-      {/* The band's full height, so an `edge` action keeps a 44px target, and `justify-end`,
-          so a switch, an add mark and a bare chevron all stop on the same gutter. The
-          chevron is the size it is on a row: one mark, one meaning, one size. */}
+      {/* The band's full height keeps a switch's cell tall, and `justify-end` stops
+          every action on the gutter. An add mark keeps the standard icon box, so its
+          mark centers on the rail the rows' menu marks below center on; a switch and
+          a bare chevron end their own right edge on the gutter. The chevron is the
+          size it is on a row: one mark, one meaning, one size. */}
       <span className="-my-1 flex shrink-0 items-center justify-end self-stretch empty:hidden">
         {disclosure ? <ChevronIcon open={disclosure.isOpen} className="size-3" /> : action}
       </span>
