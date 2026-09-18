@@ -647,7 +647,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_idle_ping_does_not_wake_independent_peer(
+def test_real_council_explicit_ping_wakes_an_idle_peer(
     tmp_path, monkeypatch, transport
 ):
     ready, release = threading.Event(), threading.Event()
@@ -656,6 +656,17 @@ def test_real_council_idle_ping_does_not_wake_independent_peer(
         if position == 1:
             ready.set()
             assert release.wait(30), "SDK did not release the author"
+
+    def settled_turns(session, count):
+        deadline = time.monotonic() + 30
+        while True:
+            turns = [row for row in session.turns() if row.get("council")]
+            if len(turns) == count and all(
+                row["status"] == "completed" for row in turns
+            ):
+                return turns
+            assert time.monotonic() < deadline, ("peer did not settle", turns)
+            time.sleep(0.05)
 
     with sdk_fixture(
         tmp_path,
@@ -675,6 +686,7 @@ def test_real_council_idle_ping_does_not_wake_independent_peer(
         try:
             assert ready.wait(30), "author model request was not observed"
             conversation = author.council()
+            # "all" snapshots the ACTIVE peers, and an idle one is not among them.
             assert (
                 conversation.publish(
                     "Active peers only", kind="coordination", ping="all"
@@ -689,9 +701,11 @@ def test_real_council_idle_ping_does_not_wake_independent_peer(
                 idempotency_key="wake-once",
             )
             assert entry.ping == (peer.id,)
-            # A shared project/group does not make this peer a managed subagent.
             assert peer.council().get(entry.entry_id) == entry
-            assert peer.turns() == []
+            # An explicit ping resumes the idle peer of this group with its own context.
+            turns = settled_turns(peer, 1)
+            assert turns[-1]["council"]["entry_id"] == entry.entry_id
+            # The repeated publication IS that entry, so it wakes nothing a second time.
             assert (
                 conversation.publish(
                     entry.content,
@@ -701,19 +715,16 @@ def test_real_council_idle_ping_does_not_wake_independent_peer(
                 )
                 == entry
             )
-            assert peer.turns() == []
-            assert len(requests) == 1  # Only the explicitly started author is blocked.
+            assert len([row for row in peer.turns() if row.get("council")]) == 1
         finally:
             release.set()
         assert turn.wait(timeout=30)["status"] == "completed"
-        assert len(requests) == 2
-        assert peer.turns() == []
         author.delete()
         peer.delete()
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_reply_after_author_finishes_does_not_wake_it(
+def test_real_council_reply_after_author_finishes_wakes_it(
     tmp_path, monkeypatch, transport
 ):
     author_ready, peer_ready = threading.Event(), threading.Event()
@@ -726,6 +737,17 @@ def test_real_council_reply_after_author_finishes_does_not_wake_it(
         elif position == 2:
             peer_ready.set()
             assert release_peer.wait(30), "peer was not released"
+
+    def settled_turns(session, count):
+        deadline = time.monotonic() + 30
+        while True:
+            turns = [row for row in session.turns() if row.get("council")]
+            if len(turns) == count and all(
+                row["status"] == "completed" for row in turns
+            ):
+                return turns
+            assert time.monotonic() < deadline, ("session did not settle", turns)
+            time.sleep(0.05)
 
     with sdk_fixture(
         tmp_path,
@@ -748,9 +770,8 @@ def test_real_council_reply_after_author_finishes_does_not_wake_it(
             entry = conversation.publish(
                 "Research question", kind="coordination", ping=[peer.id]
             )
-            # Independent peers run only after an explicit user/SDK start, not a ping.
-            peer_turn = peer.send("Answer the research question")
-            assert peer_ready.wait(30), "explicit peer turn did not start"
+            # The ping resumes the idle peer, which answers from inside its own turn.
+            assert peer_ready.wait(30), "pinged peer did not start"
             release_author.set()
             assert turn.wait(timeout=30)["status"] == "completed"
             reply = peer.council().publish(
@@ -767,11 +788,12 @@ def test_real_council_reply_after_author_finishes_does_not_wake_it(
             ]
             assert replies == [reply]
             assert reply.source == "sdk" and reply.ping == (author.id,)
-            assert len(author.turns()) == 1
+            # The requester finished its turn; the reply still reaches it.
+            assert settled_turns(author, 1)[-1]["council"]["entry_id"] == reply.entry_id
+            assert len(author.turns()) == 2
             release_peer.set()
-            assert peer_turn.wait(timeout=30)["status"] == "completed"
-            assert len(author.turns()) == len(peer.turns()) == 1
-            assert len(requests) == 4
+            assert settled_turns(peer, 1)[-1]["council"]["entry_id"] == entry.entry_id
+            assert len(peer.turns()) == 1
         finally:
             release_author.set()
             release_peer.set()
