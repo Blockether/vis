@@ -252,6 +252,21 @@ def __vis_install_attach__():
         # shape.
         return {str(k).replace("-", "_"): v for k, v in row.items()}
 
+    def __vis_decoded(payload, call):
+        # The bridge answers JSON text. Anything else is a boundary regression:
+        # name it, and what came back, rather than raising a bare
+        # JSONDecodeError that points at the caller's own line.
+        import json as _json
+
+        text = str(payload)
+        try:
+            return _json.loads(text)
+        except ValueError as exc:
+            raise RuntimeError(
+                "%s: the host bridge answered %s, not JSON (%s): %.200r"
+                % (call, type(payload).__name__, exc, text)
+            ) from exc
+
     def __vis_attach_data(data, name, kind, media_type, label, audience, commentable):
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
@@ -262,12 +277,11 @@ def __vis_install_attach__():
         if rec is None:
             raise RuntimeError("attach: capture bridge not bound in this sandbox")
         payload = rec(knd, mt, b64, name, len(data), aud, cap, commentable)
-        import json as _json
 
         # The stored artifact's own DESCRIPTOR: its id and version exist from
         # this moment, so the caller holds a handle to what it just made instead
         # of having to go looking for it.
-        row = __vis_row(_json.loads(str(payload)))
+        row = __vis_row(__vis_decoded(payload, "attach"))
         disp = row.pop("display", None)
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
@@ -485,11 +499,10 @@ def __vis_install_attach__():
                 "list_attachments: reader bridge not bound in this sandbox"
             )
         payload = lst()
-        import json as _json
 
         # Stored artifacts AND the ones this very block attached: an artifact is
         # addressable the moment it exists.
-        rows = _json.loads(str(payload))
+        rows = __vis_decoded(payload, "list_attachments")
         return [__vis_row(r) for r in rows]
 
     def __vis_thread(rows, name):
@@ -511,12 +524,10 @@ def __vis_install_attach__():
         return wanted, None if version is None else int(version)
 
     def get_attachment(target, version=None):
-        import json as _json
-
         payload = globals()["__vis_get_attachment__"](
             *__vis_attachment_args(target, version)
         )
-        return __vis_row(_json.loads(str(payload)))
+        return __vis_row(__vis_decoded(payload, "get_attachment"))
 
     def show_attachment(target, version=None):
         reinsp = globals().get("__vis_reinspect_attachment__")

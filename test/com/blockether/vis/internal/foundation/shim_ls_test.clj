@@ -233,6 +233,25 @@
                  "print(\"list `src/com/blockether` first\" in m, \"namespace\" not in m)")]
 
         (expect (= "True True\n" (out ctx code)))))
+  ;; Regression: a bridge answer that is not JSON surfaced as a bare
+  ;; JSONDecodeError underlining the caller's own `ls(...)` line, so a host
+  ;; marshalling regression read as a mistake in the block that called it.
+  (it "names the listing bridge when its answer is not JSON"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "g = globals()\n"
+                 "saved = g[\"__vis_list_directories__\"]\n"
+                 "g[\"__vis_list_directories__\"] = lambda _a: \"[Ljava.lang.String;@1a\"\n"
+                 "try:\n" "    ls(\".\")\n"
+                 "except Exception as e:\n" "    m = str(e)\n"
+                 "    print(type(e).__name__, \"listing bridge\" in m, \"Ljava\" in m)\n"
+                 "finally:\n"
+                 "    g[\"__vis_list_directories__\"] = saved\n"
+                 "print(ls(\"resources/vis-shims\").startswith(\"resources/vis-shims\"))")]
+
+        (expect (= "RuntimeError True True\nTrue\n" (out ctx code)))))
   (it
     "raises a host tool error when the `:fs/access` gate refuses the directory"
     (let

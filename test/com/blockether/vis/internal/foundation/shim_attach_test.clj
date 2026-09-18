@@ -1042,6 +1042,30 @@
         (expect (str/starts-with? (get-in bad [:error :message]) "ValueError:"))
         (expect (nil? (:error caught)))
         (expect (= "VisToolError\n" (:stdout caught))))))
+  ;; Same regression as the `ls` shim: every accessor decodes what the bridge
+  ;; answered, so a non-JSON answer names the boundary it crossed instead of
+  ;; raising a bare JSONDecodeError at the caller's own line.
+  (it "names the host bridge when its answer is not JSON"
+      (tpc/with-own
+        [ctx {}]
+        (let [code (str
+                     "g = globals()\n"
+                     "fake = {\"__vis_record_attachment__\": lambda *a: \"[Ljava@1\",\n"
+                     "        \"__vis_list_attachments__\": lambda *a: \"<html>no</html>\",\n"
+                     "        \"__vis_get_attachment__\": lambda *a: \"[#object[Row]]\"}\n"
+                     "saved = {k: g[k] for k in fake if k in g}\n"
+                     "g.update(fake)\n" "def told(f):\n"
+                     "    try:\n" "        f()\n"
+                     "        return \"none\"\n" "    except Exception as e:\n"
+                     "        m = str(e)\n"
+                     "        return \"%s:%s:%s\" % (type(e).__name__, m.split(\":\")[0],\n"
+                     "                              \"not JSON\" in m)\n" "try:\n"
+                     "    print(told(lambda: attach(b\"x\", \"x.txt\")), told(list_attachments),\n"
+                     "          told(lambda: get_attachment(\"x.txt\")))\n"
+                     "finally:\n" "    g.update(saved)")]
+          (expect (= (str "RuntimeError:attach:True RuntimeError:list_attachments:True "
+                          "RuntimeError:get_attachment:True\n")
+                     (:stdout (ep/run-python-block ctx code "t1/i1")))))))
   (it "crosses the jailed worker boundary without adding Python source context"
       (tpc/with-own
         [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]

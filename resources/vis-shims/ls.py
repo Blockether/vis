@@ -63,6 +63,19 @@ def __vis_install_ls__():
         _render(entries, "", out)
         return "\n".join(out)
 
+    def _decoded(payload):
+        """Listing rows from the bridge; a non-JSON answer names the boundary."""
+        text = str(payload)
+        try:
+            return _json.loads(text)
+        except ValueError as exc:
+            # A bare JSONDecodeError would point at the caller's own `ls(...)`
+            # line and throw the answer away, so the boundary names itself.
+            raise RuntimeError(
+                "ls: the listing bridge answered %s, not JSON (%s): %.200r"
+                % (type(payload).__name__, exc, text)
+            ) from exc
+
     def ls(paths=".", depth=1, is_hidden=False, *, hidden=None, pattern=None):
         """Map a tree through the host's ignore-aware walk, as a compact STRING.
 
@@ -104,7 +117,7 @@ def __vis_install_ls__():
                 }
             )
         )
-        rows = _json.loads(str(payload))
+        rows = _decoded(payload)
         if one:
             return _section(rows[0]["path"], rows[0]["entries"])
         return "\n\n".join(_section(r["path"], r["entries"]) for r in rows)
