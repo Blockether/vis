@@ -130,8 +130,12 @@ export const Button = forwardRef<
      * Invisible reach preserves a 44px touch target; owners leave at least 8px
      * between adjacent targets. `compact` centres the button in a header and
      * uses metadata type under a pointer. `panel` keeps fixed horizontal padding.
+     * `band` is the verb INSIDE a transcript band, where the row around it is one
+     * line of text: under a pointer its face steps under that 28px row and its
+     * padding narrows, so the row reads as a line with an action in it instead of
+     * as a box. The touch face is unchanged.
      */
-    density?: 'default' | 'compact' | 'panel';
+    density?: 'default' | 'compact' | 'panel' | 'band';
   }
 >(function Button(
   {
@@ -196,6 +200,7 @@ export const Button = forwardRef<
     default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
+    band: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui mouse:h-6 mouse:min-h-6 mouse:px-2 mouse:text-meta`,
   }[density];
   const frame = `rounded-none py-0.5 ${scale}`;
 

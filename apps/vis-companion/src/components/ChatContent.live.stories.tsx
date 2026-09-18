@@ -141,12 +141,20 @@ export const Running: Story = {
     // The transcript STATES the run: its newest status, and no log painted in place.
     await expect(controls.getByText('Waiting for integration tests')).toBeVisible();
     await expect(controls.queryByRole('button', { name: 'Build log' })).toBeNull();
-    // The interrupt rides the run's own band, centred in the row rather than padded away from
-    // a frame: 44px under a thumb, the same 28px CODE and ACTIVITY keep under a pointer.
+    // The interrupt rides the run's own band, centred in the row rather than padded away from a
+    // frame, and its face stays UNDER the row it rides: the band reads as a line of text with an
+    // action in it. LIVE ends that line in the band's own weight — the user reported it reading as
+    // light type beside a stop that filled the row.
     const interrupt = controls.getByRole('button', { name: 'Interrupt' });
     const row = liveFrame.querySelector('header')!.getBoundingClientRect();
     const key = interrupt.getBoundingClientRect();
     await expect(key.top - row.top).toBeCloseTo(row.bottom - key.bottom, 0);
+    await expect(key.height).toBeLessThan(row.height);
+    const live = controls.getByText('LIVE');
+    await expect(Number(getComputedStyle(live).fontWeight)).toBeGreaterThanOrEqual(600);
+    const state = live.getBoundingClientRect();
+    await expect(state.left).toBeGreaterThanOrEqual(key.right);
+    await expect(state.right).toBeCloseTo(row.right, 0);
     await userEvent.click(interrupt);
     await expect(
       controls.getByRole('textbox', { name: 'Why are you stopping Jenkins build pool?' }),

@@ -1165,13 +1165,10 @@ export function LiveViewPanel({
               )}
             </span>
           )}
-          {embedded && !isSettled && (
-            <span className="shrink-0 font-mono text-ui text-dialog-hint">LIVE</span>
-          )}
-          <ViewState view={view} isSettled={isSettled} />
           {!isSettled && onInterrupt && !isArmed && (
             <Button
               variant="secondary"
+              density={embedded ? 'band' : 'default'}
               className="shrink-0 self-center"
               onClick={() => setNote('')}
               disabled={isInterrupting}
@@ -1179,6 +1176,15 @@ export function LiveViewPanel({
               {isInterrupting ? 'Stopping...' : 'Interrupt'}
             </Button>
           )}
+          {/* LIVE ENDS THE ROW, in the band's own weight. The word is the run's STATE, so it
+              reads last, the way the terminal prints it, and the verb stands before it wearing
+              a face sized UNDER the row rather than one that fills it. */}
+          {embedded && !isSettled && (
+            <BandLabel tone="hint" className="shrink-0">
+              LIVE
+            </BandLabel>
+          )}
+          <ViewState view={view} isSettled={isSettled} />
         </header>
         {!isSettled && isArmed && onInterrupt && (
           <form
