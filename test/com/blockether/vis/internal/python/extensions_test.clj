@@ -5429,7 +5429,7 @@ vis.register_extension(vis.Extension(
                    (str
                      "hits = apropos(r'^hello$')\n" "assert len(hits) == 1, repr(hits)\n"
                      "assert 'Preserves capitalization unless uppercase is requested.' in doc(hits[0])\n"
-                     "assert 'hello(name, *, uppercase=...)' in doc(hits[0])\n"
+                     "assert 'hello(name: str, *, uppercase: bool = ...) -> str' in doc(hits[0])\n"
                      "assert 'uppercase: bool (keyword_only; default omitted)' in doc(hits[0])\n"
                      "assert 'Returns: str' in doc(hits[0])\n"
                      "assert hello.contract['parameters'][1]['has_default']\n"
@@ -5481,7 +5481,7 @@ vis.register_extension(vis.Extension(
                        "assert 'Unicode code points' in doc(tool_hit)\n"
                        "assert 'uppercase: bool' in doc(tool_hit)\n"
                        "assert 'Preserves capitalization unless uppercase is requested.' in doc(tool_hit)\n"
-                       "assert 'greet.hello(name, *, uppercase=...)' in doc(tool_hit)\n"
+                       "assert \"greet.hello(name: str, *, uppercase: bool = ...) -> 'Greeting'\" in doc(tool_hit)\n"
                        "assert 'uppercase: bool (keyword_only; default omitted)' in doc(tool_hit)\n"
                        "assert 'Returns: Greeting' in doc(tool_hit)\n"
                        "assert doc(tool_hit) == doc('greet.hello')\n"

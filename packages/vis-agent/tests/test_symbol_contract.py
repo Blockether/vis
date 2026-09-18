@@ -22,6 +22,7 @@ class Reading:
 class Opaque:
     """Not a dataclass: crosses the boundary as an opaque name."""
 
+
 def measure(
     target: str,
     /,
