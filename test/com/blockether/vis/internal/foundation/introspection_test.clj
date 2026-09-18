@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -572,17 +573,17 @@
       (let [core-symbols (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))]
         (expect (every? core-symbols introspection/all-symbols))
         (expect (every? :ext.symbol/active-fn introspection/all-symbols))
-        (with-redefs [vis/toggle-enabled? (constantly false)]
+        (with-redefs [toggles/enabled? (constantly false)]
           (expect (not-any? #(extension/symbol-active? % {}) introspection/all-symbols)))
-        (with-redefs [vis/toggle-enabled? (constantly true)]
+        (with-redefs [toggles/enabled? (constantly true)]
           (expect (every? #(extension/symbol-active? % {}) introspection/all-symbols)))))
   (it "keeps gateway-event and read_session guidance out of the static core prompt"
       (let [text
-            (with-redefs [vis/toggle-enabled? (constantly true)]
+            (with-redefs [toggles/enabled? (constantly true)]
               (introspection/prompt {}))
 
             disabled
-            (with-redefs [vis/toggle-enabled? (constantly false)]
+            (with-redefs [toggles/enabled? (constantly false)]
               (introspection/prompt {}))
 
             core
@@ -604,7 +605,7 @@
   demand-driven-introspection-prompt-test
   (it
     "requires a concrete task need instead of a session-start preflight"
-    (with-redefs [vis/toggle-enabled? #(= "introspection" %)]
+    (with-redefs [toggles/enabled? #(= "introspection" %)]
       (doseq [text [(introspection/prompt {}) (#'foundation/combined-prompt {})]]
         (doseq
           [required
@@ -620,7 +621,7 @@
   ;; re-read its own visible conversation. The current session is never a source:
   ;; live steps are on the wire, folded steps stand as the gist the agent chose.
   (it "keeps the current session off the evidence path and reuses targeted reads"
-      (with-redefs [vis/toggle-enabled? #(= "introspection" %)]
+      (with-redefs [toggles/enabled? #(= "introspection" %)]
         (let [text (#'foundation/combined-prompt {})]
           (doseq [required ["THIS session's conversation is already in front of you"
                             "never undoes a fold, whatever `fold_count` says"
