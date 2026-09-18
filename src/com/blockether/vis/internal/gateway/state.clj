@@ -5025,6 +5025,15 @@
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
                  :answer_count (long (or (:answer-count stats) 0))
+                 ;; The verdict no client can derive: this session's NEWEST turn
+                 ;; ended without finishing - the operator cancelled it, or a dead
+                 ;; gateway left it running and the next start swept it
+                 ;; (`reconcile-orphaned-turns!`). Read off the STORE, because the
+                 ;; registry `last-turn` above comes from is empty exactly after
+                 ;; the restart that caused it, so a swept session would report
+                 ;; itself idle. Self-clearing: the next settled turn is then the
+                 ;; newest one.
+                 :was_interrupted (boolean (:latest-turn-interrupted? stats))
                  :agent (agents/context {:db-info (lp/db-info) :session-id sid})
                  :server_time_ms server-time-ms}
           model-pref
@@ -5427,7 +5436,8 @@
 
             (cond-> (assoc s
                       "turn_count" (long (or (:turn-count st) 0))
-                      "answer_count" (long (or (:answer-count st) 0)))
+                      "answer_count" (long (or (:answer-count st) 0))
+                      "was_interrupted" (boolean (:latest-turn-interrupted? st)))
               (:latest-turn-at st)
               (assoc "modified_at" (:latest-turn-at st))
 

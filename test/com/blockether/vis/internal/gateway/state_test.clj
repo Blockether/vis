@@ -2932,6 +2932,54 @@
         (expect (not (contains? row "external_id")))
         (expect (not (contains? row "owner_id"))))))
 
+;; Regression, user report (paraphrased: a dying gateway is restarted and the sessions it
+;; killed mid-answer carry no mark at all in the companion list, not even the one a new
+;; answer gets). `reconcile-orphaned-turns!` writes the verdict to the STORE at startup,
+;; and the row flattened it away: `status` is derived from this process's registry, which
+;; is empty exactly after that restart, so every swept session reported itself idle.
+(defdescribe
+  soul-interrupted-verdict-test
+  (it "carries the store's verdict as was_interrupted"
+      (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "s-killed" :channel :api :title "t"})
+                                 #'lp/db-info (constantly :db)
+                                 #'persistance/db-session-turn-stats
+                                 (constantly
+                                   {:turn-count 3 :answer-count 3 :latest-turn-interrupted? true})
+                                 #'bus/live-turn-id (constantly nil)
+                                 #'bus/session-waiting? (constantly false)
+                                 #'smodel/pending-pref (constantly [false nil])}
+                  (fn []
+                    (state/soul "s-killed")))]
+        (expect (true? (get row "was_interrupted")))
+        ;; This process never ran the killed turn, so `status` cannot say it — which is
+        ;; the whole reason the verdict needs a field of its own.
+        (expect (= "idle" (get row "status")))))
+  (it "says false for a session that simply went idle"
+      (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "s-idle" :channel :api :title "t"})
+                                 #'lp/db-info (constantly :db)
+                                 #'persistance/db-session-turn-stats
+                                 (constantly
+                                   {:turn-count 3 :answer-count 3 :latest-turn-interrupted? false})
+                                 #'bus/live-turn-id (constantly nil)
+                                 #'bus/session-waiting? (constantly false)
+                                 #'smodel/pending-pref (constantly [false nil])}
+                  (fn []
+                    (state/soul "s-idle")))]
+        (expect (false? (get row "was_interrupted")))))
+  ;; ALWAYS present, like `favorite_rank`: a client merging this row onto a cached one
+  ;; has to see the mark taken away, not merely not-mentioned.
+  (it "stays on the row even when the store has nothing to say"
+      (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "s-bare" :channel :api :title "t"})
+                                 #'lp/db-info (constantly nil)
+                                 #'persistance/db-session-turn-stats (constantly nil)
+                                 #'bus/live-turn-id (constantly nil)
+                                 #'bus/session-waiting? (constantly false)
+                                 #'smodel/pending-pref (constantly [false nil])}
+                  (fn []
+                    (state/soul "s-bare")))]
+        (expect (contains? row "was_interrupted"))
+        (expect (false? (get row "was_interrupted"))))))
+
 ;; Regression: SDK reactivation could miss a ping between terminal state and journal cleanup.
 (defdescribe
   council-wake-after-terminal-marker-test

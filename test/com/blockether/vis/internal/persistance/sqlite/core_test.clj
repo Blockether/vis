@@ -4810,3 +4810,48 @@
                        ((var-get #'sqlite-core/pooled-datasource) raw "vis-test-leak-off")]
 
                    (try (expect (zero? (.getLeakDetectionThreshold ds))) (finally (.close ds))))))
+
+(defdescribe
+  swept-turn-session-stats-test
+  ;; Regression, user report (paraphrased: a dying gateway is restarted and the
+  ;; sessions it killed mid-answer show nothing at all in the companion list).
+  ;; The engine already writes the verdict - `db-sweep-orphaned-running-turns!`
+  ;; flips every orphaned `:running` turn to `:interrupted` at startup - but the
+  ;; per-session stats every list row already pays for did not carry it out, so
+  ;; a killed session listed as plain `idle` with no unread answer either.
+  (it "counts a swept turn as settled and flags it as the session's newest"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})]
+
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id sid :user-request "answered" :status :success})
+        (vis/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
+        (let [before (persistance/db-session-turn-stats s sid)]
+          (expect (= 1 (:answer-count before)))
+          (expect (false? (:latest-turn-interrupted? before))))
+        (expect (= 1 (vis/db-sweep-orphaned-running-turns! s)))
+        (let [after (persistance/db-session-turn-stats s sid)]
+          ;; The swept turn is TERMINAL and it left something in front of the
+          ;; reader, so it advances the unread watermark like any other answer.
+          (expect (= 2 (:answer-count after)))
+          (expect (true? (:latest-turn-interrupted? after))))
+        (expect (true? (get-in (persistance/db-session-turn-stats s)
+                               [(str sid) :latest-turn-interrupted?])))))
+  (it "drops the flag as soon as a later turn settles, so it cannot stick"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})]
+
+        (vis/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
+        (vis/db-sweep-orphaned-running-turns! s)
+        (expect (true? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid))))
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id sid :user-request "retried" :status :success})
+        (expect (false? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid)))))))

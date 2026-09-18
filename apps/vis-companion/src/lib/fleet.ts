@@ -315,6 +315,15 @@ export function sessionNeedsInput(session: Session): boolean {
   return session.is_awaiting_input === true;
 }
 
+/**
+ * Did this session's last turn get cut off? A cancel, or a gateway that died
+ * mid-answer and swept the turn on its next start. Paired with an unread mark it
+ * is what tells the reader a session stopped rather than finished.
+ */
+export function sessionWasInterrupted(session: Session): boolean {
+  return session.was_interrupted === true;
+}
+
 /** Bands of the list order, best first. Every row is in exactly one. */
 const FAVORITE_BAND = 0;
 const DIRTY_BAND = 1;

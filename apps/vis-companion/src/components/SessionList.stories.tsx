@@ -9,6 +9,8 @@ import {
   STORY_SESSION_USAGE,
 } from '../dev/story-data';
 import { EMPTY_DRAFT_MESSAGE } from '../lib/draft-messages';
+import type { Session } from '../lib/types';
+import { markSessionRead } from '../lib/unread';
 import { SessionRow } from './SessionList';
 
 const onOpen = fn();
@@ -211,4 +213,38 @@ export const FavoritesNarrow: Story = {
       </div>
     ),
   ],
+};
+
+/**
+ * A session the gateway killed mid-answer. The next start swept its turn to
+ * `interrupted` and the row says so: a red STOPPED mark standing where the NEW badge
+ * would be, which retires as soon as the reader has opened the session.
+ */
+const STOPPED_SESSION: Session = {
+  ...STORY_SESSION_ROW,
+  id: '7b21f4ac-1d90-4a6f-9d2c-5e0a1c7f3b84',
+  title: 'Move the pager off the whole-store scan',
+  status: 'idle',
+  live: false,
+  current_turn_id: null,
+  is_awaiting_input: false,
+  favorite_rank: null,
+  answer_count: 2,
+  was_interrupted: true,
+};
+
+export const Stopped: Story = {
+  beforeEach: () => {
+    markSessionRead(STOPPED_SESSION.id, 0);
+  },
+  args: { session: STOPPED_SESSION },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText('stopped')).toBeVisible();
+    await expect(canvas.queryByText('2 new')).not.toBeInTheDocument();
+    await expect(canvas.getByText('STOPPED')).toBeInTheDocument();
+    const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
+    await expect(dot).toHaveClass('bg-err');
+    // Solid, never pulsing: an interrupted session is the opposite of a live one.
+    await expect(dot).not.toHaveClass('animate-pulse');
+  },
 };

@@ -107,6 +107,14 @@ export interface Session {
    * nothing will move it but an answer.
    */
   is_awaiting_input?: boolean;
+  /**
+   * The session's NEWEST turn ended without finishing — the operator cancelled it,
+   * or a gateway died with it running and the next start swept it. The gateway owns
+   * this verdict off its store; never infer it from `status`, which is registry-only
+   * and therefore says "idle" for exactly these sessions after a restart. It clears
+   * itself as soon as a later turn settles.
+   */
+  was_interrupted?: boolean;
   /** In-flight facts and same-response gateway clock for clock-safe attachment. */
   running_request?: string;
   running_request_kind?: RequestKind;

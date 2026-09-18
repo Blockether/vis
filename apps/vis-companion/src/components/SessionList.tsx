@@ -21,7 +21,7 @@ import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages'
 import type { PendingAttachment } from '../lib/attachments';
 import { unreadTurnCount, useReadMarks } from '../lib/unread';
 import { isFavorite } from '../lib/favorites';
-import { sessionIsLive, sessionNeedsInput, timeLabel } from '../lib/fleet';
+import { sessionIsLive, sessionNeedsInput, sessionWasInterrupted, timeLabel } from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
 
 // Same frames as the session transcript's spinner and the TUI's
@@ -116,7 +116,6 @@ export const SessionRow = memo(function SessionRow({
   commands: SessionRowCommands;
   deletion: SessionRowDeletion;
 }) {
-  const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.created_at;
   // DIRTY: this device is holding composer content nobody has sent — words, a
   // picture, a file. When the session has no title of its own, that content names
@@ -136,6 +135,14 @@ export const SessionRow = memo(function SessionRow({
   // the session you just read stayed on screen until something else moved.
   useReadMarks();
   const unread = unreadTurnCount(session);
+  // STOPPED: the newest turn was cut off — the operator cancelled it, or the
+  // gateway died mid-answer and swept it on its next start. Gated on the unread
+  // mark on purpose, so the flag is BOUNDED: it reports something you have not
+  // seen, and opening the session retires it exactly the way it retires "new".
+  // Ungated it would sit on the row until that session's next turn, which for an
+  // abandoned session never comes.
+  const stopped = !live && sessionWasInterrupted(session) && unread > 0;
+  const status = statusLabel(session, stopped);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
@@ -346,12 +353,21 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* Unread and unsent-message flags share one aligned column. */}
+                {/* Stopped, unread and unsent-message flags share one aligned column. */}
                 <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip @3xl:col-start-auto @3xl:row-start-auto">
-                  {unread > 0 && (
-                    <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
-                      {unread > 1 ? `${unread} new` : 'new'}
+                  {stopped ? (
+                    <span
+                      className="shrink-0 border border-err-edge bg-err-surface px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-err-ink"
+                      title="This session's last turn was cut off before it could finish"
+                    >
+                      stopped
                     </span>
+                  ) : (
+                    unread > 0 && (
+                      <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
+                        {unread > 1 ? `${unread} new` : 'new'}
+                      </span>
+                    )
                   )}
                   {hasUnsent && (
                     <span
@@ -401,12 +417,12 @@ export const SessionRow = memo(function SessionRow({
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
                       status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${statusTone(session)}`}
+                    } ${statusTone(session, stopped)}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
-                      className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                      className={`size-1.5 shrink-0 ${statusDot(session, stopped)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
                     <span className="sr-only @sm:not-sr-only">
                       {renameBusy ? 'Saving' : status}
@@ -755,25 +771,29 @@ export function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
 }
 
-function statusLabel(session: Session): string {
+function statusLabel(session: Session, stopped: boolean): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
   if (sessionNeedsInput(session)) return 'INPUT NEEDED';
   if (sessionIsLive(session)) return 'LIVE';
+  if (stopped) return 'STOPPED';
   if (session.status === 'suspended') return 'WAITING';
   return 'IDLE';
 }
 
-function statusTone(session: Session): string {
+function statusTone(session: Session, stopped: boolean): string {
   if (sessionNeedsInput(session)) return 'text-warn';
   if (sessionIsLive(session)) return 'text-ok';
+  if (stopped) return 'text-err';
   if (session.status === 'suspended') return 'text-warn';
   return 'text-dialog-hint';
 }
 
-function statusDot(session: Session): string {
+function statusDot(session: Session, stopped: boolean): string {
   if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
+  // Solid, never pulsing: an interrupted session is the opposite of live.
+  if (stopped) return 'bg-err';
   if (session.status === 'suspended') return 'bg-warn-strong';
   return 'border border-dialog-hint';
 }
@@ -794,6 +814,7 @@ export function sessionSearchText(session: Session): string {
     session.workspace?.root,
     session.status,
     sessionNeedsInput(session) ? 'input needed waiting human' : '',
+    sessionWasInterrupted(session) ? 'stopped interrupted' : '',
     sessionIsLive(session) ? 'live running' : 'idle',
   ]
     .filter(Boolean)
