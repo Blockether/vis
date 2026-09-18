@@ -354,6 +354,29 @@
   (into (set (vals document-media-types))
         (concat gzip-media-types markdown-media-types csv-media-types tsv-media-types)))
 
+(def viewer-document-media-types
+  "The documents a SURFACE can show in a document viewer: a PDF handed to the
+   system viewer, an HTML page rendered inside the companion's sandboxed frame.
+   The sandbox spells the same closed table in `resources/vis-shims/attach.py`
+   (`__vis_doc_media_types`). Markdown, CSV, TSV and NDJSON are documents too,
+   but they ride the transcript as text or as a table fence, so they never mint
+   a display file."
+  #{(:pdf document-media-types) (:html document-media-types) (:xhtml document-media-types)})
+
+(defn viewer-document-media-type?
+  "True when `media-type` names a file from [[viewer-document-media-types]].
+   Media-type parameters (`text/html; charset=utf-8`) are dropped before the
+   lookup."
+  [media-type]
+  (let [mt (-> (str media-type)
+               (str/trim)
+               (str/lower-case)
+               (str/split #";")
+               (first)
+               (str)
+               (str/trim))]
+    (contains? viewer-document-media-types mt)))
+
 (defn detect-document-mime
   "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
   [^bytes b]

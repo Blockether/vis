@@ -38,21 +38,23 @@
    For an image the pixel dimensions are probed and the attach shim prints a
    `vis-image` display fence so a graphical TUI/web paints the picture inline
    (the same fence matplotlib's `plt.show()` emits). For a PDF or an HTML page
-   ([[attachments/human-only-media-type?]]) there are no pixels to probe: the
+   ([[attachments/viewer-document-media-type?]]) there are no pixels to probe: the
    dimensions are 0 and the shim prints a `vis-doc` fence instead, which the TUI
    hands to the system viewer and the companion renders inside a sandboxed
    frame. Either way the bytes are written HOST-side (like
    `__vis_mpl_render_file__`), so display works even when the sandbox's own
    Python filesystem is denied.
 
-   Returns nil for any other media-type, and for bytes that cannot be decoded as
-   an image (an SVG, or a format `com.blockether/imaging` cannot probe) — the
-   caller then records the attachment with no inline fence and the renderer
+   Returns nil for any other media-type — a CSV/TSV table prints its own
+   `vis-table` fence from the shim and mints no display file — and for bytes that
+   cannot be decoded as an image (an SVG, or a format `com.blockether/imaging`
+   cannot probe). The caller then records the attachment with no inline fence and
+   the renderer
    keeps its text placeholder. Never throws: a temp-file/decoding hiccup must
    not break `attach`."
   [^String media-type ^String b64]
   (try (let [mt (str/lower-case (str/trim (str media-type)))]
-         (cond (attachments/human-only-media-type? mt)
+         (cond (attachments/viewer-document-media-type? mt)
                (let [bytes (.decode (java.util.Base64/getDecoder) b64)
                      ext (if (str/includes? mt "pdf") "pdf" "html")
                      f (mpl-capture/display-cache-file "doc-" ext bytes)]
