@@ -2128,7 +2128,7 @@
                             (expect (zero? (:exit (run! [] {"DESKTOP_FAIL" "api"}))))
                             (expect (zero? (:exit (run! ["--update"] {}))))
                             (expect (= "9.8.8\n" (slurp (io/file desktop "current"))))
-                            (expect (.exists (io/file desktop "9.8.7/Vis.AppImage")))
+                            (expect (not (.exists (io/file desktop "9.8.7"))))
                             (io/delete-file (io/file desktop "9.8.8/Vis.AppImage"))
                             (expect (zero? (:exit (run! [] {}))))
                             (expect (.canExecute (io/file desktop "9.8.8/Vis.AppImage"))))))
@@ -2195,6 +2195,41 @@
                    (expect (or (nil? selected) (.isAlive selected)) output))
                  (finally (.destroyForcibly stale)
                           (when selected (.destroyForcibly selected)))))))))
+  (it
+    "removes the versions a launch supersedes and leaves the other track alone"
+    (with-desktop-fixture
+      "Linux"
+      "x86_64"
+      (fn [{:keys [desktop dev-desktop track publish! run!]}]
+        (expect (zero? (:exit (run! [] {}))))
+        (let [staging
+              (io/file desktop ".download.ABCDEF")
+
+              unrelated
+              (io/file desktop "notes.txt")]
+
+          (.mkdirs staging)
+          (spit unrelated "keep me")
+          (publish! "9.8.8")
+          (let [{:keys [exit output]} (run! ["--update"] {})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "removed the superseded desktop 9.8.7") output))
+          (expect (not (.exists (io/file desktop "9.8.7"))))
+          (expect (.canExecute (io/file desktop "9.8.8/Vis.AppImage")))
+          (expect (= "9.8.8\n" (slurp (io/file desktop "current"))))
+          ;; An install in flight and files nobody installed stay where they are.
+          (expect (.isDirectory staging))
+          (expect (= "keep me" (slurp unrelated))))
+        ;; Every dev launch builds a new directory; only the newest one survives.
+        (spit track "dev\n")
+        (expect (zero? (:exit (run! [] {}))))
+        (expect (zero? (:exit (run! [] {}))))
+        (let [builds (->> (.listFiles (io/file dev-desktop))
+                          (filter #(.isDirectory ^java.io.File %))
+                          (map #(.getName ^java.io.File %))
+                          set)]
+          (expect (= #{(str/trim (slurp (io/file dev-desktop "current")))} builds) (pr-str builds)))
+        (expect (.canExecute (io/file desktop "9.8.8/Vis.AppImage"))))))
   (it "shows help and rejects unsupported platforms or options without network access"
       (with-desktop-fixture "FreeBSD"
                             "riscv64"
