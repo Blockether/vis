@@ -1032,7 +1032,7 @@ Open the desktop for your installed track; --track overrides it for this launch.
 Dev needs Node/npm, Rust/Cargo, and native build tools (Xcode on macOS; WebKitGTK
 and a C/C++ toolchain on Linux). It builds the current source, including local
 edits. Fetch newer source separately with: vis-agent update --track dev
-Quit an already-running app before reopening to use a newer build of that track.
+Only one desktop runs at a time: another version or track still open is closed first.
 
 Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
 Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed
@@ -1154,6 +1154,31 @@ vis_fetch_desktop() (
   fi
 )
 
+# One desktop at a time. Every installed copy of a track carries that track's
+# bundle id, so macOS hands a launch to whichever version is already running and
+# the selected version never opens; the two tracks would otherwise run side by
+# side. Close every desktop process except the app about to open, and say so.
+vis_close_other_desktops() {
+  local keep="$1" pid command other attempt
+  while read -r pid command; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    case "$command" in
+      *"$keep"/*) continue ;;
+      *"$vis_install_dir"/desktop/*) ;;
+      *) continue ;;
+    esac
+    kill "$pid" 2>/dev/null || continue
+    other="${command#*"$vis_install_dir"/desktop/}"
+    say "closed the desktop app still running (${other%%/Vis.*})"
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi
+  done < <(ps -A -ww -o pid=,command= 2>/dev/null || true)
+  return 0
+}
+
 vis_do_desktop() {
   local update=0 track os arch desktop_dir version cmd
   local source destination artifact
@@ -1221,9 +1246,11 @@ vis_do_desktop() {
       version="$(read_state "$desktop_dir/current")"
     fi
   fi
+  vis_close_other_desktops "$desktop_dir/$version"
   say "opening $track desktop $version"
   if [[ "$os" == Darwin ]]; then
-    # Dev and release have distinct bundle IDs; an existing same-track app activates.
+    # Nothing else answers to the track's bundle id now, so this opens the
+    # selected version instead of activating a copy left over from another one.
     exec open -n -a "$desktop_dir/$version/Vis.app"
   else
     # AppImage's built-in extraction avoids requiring a system FUSE installation.

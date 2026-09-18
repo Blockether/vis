@@ -266,9 +266,10 @@ first, run `vis-agent update --track dev`.
 On macOS and Linux, release files live in `~/.vis/install/desktop/<platform>/<version>/`;
 source builds live in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. Both respect
 `VIS_HOME`. Older copies remain so a build or update does not replace files used
-by an open app. Quit an already-running app before reopening to use a newer build
-of that track; otherwise its existing window is activated. Dev and release can run
-side by side.
+by an open app. Only one desktop app runs at a time: each launch closes a Vis
+desktop still running from another version or track, then opens the version you
+selected. An app already running from that exact version keeps its window and
+comes to the front.
 
 Installing the app in this cache needs no administrator access. Desktop launches
 do not require Java, change your engine track, or start or restart a gateway.

@@ -2156,6 +2156,45 @@
                                 (expect (zero? exit) output)
                                 (expect (str/includes? output "desktop-open") output)
                                 (expect (str/includes? (slurp calls) "-force"))))))
+  (it
+    "closes a desktop left running from another version and keeps the selected one"
+    (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"]]]
+      (with-desktop-fixture
+        os
+        arch
+        (fn [{:keys [checkout desktop run!]}]
+          (expect (zero? (:exit (run! [] {}))))
+          (let [start!
+                (fn [version]
+                  (let [app (io/file
+                              desktop
+                              version
+                              (if (= os "Darwin") "Vis.app/Contents/MacOS/pake-vis" "Vis.AppImage"))
+                        started (io/file checkout (str "started-" version))]
+
+                    (.mkdirs (.getParentFile app))
+                    (write-executable! app "#!/usr/bin/env bash\ntouch \"$1\"\nsleep 120\n")
+                    (let [^Process process (.start (ProcessBuilder. ^java.util.List
+                                                                    [(.getAbsolutePath app)
+                                                                     (.getAbsolutePath started)]))]
+                      (loop [attempt 0]
+                        (when (and (not (.exists started)) (< attempt 400))
+                          (Thread/sleep 25)
+                          (recur (inc attempt))))
+                      process)))
+                ^Process stale (start! "9.8.6")
+                ;; Every macOS copy answers to one bundle id per track, so the
+                ;; app that is already the selected version has to survive.
+                ^Process selected (when (= os "Darwin") (start! "9.8.7"))]
+
+            (try (let [{:keys [exit output]} (run! [] {})]
+                   (expect (zero? exit) output)
+                   (expect (str/includes? output "closed the desktop app still running (") output)
+                   (expect (str/includes? output "9.8.6") output)
+                   (expect (.waitFor stale 10 java.util.concurrent.TimeUnit/SECONDS) output)
+                   (expect (or (nil? selected) (.isAlive selected)) output))
+                 (finally (.destroyForcibly stale)
+                          (when selected (.destroyForcibly selected)))))))))
   (it "shows help and rejects unsupported platforms or options without network access"
       (with-desktop-fixture "FreeBSD"
                             "riscv64"
