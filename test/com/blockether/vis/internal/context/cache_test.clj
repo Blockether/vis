@@ -135,7 +135,24 @@
                                                        "saturation" 12})})]
         (expect (str/includes? boundary "session[\"turn\"] = 7"))
         (expect (str/includes? boundary "session[\"utilization\"]"))
-        (expect (str/includes? boundary "\"saturation\": 12")))))
+        (expect (str/includes? boundary "\"saturation\": 12"))))
+  ;; Regression: `/goal` persists ~13 ms AFTER the frozen standing block was
+  ;; rendered, so iteration 1 of the turn that SETS a goal used to read a
+  ;; session without one and spent a step re-checking whether it saved.
+  (it "renders a goal set by this very turn for iteration 1"
+      (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx
+                                                      "session_turn" 4
+                                                      "session_goal" {"id" "g1"
+                                                                      "objective"
+                                                                      "remove tree-sitter"
+                                                                      "status" "active"
+                                                                      "revision" 1})})]
+        (expect (str/includes? boundary "session[\"goal\"] = "))
+        (expect (str/includes? boundary "\"objective\": \"remove tree-sitter\""))
+        (expect (str/includes? boundary "\"status\": \"active\""))))
+  (it "omits the goal line for a session without a goal"
+      (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]
+        (expect (not (str/includes? boundary "session[\"goal\"]"))))))
 
 (defdescribe
   freeze-semantics-test

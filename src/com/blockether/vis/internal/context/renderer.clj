@@ -154,7 +154,11 @@
 (defn render-turn-boundary
   "Render the append-only turn boundary placed on every current user message.
    It always states the current turn and includes utilization when available, so
-   iteration 1 never relies on a stale frozen system snapshot."
+   iteration 1 never relies on a stale frozen system snapshot.
+
+   The goal rides here for the same reason: `/goal` persists AFTER the frozen
+   standing block was rendered, so without this line the very turn that sets a
+   goal shows the model a session without one."
   [{:keys [ctx warnings]}]
   (let [view
         (eng/session-view ctx warnings)
@@ -163,12 +167,15 @@
         (get view "session_turn")
 
         utilization
-        (get view "session_utilization")]
+        (get view "session_utilization")
+
+        goal
+        (get view "session_goal")]
 
     (str "session[\"turn\"] = "
          (env/ctx->python-str turn)
-         (when utilization
-           (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization))))))
+         (when utilization (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization)))
+         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-str goal))))))
 
 (defn- ctx-path-str
   "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain
