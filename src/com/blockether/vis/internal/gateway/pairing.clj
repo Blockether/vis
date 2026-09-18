@@ -28,15 +28,28 @@
   scanned interfaces alongside it."
   #{"127.0.0.1" "localhost" "::1" "[::1]" "0:0:0:0:0:0:0:1"})
 
+(defn- network-interfaces
+  "Every interface the OS admits to, or none when it refuses to enumerate them."
+  []
+  (try (enumeration-seq (NetworkInterface/getNetworkInterfaces)) (catch Exception _ nil)))
+
+(defn- iface-ips
+  "The non-loopback IPv4 addresses `nif` currently holds, or none when the
+  interface will not describe itself. Linux answers an interface whose flags it
+  cannot read with `SocketException: Invalid argument`, and that ONE interface
+  must not take pairing and `/v1/capabilities` down with it."
+  [^NetworkInterface nif]
+  (try (when (and (not (.isLoopback nif)) (.isUp nif))
+         (->> (enumeration-seq (.getInetAddresses nif))
+              (filter #(instance? Inet4Address %))
+              (remove #(.isLoopbackAddress ^Inet4Address %))
+              (map #(.getHostAddress ^Inet4Address %))))
+       (catch Exception _ nil)))
+
 (defn- iface-addresses
   []
-  (->> (enumeration-seq (NetworkInterface/getNetworkInterfaces))
-       (remove #(.isLoopback ^NetworkInterface %))
-       (remove #(not (.isUp ^NetworkInterface %)))
-       (mapcat #(enumeration-seq (.getInetAddresses ^NetworkInterface %)))
-       (filter #(instance? Inet4Address %))
-       (remove #(.isLoopbackAddress ^Inet4Address %))
-       (map #(.getHostAddress ^Inet4Address %))
+  (->> (network-interfaces)
+       (mapcat iface-ips)
        distinct
        vec))
 
@@ -100,7 +113,8 @@
   []
   (let [proc-table (File. "/proc/net/route")]
     (if (.canRead proc-table)
-      (parse-proc-net-route (slurp proc-table))
+      (some-> (try (slurp proc-table) (catch Exception _ nil))
+              parse-proc-net-route)
       (some #(parse-route-get-default (command-stdout %))
             [["/sbin/route" "-n" "get" "default"] ["route" "-n" "get" "default"]]))))
 

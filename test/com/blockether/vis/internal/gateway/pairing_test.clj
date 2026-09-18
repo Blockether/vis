@@ -53,6 +53,18 @@
         (is (str/includes? (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
                            "url=http%3A%2F%2F100.109.18.77%3A7890"))))))
 
+(deftest an-interface-that-refuses-to-describe-itself-is-skipped
+  (testing
+    "Linux answers an interface whose flags it cannot read with
+            `SocketException: Invalid argument`: the scan drops that ONE
+            interface, because a refusal here took the whole pairing answer
+            and `GET /v1/capabilities` down with it"
+    (with-redefs-fn {#'pairing/network-interfaces (fn []
+                                                    [::refuses-every-query])}
+      (fn []
+        (is (= [] (#'pairing/iface-addresses)))
+        (is (= [] (pairing/candidate-hosts "0.0.0.0")))))))
+
 (deftest concrete-bind-advertises-only-the-bound-address
   (testing
     "a specific --host answers on that address and nowhere else, so the link
