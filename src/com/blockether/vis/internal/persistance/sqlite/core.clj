@@ -231,11 +231,43 @@
    LEFT JOIN session_soul s ON s.id = i.session_soul_id
    WHERE NOT EXISTS (SELECT 1 FROM improve_record r WHERE r.entry_id = i.entry_id)")
 
+(def ^:private council-attribution-sql
+  "UPDATE session_turn_soul AS ts
+      SET request_kind = 'council', council_entry_id = m.entry_id
+     FROM (SELECT s.id AS turn_id,
+                  CAST(substr(s.user_request, 23,
+                              instr(substr(s.user_request, 23), '.') - 1) AS INTEGER) AS entry_id
+             FROM session_turn_soul s
+            WHERE s.request_kind = 'user'
+              AND s.council_entry_id IS NULL
+              AND s.user_request LIKE 'Council notification #%') AS m
+    WHERE ts.id = m.turn_id
+      AND ts.user_request LIKE 'Council notification #' || m.entry_id
+                               || '. Read the attributed Council input; if missing or truncated, use council.get('
+                               || m.entry_id || ').%'
+      AND EXISTS (SELECT 1 FROM council_entry e
+                   WHERE e.id = m.entry_id
+                     AND ts.created_at >= e.created_at
+                     AND ts.created_at < e.created_at + 60000)")
+
+(defn- repair-council-attribution!
+  "Give Council wake turns written before the engine kept request provenance the
+   entry link they were stored without, so the TUI and the Companion both label
+   them Council and show the peer message instead of the host instruction.
+
+   A turn qualifies only when the entry its host text names still exists and the
+   turn was created within a minute of that entry being published; the text alone
+   never reclassifies a request a person typed. Turns that already carry
+   provenance are excluded, so a repaired store updates nothing."
+  [^DataSource ds]
+  (jdbc/execute! ds [council-attribution-sql]))
+
 (defn- install-schema!
   [^DataSource ds]
   (migration/migrate! ds MIGRATIONS)
   ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
-  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql])))
+  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql]))
+  (repair-council-attribution! ds))
 
 ;; Connection management
 ;;
