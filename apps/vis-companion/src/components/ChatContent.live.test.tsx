@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { LiveViewPanel } from './LiveView';
 import { STORY_LIVE_VIEW } from '../dev/story-data';
@@ -21,6 +21,23 @@ it('frames the embedded live view as a bordered box on its shared background', (
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
 });
 
+// THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A run painted in place stood taller
+// than the turn that opened it — a meter, a log and a table pushed the answer off the
+// screen — so the trace keeps ONE row saying what is running and where it got to, the
+// same line the terminal collapses a view to, and the picture opens from it.
+it('keeps an embedded run to one row and paints its picture only when opened', () => {
+  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
+  const panel = mounted.getByText(STORY_LIVE_VIEW.title).closest('section')!;
+  expect(panel.querySelector('ul')).toBeNull();
+  expect(panel.querySelector('table')).toBeNull();
+  expect(mounted.queryByRole('progressbar')).toBeNull();
+  // The row still reports itself: the newest status the run has.
+  expect(mounted.getByText('Scanning db-2')).toBeVisible();
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+  const opened = within(mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title }));
+  expect(opened.getByRole('progressbar')).toBeVisible();
+  expect(opened.getByText('Scanning db-2')).toBeVisible();
+});
 // The opened run is the app's ONE dialog (`Modal` + `DialogFrame`), not the viewport-pinned
 // artifact screen: on a desktop, opening a run used to paper the session list, the transcript
 // and the composer with a single view.

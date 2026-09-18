@@ -168,8 +168,16 @@ export const Landscape: Story = {
       await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
     }
     await expect(getComputedStyle(panel.querySelector('header')!).paddingLeft).toBe('59px');
-    const select = context.canvas.getAllByRole('button', { name: /^Select / })[0];
+    // The picture — and the safe area it must clear — belongs to the run's own screen now.
+    await userEvent.click(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
+    const page = within(document.body);
+    const opened = page
+      .getByRole('dialog', { name: view.title })
+      .querySelector<HTMLElement>('section.live-view-panel')!;
+    opened.style.setProperty('--live-view-inset', '59px');
+    const select = page.getAllByRole('button', { name: /^Select / })[0];
     await expect(getComputedStyle(select).paddingLeft).toBe('59px');
+    await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
     await meta.play(context);
   },
 };

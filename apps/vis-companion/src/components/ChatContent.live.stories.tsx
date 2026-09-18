@@ -134,10 +134,9 @@ export const Running: Story = {
     await userEvent.click(controls.getByRole('button', { name: 'Collapse Activity' }));
     await expect(title).toBeVisible();
     await userEvent.click(controls.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(controls.getByRole('button', { name: 'Build log' }));
-    await expect(controls.getByText(/Compile completed/)).toBeInTheDocument();
-    await userEvent.click(controls.getByRole('button', { name: 'Build log' }));
-    await expect(controls.queryByText('Compile completed')).not.toBeInTheDocument();
+    // The transcript STATES the run: its newest status, and no log painted in place.
+    await expect(controls.getByText('Waiting for integration tests')).toBeVisible();
+    await expect(controls.queryByRole('button', { name: 'Build log' })).toBeNull();
     // The interrupt used to sit flush against the run's top border, one hairline from
     // the activity above it; it needs air of its own before the thumb reaches for it.
     const interrupt = controls.getByRole('button', { name: 'Interrupt' });
@@ -156,6 +155,11 @@ export const Running: Story = {
     await expect(launch.querySelector('svg')).toBeNull();
     await userEvent.click(launch);
     const page = within(document.body);
+    // The picture belongs to the run's own screen: the log opens there, and leaves with it.
+    await userEvent.click(page.getByRole('button', { name: 'Build log' }));
+    await expect(page.getByText(/Compile completed/)).toBeInTheDocument();
+    await userEvent.click(page.getByRole('button', { name: 'Build log' }));
+    await expect(page.queryByText('Compile completed')).not.toBeInTheDocument();
     await userEvent.click(page.getByRole('button', { name: 'Close Jenkins build pool' }));
     await expect(title).toBeVisible();
   },

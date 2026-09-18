@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_LIVE_VIEW, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
@@ -672,9 +672,18 @@ export const Dividers: Story = {
   },
 };
 
-export const EmbeddedDividers: Story = {
+// THE TRANSCRIPT STATES A RUN. Embedded, the panel is ONE row that opens: the picture —
+// dividers and all — is painted in the run's own screen rather than in the trace.
+export const EmbeddedRow: Story = {
   args: { ...Dividers.args, embedded: true },
-  play: Dividers.play,
+  play: async ({ canvas }) => {
+    await expect(canvas.queryAllByRole('separator')).toHaveLength(0);
+    await userEvent.click(canvas.getByRole('button', { name: /^Open run / }));
+    const page = within(document.body);
+    await expect(page.getAllByRole('separator')).toHaveLength(2);
+    await userEvent.click(page.getByRole('button', { name: /^Close / }));
+    await expect(canvas.queryAllByRole('separator')).toHaveLength(0);
+  },
 };
 
 export const DividersReceipt: Story = {

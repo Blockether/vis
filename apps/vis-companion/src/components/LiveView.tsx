@@ -65,9 +65,10 @@ import {
  * The other half of human input is a QUESTION: it blocks, it takes the screen,
  * it wants an answer. This one wants nothing. A scan sweeping a fleet, a build
  * draining a log, a table filling in — the operator watches it, or does not,
- * and the run finishes either way. Its inline preview stays in the session.
- * Selecting RUN opens an optional transient screen; closing that screen leaves
- * both the preview and the running work alone.
+ * and the run finishes either way. In the transcript it is ONE ROW — what is
+ * running and how far it has come — and selecting RUN opens the picture in a
+ * transient screen; closing that screen leaves both the row and the running work
+ * alone.
  *
  * It paints the same picture the terminal pane paints, node for node, because
  * both fold the same patches through the same rules (`lib/live-view`). What
@@ -1025,6 +1026,38 @@ function NodeCell({
 }
 
 /**
+ * The one line a run is worth while its picture is folded away: the newest status
+ * it carries, else how far it has come. The terminal's collapsed row reads the
+ * same way (`live-view/status-summary`), so a run says the same thing on both
+ * surfaces.
+ */
+function runSummary(nodes: LiveNode[]): string {
+  const status = findNode(
+    nodes,
+    (node): node is LiveStatusNode => node.type === 'status' && node.text.trim() !== '',
+  );
+  if (status) return status.text;
+  const progress = findNode(nodes, (node): node is LiveProgressNode => node.type === 'progress');
+  const fraction = progress ? liveFraction(progress) : null;
+  return fraction === null ? '' : `${livePercent(fraction)}%`;
+}
+
+/** Depth first, because a status inside a group still says what the run is doing. */
+function findNode<T extends LiveNode>(
+  nodes: LiveNode[],
+  pick: (node: LiveNode) => node is T,
+): T | undefined {
+  for (const node of nodes) {
+    if (pick(node)) return node;
+    if (node.type === 'group') {
+      const inner = findNode(node.fields, pick);
+      if (inner) return inner;
+    }
+  }
+  return undefined;
+}
+
+/**
  * ONE view, painted. Pure: everything it knows arrived as a prop, which is what
  * lets the whole picture be rendered from the engine's own fixture in a test.
  */
@@ -1077,6 +1110,8 @@ export function LiveViewPanel({
       })),
   };
   const [opened, setOpened] = useState(false);
+  // What the row SAYS while the picture is folded away — see `runSummary`.
+  const summary = embedded ? runSummary(view.nodes) : '';
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
   const typed = note ?? '';
@@ -1099,7 +1134,7 @@ export function LiveViewPanel({
         <header
           className={
             embedded
-              ? `flex min-w-0 items-center gap-2 px-(--live-view-inset) pt-2 ${view.description ? '' : 'border-b border-dialog-edge pb-2'}`
+              ? 'flex min-w-0 items-center gap-2 px-(--live-view-inset) py-2'
               : 'flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-(--live-view-inset) py-2.5'
           }
         >
@@ -1110,7 +1145,10 @@ export function LiveViewPanel({
               onClick={() => setOpened(true)}
             >
               <BandLabel>RUN</BandLabel>
-              <span className="min-w-0 flex-1 truncate">{view.title}</span>
+              <span className="min-w-0 shrink truncate">{view.title}</span>
+              {summary && (
+                <span className="min-w-0 flex-1 truncate text-dialog-hint">{summary}</span>
+              )}
             </ExecutionAction>
           ) : (
             <span className="min-w-0 flex-1">
@@ -1139,14 +1177,9 @@ export function LiveViewPanel({
             </Button>
           )}
         </header>
-        {embedded && view.description && (
-          <p className="border-b border-dialog-edge px-(--live-view-inset) pb-2.5 font-mono text-ui text-dialog-hint mouse:text-meta">
-            <InlineMarkdown>{view.description}</InlineMarkdown>
-          </p>
-        )}
         {!isSettled && isArmed && onInterrupt && (
           <form
-            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge px-(--live-view-inset) py-2 ${embedded ? '' : 'bg-panel-2'}`}
+            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-dialog-edge px-(--live-view-inset) py-2 ${embedded ? 'border-t' : 'border-b bg-panel-2'}`}
             onSubmit={(event) => {
               event.preventDefault();
               sendStop(onInterrupt);
@@ -1180,22 +1213,30 @@ export function LiveViewPanel({
           </form>
         )}
         {error && (
-          <p className="border-b border-dialog-edge px-(--live-view-inset) py-2 font-mono text-chip text-err">
+          <p
+            className={`border-dialog-edge px-(--live-view-inset) py-2 font-mono text-chip text-err ${embedded ? 'border-t' : 'border-b'}`}
+          >
             {error}
           </p>
         )}
-        <ul>
-          {view.nodes.map((node, index) => (
-            // Table cells own their padding; an outer inset makes the first and last
-            // rows uneven relative to the internal separators. Keep labelled headings inset.
-            <li
-              key={node.id}
-              className={`min-w-0 ${rowRule(view.nodes[index - 1], node)} ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
-            >
-              <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
-            </li>
-          ))}
-        </ul>
+        {/* THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A build observation
+            painted in place stood taller than the turn that opened it and pushed the
+            answer off the screen — the same rule a settled run obeys one row above
+            (`LiveRunRow`). The picture is one press away, in the run's own screen. */}
+        {!embedded && (
+          <ul>
+            {view.nodes.map((node, index) => (
+              // Table cells own their padding; an outer inset makes the first and last
+              // rows uneven relative to the internal separators. Keep labelled headings inset.
+              <li
+                key={node.id}
+                className={`min-w-0 ${rowRule(view.nodes[index - 1], node)} ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+              >
+                <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
       {embedded && opened && (
         <RunDialog title={view.title} onClose={() => setOpened(false)}>
