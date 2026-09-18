@@ -302,42 +302,57 @@
         (expect (true? (get-in snapshot [:process-jail :disabled?])))
         (expect (false? (:jail-enabled snapshot)))
         (expect (false? (get view "is_jailed")))))
-  (it
-    "grants unrestricted explicit filesystem access when the jail is disabled"
-    (let [home
-          (.getCanonicalFile (.toFile (Files/createTempDirectory
-                                        "vis-policy-open"
-                                        (make-array java.nio.file.attribute.FileAttribute 0))))
+  (it "grants unrestricted explicit filesystem access when the jail is disabled"
+      ;; Regression: a disabled jail replaced the configured catalog with the host
+      ;; roots, so a named project root lost its identity, guidance and search scope.
+      (let [home
+            (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                          "vis-policy-open"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))))
 
-          project
-          (doto (java.io.File. home "vis") .mkdirs)
+            project
+            (doto (java.io.File. home "vis") .mkdirs)
 
-          base
-          (.getPath project)
+            sibling
+            (doto (java.io.File. home "sibling") .mkdirs)
 
-          snapshot
-          (policy/snapshot {"jail" {"enabled" false}} {:base-dir base :home (.getPath home)})
+            base
+            (.getPath project)
 
-          host-roots
-          (->> (java.io.File/listRoots)
-               (mapv #(.getCanonicalPath ^java.io.File %)))
+            snapshot
+            (policy/snapshot {"jail" {"enabled" false}
+                              "workspace" {"filesystem" [{"id" "sibling"
+                                                          "path" (.getPath sibling)
+                                                          "access" "read-write"}]}}
+                             {:base-dir base :home (.getPath home)})
 
-          view
-          (policy/access-view snapshot [base])]
+            host-roots
+            (->> (java.io.File/listRoots)
+                 (mapv #(.getCanonicalPath ^java.io.File %)))
 
-      (expect (false? (:jail-enabled snapshot)))
-      (expect (false? (get view "is_jailed")))
-      (expect (= host-roots (policy/read-write-roots snapshot)))
-      (expect (= host-roots (policy/no-search-roots snapshot)))
-      (expect (= (vec (distinct (concat ["~/vis"] host-roots)))
-                 (get-in view ["filesystem" "read_write"])))
-      (expect (= host-roots (get-in view ["filesystem" "no_search"])))
-      (expect (= (mapv (fn [root]
-                         {:trunk root :clone root :draft :shared :no-search? true})
-                       host-roots)
-                 (workspace/env-filesystem-roots {:security-policy snapshot
-                                                  :security/filesystem-roots []
-                                                  :security/no-search-roots []})))))
+            catalog
+            [(.getPath sibling) (.getPath (java.io.File. home ".vis"))]
+
+            view
+            (policy/access-view snapshot [base])]
+
+        (expect (false? (:jail-enabled snapshot)))
+        (expect (false? (get view "is_jailed")))
+        (expect (= (vec (distinct (concat catalog host-roots))) (policy/read-write-roots snapshot)))
+        (expect (= host-roots (policy/no-search-roots snapshot)))
+        (expect (= (vec (distinct (concat ["~/vis" "~/sibling" "~/.vis"] host-roots)))
+                   (get-in view ["filesystem" "read_write"])))
+        (expect (= host-roots (get-in view ["filesystem" "no_search"])))
+        (expect (= (into (mapv (fn [root]
+                                 {:trunk root :clone root :draft :shared})
+                               catalog)
+                         (mapv (fn [root]
+                                 {:trunk root :clone root :draft :shared :no-search? true})
+                               host-roots))
+                   (workspace/env-filesystem-roots
+                     {:security-policy snapshot
+                      :security/filesystem-roots (policy/read-write-roots snapshot)
+                      :security/no-search-roots (policy/no-search-roots snapshot)})))))
   (it
     "keeps a stable generation for equivalent snapshots and changes it with policy"
     (let [base

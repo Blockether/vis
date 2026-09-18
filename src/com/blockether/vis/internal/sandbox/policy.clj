@@ -316,13 +316,15 @@
        vec))
 
 (defn read-write-roots
-  "Filesystem roots available read/write to common model tools. When the jail is
-   disabled, every host filesystem root is available; otherwise this is the
-   configured allowlist."
+  "Filesystem roots available read/write to common model tools. With the jail
+   enabled this is the configured allowlist. A disabled jail adds every host
+   filesystem root, but the configured catalog keeps leading it: a named project
+   root stays a root of its own, with its guidance and its default search scope."
   [policy]
-  (if (:jail-enabled policy)
-    (vec (distinct (get-in policy [:process-jail :allow-read-write])))
-    (host-filesystem-roots)))
+  (let [configured (distinct (get-in policy [:process-jail :allow-read-write]))]
+    (if (:jail-enabled policy)
+      (vec configured)
+      (vec (distinct (concat configured (host-filesystem-roots)))))))
 
 (defn no-search-roots
   "Roots excluded from the DEFAULT grep sweep; explicit paths still reach

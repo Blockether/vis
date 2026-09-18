@@ -268,7 +268,9 @@
                 (java.io.File/listRoots)))
 
         configured-roots
-        (if unrestricted? host-roots (when environment? (:security/filesystem-roots env-or-roots)))
+        (cond-> (when environment? (:security/filesystem-roots env-or-roots))
+          unrestricted?
+          (concat host-roots))
 
         no-search
         (if unrestricted?
@@ -298,8 +300,8 @@
                (entry trunk clone (if (= :shared policy) (draft-policy-for policies trunk) policy)))
              (vals clones))
 
-        ;; A policied root the jail never listed (jail off ⇒ only host roots are
-        ;; configured) still has to be denied/remapped, so it enters explicitly.
+        ;; A policied root the configured catalog never listed still has to be
+        ;; denied/remapped, so it enters explicitly.
         policied
         (when drafted?
           (keep (fn [[root policy]]
