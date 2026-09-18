@@ -263,20 +263,21 @@ first, run `vis-agent update --track dev`.
 
 ### Cached files and pairing
 
-On macOS and Linux, release files live in `~/.vis/install/desktop/<platform>/<version>/`;
-source builds live in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. Both respect
-`VIS_HOME`. Only one desktop app runs at a time: each launch closes a Vis desktop
-still running from another version or track, then opens the version you selected.
-An app already running from that exact version keeps its window and comes to the
-front.
+Release files live in `~/.vis/install/desktop/<platform>/<version>/`; source builds
+live in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. Both respect
+`VIS_HOME`, and installing an app there needs no administrator access.
 
-Once the selected version opens, the launcher deletes the copies it supersedes in
-that track's folder, so only the version you run stays on disk. Files for the other
-track are left alone. A release version removed this way downloads again if you
-select it later, and a dev build is rebuilt from source on every launch anyway.
+Only one desktop app runs at a time. A launch closes a desktop running from another
+version or track, then opens the version you selected. If that version is already
+running, its window comes to the front.
 
-Installing the app in this cache needs no administrator access. Desktop launches
-do not require Java, change your engine track, or start or restart a gateway.
+The launch then deletes the other versions in that track's folder, leaving one app
+on disk; the other track keeps its files. A release version deleted this way
+downloads again the next time you select it, and dev builds are rebuilt from source
+on every launch.
+
+A desktop launch does not use Java, change your engine track, or start or restart
+a gateway.
 
 On first launch, pair with your gateway in the app using its URL and bearer token.
 See [Desktop and mobile setup](index.md#connecting-the-companion-app) for connection options.
