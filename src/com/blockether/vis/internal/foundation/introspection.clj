@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.channel.header :as header]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
@@ -1487,7 +1488,7 @@
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle.
-(defn introspection-enabled? [_env] (vis/toggle-enabled? "introspection"))
+(defn introspection-enabled? [_env] (toggles/enabled? "introspection"))
 
 (def all-symbols
   (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
@@ -1515,4 +1516,4 @@
     "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
     "- Filter in `python_execution`; print the fields the question needs.\n"))
 
-(defn prompt [_env] (when (vis/toggle-enabled? "introspection") INTROSPECTION_PROMPT))
+(defn prompt [_env] (when (toggles/enabled? "introspection") INTROSPECTION_PROMPT))
