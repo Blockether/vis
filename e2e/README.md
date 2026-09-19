@@ -101,7 +101,9 @@ reasoning behavior.
 Without `VIS_E2E_TIMEOUT`, each scenario uses its `timeout_s` or the 300-second
 default. These budgets include model requests and all tool calls; they do not
 change the Python execution watchdog. `extension-watchdog` uses 900 seconds to
-allow for its real 310-second extension call and model response time.
+allow for its real 310-second extension call and model response time. `find-usages`
+uses 480 seconds because its answer is a single long prose reply, which flash-class
+models stream slowly enough to outlast the default budget.
 
 ## Interpret measurements
 
@@ -109,6 +111,9 @@ allow for its real 310-second extension call and model response time.
 summaries. Compare pass counts before efficiency: each run must converge, satisfy
 all correctness guards, and have no surfaced errors, failed/cancelled Activities
 or unfinished Activities. Repeated snapshots count once, after terminal state updates.
+A form's final snapshot collapses the calls it made into one row: a row that snapshot
+no longer lists finished with the group, so only a row still running there counts as
+unfinished work.
 
 The report separates surfaced errors from Activity failures without a same-form
 error (possible caught failures). Missing scopes remain unclassified; a shared form

@@ -658,6 +658,41 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         self.assertEqual(0, result["surfaced_errors"])
         self.assertFalse(result["correct"])
 
+    def test_group_row_supersedes_the_rows_it_collapsed(self):
+        # A finished form collapses its per-call rows into ONE group row, so the
+        # last snapshot no longer lists the row it replaced. That row finished with
+        # the group; only a row the final snapshot still shows as running is work
+        # the session abandoned.
+        result = self.run_events(
+            [
+                self.activity("running", operation="shell"),
+                self.activity("succeeded", operation="shell", row_id="group-call-1"),
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["shell"],
+        )
+        self.assertEqual(0, result["incomplete_activities"])
+        self.assertEqual(0, result["errors"])
+        self.assertTrue(result["correct"])
+
+    def test_collapsing_a_scope_keeps_its_failed_row_and_other_scopes(self):
+        stale = self.activity("running", operation="shell")
+        stale["payload"]["scope"] = "t1/i2/f1"
+        failed = self.activity("failed", operation="shell", row_id="call-2")
+        group = self.activity("succeeded", operation="shell", row_id="group-call-2")
+        result = self.run_events(
+            [
+                stale,
+                failed,
+                group,
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["shell"],
+        )
+        self.assertEqual(1, result["activity_failures"])
+        self.assertEqual(1, result["incomplete_activities"])
+        self.assertFalse(result["correct"])
+
     def test_running_or_cancelled_activity_is_not_success(self):
         for state in ("running", "cancelled"):
             with self.subTest(state=state):
@@ -890,6 +925,42 @@ class EvaluationSummaryTest(unittest.TestCase):
         )
         self.assertEqual([], failures)
         self.assertEqual(1, metrics["doc_calls"])
+
+    def test_doc_settles_the_contract_without_a_signature_call(self):
+        # `doc(name)` is the registered contract itself: signature, defaults and
+        # schema. Demanding inspect.signature on top of it would be the redundant
+        # lookup this same audit counts against a run.
+        metrics, failures = run.discovery_evidence(
+            ['print(doc("probe.read"))'], [], {"signatures": ["probe.read"]}
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(0, metrics["signature_calls"])
+        self.assertEqual(1, metrics["doc_calls"])
+        _, failures = run.discovery_evidence(
+            ['print(doc("probe.other"))'], [], {"signatures": ["probe.read"]}
+        )
+        self.assertEqual(["no signature or doc call found for probe.read"], failures)
+
+    def test_availability_probe_is_not_rediscovery_of_a_known_tool(self):
+        # A NameError guard answers "is the extension installed?", not "what is its
+        # contract?" — scanning a namespace or a result shape reads no contract.
+        guard = (
+            "try:\n"
+            "    probe\n"
+            "except NameError:\n"
+            '    print([n for n in dir(builtins) if "probe" in n])\n'
+            "else:\n"
+            "    print(probe.read())"
+        )
+        metrics, failures = run.discovery_evidence(
+            [guard], [], {"known": True, "symbols": ["probe.read"]}
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(0, metrics["other_inspection_calls"])
+        _, failures = run.discovery_evidence(
+            ["print(dir(probe))"], [], {"known": True, "symbols": ["probe.read"]}
+        )
+        self.assertEqual(["known contracts were unnecessarily rediscovered"], failures)
 
     def test_nonobject_token_payload_fails_without_crashing(self):
         for payload in (None, [], "100"):

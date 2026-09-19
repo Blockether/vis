@@ -63,6 +63,7 @@ MODELS = [
 TIMEOUT = int(os.environ.get("VIS_E2E_TIMEOUT", "300"))
 WORKERS = int(os.environ.get("VIS_E2E_WORKERS", "5"))
 TRACES = os.environ.get("VIS_E2E_TRACES", "/tmp/vis_e2e/traces")
+TERMINAL_ACTIVITY_STATES = {"succeeded", "failed", "cancelled"}
 
 
 @cache
@@ -396,6 +397,18 @@ def discovery_evidence(forms, activities, rules):
             return f"{resolve(node.args[0])}.{resolve(node.args[1])}"
         return "?"
 
+    audited_symbols = {
+        *rules.get("symbols", []),
+        *rules.get("signatures", []),
+        *rules.get("contracts", []),
+    }
+    audited_symbols |= {name.split(".")[0] for name in audited_symbols}
+
+    def inspects_audited_tool(node):
+        """`dir()`/`vars()` on the TOOL is discovery; on a result or a namespace it is not."""
+        target = resolve(node.args[0]) if node.args else "?"
+        return isinstance(target, str) and target in audited_symbols
+
     local_bodies = {}
     sensitive_calls = {
         "doc",
@@ -541,7 +554,9 @@ def discovery_evidence(forms, activities, rules):
                     )
                 )
                 syntax_lookups.append((name, resolve(argument)))
-            elif name.startswith("inspect.") or name in {"dir", "vars", "help"}:
+            elif name.startswith("inspect.") or name == "help":
+                other_inspection.append(name)
+            elif name in {"dir", "vars"} and inspects_audited_tool(node):
                 other_inspection.append(name)
             if name in rules.get("forbid_tools", []):
                 failures.append(f"forbidden tool call {name!r}")
@@ -600,9 +615,14 @@ def discovery_evidence(forms, activities, rules):
         failures.append(f"redundant discovery: {redundant} repeated unchanged lookups")
     if rules.get("known") and (signatures or contracts or lookups or other_inspection):
         failures.append("known contracts were unnecessarily rediscovered")
+    # `doc(name)` IS the registered contract -- signature, defaults, schema and
+    # effects -- so it settles arguments at least as well as `inspect.signature`.
+    documented = {
+        argument for operation, argument in syntax_lookups if operation == "doc"
+    }
     for name in rules.get("signatures", []):
-        if name not in signatures:
-            failures.append(f"no signature call found for {name}")
+        if name not in signatures and name not in documented:
+            failures.append(f"no signature or doc call found for {name}")
     for name in rules.get("contracts", []):
         if name not in contracts:
             failures.append(f"no focused contract access found for {name}")
@@ -978,19 +998,29 @@ def run_one(job):
                     }
                 )
             elif ph == "form-activity":
-                for row in (pl.get("activity") or {}).get("rows", []):
-                    row_id = row.get("id")
-                    operation = row.get("operation")
-                    if row_id and operation:
-                        previous = activities.get(row_id, {})
-                        if previous.get("state") not in {
-                            "succeeded",
-                            "failed",
-                            "cancelled",
-                        }:
-                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
-                        elif row.get("state") in {"failed", "cancelled"}:
-                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
+                scope = pl.get("scope", "")
+                rows = [
+                    row
+                    for row in (pl.get("activity") or {}).get("rows", [])
+                    if row.get("id") and row.get("operation")
+                ]
+                present = {row["id"] for row in rows}
+                # A later snapshot of the SAME form collapses finished rows into one
+                # group row. A non-terminal row that snapshot no longer lists was
+                # superseded, not abandoned; terminal rows stay as evidence.
+                for row_id, previous in list(activities.items()):
+                    if (
+                        previous.get("scope") == scope
+                        and row_id not in present
+                        and previous.get("state") not in TERMINAL_ACTIVITY_STATES
+                    ):
+                        del activities[row_id]
+                for row in rows:
+                    previous = activities.get(row["id"], {})
+                    if previous.get("state") not in TERMINAL_ACTIVITY_STATES:
+                        activities[row["id"]] = {**row, "scope": scope}
+                    elif row.get("state") in {"failed", "cancelled"}:
+                        activities[row["id"]] = {**row, "scope": scope}
             elif ph == "form-result":
                 largest_form_output = max(
                     largest_form_output, len(pl.get("stdout") or "")
@@ -1067,7 +1097,11 @@ def run_one(job):
             discovery, discovery_failures = discovery_evidence(
                 forms,
                 activity_rows,
-                {**sc["discovery"], "forbid_tools": sc.get("forbid_tools", [])},
+                {
+                    **sc["discovery"],
+                    "symbols": sc.get("want_tools", []),
+                    "forbid_tools": sc.get("forbid_tools", []),
+                },
             )
             detail.extend(discovery_failures)
         helper_reuse = {}
