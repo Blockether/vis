@@ -2706,6 +2706,23 @@
                not-empty)
        (catch Throwable _ nil)))
 
+(defn newest-answer-text
+  "Plain-text projection of this session's NEWEST settled answer, or nil.
+
+   [[turn-answer-text]] answers for a turn the caller can name - the push tap
+   reads that id off the event it just fired on. A client that alerts from
+   POLLING holds no turn id, so the newest row is read here: a one-turn
+   transcript page, never the whole session. A Council turn is never that
+   answer - it does not advance `answer_count`, so no banner is about one."
+  [sid]
+  (try (let [turn (last (:turns (transcript-page sid {:limit 1})))]
+         (when-not (= "council" (get turn "request_kind"))
+           (some-> (get turn "content")
+                   content/text-projection
+                   str/trim
+                   not-empty)))
+       (catch Throwable _ nil)))
+
 (defn- record-metrics!
   [sid {:keys [tokens cost duration-ms status]}]
   (let [input

@@ -262,7 +262,7 @@ export function DesktopNotificationsPanel({ gateway }: { gateway: GatewayConn })
     if (live !== null) rememberNotifyVerdict(gateway.url, live);
   }, [live, gateway.url]);
   const shown = live ?? remembered;
-  const hasBanner = Boolean(err) || blocked || shown === true;
+  const hasBanner = Boolean(err) || blocked;
 
   return (
     <SettingsPanel
@@ -286,13 +286,6 @@ export function DesktopNotificationsPanel({ gateway }: { gateway: GatewayConn })
             <Banner kind="warn">
               macOS is not delivering alerts from Vis — allow them in System Settings, under
               Notifications, and this machine can connect again.
-            </Banner>
-          )}
-
-          {shown === true && !blocked && (
-            <Banner kind="neutral">
-              Alerts arrive while the desktop app is open. Keep notifications on your phone or in a
-              browser tab to hear about a session while it is closed.
             </Banner>
           )}
         </div>

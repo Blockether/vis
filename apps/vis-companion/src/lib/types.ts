@@ -179,6 +179,18 @@ export interface BrowseListing {
   entries: BrowseEntry[];
 }
 
+/**
+ * `GET /v1/sessions/:sid/alert` — the two lines a system notification shows, worded by the
+ * gateway. `gateway/push.clj` words every alert, whether it is pushed to a phone or raised
+ * locally by the desktop app (`lib/desktop-notify.ts`), so a banner reads the same anywhere.
+ */
+export interface SessionAlert {
+  /** The session's own name, or `Action needed — <what was asked>` when a run is parked. */
+  title: string;
+  /** What vis said, flattened out of markdown and clipped, or the request's own description. */
+  body: string;
+}
+
 /** One persisted request enriched by gateway session metrics. Clients format only:
  * they never sum breakdown rows, derive budget pressure, percentages or deltas.
  * Missing optional facts remain unknown; derived fields are supplied by /usage.

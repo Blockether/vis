@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.persistance.core]
@@ -4397,3 +4398,38 @@
       (with-redefs [state/council-operation! (fn [& _]
                                                (throw (ex-info "fixture" {:error kind})))]
         (is (= status (:status (handler {:path-params {:sid "fixture"}}))))))))
+
+(deftest session-alert-is-the-gateways-own-wording-test
+  ;; The desktop app cannot be pushed to (its WKWebView has no `PushManager`), so it raises its
+  ;; own banners and asks THIS route what they say. One wording therefore reaches a phone and a
+  ;; desktop window alike, instead of each surface flattening an answer its own way.
+  (let [sid
+        (random-uuid)
+
+        handler
+        (rv 'session-alert-handler)
+
+        alert
+        (fn [query]
+          (wire/parse-json (:body (handler {:path-params {:sid (str sid)} :query-params query}))))]
+
+    (with-redefs [state/soul
+                  (fn [id]
+                    (when (= (str sid) (str id)) {"title" "deploy"}))
+
+                  state/newest-answer-text
+                  (constantly "## Done\n\n- Shipped **v2** to `prod`")
+
+                  gw-view/input-views
+                  (constantly [{:id "v1"
+                                :title "Which branch should I deploy?"
+                                :description "main is two commits ahead of the tag."}])]
+
+      (testing "an answer is the session's own name and what vis said, flattened for a banner"
+        (is (= {"title" "deploy" "body" "Done • Shipped v2 to prod"} (alert {}))))
+      (testing "a parked run is the question it asked"
+        (is (= {"title" "Action needed — Which branch should I deploy?"
+                "body" "main is two commits ahead of the tag."}
+               (alert {"reason" "question"}))))
+      (testing "a session this gateway does not have has no banner"
+        (is (= 404 (:status (handler {:path-params {:sid (str (random-uuid))}}))))))))

@@ -619,44 +619,66 @@
           not-empty
           (clip BODY_LIMIT)))
 
+(defn- document-field
+  "One value of a View document, whichever spelling the caller holds: an event
+   carries the wire (string-keyed) document, a read of the open-View registry
+   the engine's own keyword map."
+  [document k]
+  (not-blank (or (get document (name k)) (get document k))))
+
+(defn answer-alert
+  "The banner a finished turn raises: the session's own name, and WHAT vis said.
+
+   THE one place an alert is worded. A phone reads these two lines out of its
+   push payload; the desktop app has no push channel of its own and reads the
+   same two back over `GET /v1/sessions/:sid/alert`, so a banner says the same
+   thing wherever it appears."
+  [{:keys [title answer is-failed]}]
+  {:title (clip (or (not-blank title) "Vis") TITLE_LIMIT)
+   :body (or (answer-body answer) (if is-failed "Turn failed." "Turn finished."))})
+
+(defn question-alert
+  "The banner a run PARKED on a human raises: what it asked, and the request's
+   own description. `document` is that input View, from the `view.open` event
+   or from the open-View registry; nil when the run is parked on nothing this
+   gateway can still name."
+  [document]
+  (let [asked
+        (document-field document :title)
+
+        description
+        (document-field document :description)]
+
+    {:title (clip (if asked (str "Action needed — " asked) "Action needed") TITLE_LIMIT)
+     :body (clip (or description "Vis is waiting on your answer.") BODY_LIMIT)}))
+
 (defn- turn-notification
   [sid event]
   (let [status
         (or (get event "status") (when (= "turn.failed" (get event "type")) "failed") "completed")
 
         described
-        (@describe-session sid (get event "turn_id"))
+        (@describe-session sid (get event "turn_id"))]
 
-        title
-        (or (not-empty (str (:title described))) "Vis")]
-
-    {:title title
-     :body (or (answer-body (:answer described))
-               (if (= "failed" status) "Turn failed." "Turn finished."))
-     :thread-id (str sid)
-     :collapse-id (str sid)
-     :data
-     (with-gateway
-       {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"})}))
+    (merge (answer-alert
+             {:title (:title described) :answer (:answer described) :is-failed (= "failed" status)})
+           {:thread-id (str sid)
+            :collapse-id (str sid)
+            :data (with-gateway {:session_id (str sid)
+                                 :turn_id (get event "turn_id")
+                                 :status status
+                                 :type "turn.end"})})))
 
 (defn- input-view-notification
   "Alert for a run BLOCKED on an input-capable View."
   [sid event]
-  (let [document
-        (get event "view")
-
-        asked
-        (not-empty (str (get document "title")))
-
-        description
-        (not-empty (str (get document "description")))]
-
-    {:title (clip (if asked (str "Action needed — " asked) "Action needed") TITLE_LIMIT)
-     :body (clip (or description "Vis is waiting on your answer.") BODY_LIMIT)
-     :thread-id (str sid)
-     :collapse-id (str sid ":input-view")
-     :data (with-gateway
-             {:session_id (str sid) :view_id (str (get document "id")) :type "view.open"})}))
+  (let [document (get event "view")]
+    (merge (question-alert document)
+           {:thread-id (str sid)
+            :collapse-id (str sid ":input-view")
+            :data (with-gateway {:session_id (str sid)
+                                 :view_id (str (get document "id"))
+                                 :type "view.open"})})))
 
 (defn on-event!
   "Push on terminal turns and on input Views that need the operator."

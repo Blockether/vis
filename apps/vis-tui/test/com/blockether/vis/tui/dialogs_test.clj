@@ -11,7 +11,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.toggles :as toggles])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal
@@ -2832,3 +2832,180 @@
         (expect (= 16 (p/display-width "日本語ダイアログ")))
         (expect (= 16 (p/display-width "ABCDEFGHIJKLMNOP")))
         (expect (= (first-title-col "ABCDEFGHIJKLMNOP") (first-title-col "日本語ダイアログ"))))))
+
+(defdescribe
+  settings-catalog-test
+  ;; The TUI renders the gateway's own settings catalog — the SAME payload the
+  ;; companion app draws — instead of a registry copy that drifts whenever the
+  ;; engine or an extension registers a toggle this binary never heard of.
+  (it
+    "projects the gateway catalog: same groups, same order, same marks as the app"
+    (let [registry-toggle-rows
+          (var-get #'dlg/registry-toggle-rows)
+
+          settings-option-label
+          (var-get #'dlg/settings-option-label)
+
+          settings-row-mark
+          (var-get #'dlg/settings-row-mark)
+
+          inventory
+          (var-get #'dlg/settings-inventory)
+
+          original
+          @inventory]
+
+      (try (reset! inventory {:status :ok
+                              :error nil
+                              :groups [{"id" "agent"
+                                        "title" "Agent"
+                                        "toggles" [{"id" "agent_name"
+                                                    "label" "Agent name"
+                                                    "type" "string"
+                                                    "value" "vis"}]}
+                                       {"id" "experimental"
+                                        "title" "Experimental"
+                                        "toggles" [{"id" "draft_backend"
+                                                    "label" "Draft backend"
+                                                    "description" "Off by default."
+                                                    "type" "enum"
+                                                    "value" "off"
+                                                    "choices" ["auto" "worktree" "rift" "off"]
+                                                    "is_experimental" true}
+                                                   {"id" "plans"
+                                                    "label" "Plan before coding"
+                                                    "type" "boolean"
+                                                    "enabled" false
+                                                    "is_experimental" true}]}]})
+           ;; The agent group stays with the dialog's own agent-name row above,
+           ;; and the section header is the gateway's title verbatim.
+           (let [rows (registry-toggle-rows)]
+             (expect (= [:section :registry-toggle :registry-toggle] (mapv :type rows)))
+             (expect (= "Experimental" (:label (first rows))))
+             ;; `draft_backend` lives in the engine, never in this binary's
+             ;; registry: the catalog is what puts it on the screen.
+             (expect (nil? (toggles/toggle-spec "draft_backend")))
+             (let [drafts (second rows)]
+               (expect (= "draft_backend" (:toggle-id drafts)))
+               (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
+               (expect (= "Draft backend: off  [Experimental]" (settings-option-label drafts {})))
+               (expect (= p/MARK_VALUE (first (settings-row-mark drafts {})))))
+             (let [plans (nth rows 2)]
+               (expect (= "Plan before coding  [Experimental]" (settings-option-label plans {})))
+               (expect (= p/STATUS_OFF (first (settings-row-mark plans {}))))))
+           (finally (reset! inventory original)))))
+  (it
+    "mirrors the daemon's answer back into the catalog a flipped row renders from"
+    (let [apply-settings-option
+          (var-get #'dlg/apply-settings-option)
+
+          registry-toggle-rows
+          (var-get #'dlg/registry-toggle-rows)
+
+          settings-option-label
+          (var-get #'dlg/settings-option-label)
+
+          inventory
+          (var-get #'dlg/settings-inventory)
+
+          original
+          @inventory]
+
+      (try (reset! inventory {:status :ok
+                              :error nil
+                              :groups [{"id" "experimental"
+                                        "title" "Experimental"
+                                        "toggles" [{"id" "draft_backend"
+                                                    "label" "Draft backend"
+                                                    "type" "enum"
+                                                    "value" "off"
+                                                    "choices" ["auto" "worktree" "rift" "off"]
+                                                    "is_experimental" true}]}]})
+           (with-redefs [vis/gateway-set-setting-value! (fn [id value]
+                                                          {"id" id "type" "enum" "value" value})]
+             (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree")))
+           (expect (= "Draft backend: worktree  [Experimental]"
+                      (settings-option-label (second (registry-toggle-rows)) {})))
+           ;; A daemon-only toggle never leaks into the process registry.
+           (expect (nil? (toggles/toggle-spec "draft_backend")))
+           (finally (reset! inventory original)))))
+  (it "falls back to the process registry when the daemon cannot answer"
+      (let [registry-toggle-rows
+            (var-get #'dlg/registry-toggle-rows)
+
+            inventory
+            (var-get #'dlg/settings-inventory)
+
+            original
+            @inventory]
+
+        (try (reset! inventory {:status :unloaded :groups [] :error nil})
+             (with-redefs [vis/gateway-settings (fn [& _]
+                                                  (throw (ex-info "daemon down" {})))]
+               (dlg/load-settings-inventory!))
+             (expect (= :error (:status @inventory)))
+             (let [rows (registry-toggle-rows)]
+               (expect (some #(= "plans" (:toggle-id %)) rows))
+               (expect (some #(and (= :section (:type %)) (= "Experimental" (:label %))) rows)))
+             (finally (reset! inventory original))))))
+
+(defn- back-buffer-text
+  "What the last paint asked the terminal to show, one line per screen row."
+  [^TerminalScreen screen]
+  (let [size (.getTerminalSize screen)]
+    (str/join "\n"
+              (for [row (range (.getRows size))]
+                (str/trimr (apply str
+                             (for [col (range (.getColumns size))]
+                               (.getCharacterString
+                                 (.getBackCharacter screen (int col) (int row))))))))))
+
+(defn- terminal-text
+  "What the terminal is actually showing, one line per terminal row."
+  [^DefaultVirtualTerminal terminal]
+  (let [size (.getTerminalSize terminal)]
+    (str/join "\n"
+              (for [row (range (.getRows size))]
+                (str/trimr (apply str
+                             (for [col (range (.getColumns size))]
+                               (if-let [^TextCharacter cell
+                                        (.getCharacter terminal
+                                                       (TerminalPosition. (int col) (int row)))]
+                                 (.getCharacterString cell)
+                                 " "))))))))
+
+(defdescribe modal-resize-test
+             ;; Regression: resizing the terminal while a dialog was open left the cells of
+             ;; the pre-resize frame on screen - broken borders, leftover glyphs - and the
+             ;; chat behind it stayed broken once the dialog closed. Modals flushed an
+             ;; explicit DELTA refresh, which skips the full repaint Lanterna asks for after
+             ;; a resize, so only the cells that differed from the stale front buffer were
+             ;; rewritten.
+             (it "repaints every cell after a terminal resize inside a modal"
+                 (let [terminal
+                       (DefaultVirtualTerminal. (TerminalSize. 100 30))
+
+                       ^TerminalScreen screen
+                       (doto (TerminalScreen. terminal) (.startScreen))
+
+                       flushes
+                       (atom 0)]
+
+                   ;; Driven by the terminal's own flushes: resize after the dialog's first
+                   ;; frame, close it after the frame that answers the resize.
+                   (.addVirtualTerminalListener
+                     terminal
+                     (reify
+                       VirtualTerminalListener
+                         (onFlush [_]
+                           (let [n (swap! flushes inc)]
+                             (cond (= 1 n) (.setTerminalSize terminal (TerminalSize. 70 20))
+                                   (= 2 n) (.addInput terminal (KeyStroke. KeyType/Escape)))))
+                         (onBell [_])
+                         (onClose [_])
+                         (onResized [_ _terminal _size])))
+                   (try (dlg/list-dialog! screen "Resize" ["alpha" "beta" "gamma"] {})
+                        (expect (= 2 @flushes))
+                        (expect (= (TerminalSize. 70 20) (.getTerminalSize screen)))
+                        (expect (= (back-buffer-text screen) (terminal-text terminal)))
+                        (finally (.stopScreen screen))))))

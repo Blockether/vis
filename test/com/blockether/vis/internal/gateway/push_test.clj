@@ -339,6 +339,25 @@
       (is (str/ends-with? out "\u2026"))
       (is (not (str/includes? out "wor\u2026"))))))
 
+(deftest alerts-are-worded-in-one-place-test
+  ;; THE shape of a notification, wherever it is raised: the gateway pushes it to a phone and
+  ;; the desktop app reads the same two lines back over `GET /v1/sessions/:sid/alert`.
+  (testing "an answer is the session's own name and what vis said"
+    (is (= {:title "deploy" :body "Done • Shipped v2 to prod"}
+           (push/answer-alert {:title "deploy" :answer "## Done\n\n- Shipped **v2** to `prod`"}))))
+  (testing "a turn that left nothing readable still says what happened"
+    (is (= {:title "Vis" :body "Turn finished."} (push/answer-alert {:answer "  \n "})))
+    (is (= {:title "notes" :body "Turn failed."}
+           (push/answer-alert {:title "notes" :answer nil :is-failed true}))))
+  (testing "a parked run is the question it asked, in either spelling of the View"
+    (doseq [document [{"title" "Which branch?" "description" "main is two commits ahead."}
+                      {:title "Which branch?" :description "main is two commits ahead."}]]
+      (is (= {:title "Action needed — Which branch?" :body "main is two commits ahead."}
+             (push/question-alert document)))))
+  (testing "a request that names nothing still asks for the human"
+    (is (= {:title "Action needed" :body "Vis is waiting on your answer."}
+           (push/question-alert nil)))))
+
 (deftest alert-payload-speaks-apns-kebab-case-test
   (testing "aps keys are APNs' literal kebab-case, not the wire encoder's snake_case"
     (let [payload
