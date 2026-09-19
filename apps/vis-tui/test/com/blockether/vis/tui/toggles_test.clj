@@ -14,3 +14,12 @@
       (is (false? (toggles/coerce-config-value id token))))
     (is (true? (toggles/coerce-config-value id true)))
     (is (false? (toggles/coerce-config-value id false)))))
+
+(deftest drafts-are-an-experimental-opt-in-that-defaults-to-off
+  (let [spec (toggles/toggle-spec "draft_backend")]
+    (is (= "off" (:default spec)))
+    (is (= :enum (:type spec)))
+    (is (= ["auto" "worktree" "rift" "off"] (:choices spec)))
+    (is (true? (:experimental? spec)))
+    (is (= :experimental (:group spec)))
+    (is (some #(= "draft_backend" (:id %)) (toggles/toggles-for-channel :tui)))))
