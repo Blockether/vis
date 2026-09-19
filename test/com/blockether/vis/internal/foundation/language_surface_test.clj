@@ -788,6 +788,22 @@
         (expect (str/includes? m "`run_tests` runs a one-shot hermetic CPython"))
         ;; A Python-only session is not owed the Clojure JVM paragraph.
         (expect (not (str/includes? m "clojure run_tests NEVER starts a REPL")))))
+  ;; The same lifecycle fact for Clojure: the `clj-add-fn` e2e run called repl_eval
+  ;; with no REPL up, read the refusal ("no REPL running in <dir> -- start one"), and
+  ;; only then started one. The matrix states that order for BOTH packs.
+  (it "says Clojure repl_eval needs a repl_start THIS session made"
+      (let [env
+            {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
+                                                              :test-fn identity
+                                                              :repl-eval-fn identity
+                                                              :start-repl-fn identity}]}])}
+
+            m
+            (language-surface/capability-matrix env)]
+
+        (expect (str/includes? m "clojure repl_eval NEVER starts a REPL"))
+        (expect (str/includes? m "`repl_start(\"clojure\")` for that project"))
+        (expect (not (str/includes? m "python repl_eval NEVER starts a REPL")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
       (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
 
