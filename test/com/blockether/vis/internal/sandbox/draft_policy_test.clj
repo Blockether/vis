@@ -14,8 +14,9 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (defn- with-project
-  ([backend f] (with-project backend nil f))
-  ([backend cache-policy f]
+  ([backend f] (with-project backend nil true f))
+  ([backend cache-policy f] (with-project backend cache-policy true f))
+  ([backend cache-policy jail? f]
    (let [dir
          (.toFile (java.nio.file.Files/createTempDirectory
                     "vis-draft-policy"
@@ -44,7 +45,7 @@
 
          snapshot
          (policy/snapshot {"workspace" {"filesystem" entries}
-                           "jail" {"enabled" true
+                           "jail" {"enabled" jail?
                                    "filesystem" {"allow" ["project" "extra" "unselected" "cache"
                                                           "reference"]}}})]
 
@@ -419,3 +420,68 @@
                                                (.getCanonicalPath (io/file moved "source.txt"))))))
          (finally (doseq [file (reverse (file-seq dir))]
                     (io/delete-file file true))))))
+
+(deftest disabled-jail-drafts-write-their-own-copies
+  ;; The default configuration runs WITHOUT the jail, and that grants every host filesystem
+  ;; root. Sweeping those grants as protected originals refused every host write of a drafted
+  ;; session — the draft's own copies included — so `patch` could not land an edit anywhere
+  ;; while raw Python kept writing the shared checkout.
+  (with-project :worktree nil
+                false
+                (fn [environment root]
+                  (let [extra
+                        (.getCanonicalPath (io/file root ".." "extra"))
+
+                        unselected
+                        (.getCanonicalPath (io/file root ".." "unselected"))
+
+                        scratch
+                        (.getCanonicalPath (io/file root ".." "scratch.txt"))
+
+                        opened
+                        (drafts/draft-create environment "disabled-jail" true [root extra])
+
+                        clone
+                        (get-in opened [:result "root"])
+
+                        extra-clone
+                        (:clone (first (filter #(= extra (:trunk %))
+                                               (workspace/env-filesystem-roots
+                                                 (assoc environment
+                                                   :workspace @(:workspace-atom environment))))))
+
+                        gate
+                        (fn [path]
+                          ((:ext.symbol/before-fn editing/patch-symbol)
+                            environment
+                            #'editing/patch-tool
+                            [path [{"from" "1:000" "replace" "changed"}]]))]
+
+                    (is (nil? (:error opened)) (str opened))
+                    (is (string? clone) (str opened))
+                    (is (not= root clone))
+                    (is (string? extra-clone) (str opened))
+                    (is (not= extra extra-clone))
+                    ;; Every selected repository takes host writes in its own copy, and so does scratch
+                    ;; space the blanket grant reaches.
+                    (doseq [path [(str clone "/source.txt") (str extra-clone "/source.txt")
+                                  scratch]]
+                      ;; The pass-through carries the live environment: report the path, never the map.
+                      (is (nil? (:result (gate path))) path))
+                    ;; Their originals, and a repository this draft never selected, stay read-only.
+                    (doseq [path [(str root "/source.txt") (str extra "/source.txt")
+                                  (str unselected "/source.txt")]]
+                      (let [refusal (:result (gate path))]
+                        (is (some? refusal) path)
+                        (is (re-find #"draft_create" (str refusal)) path)))
+                    (let [result (#'lp/execute-code
+                                  environment
+                                  (str "(project_root_path / 'source.txt').write_text('draft')\n"
+                                       "(extra_path / 'source.txt').write_text('extra draft')\n"))]
+                      (is (nil? (:error result)) (str result)))
+                    (is (= "draft" (slurp (io/file clone "source.txt"))))
+                    (is (= "extra draft" (slurp (io/file extra-clone "source.txt"))))
+                    (doseq [original [root extra unselected]]
+                      (is (= "original" (slurp (io/file original "source.txt"))) original))
+                    (let [discarded (drafts/draft-discard environment)]
+                      (is (nil? (:error discarded)) (str discarded)))))))
