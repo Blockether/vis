@@ -1,10 +1,12 @@
 (ns com.blockether.vis.internal.foundation.language-surface-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.surface :as surface-contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.language.clojure.core :as clojure-language]
+            [com.blockether.vis.internal.language.python.core :as python-language]
             [com.blockether.vis.internal.language.python.ruff :as python-format]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
@@ -884,3 +886,44 @@
                  (doseq [symbol language-surface/symbols]
                    (expect (true? (:ext.symbol/inject-env? symbol)))
                    (expect (nil? (:ext.symbol/before-fn symbol))))))
+
+;; A pack declares the surface it serves, so the schema refuses a malformed
+;; declaration at registration instead of inside the first tool call.
+(defdescribe
+  surface-registration-test
+  (it "accepts the surfaces the bundled packs declare"
+      (doseq [ext
+              [clojure-language/vis-extension python-language/vis-extension]
+
+              entry
+              (:ext/language-tools ext)]
+
+        (expect (nil? (surface-contract/explain-surface entry)))))
+  (it "refuses a malformed surface at registration, with the schema's explanation"
+      (let [data (try (vis/extension {:ext/name "fixture-language"
+                                      :ext/description "Fixture pack for the surface contract."
+                                      :ext/language-tools [{:language "Fixture"
+                                                            :format-fn identity}]})
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (expect (= :extension/invalid-language-surface (:type data)))
+        (expect (str/includes? (str (:explain data)) "language"))))
+  (it "refuses a surface that implements no capability at all"
+      (let [data (try (vis/extension {:ext/name "fixture-language"
+                                      :ext/description "Fixture pack for the surface contract."
+                                      :ext/language-tools [{:language "fixture"}]})
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (expect (= :extension/invalid-language-surface (:type data)))))
+  (it "keeps an accepted surface exactly as the pack declared it"
+      (let [ext
+            (vis/extension {:ext/name "fixture-language"
+                            :ext/description "Fixture pack for the surface contract."
+                            :ext/language-tools
+                            [{:language "fixture" :extensions [".fixture"] :format-fn identity}]})
+
+            entry
+            (first (:ext/language-tools ext))]
+
+        (expect (= "fixture" (:language entry)))
+        (expect (= [".fixture"] (:extensions entry))))))

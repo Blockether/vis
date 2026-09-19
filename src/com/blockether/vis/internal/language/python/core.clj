@@ -7,6 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.xml :as xml]
+            [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.contract.test-runner :as contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.language.python.interpreter :as interpreter]
@@ -586,12 +587,14 @@
         {:keys [paths names]}
         (resolve-test-paths dir opts (:testpaths layout))]
 
-    (extension/success {:result (cond-> (assoc (if (= "project" runner)
-                                                 (project-test (:session-id env) dir paths names)
-                                                 (vispython-test paths (:import-roots layout)))
-                                          "language" "python")
-                                  (:warning layout)
-                                  (assoc "warning" (:warning layout)))})))
+    (extension/success {:result (surface/check
+                                  :test-fn
+                                  (cond-> (assoc (if (= "project" runner)
+                                                   (project-test (:session-id env) dir paths names)
+                                                   (vispython-test paths (:import-roots layout)))
+                                            "language" "python")
+                                    (:warning layout)
+                                    (assoc "warning" (:warning layout))))})))
 
 ;; Manifest
 

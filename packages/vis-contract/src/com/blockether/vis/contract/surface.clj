@@ -4,7 +4,25 @@
 
 (def capability->definition
   "Language-tool capability to its JSON Schema definition."
-  {:format-fn "format_result" :lint-fn "lint_result" :test-fn "test_result"})
+  {:format-fn "format_result"
+   :lint-fn "lint_result"
+   :test-fn "test_result"
+   :syntax-fn "syntax_result"})
+
+(def capability-keys
+  "Language-tool entry keys, in the order a surface declares its capabilities."
+  [:format-fn :lint-fn :test-fn :repl-eval-fn :start-repl-fn :syntax-fn :balance-fn])
+
+(def capability->name
+  "Language-tool entry key to its capability name in a `language_surface` document.
+   `:start-repl-fn` is the one name that is not its key without the `-fn` suffix."
+  {:format-fn "format"
+   :lint-fn "lint"
+   :test-fn "test"
+   :repl-eval-fn "repl_eval"
+   :start-repl-fn "repl_start"
+   :syntax-fn "syntax"
+   :balance-fn "balance"})
 
 (defn valid?
   "True when `result` satisfies the capability schema, or no schema is registered."
@@ -30,6 +48,41 @@
                {:type :surface/contract-violation :capability capability :explain-data errors}))
       result)
     result))
+
+(defn- declared-vector
+  "A declared collection as a vector; anything else stays as declared, so the
+   schema explains what is wrong with it."
+  [v]
+  (if (coll? v) (vec v) v))
+
+(defn ->surface
+  "The `language_surface` document a registered language-tool entry describes: the
+   language it serves, the capabilities it implements, and the file extensions and
+   syntax exactness it declares."
+  [entry]
+  (let [entry (if (map? entry) entry {})]
+    (cond-> {"capabilities"
+             (into [] (comp (filter #(get entry %)) (map capability->name)) capability-keys)}
+      (some? (:language entry))
+      (assoc "language" (str (:language entry)))
+
+      (contains? entry :extensions)
+      (assoc "extensions" (declared-vector (:extensions entry)))
+
+      (contains? entry :is-exact-syntax)
+      (assoc "is_exact_syntax" (:is-exact-syntax entry)))))
+
+(defn valid-surface?
+  "True when a registered language-tool entry describes a valid language surface."
+  [entry]
+  (document/valid? "surface" "language_surface" (->surface entry)))
+
+(defn explain-surface
+  "A readable explanation of why a language-tool entry is not a valid language
+   surface, or nil when it is one."
+  [entry]
+  (some-> (document/explain "surface" "language_surface" (->surface entry))
+          pr-str))
 
 (def test-result-base
   "Defaults shared by every `run_tests` result. Missing counts stay nil;

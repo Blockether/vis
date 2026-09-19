@@ -45,8 +45,10 @@
         (expect (some? (:explain-data ed)))))
   (it "passes a capability with no registered contract straight through"
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
-  (it "capability->definition is the single source for format, lint, and test results"
-      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->definition)))))
+  (it "capability->definition is the single source for format, lint, test, and syntax results"
+      (expect (= #{:format-fn :lint-fn :test-fn :syntax-fn}
+                 (set (keys contract/capability->definition))))
+      (expect (every? contract/capability->name (keys contract/capability->definition))))
   (it "completes an error-branch test result onto the TOTAL key set"
       ;; The reported crash: a run that errored out returned NO "failures" key, so
       ;; `r["failures"][:3]` in ordinary model Python blew up on None.
@@ -127,3 +129,48 @@
                  (get (contract/complete-test-result "typescript" {"language" "clojure"})
                       "language")))
       (expect (= :untouched (contract/complete-test-result "clojure" :untouched)))))
+
+(def ^:private schema-capabilities
+  (set (get-in (document/schema-document "surface")
+               ["$defs" "language_surface" "properties" "capabilities" "items" "enum"])))
+
+(defdescribe
+  language-surface-test
+  (it "derives the surface document a live registration describes"
+      (expect (= {"language" "clojure"
+                  "capabilities" ["format" "lint" "test" "repl_eval" "repl_start" "balance"]}
+                 (contract/->surface {:language "clojure"
+                                      :format-fn identity
+                                      :lint-fn identity
+                                      :test-fn identity
+                                      :repl-eval-fn identity
+                                      :balance-fn identity
+                                      :start-repl-fn identity})))
+      (expect (contract/valid-surface? {:language "python"
+                                        :repl-eval-fn identity
+                                        :format-fn identity
+                                        :lint-fn identity
+                                        :test-fn identity
+                                        :start-repl-fn identity})))
+  (it "names every capability the schema knows, and no other"
+      (expect (= schema-capabilities (set (vals contract/capability->name))))
+      (expect (= (set contract/capability-keys) (set (keys contract/capability->name)))))
+  (it "carries the file extensions and syntax exactness a surface declares"
+      (let [declared
+            {:language "toml" :extensions [".toml"] :is-exact-syntax true :syntax-fn identity}
+
+            surface
+            (contract/->surface declared)]
+
+        (expect (= ["syntax"] (get surface "capabilities")))
+        (expect (= [".toml"] (get surface "extensions")))
+        (expect (true? (get surface "is_exact_syntax")))
+        (expect (nil? (contract/explain-surface declared)))))
+  (it "explains an entry that is not a language surface"
+      ;; An uppercase language, a missing language, a surface that implements
+      ;; nothing, and file extensions that are not a list.
+      (expect (some? (contract/explain-surface {:language "Clojure" :format-fn identity})))
+      (expect (some? (contract/explain-surface {:format-fn identity})))
+      (expect (some? (contract/explain-surface {:language "clojure"})))
+      (expect (some? (contract/explain-surface
+                       {:language "clojure" :extensions ".clj" :format-fn identity})))))
