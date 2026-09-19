@@ -1,10 +1,10 @@
 # Drafts
 
 A draft gives a session its own working copies of one or more repositories, separate from
-your current checkout. **Drafts are off by default.** To enable them, open
-**Settings → Sandbox → Draft backend** in the TUI or Companion app and choose
-`auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts and new
-draft creation. Vis preserves any choice you have already saved.
+your current checkout. **Drafts are experimental and off by default.** To enable
+them, open **Settings → Experimental → Draft backend** in the TUI or Companion app
+and choose `auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts
+and new draft creation. Vis preserves any choice you have already saved.
 
 When enabled, Vis starts each change-making task in a session-owned draft without
 a separate request. This includes code, tests, documentation and configuration;
@@ -231,7 +231,7 @@ require Git history. The `draft_backend` toggle chooses between them:
 | `worktree`, `rift` | Require drafts using only that backend; `draft_create` refuses when it is unavailable. |
 | `off` (default) | No automatic draft workflow or draft creation. `draft_create` explains why. |
 
-Set it from the Settings dialog or in `~/.vis/config.yml`:
+Set it in **Settings → Experimental**, or in `~/.vis/config.yml`:
 
 ```yaml
 toggles:

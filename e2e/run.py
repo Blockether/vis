@@ -22,9 +22,9 @@ repl_eval); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
 cache-metric arithmetic. Peak/cumulative stdout guards count characters, not tokens.
-Exact JSON answers, JSONL fixture journals, operation sequences and discovery audits
-are described in README.md. Every run reports provider token totals separately from
-output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
+Exact JSON answers, JSONL fixture journals, operation sequences, helper reuse and
+discovery audits are described in README.md. Every run reports provider token totals
+separately from output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
 `workspace_filesystem` registers fixture directories; `files_from` reuses sibling input.
 
 Each scenario runs in its own throwaway git repo through a source-owned gateway on an
@@ -63,6 +63,7 @@ MODELS = [
 TIMEOUT = int(os.environ.get("VIS_E2E_TIMEOUT", "300"))
 WORKERS = int(os.environ.get("VIS_E2E_WORKERS", "5"))
 TRACES = os.environ.get("VIS_E2E_TRACES", "/tmp/vis_e2e/traces")
+TERMINAL_ACTIVITY_STATES = {"succeeded", "failed", "cancelled"}
 
 
 @cache
@@ -185,6 +186,8 @@ def summarize_results(results):
                 row["converged"] and row["correct"] and row["errors"] == 0
                 for row in rows
             ),
+            "measurement": any(row.get("measurement") for row in rows),
+            "behavior_passed": sum(not row.get("behavior") for row in rows),
             "token_samples": len(valid),
         }
         totals = {
@@ -285,6 +288,74 @@ def structured_failures(sc, work, answer, activities):
     return failures
 
 
+def helper_reuse_evidence(forms, want):
+    """Prove a helper was defined once and then CALLED by a later sandbox form.
+
+    Saved definitions persist, so reuse means a later top-level form calls a
+    function an earlier form defined. The audit is name-agnostic and accepts a
+    `def` or a name bound to a `lambda`, the two shapes the runtime saves as a
+    helper. Retyping the same definition instead of calling it fails, and so
+    does a helper that no later form ever uses.
+    """
+    if want is True:
+        wanted = 1
+    elif type(want) is int and want > 0:
+        wanted = want
+    else:
+        return {}, ["want_helper_reuse must be true or a positive integer"]
+    defined = {}
+    lambdas = set()
+    sources = collections.defaultdict(set)
+    reuse = collections.defaultdict(set)
+    retyped = set()
+    for index, form in enumerate(forms):
+        try:
+            tree = ast.parse(form)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = node.name
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Lambda)
+            ):
+                name = node.targets[0].id
+                lambdas.add(name)
+            else:
+                continue
+            defined.setdefault(name, index)
+            source = ast.unparse(node)
+            if source in sources[name]:
+                retyped.add(name)
+            sources[name].add(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                first = defined.get(node.func.id)
+                if first is not None and first < index:
+                    reuse[node.func.id].add(index)
+    metrics = {
+        "helpers_defined": len(defined),
+        "lambda_helpers": len(lambdas),
+        "reused_helpers": len(reuse),
+        "reuse_forms": max((len(seen) for seen in reuse.values()), default=0),
+        "retyped_helpers": len(retyped),
+    }
+    failures = [
+        f"helper {name!r} was retyped in a later form instead of called"
+        for name in sorted(retyped)
+    ]
+    if not defined:
+        failures.append("no sandbox form defined a helper to reuse")
+    elif metrics["reuse_forms"] < wanted:
+        failures.append(
+            f"a helper was reused in {metrics['reuse_forms']} later form(s), want {wanted}"
+        )
+    return metrics, failures
+
+
 def discovery_evidence(forms, activities, rules):
     """Audit simple Python syntax; runtime Activities independently prove host calls.
 
@@ -325,6 +396,18 @@ def discovery_evidence(forms, activities, rules):
         ):
             return f"{resolve(node.args[0])}.{resolve(node.args[1])}"
         return "?"
+
+    audited_symbols = {
+        *rules.get("symbols", []),
+        *rules.get("signatures", []),
+        *rules.get("contracts", []),
+    }
+    audited_symbols |= {name.split(".")[0] for name in audited_symbols}
+
+    def inspects_audited_tool(node):
+        """`dir()`/`vars()` on the TOOL is discovery; on a result or a namespace it is not."""
+        target = resolve(node.args[0]) if node.args else "?"
+        return isinstance(target, str) and target in audited_symbols
 
     local_bodies = {}
     sensitive_calls = {
@@ -471,7 +554,9 @@ def discovery_evidence(forms, activities, rules):
                     )
                 )
                 syntax_lookups.append((name, resolve(argument)))
-            elif name.startswith("inspect.") or name in {"dir", "vars", "help"}:
+            elif name.startswith("inspect.") or name == "help":
+                other_inspection.append(name)
+            elif name in {"dir", "vars"} and inspects_audited_tool(node):
                 other_inspection.append(name)
             if name in rules.get("forbid_tools", []):
                 failures.append(f"forbidden tool call {name!r}")
@@ -530,9 +615,14 @@ def discovery_evidence(forms, activities, rules):
         failures.append(f"redundant discovery: {redundant} repeated unchanged lookups")
     if rules.get("known") and (signatures or contracts or lookups or other_inspection):
         failures.append("known contracts were unnecessarily rediscovered")
+    # `doc(name)` IS the registered contract -- signature, defaults, schema and
+    # effects -- so it settles arguments at least as well as `inspect.signature`.
+    documented = {
+        argument for operation, argument in syntax_lookups if operation == "doc"
+    }
     for name in rules.get("signatures", []):
-        if name not in signatures:
-            failures.append(f"no signature call found for {name}")
+        if name not in signatures and name not in documented:
+            failures.append(f"no signature or doc call found for {name}")
     for name in rules.get("contracts", []):
         if name not in contracts:
             failures.append(f"no focused contract access found for {name}")
@@ -908,19 +998,29 @@ def run_one(job):
                     }
                 )
             elif ph == "form-activity":
-                for row in (pl.get("activity") or {}).get("rows", []):
-                    row_id = row.get("id")
-                    operation = row.get("operation")
-                    if row_id and operation:
-                        previous = activities.get(row_id, {})
-                        if previous.get("state") not in {
-                            "succeeded",
-                            "failed",
-                            "cancelled",
-                        }:
-                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
-                        elif row.get("state") in {"failed", "cancelled"}:
-                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
+                scope = pl.get("scope", "")
+                rows = [
+                    row
+                    for row in (pl.get("activity") or {}).get("rows", [])
+                    if row.get("id") and row.get("operation")
+                ]
+                present = {row["id"] for row in rows}
+                # A later snapshot of the SAME form collapses finished rows into one
+                # group row. A non-terminal row that snapshot no longer lists was
+                # superseded, not abandoned; terminal rows stay as evidence.
+                for row_id, previous in list(activities.items()):
+                    if (
+                        previous.get("scope") == scope
+                        and row_id not in present
+                        and previous.get("state") not in TERMINAL_ACTIVITY_STATES
+                    ):
+                        del activities[row_id]
+                for row in rows:
+                    previous = activities.get(row["id"], {})
+                    if previous.get("state") not in TERMINAL_ACTIVITY_STATES:
+                        activities[row["id"]] = {**row, "scope": scope}
+                    elif row.get("state") in {"failed", "cancelled"}:
+                        activities[row["id"]] = {**row, "scope": scope}
             elif ph == "form-result":
                 largest_form_output = max(
                     largest_form_output, len(pl.get("stdout") or "")
@@ -997,9 +1097,24 @@ def run_one(job):
             discovery, discovery_failures = discovery_evidence(
                 forms,
                 activity_rows,
-                {**sc["discovery"], "forbid_tools": sc.get("forbid_tools", [])},
+                {
+                    **sc["discovery"],
+                    "symbols": sc.get("want_tools", []),
+                    "forbid_tools": sc.get("forbid_tools", []),
+                },
             )
             detail.extend(discovery_failures)
+        helper_reuse = {}
+        behavior = []
+        measurement = bool(sc.get("measurement"))
+        if "want_helper_reuse" in sc:
+            helper_reuse, helper_failures = helper_reuse_evidence(
+                forms, sc["want_helper_reuse"]
+            )
+            if measurement:
+                behavior.extend(helper_failures)
+            else:
+                detail.extend(helper_failures)
         if detail:
             correct = False
         total_limit = sc.get("max_total_output_chars")
@@ -1182,6 +1297,11 @@ def run_one(job):
                 "discovery="
                 + ", ".join(f"{key}:{value}" for key, value in discovery.items())
             )
+        if helper_reuse:
+            evidence.append(
+                "helper_reuse="
+                + ", ".join(f"{key}:{value}" for key, value in helper_reuse.items())
+            )
         if REASONING_EFFORT:
             evidence.append(f"reasoning-effort={REASONING_EFFORT}")
         if sc.get("want_requested_route") or REASONING_EFFORT:
@@ -1242,9 +1362,12 @@ def run_one(job):
             "unscoped_activity_failures": len(unscoped_failures),
             "incomplete_activities": len(incomplete_activities),
             "discovery": discovery,
+            "helper_reuse": helper_reuse,
+            "measurement": measurement,
             "used_patch": used_patch,
             "edit_path": path,
             "detail": detail,
+            "behavior": behavior,
             "evidence": evidence,
         }
     finally:
@@ -1326,6 +1449,8 @@ def main():
         )
         for d in r["detail"]:
             print(f"    ! {d}")
+        for b in r["behavior"]:
+            print(f"    ~ {b}")
         for item in r["evidence"]:
             print(f"    · {item}")
         for e in r["err_msgs"]:
@@ -1334,7 +1459,9 @@ def main():
     # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
     # produced correct output, and had no loop/tool errors. `PATCH(fast)`
     # remains a performance/adherence metric because some scenarios legitimately
-    # answer from the REPL instead of editing a file.
+    # answer from the REPL instead of editing a file. A scenario marked
+    # `measurement` reports its behavior rate instead of gating on it: a model's
+    # habits vary between runs, while its answer, errors and edits do not.
     by_scn = {}
     for r in results:
         by_scn.setdefault(r["id"], []).append(
@@ -1356,6 +1483,10 @@ def main():
         print(
             f"SUMMARY {summary['id']} {summary['provider']}/{summary['model']}: {summary['passed']}/{summary['runs']} passed; token samples={summary['token_samples']}"
         )
+        if summary["measurement"]:
+            print(
+                f"    BEHAVIOR (measured, not gated): {summary['behavior_passed']}/{summary['runs']} runs met the behavior check"
+            )
         if summary["token_samples"]:
             print(
                 "    token medians="

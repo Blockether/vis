@@ -358,3 +358,64 @@
   ;; Exercise the refusal boundary even on development filesystems with CoW support.
   (with-redefs [workspace/rift-available? (constantly {:available? false :reason :probe-failed})]
     (with-project :rift :copy-only assert-copied-cache-protection)))
+
+(deftest whole-filesystem-grant-is-not-a-protected-original
+  ;; A disabled jail grants every host filesystem root. Protecting one of those made the
+  ;; draft prerequisite refuse EVERY host write of a drafted session — the draft's own
+  ;; private copy included — so `patch` could not land an edit anywhere while raw Python
+  ;; kept writing.
+  (let [dir
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-draft-grant"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        project
+        (doto (io/file dir "project") (.mkdirs))
+
+        drafts
+        (doto (io/file project ".vis" "drafts") (.mkdirs))
+
+        clone
+        (doto (io/file drafts "sessions" "session" "project" "label") (.mkdirs))
+
+        moved
+        (doto (io/file project "review" "sessions" "session" "project" "label") (.mkdirs))
+
+        snapshot
+        (policy/snapshot {"workspace" {"filesystem" [{"id" "project"
+                                                      "path" (.getCanonicalPath project)}]}
+                          "jail" {"enabled" false}})
+
+        environment
+        {:workspace {:repo-root (.getCanonicalPath project)}
+         :security-policy snapshot
+         :security/filesystem-roots (policy/read-write-roots snapshot)}
+
+        host-root?
+        (fn [path]
+          (nil? (.getParentFile (io/file path))))]
+
+    (try (binding [workspace/*draft-backend*
+                   :worktree
+
+                   workspace/*drafts-home*
+                   (.getCanonicalPath drafts)]
+
+           ;; The grant a disabled jail adds is the whole machine, never a checkout.
+           (is (some host-root? (policy/read-write-roots snapshot)))
+           (is (not-any? host-root? (jail/draft-source-roots environment)))
+           (is (some? (jail/draft-write-refusal environment
+                                                (.getCanonicalPath (io/file project
+                                                                            "source.txt")))))
+           (is (nil? (jail/draft-write-refusal environment
+                                               (.getCanonicalPath (io/file dir "scratch.txt")))))
+           ;; The private clone store is where the prerequisite steers writes TO, even when
+           ;; a protected root holds it.
+           (is (nil? (jail/draft-write-refusal environment
+                                               (.getCanonicalPath (io/file clone "source.txt")))))
+           (is (nil? (jail/draft-write-refusal (assoc environment
+                                                 :workspace/drafts-home
+                                                 (.getCanonicalPath (io/file project "review")))
+                                               (.getCanonicalPath (io/file moved "source.txt"))))))
+         (finally (doseq [file (reverse (file-seq dir))]
+                    (io/delete-file file true))))))

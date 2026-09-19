@@ -43,6 +43,14 @@ e2e/
   examples. Runtime Activities supply doc/apropos evidence when available; otherwise
   syntax is used. Local helpers hiding discovery are rejected. This bounded audit
   is not a Python execution tracer or a security boundary.
+- **want_helper_reuse** — `true`, or the number of later forms required: a function
+  defined in one sandbox form must be called by that many later forms. The audit is
+  name-agnostic and counts a `def` or a name bound to a `lambda`, the two shapes the
+  runtime saves. Retyping the same definition instead of calling it fails, as does a
+  helper no later form uses; a definition and its call inside one form prove nothing.
+- **measurement** — `true` reports the scenario's behavior check instead of gating on it.
+  The run must still converge, answer correctly and stay error-free; a missed behavior
+  check prints with `~` and is counted in that scenario's `BEHAVIOR` rate.
 - **want_requested_route** — all provider markers and billed results must use
   the requested provider and model. Fallbacks fail the test.
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
@@ -93,7 +101,9 @@ reasoning behavior.
 Without `VIS_E2E_TIMEOUT`, each scenario uses its `timeout_s` or the 300-second
 default. These budgets include model requests and all tool calls; they do not
 change the Python execution watchdog. `extension-watchdog` uses 900 seconds to
-allow for its real 310-second extension call and model response time.
+allow for its real 310-second extension call and model response time. `find-usages`
+uses 480 seconds because its answer is a single long prose reply, which flash-class
+models stream slowly enough to outlast the default budget.
 
 ## Interpret measurements
 
@@ -101,6 +111,9 @@ allow for its real 310-second extension call and model response time.
 summaries. Compare pass counts before efficiency: each run must converge, satisfy
 all correctness guards, and have no surfaced errors, failed/cancelled Activities
 or unfinished Activities. Repeated snapshots count once, after terminal state updates.
+A form's final snapshot collapses the calls it made into one row: a row that snapshot
+no longer lists finished with the group, so only a row still running there counts as
+unfinished work.
 
 The report separates surfaced errors from Activity failures without a same-form
 error (possible caught failures). Missing scopes remain unclassified; a shared form
@@ -111,6 +124,12 @@ cached-input share uses summed counts, not an average of percentages. Input,
 cached, uncached and output tokens, model calls, forms, wall time, peak/total stdout
 and discovery counts are separate measurements. Reasoning is `unavailable` unless
 the provider's result supplies it; persisted usage counters are reported separately.
+
+`want_helper_reuse` measures a behavior rather than one edit, so read it over repeats:
+a model that factors a helper in most runs can still retype the same block in one. That is
+why `session-helper-reuse` sets `measurement` — the gate covers its answer and errors, and
+helper reuse is reported as a rate. Raise `VIS_E2E_REPEATS`, compare the `BEHAVIOR` count
+across prompt revisions, and expect small models to be less consistent.
 
 Repeats report minimum, median and maximum, plus the number of valid token samples.
 There is no fixed token/cache target: changing model, route, prompt or cache state

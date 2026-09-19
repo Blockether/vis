@@ -1,0 +1,33 @@
+# request log for publish workers, delta.log
+
+2026-02-12T08:00:00Z level=info op=publish ms=4
+2026-02-12T08:03:07Z level=error op=publish ms=24
+2026-02-12T08:06:14Z level=info op=publish ms=4
+2026-02-12T08:09:21Z level=info op=publish ms=4
+2026-02-12T08:12:28Z level=info op=publish ms=26
+2026-02-12T08:15:35Z level=info op=publish ms=5
+2026-02-12T08:18:42Z level=info op=publish ms=15
+2026-02-12T08:21:49Z level=warn op=publish ms=21
+2026-02-12T08:24:56Z level=info op=publish ms=9
+2026-02-12T08:27:03Z level=info op=publish ms=18
+2026-02-12T08:30:10Z level=info op=publish ms=4
+2026-02-12T08:33:17Z level=info op=publish ms=9
+2026-02-12T08:36:24Z level=error op=publish ms=4
+2026-02-12T08:39:31Z level=info op=publish ms=4
+2026-02-12T08:42:38Z level=info op=publish ms=5
+
+# worker restarted
+2026-02-12T08:45:45Z level=info op=publish ms=10
+2026-02-12T08:48:52Z level=info op=publish ms=21
+2026-02-12T08:51:59Z level=info op=publish ms=15
+2026-02-12T08:54:06Z level=warn op=publish ms=4
+2026-02-12T08:57:13Z level=info op=publish ms=13
+2026-02-12T09:00:20Z level=info op=publish ms=4
+2026-02-12T09:03:27Z level=info op=publish ms=12
+2026-02-12T09:06:34Z level=info op=publish ms=21
+2026-02-12T09:09:41Z level=info op=publish ms=12
+2026-02-12T09:12:48Z level=info op=publish ms=17
+2026-02-12T09:15:55Z level=info op=publish ms=4
+2026-02-12T09:18:02Z level=info op=publish ms=15
+2026-02-12T09:21:09Z level=info op=publish ms=4
+

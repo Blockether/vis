@@ -3680,6 +3680,29 @@
                                                :data {:type "test"}})
                     :push (push/status)})))
 
+(defn- session-alert-handler
+  "GET /v1/sessions/:sid/alert - the banner this session would raise right now,
+   `{\"title\": …, \"body\": …}`, worded by the one place that words alerts:
+   [[push/answer-alert]] and [[push/question-alert]].
+
+   The desktop app cannot be pushed to at all - its WKWebView has no
+   `PushManager` - so it raises its own alerts from the fleet it already polls,
+   and asks HERE what they say. `?reason=question` is a run parked on a human;
+   anything else is its answer."
+  [request]
+  (let [sid
+        (path-sid request)
+
+        session
+        (when sid (state/soul sid))]
+
+    (if session
+      (json-response (if (= "question" (get-in request [:query-params "reason"]))
+                       (push/question-alert (first (gw-view/input-views sid)))
+                       (push/answer-alert {:title (get session "title")
+                                           :answer (state/newest-answer-text sid)})))
+      (session-404 (get-in request [:path-params :sid])))))
+
 ;; --- Views ---
 
 (defn- view-404
@@ -4661,6 +4684,7 @@
         [(sid-route "/client-calls/:call_id/activity") {:post (client-extension-handler :activity)}]
         [(sid-route "/slashes") {:get slashes-handler}]
         [(sid-route "/release") {:post release-session-handler}]
+        [(sid-route "/alert") {:get session-alert-handler}]
         [(sid-route "/views/input") {:get list-input-views-handler}]
         [(sid-route "/views/live") {:get list-live-views-handler}]
         [(sid-route "/views/live/:view-id/log") {:get live-view-log-handler}]

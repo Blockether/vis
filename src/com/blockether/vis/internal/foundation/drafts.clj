@@ -21,9 +21,10 @@
    :type :enum
    :choices ["auto" "worktree" "rift" "off"]
    :default "off"
+   :experimental? true
    :owner :vis
    :persist? true
-   :group :sandbox})
+   :group :experimental})
 
 (def ^:private DRAFT_WORKFLOW_PROMPT
   (str

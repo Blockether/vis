@@ -162,78 +162,78 @@
                                                        true
                                                        true)))))))
 
-(defdescribe
-  remove-provider-test
-  ;; Regression (user report, Settings -> Providers): the TUI offered LOG OUT as a
-  ;; provider's only teardown while the companion offered Remove, so a provider
-  ;; signed out here kept its config entry and came back as an authenticated
-  ;; preset - and the confirmation stacked a DIALOG on top of the transient it
-  ;; was fired from.
-  (it
-    "asks in the caller's own band and drops config entry AND credential"
-    (let [removed
-          (atom nil)
+(defdescribe remove-provider-test
+             ;; Regression (user report, Settings -> Providers): the TUI offered LOG OUT as a
+             ;; provider's only teardown while the companion offered Remove, so a provider
+             ;; signed out here kept its config entry and came back as an authenticated
+             ;; preset - and the confirmation stacked a DIALOG on top of the transient it
+             ;; was fired from.
+             (it
+               "asks in the caller's own band and drops config entry AND credential"
+               (let [removed
+                     (atom nil)
 
-          asked
-          (atom nil)]
+                     asked
+                     (atom nil)]
 
-      (with-redefs [vis/gateway-provider-remove!
-                    (fn [provider-id]
-                      (reset! removed provider-id)
-                      {"is_removed" true})
+                 (with-redefs [vis/gateway-provider-remove!
+                               (fn [provider-id]
+                                 (reset! removed provider-id)
+                                 {"is_removed" true})
 
-                    dlg/band-questions
-                    (fn [_screen _g _region]
-                      {:confirm! (fn [question opts]
-                                   (reset! asked {:question question :opts opts})
-                                   true)
-                       :note! (fn [& args]
-                                (throw (ex-info "a successful removal said nothing"
-                                                {:args args})))})
+                               dlg/band-questions
+                               (fn [_screen _g _region]
+                                 {:confirm! (fn [question opts]
+                                              (reset! asked {:question question :opts opts})
+                                              true)
+                                  :note! (fn [& args]
+                                           (throw (ex-info "a successful removal said nothing"
+                                                           {:args args})))})
 
-                    ;; A verb reached from a transient must never answer with a window.
-                    dlg/confirm-dialog!
-                    (fn [& _]
-                      (throw (ex-info "removal opened a dialog" {})))
+                               ;; A verb reached from a transient must never answer with a window.
+                               dlg/confirm-dialog!
+                               (fn [& _]
+                                 (throw (ex-info "removal opened a dialog" {})))
 
-                    dlg/text-view-dialog!
-                    (fn [& _]
-                      (throw (ex-info "removal opened a dialog" {})))]
+                               dlg/text-view-dialog!
+                               (fn [& _]
+                                 (throw (ex-info "removal opened a dialog" {})))]
 
-        (expect (= true (provider/remove-provider! nil nil nil {:id :github-copilot})))
-        (expect (= :github-copilot @removed))
-        ;; The band says what saying yes COSTS, the way the companion's
-        ;; confirm row does - `Yes` alone never says what it agrees to.
-        (expect (str/includes? (str (:question @asked)) "Remove"))
-        (expect (str/includes? (str (:cost (:opts @asked))) "Signs out"))
-        (expect (= "Yes, remove" (:yes-label (:opts @asked)))))))
-  (it "keeps the row when the user declines"
-      (let [removed (atom nil)]
-        (with-redefs [vis/gateway-provider-remove! (fn [provider-id]
-                                                     (reset! removed provider-id))
-                      dlg/band-questions (fn [& _]
-                                           {:confirm! (fn [& _]
-                                                        false)
-                                            :note! (fn [& _]
-                                                     nil)})]
+                   (expect (= true (provider/remove-provider! nil nil nil {:id :github-copilot})))
+                   (expect (= :github-copilot @removed))
+                   ;; The band says what saying yes COSTS, the way the companion's
+                   ;; confirm row does - `Yes` alone never says what it agrees to.
+                   (expect (str/includes? (str (:question @asked)) "Remove"))
+                   (expect (str/includes? (str (:cost (:opts @asked))) "Signs out"))
+                   (expect (= "Yes, remove" (:yes-label (:opts @asked)))))))
+             (it "keeps the row when the user declines"
+                 (let [removed (atom nil)]
+                   (with-redefs [vis/gateway-provider-remove! (fn [provider-id]
+                                                                (reset! removed provider-id))
+                                 dlg/band-questions (fn [& _]
+                                                      {:confirm! (fn [& _]
+                                                                   false)
+                                                       :note! (fn [& _]
+                                                                nil)})]
 
-          (expect (nil? (provider/remove-provider! nil nil nil {:id :openai})))
-          (expect (nil? @removed)))))
-  (it "reports a gateway refusal in the SAME band instead of a dialog"
-      (let [note (atom nil)]
-        (with-redefs [vis/gateway-provider-remove! (fn [_]
-                                                     (throw (ex-info "provider remove failed: 400"
-                                                                     {:status 400})))
-                      dlg/band-questions (fn [& _]
-                                           {:confirm! (fn [& _]
-                                                        true)
-                                            :note! (fn [title line]
-                                                     (reset! note [title line]))})
-                      dlg/text-view-dialog! (fn [& _]
-                                              (throw (ex-info "refusal opened a dialog" {})))]
+                     (expect (nil? (provider/remove-provider! nil nil nil {:id :openai})))
+                     (expect (nil? @removed)))))
+             (it "reports a gateway refusal in the SAME band instead of a dialog"
+                 (let [note (atom nil)]
+                   (with-redefs [vis/gateway-provider-remove!
+                                 (fn [_]
+                                   (throw (ex-info "provider remove failed: 400" {:status 400})))
+                                 dlg/band-questions (fn [& _]
+                                                      {:confirm! (fn [& _]
+                                                                   true)
+                                                       :note! (fn [title line]
+                                                                (reset! note [title line]))})
+                                 dlg/text-view-dialog! (fn [& _]
+                                                         (throw (ex-info "refusal opened a dialog"
+                                                                         {})))]
 
-          (expect (= false (provider/remove-provider! nil nil nil {:id :openai})))
-          (expect (str/includes? (str @note) "remove failed"))))))
+                     (expect (= false (provider/remove-provider! nil nil nil {:id :openai})))
+                     (expect (str/includes? (str @note) "remove failed"))))))
 
 (defdescribe
   api-key-auth-prompt-test

@@ -626,52 +626,83 @@
         ;; so "9." and "10." start their text in the same place.
         marker-column
         (+ 2 (count (str (+ start (max 0 (dec (count children)))))))]
+
     (vec
       (mapcat
         (fn [idx li]
-          (let [kids (node-children li)
-                first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
-                first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
-                task-marker (task-list-marker ordered? first-runs)
-                marker (if ordered?
-                         (p/pad-right (str (+ start (long idx)) ". ") marker-column)
-                         (or (:marker task-marker) "- "))
-                indent (apply str (repeat (p/display-width marker) " "))
-                marker-run {:text marker :style #{:marker} :node li}
+          (let [kids
+                (node-children li)
+
+                first-p
+                (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
+
+                first-runs
+                (when first-p (inlines->runs (node-children first-p) #{} nil))
+
+                task-marker
+                (task-list-marker ordered? first-runs)
+
+                marker
+                (if ordered?
+                  (p/pad-right (str (+ start (long idx)) ". ") marker-column)
+                  (or (:marker task-marker) "- "))
+
+                indent
+                (apply str (repeat (p/display-width marker) " "))
+
+                marker-run
+                {:text marker :style #{:marker} :node li}
+
                 ;; canonical :li children = either all blocks (post-canon
                 ;; multi-paragraph) OR exactly one wrapping :p (post-canon
                 ;; inline run). Both cases handled uniformly: lay out each
                 ;; block, indent continuation, prefix the FIRST line of the
                 ;; FIRST block with the marker.
                 block-lines
-                (loop [out []
-                       first? true
-                       bs (seq kids)]
+                (loop [out
+                       []
+
+                       first?
+                       true
+
+                       bs
+                       (seq kids)]
 
                   (if (nil? bs)
                     out
-                    (let [b (first bs)
+                    (let [b
+                          (first bs)
+
                           ;; for :p produce inline-wrapped lines with
                           ;; hanging indent equal to marker width
                           lines
                           (cond
                             (and (vector? b) (= :p (node-tag b)))
-                            (let [indent-run {:text indent :style #{} :node li}
-                                  raw-inline-runs (inlines->runs (node-children b) #{} nil)
-                                  inline-runs (if first?
-                                                (strip-task-list-marker raw-inline-runs
-                                                                        (:prefix task-marker))
-                                                raw-inline-runs)
-                                  prefix (if first?
-                                           {:initial [marker-run] :cont [indent-run]}
-                                           {:initial [indent-run] :cont [indent-run]})
-                                  ls (wrap-runs inline-runs width prefix)]
+                            (let [indent-run
+                                  {:text indent :style #{} :node li}
+
+                                  raw-inline-runs
+                                  (inlines->runs (node-children b) #{} nil)
+
+                                  inline-runs
+                                  (if first?
+                                    (strip-task-list-marker raw-inline-runs (:prefix task-marker))
+                                    raw-inline-runs)
+
+                                  prefix
+                                  (if first?
+                                    {:initial [marker-run] :cont [indent-run]}
+                                    {:initial [indent-run] :cont [indent-run]})
+
+                                  ls
+                                  (wrap-runs inline-runs width prefix)]
 
                               (if first? ls (concat [{:runs []}] ls)))
                             ;; nested block: recurse and indent each line
                             :else
                             (let [inner
                                   (block->lines b (max 1 (- (long width) (count indent))) opts)
+
                                   prefixed
                                   (mapv
                                     (fn [l]
@@ -686,10 +717,14 @@
                                         (= :code (:block-tag l))
                                         (update-in [:meta :list-indent] (fnil + 0) (count indent))))
                                     inner)
+
                                   prefixed
                                   (if (and first? (seq prefixed))
-                                    (let [first-line (first prefixed)
-                                          new-runs (into [marker-run] (drop 1 (:runs first-line)))]
+                                    (let [first-line
+                                          (first prefixed)
+
+                                          new-runs
+                                          (into [marker-run] (drop 1 (:runs first-line)))]
 
                                       (into [(assoc first-line :runs new-runs)] (rest prefixed)))
                                     prefixed)]

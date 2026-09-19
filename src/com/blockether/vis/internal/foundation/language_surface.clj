@@ -98,6 +98,8 @@
                   (str "  " lang " : " (str/join " · " tools))))
       (when (contains? data "clojure")
         (str
+          "\n  clojure repl_eval NEVER starts a REPL: it needs one THIS session started with"
+          " `repl_start(\"clojure\")` for that project, and refuses otherwise."
           "\n  clojure run_tests NEVER starts a REPL: with none running it shells the project's"
           " own test command in a CLEAN JVM, so the run sees the code on disk. When THIS"
           " session already has one for that project it REUSES it — that path reloads"

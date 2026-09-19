@@ -72,6 +72,7 @@ import type {
   McpTestResult,
   BrowseEntry,
   BrowseListing,
+  SessionAlert,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import { withSavedAttachment } from './artifacts';
@@ -3733,6 +3734,25 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/transcript.md`,
       { signal },
       (response) => response.text(),
+    );
+  }
+
+  /**
+   * The banner this session would raise right now, worded by the GATEWAY: the same two lines
+   * `gateway/push.clj` sends a phone. The desktop app has no push channel and raises its own
+   * alerts (`lib/desktop-notify.ts`), so it reads what they say from here rather than keeping
+   * a second wording of its own.
+   */
+  sessionAlert(
+    sid: string,
+    reason: 'answer' | 'question',
+    signal?: AbortSignal,
+  ): Promise<SessionAlert> {
+    return this.request<SessionAlert>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/alert?reason=${reason}`,
+      undefined,
+      signal,
     );
   }
 

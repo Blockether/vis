@@ -22,6 +22,32 @@ class ScenarioFilesTest(unittest.TestCase):
             self.assertEqual(["library"], config["jail"]["filesystem"]["allow"])
             self.assertIn("return 0", (Path(work) / "library/value.py").read_text())
 
+    def test_helper_reuse_scenario_repeats_one_audit_across_blocks(self):
+        scenario = run.load_scenarios(["session-helper-reuse"])[0]
+        self.assertEqual(2, scenario["want_helper_reuse"])
+        self.assertIs(True, scenario["measurement"])
+        self.assertIn("one log per python_execution block", scenario["prompt"])
+        self.assertEqual(["187", "23", "charlie", "18.5"], scenario["want_answer"])
+        with tempfile.TemporaryDirectory() as work:
+            run.seed_files(scenario, work)
+            logs = sorted((Path(work) / "reports").glob("*.log"))
+            events = [
+                [
+                    line
+                    for line in log.read_text().splitlines()
+                    if line.strip() and not line.startswith("#")
+                ]
+                for log in logs
+            ]
+            self.assertEqual(5, len(logs))
+            self.assertEqual(187, sum(len(rows) for rows in events))
+            self.assertEqual(
+                23, sum(row.count("level=error") for rows in events for row in rows)
+            )
+            charlie = events[logs.index(Path(work) / "reports" / "charlie.log")]
+            latency = [int(row.split("ms=")[1]) for row in charlie]
+            self.assertEqual(18.5, round(sum(latency) / len(latency), 1))
+
     def test_namespace_rename_uses_anchored_edits_and_checks_the_moved_source(self):
         scenario = run.load_scenarios(["clj-ns-rename"])[0]
         self.assertEqual(["patch"], scenario["want_tools"])
@@ -504,6 +530,89 @@ class ReasoningEffortTest(unittest.TestCase):
         self.assertEqual(["Provider model unavailable"], result["err_msgs"])
 
 
+class HelperReuseEvidenceTest(unittest.TestCase):
+    def test_helper_called_by_later_forms_passes(self):
+        forms = [
+            "def summarize(path):\n    return len(open(path).read())\nprint(summarize('a'))",
+            "print(summarize('b'))",
+            "print([summarize(name) for name in ('c', 'd')])",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["helpers_defined"])
+        self.assertEqual(2, metrics["reuse_forms"])
+        self.assertEqual(0, metrics["retyped_helpers"])
+        self.assertEqual(0, metrics["lambda_helpers"])
+
+    def test_named_lambda_helper_counts_like_a_def(self):
+        forms = [
+            "audit = lambda name: len(open(name).read())\nprint(audit('a'))",
+            "print(audit('b'))",
+            "print(audit('c'))",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["helpers_defined"])
+        self.assertEqual(1, metrics["lambda_helpers"])
+        self.assertEqual(2, metrics["reuse_forms"])
+
+    def test_retyped_lambda_helper_fails_like_a_retyped_def(self):
+        body = "audit = lambda name: name.strip()\n"
+        forms = [body + "print(audit('a'))", body + "print(audit('b'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual(1, metrics["retyped_helpers"])
+        self.assertEqual(
+            ["helper 'audit' was retyped in a later form instead of called"],
+            failures,
+        )
+
+    def test_defining_and_calling_inside_one_form_is_not_reuse(self):
+        forms = ["def summarize(path):\n    return path\nprint(summarize('a'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, True)
+        self.assertEqual(0, metrics["reuse_forms"])
+        self.assertIn("reused in 0 later form(s)", failures[0])
+
+    def test_retyped_definition_fails_even_when_a_later_form_calls_it(self):
+        body = "def summarize(path):\n    return path.strip()\n"
+        forms = [body + "print(summarize('a'))", body + "print(summarize('b'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual(1, metrics["retyped_helpers"])
+        self.assertEqual(1, metrics["reuse_forms"])
+        self.assertEqual(
+            ["helper 'summarize' was retyped in a later form instead of called"],
+            failures,
+        )
+
+    def test_reuse_needs_a_call_not_a_mention(self):
+        forms = [
+            "def summarize(path):\n    return path\n",
+            "summarize = 3\nprint(summarize)",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, True)
+        self.assertEqual(0, metrics["reused_helpers"])
+        self.assertTrue(failures)
+
+    def test_unparsable_form_is_skipped(self):
+        forms = [
+            "def summarize(path):\n    return path\n",
+            "print(summarize(",
+            "print(summarize('b'))",
+        ]
+        _, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual([], failures)
+
+    def test_missing_helper_and_invalid_requirements_are_reported(self):
+        _, failures = run.helper_reuse_evidence(["print(1)"], True)
+        self.assertEqual(["no sandbox form defined a helper to reuse"], failures)
+        for want in (0, -1, "2", False, None):
+            with self.subTest(want=want):
+                metrics, failures = run.helper_reuse_evidence([], want)
+                self.assertEqual({}, metrics)
+                self.assertEqual(
+                    ["want_helper_reuse must be true or a positive integer"], failures
+                )
+
+
 class DiscoveryEvaluationTest(unittest.TestCase):
     # #232/#234: syntactic markers and tool presence hid incorrect workflows.
     def run_events(self, events, **checks):
@@ -547,6 +656,41 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         self.assertEqual(1, result["activity_failures"])
         self.assertEqual(1, result["caught_activity_failures"])
         self.assertEqual(0, result["surfaced_errors"])
+        self.assertFalse(result["correct"])
+
+    def test_group_row_supersedes_the_rows_it_collapsed(self):
+        # A finished form collapses its per-call rows into ONE group row, so the
+        # last snapshot no longer lists the row it replaced. That row finished with
+        # the group; only a row the final snapshot still shows as running is work
+        # the session abandoned.
+        result = self.run_events(
+            [
+                self.activity("running", operation="shell"),
+                self.activity("succeeded", operation="shell", row_id="group-call-1"),
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["shell"],
+        )
+        self.assertEqual(0, result["incomplete_activities"])
+        self.assertEqual(0, result["errors"])
+        self.assertTrue(result["correct"])
+
+    def test_collapsing_a_scope_keeps_its_failed_row_and_other_scopes(self):
+        stale = self.activity("running", operation="shell")
+        stale["payload"]["scope"] = "t1/i2/f1"
+        failed = self.activity("failed", operation="shell", row_id="call-2")
+        group = self.activity("succeeded", operation="shell", row_id="group-call-2")
+        result = self.run_events(
+            [
+                stale,
+                failed,
+                group,
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["shell"],
+        )
+        self.assertEqual(1, result["activity_failures"])
+        self.assertEqual(1, result["incomplete_activities"])
         self.assertFalse(result["correct"])
 
     def test_running_or_cancelled_activity_is_not_success(self):
@@ -782,6 +926,42 @@ class EvaluationSummaryTest(unittest.TestCase):
         self.assertEqual([], failures)
         self.assertEqual(1, metrics["doc_calls"])
 
+    def test_doc_settles_the_contract_without_a_signature_call(self):
+        # `doc(name)` is the registered contract itself: signature, defaults and
+        # schema. Demanding inspect.signature on top of it would be the redundant
+        # lookup this same audit counts against a run.
+        metrics, failures = run.discovery_evidence(
+            ['print(doc("probe.read"))'], [], {"signatures": ["probe.read"]}
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(0, metrics["signature_calls"])
+        self.assertEqual(1, metrics["doc_calls"])
+        _, failures = run.discovery_evidence(
+            ['print(doc("probe.other"))'], [], {"signatures": ["probe.read"]}
+        )
+        self.assertEqual(["no signature or doc call found for probe.read"], failures)
+
+    def test_availability_probe_is_not_rediscovery_of_a_known_tool(self):
+        # A NameError guard answers "is the extension installed?", not "what is its
+        # contract?" — scanning a namespace or a result shape reads no contract.
+        guard = (
+            "try:\n"
+            "    probe\n"
+            "except NameError:\n"
+            '    print([n for n in dir(builtins) if "probe" in n])\n'
+            "else:\n"
+            "    print(probe.read())"
+        )
+        metrics, failures = run.discovery_evidence(
+            [guard], [], {"known": True, "symbols": ["probe.read"]}
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(0, metrics["other_inspection_calls"])
+        _, failures = run.discovery_evidence(
+            ["print(dir(probe))"], [], {"known": True, "symbols": ["probe.read"]}
+        )
+        self.assertEqual(["known contracts were unnecessarily rediscovered"], failures)
+
     def test_nonobject_token_payload_fails_without_crashing(self):
         for payload in (None, [], "100"):
             with self.subTest(payload=payload):
@@ -829,6 +1009,33 @@ class EvaluationSummaryTest(unittest.TestCase):
         self.assertEqual(50.0, summary["cached_input_percent"])
         self.assertEqual({"min": 100, "median": 200.0, "max": 300}, summary["input"])
         self.assertEqual({"min": 10, "median": 15.0, "max": 20}, summary["wall"])
+
+    def test_measurement_runs_report_a_behavior_rate_instead_of_gating(self):
+        rows = [
+            {
+                "id": "probe",
+                "provider": "test",
+                "model": "model",
+                "repeat": index,
+                "converged": True,
+                "correct": True,
+                "errors": 0,
+                "measurement": True,
+                "behavior": [] if index == 1 else ["no helper was reused"],
+                "tokens": {},
+                "token_errors": [],
+                "wall": 10,
+                "forms": 5,
+                "provider_calls": 3,
+                "max_form_output_chars": 4,
+                "total_output_chars": 5,
+            }
+            for index in (1, 2)
+        ]
+        summary = run.summarize_results(rows)[0]
+        self.assertTrue(summary["measurement"])
+        self.assertEqual(2, summary["passed"])
+        self.assertEqual(1, summary["behavior_passed"])
 
     def test_reuse_seeds_one_canonical_fixture_and_rejects_path_escape(self):
         scenario = run.load_scenarios(["extension-known-contract"])[0]

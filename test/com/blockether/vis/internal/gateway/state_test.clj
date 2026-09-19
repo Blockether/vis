@@ -1638,6 +1638,39 @@
               (expect (= 8 (:offset page)))))))))
 
 (defdescribe
+  newest-answer-text-test
+  "A banner raised from POLLING has no turn id to ask about: the desktop app
+   compares session rows and then asks what the newest answer SAID. That read is
+   one turn wide, and a Council turn is never the answer it is about."
+  (it "projects the newest settled turn, and never a Council one"
+      (let [sid
+            (java.util.UUID/randomUUID)
+
+            rows
+            (mapv (fn [n]
+                    {:id (str "turn-" n) :position 1})
+                  (range 3))
+
+            answer-of
+            (fn [kind]
+              (with-redefs-fn {#'lp/db-info (constantly ::db)
+                               #'persistance/db-list-session-turns (fn [_ _]
+                                                                     rows)
+                               #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                         (zipmap ids (repeat [])))
+                               #'state/transcript-turn
+                               (fn [_db _att row]
+                                 {:turn_id (:id row)
+                                  :request_kind kind
+                                  :content [{:type "prose"
+                                             :markdown (str "Shipped " (:id row) ".")}]})}
+                (fn []
+                  (state/newest-answer-text sid))))]
+
+        (expect (= "Shipped turn-2." (answer-of "user")))
+        (expect (nil? (answer-of "council"))))))
+
+(defdescribe
   queued-update-payload-test
   "Editing a queued request must also edit the provider message payload;
   otherwise the drained queued turn answers the pre-edit prompt."

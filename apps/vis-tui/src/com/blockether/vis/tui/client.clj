@@ -583,6 +583,14 @@
   [id value]
   (send-json! "POST" "/v1/settings" {:id id :action "value" :value value}))
 
+(defn settings
+  "Every settings group the gateway serves for `channel`, in ITS order — the same
+   payload the companion app renders. Clients project this catalog instead of
+   re-deriving one from a process-local registry copy, which drifts the moment the
+   engine or an extension registers a toggle this binary never heard of."
+  ([] (settings :tui))
+  ([channel] (send-json! "GET" (str "/v1/settings?channel=" (enc (name channel))))))
+
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
 (defn session-slashes
@@ -2248,6 +2256,8 @@
 (def gateway-current-seq current-seq)
 
 (def gateway-set-setting-value! set-setting-value!)
+
+(def gateway-settings settings)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
 

@@ -127,12 +127,14 @@
 
 ;; Draft recovery reports #242 and #243: isolation must be an explicit opt-in.
 (defdescribe draft-backend-setting-test
-             (it "defaults to off and exposes the same persistent choice in both clients"
+             (it "is an experimental opt-in that defaults to off in both clients"
                  (let [spec (toggles/toggle-spec ws/draft-backend-toggle-id)]
                    (expect (= "off" (:default spec)))
                    (expect (= :enum (:type spec)))
                    (expect (= ["auto" "worktree" "rift" "off"] (:choices spec)))
                    (expect (true? (:persist? spec)))
+                   (expect (true? (:experimental? spec)))
+                   (expect (= :experimental (:group spec)))
                    (doseq [channel [:tui :web]]
                      (expect (some #(= ws/draft-backend-toggle-id (:id %))
                                    (toggles/toggles-for-channel channel))))))
