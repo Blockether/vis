@@ -1,0 +1,30 @@
+{
+  "lang": "python",
+  "timeout_s": 600,
+  "prompt": "service.py must report the real rate: change rate() to return 42 and leave every other function unchanged. Drafts are enabled in this workspace, so isolate the change. First keep the current project_root_path in a Python variable, then call draft_create(\"rate-fix\") and edit service.py inside the draft with the anchored patch tool. Before approving, assert with Python that project_root_path now points at the draft copy, that the draft's service.py contains 'return 42', and that the remembered original path still contains 'return 0'. Then call draft_approve(\"fix: report the real rate\") so the change lands in the original repository, assert the original service.py now contains 'return 42', and call draft_discard(). Report DRAFT-ISOLATION-OK with the draft root only after every assertion passes.",
+  "want": {
+    "service.py": [
+      "def rate(",
+      "return 42",
+      "def label("
+    ]
+  },
+  "wantnot": {
+    "service.py": [
+      "return 0"
+    ]
+  },
+  "want_answer": [
+    "DRAFT-ISOLATION-OK"
+  ],
+  "want_tools": [
+    "draft-create",
+    "patch",
+    "draft-approve"
+  ],
+  "want_forms": [
+    "draft_create(",
+    "project_root_path",
+    "draft_approve("
+  ]
+}
