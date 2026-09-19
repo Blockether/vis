@@ -782,7 +782,10 @@
       ;; 10.6k → 10.7k: user report — §2 only told the model to REUSE helpers, so blocks
       ;; retyped the same steps and `defs()` stayed empty. Factoring one out on the second
       ;; occurrence is a rule again, and it lands at 10 680.
-      (expect (< (count text) 10700))
+      ;; 10.7k → 10.8k: user report — "you can delete the helper and it is not available in
+      ;; `defs` then" was not what §2 said. Deletion now names what it removes and that a
+      ;; restart restores only what is still defined. The lifecycle lands at 10 754.
+      (expect (< (count text) 10800))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1589,8 +1592,7 @@
                  (let [text (prompt/build-system-prompt {})]
                    (doseq [rule ["Before a new helper, search `defs(pattern=\"...\")`"
                                  "read `defs(name)` and refine a stable name"
-                                 "After a restart, `defs(name, details=True)`"
-                                 "whether each is present"]]
+                                 "`defs(name, details=True)` lists a" "whether each is present"]]
                      (expect (str/includes? text rule) rule))))
              ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
              ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
@@ -1604,8 +1606,10 @@
              ;; saved definitions, so the model had to read the host to answer that.
              (it "states that the saved set follows redefinition and explicit deletion"
                  (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["mirror the namespace after each block" "redefining replaces"
-                                 "`del obsolete_name` removes"
+                   (doseq [rule ["mirror the namespace after each block"
+                                 "redefining replaces the saved source"
+                                 "`del obsolete_name` drops the helper from `defs()` for good"
+                                 "a restart restores only what is still defined"
                                  "callers, aliases and captured defaults confirm it is unused"]]
                      (expect (str/includes? text rule) rule))))
              ;; User report: three of seven helper lines described source fingerprints and
