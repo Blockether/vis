@@ -696,24 +696,6 @@
 
     (str o "-" a)))
 
-(defn- pack-native-token
-  "tree-sitter-language-pack native artifact suffix for the build host. The
-   pack publishes its OWN rid scheme (macos-arm64 / macos-x86_64 /
-   linux-aarch64 / linux-x86_64) — NOT the fff/rift/ruff darwin-arm64 style;
-   both verified against the Clojars artifact list."
-  []
-  (let [os
-        (str/lower-case (System/getProperty "os.name"))
-
-        arch
-        (str/lower-case (System/getProperty "os.arch"))
-
-        arm?
-        (boolean (#{"aarch64" "arm64"} arch))]
-
-    (cond (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
-          :else (str "linux-" (if arm? "aarch64" "x86_64")))))
-
 (defn- native-platform-token
   "sherpa-onnx native-lib dir token for the BUILD host (e.g. `osx-aarch64`,
    `linux-x64`) — the directory name inside `sherpa-onnx-native-lib-<platform>`
@@ -736,7 +718,7 @@
 (defn- native-lib-jars
   "Resolve every host-platform FFM artifact at the exact version of its main jar
    in `basis`. Only the host native jar enters the image classpath, so each
-   platform image embeds only its own fff/rift/ruff/tree-sitter library.
+   platform image embeds only its own fff/rift/ruff/imaging library.
 
    Native images cannot use the runtime tools.deps downloader. A missing main
    dependency, failed resolution, or missing direct native jar is therefore a
@@ -749,9 +731,7 @@
         {'com.blockether/fff (str "fff-native-" tok)
          'com.blockether/rift (str "rift-native-" tok)
          'com.blockether/ruff (str "ruff-native-" tok)
-         'com.blockether/imaging (str "imaging-native-" tok)
-         'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
-                                                        (pack-native-token))}
+         'com.blockether/imaging (str "imaging-native-" tok)}
 
         missing-mains
         (->> (keys native-artifacts)
@@ -787,9 +767,7 @@
 
       (when (seq missing-natives)
         (throw (ex-info "Native build requires every FFM native artifact for its target platform."
-                        {:artifacts missing-natives
-                         :platform tok
-                         :tree-sitter-platform (pack-native-token)})))
+                        {:artifacts missing-natives :platform tok})))
       (->> (keys deps)
            (mapcat jars-by-artifact)
            vec))))
@@ -1084,6 +1062,10 @@
              "-H:IncludeResources=vis-shims/.*"
              ;; Host modules are materialized for the runtime worker at first use.
              "-H:IncludeResources=vis-guest/.*"
+             ;; The language surfaces Vis SHIPS (resources/vis-extensions/**): the
+             ;; engine materializes them into ~/.vis/extensions-bundled and scans
+             ;; that directory first, so they must travel inside the image.
+             "-H:IncludeResources=vis-extensions/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/blockether/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
@@ -1093,12 +1075,6 @@
              ;; vendored Prism highlighter, inlined into standalone HTML
              ;; transcript exports at RUNTIME via io/resource.
              "-H:IncludeResources=vis-transcript/.*"
-             ;; tree-sitter pack FFI lib for THIS platform. The pack's own
-             ;; metadata ships NO resource glob (unlike fff/rift/ruff's
-             ;; prebuilds/**), so without this the shipped binary embeds no
-             ;; tree-sitter native at all and the runtime resolver-download
-             ;; path — which a native image cannot take — is the only hope.
-             (str "-H:IncludeResources=natives/" (pack-native-token) "/.*")
              ;; ── Embedded CPython ────────────────────────────────────────────
              ;; The interpreter itself is a cdylib plus a vendored tree, resolved
              ;; at RUNTIME (VIS_PYTHON_NATIVE_PATH / VIS_PYTHON_HOME, which the

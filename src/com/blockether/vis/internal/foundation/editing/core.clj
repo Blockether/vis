@@ -3681,11 +3681,9 @@
                 original
                 (sort-by :start #(compare %2 %1) resolved))
 
-        ;; Only a CODE grammar may gate a write. `detect-language` answers for every
-        ;; extension it knows — `.txt` is `vimdoc`, whose grammar reports an ERROR node
-        ;; on ordinary prose — so gating on it alone told EVERY prose edit that its file
-        ;; was broken. `parse/code-languages` is the set where a parse error means
-        ;; something; vimdoc, markdown and csv are not in it.
+        ;; Only a language a registered surface JUDGES may gate a write. Vis carries
+        ;; no parser of its own, so `guarded-language` answers nil for every file type
+        ;; nobody claims — prose included — and those writes go through unchecked.
         lang
         (parse/guarded-language rel)
 

@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-09-18.
+> Generated 2026-09-19.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -30,8 +30,8 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 58 unique, across 3 `deps.edn` modules (root + siblings).
-- **Total direct jar size:** ~38 MB; most space is used by Python and optional speech components (§8).
+- **Direct dependency coordinates:** 57 unique, across 3 `deps.edn` modules (root + siblings).
+- **Total direct jar size:** ~37 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
 
@@ -143,7 +143,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.172` | Apache-2.0 | 619 KB | Blockether (in-house) |
-| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:aad4ee579eb927f8924085c5afea74685ac9b90d` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
@@ -210,7 +209,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | License | Count |
 |---|---|
 | EPL-1.0 | 19 |
-| MIT | 15 |
+| MIT | 14 |
 | Apache-2.0 | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |

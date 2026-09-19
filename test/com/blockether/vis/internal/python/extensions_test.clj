@@ -6093,3 +6093,83 @@ vis.register_extension(vis.Extension(
                                   (:status
                                     (parse/transition-verdict "fixturelang" "value = 1\n" dirty))))
                        (expect (= "value = (\n)\n" ((:balance-fn (fixture-surface)) dirty))))))))
+
+(defn- bundled-sources
+  "The shipped surfaces as the `{filename -> source}` map the loader writes, read
+   from the classpath exactly as the engine reads them."
+  []
+  (into {}
+        (map (fn [rel]
+               [rel (slurp (io/resource (str "vis-extensions/" rel)))]))
+        pyx/bundled-extension-sources))
+
+(defn- bundled-entries
+  "Every language-tool entry the shipped surface extensions registered, by language."
+  []
+  (into {}
+        (map (juxt :language identity))
+        (mapcat :ext/language-tools
+                (keep registered
+                      ["language-surface" "language-surface-python" "language-surface-clojure"]))))
+
+(defdescribe
+  bundled-language-surfaces-test
+  (it "materializes the shipped sources, drops what it no longer ships, and scans them first"
+      (let [dir
+            (temp-dir)
+
+            stale
+            (write-ext! dir "language_surface_fortran.py" "boom\n")
+
+            materialized
+            (pyx/materialize-bundled-extensions! dir)]
+
+        (expect (= dir materialized))
+        (doseq [rel pyx/bundled-extension-sources]
+          (expect (.isFile (io/file dir rel)) rel))
+        (expect (str/includes? (slurp (io/file dir "language_surface_clojure.py"))
+                               "language-surface-clojure"))
+        ;; The directory belongs to vis: a surface this version dropped stops claiming its language.
+        (expect (not (.exists stale)))
+        ;; Bundled FIRST, so a user or project file of the same name replaces a shipped one.
+        (expect (= (.getPath (io/file (System/getProperty "user.home") ".vis" "extensions-bundled"))
+                   (.getPath ^java.io.File (first (pyx/default-extension-dirs)))))))
+  (it
+    "serves the syntax verdict for every language it ships"
+    (with-fresh-loaded
+      (bundled-sources)
+      (fn [result _]
+        (expect (zero? (:failed result)) (pr-str result))
+        (let [entries (bundled-entries)]
+          (expect (= #{"clojure" "json" "python" "toml"} (set (keys entries))))
+          (doseq [[language entry] entries]
+            (expect (contract-surface/valid-surface? entry) language)
+            (expect (ifn? (:syntax-fn entry)) language)
+            ;; A shipped surface judges syntax and nothing else: the JVM packs keep
+            ;; formatting, linting, tests and the REPL.
+            (expect (= ["syntax"] (get (contract-surface/->surface entry) "capabilities"))
+                    language)))
+        ;; Claiming the verdict is what guards a file type.
+        (expect (= "clojure" (parse/guarded-language "src/app.clj")))
+        (expect (= "clojure" (parse/guarded-language "deps.edn")))
+        (expect (= "python" (parse/guarded-language "app.py")))
+        (expect (= "json" (parse/guarded-language "package.json")))
+        (expect (= "toml" (parse/guarded-language "pyproject.toml")))
+        (let [findings (parse/error-nodes "clojure" "(defn f [x]\n  (+ x 1)\n")]
+          (expect (= [{:line 1 :col 0 :kind "unclosed"}]
+                     (mapv #(select-keys % [:line :col :kind]) findings)))
+          (expect (= "(" (:delimiter (first findings)))))
+        (expect (empty? (parse/error-nodes "clojure" "(defn f [x] (+ x 1))\n")))
+        ;; A delimiter inside a comment, a string or a character literal is not one.
+        (expect (empty? (parse/error-nodes "clojure" ";; (\n(def s \"(\")\n(def c \\))\n")))
+        (expect (= "unclosed" (:kind (first (parse/error-nodes "python" "value = (\n")))))
+        (expect (empty? (parse/error-nodes "python" "value = 1\n")))
+        (expect (= "parse" (:kind (first (parse/error-nodes "json" "{\"a\": 1,}")))))
+        (expect (empty? (parse/error-nodes "json" "{\"a\": [1, 2]}")))
+        (expect (= "parse" (:kind (first (parse/error-nodes "toml" "[a\nb = 1\n")))))
+        (expect (empty? (parse/error-nodes "toml" "[tool.vis]\nb = 1\n")))
+        ;; The gate refuses an edit that introduces a fault the file did not have.
+        (expect (= :introduced-error
+                   (:status (parse/transition-verdict "clojure" "(+ 1 2)\n" "(+ 1 2\n"))))
+        (expect (= :clean
+                   (:status (parse/transition-verdict "clojure" "(+ 1 2)\n" "(+ 1 3)\n"))))))))

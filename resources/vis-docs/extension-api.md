@@ -64,7 +64,7 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `activation` | `None` | Optional `(env) -> bool`; `False` hides the extension for that turn |
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
-| `language_tools` | `()` | `vis.LanguageSurface` packs serving one language's formatting, linting, tests, REPL and syntax checks |
+| `language_tools` | `()` | `vis.LanguageSurface` packs serving one language's formatting, linting, tests, REPL and syntax checks; see [language extensions](language-extensions.md) |
 | `network_filters` | `()` | `vis.NetworkFilter` request/response policy; see [network filters](jail.md#project-network-filters) |
 | `providers` | `()` | `vis.Provider` declarations |
 | `ctx` | `None` | Optional `(env) -> dict` merged into the model's session context |

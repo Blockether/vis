@@ -2469,7 +2469,7 @@
             terminal
             (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. (int bar-x) (int 27))))
           (.addInput terminal (KeyStroke. KeyType/Escape))
-          (dlg/log-view-dialog! screen "log" lines :grammar nil)
+          (dlg/log-view-dialog! screen "log" lines)
           (let [top (str/triml (:text (nth (term/painted-rows terminal) 1)))]
             (expect (str/starts-with? top "line-166")))
           (finally (.stopScreen screen))))))

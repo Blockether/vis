@@ -7,7 +7,6 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
-            [com.blockether.vis.tui.highlight :as hl]
             [com.blockether.vis.tui.table :as table]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
@@ -7389,11 +7388,11 @@
                 show-execution-details?
                 (or show-python-code? (not= "python" code-language))
 
-                ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
-                ;; The diagnostic caret remains plain and column-aligned below.
-                colored-lines
-                (some-> (hl/highlight code-language code-text)
-                        str/split-lines)
+                 ;; Source that already carries ANSI (a colored pre-rendering)
+                 ;; folds SGR-aware below; everything else folds plain.
+                 colored-lines
+                 (when (str/includes? code-text "\u001b[")
+                   (str/split-lines code-text))
 
                 inline-error-code-lines
                 (when (and error (not (:group-errors form)))
@@ -8301,7 +8300,7 @@
                 render!
                 #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
 
-            (if live? (cached* k #(binding [hl/*live?* true] (render!))) (render!))))]
+            (if live? (cached* k render!) (render!))))]
 
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
       ;; The code blocks render flat — no TURN wrapper. The turn-level

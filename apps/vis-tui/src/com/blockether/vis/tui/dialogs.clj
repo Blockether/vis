@@ -3,7 +3,6 @@
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.highlight :as highlight]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.markdown-layout :as layout]
@@ -2139,15 +2138,13 @@
                         (recur))))))))
 
 (defn log-view-dialog!
-  "FULLSCREEN, syntax-highlighted log viewer — the whole terminal, edge to edge.
+  "FULLSCREEN log viewer — the whole terminal, edge to edge.
 
    Unlike `text-view-dialog!` (a centered modal box) this owns the entire screen:
    a title strip on the top row, the log body filling every row beneath it, and a
-   hint strip on the bottom row. Each line is colorized by parsing the WHOLE
-   buffer with tree-sitter (`highlight/highlight`, default the `bash` grammar) and
-   painting the resulting ANSI runs through `render/paint-ansi-line!` — the same
-   path that carries syntax color on the transcript's code fences. Fails open to
-   plain text when the native grammar pack isn't loadable.
+   hint strip on the bottom row. Lines that already carry ANSI (colored tool
+   output) are painted through `render/paint-ansi-line!` — the same path that
+   carries color on the transcript's code fences.
 
    Keys: ↑/↓ line, PgUp/PgDn page, Home/End jump, mouse-wheel scroll, `r` refresh
    (when `:refresh-fn`), Enter/Esc close. Options:
@@ -2155,9 +2152,8 @@
                   buffer (e.g. background-shell logs) can be re-pulled in place.
    - :tail?       start pinned to the newest line and re-follow the bottom on
                   refresh (log-tail behaviour); scrolling up releases the pin.
-   - :grammar     tree-sitter grammar for coloring (default \"bash\"); nil = plain.
    Returns nil after close."
-  [^TerminalScreen screen title lines & {:keys [refresh-fn tail? grammar] :or {grammar "bash"}}]
+  [^TerminalScreen screen title lines & {:keys [refresh-fn tail?]}]
   (let [lines*
         (atom (vec lines))
 
@@ -2187,18 +2183,8 @@
             cur-lines
             @lines*
 
-            ;; Colorize the WHOLE buffer at once (cached by [grammar source]) so
-            ;; multi-line shell constructs classify correctly and identical
-            ;; buffers aren't re-parsed on every scroll keystroke. nil = plain.
-            colored
-            (when (and grammar (seq cur-lines))
-              (some-> (highlight/highlight grammar (str/join "\n" (map str cur-lines)))
-                      str/split-lines))
-
             painted
-            (if (and colored (= (count colored) (count cur-lines)))
-              (vec colored)
-              (mapv str cur-lines))
+            (mapv str cur-lines)
 
             total
             (count painted)

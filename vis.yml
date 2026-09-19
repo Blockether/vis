@@ -39,12 +39,6 @@ workspace:
     - id: lanterna
       path: ~/lanterna
       description: Blockether Lanterna fork — release there, then move the com.blockether/lanterna pin in the TUI extension.
-    - id: tree-sitter
-      path: ~/tree-sitter-language-pack
-      description: Sibling repo — tree-sitter grammars for syntax highlighting and the patch parse gate.
-    - id: tree-sitter-clojure
-      path: ~/tree-sitter-clojure
-      description: Blockether fork of sogaiu/tree-sitter-clojure — THE Clojure grammar (grammar.js + queries/highlights.scm + queries/tags.scm). The language pack pins it by rev in sources/language_definitions.json; bump the grammar here, tag v0.0.13-blockether.N, then move that rev.
     - id: spel
       path: ~/spel
       description: Sibling repo — Spel CLI and runtime.
@@ -82,10 +76,6 @@ workspace:
       path: ~/.clojure
       description: tools.deps config + cache (deps.edn) read at JVM startup.
       search: false
-    - id: clj-tslp
-      path: ~/.cache/clj-tslp
-      description: Extracted tree-sitter native library loaded by the patch parse gate and the TUI highlighter.
-      search: false
     - id: npm
       path: ~/.npm
       description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
@@ -113,7 +103,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, tree-sitter, tree-sitter-clojure, spel, svar, skjema, clj-imaging, vis-python-runtime, infrastructure, blockether-com, actions-runner, m2, clojure, clj-tslp, npm]
+#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, spel, svar, skjema, clj-imaging, vis-python-runtime, infrastructure, blockether-com, actions-runner, m2, clojure, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers

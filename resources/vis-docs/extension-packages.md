@@ -21,10 +21,14 @@ provider does not need tools, and a small tool does not need a package.
 
 | Directory | Scope |
 | --- | --- |
+| `~/.vis/extensions-bundled/` | Every project; the extensions Vis ships |
 | `~/.vis/extensions/` | Every project |
 | `<project>/.vis/extensions/` | That project |
 
-A project extension with the same registered name overrides the global extension.
+Vis refreshes the bundled directory from the copies inside it when it starts, so
+edits there are overwritten. To replace one of Vis' own extensions, save a file
+with the same registered name in one of the other two directories. A project
+extension with the same registered name overrides the global extension.
 Top-level `.py` files are entries. Installed packages live at
 `.vis/extensions/<name>/<version>/`, with source files directly inside the version
 directory. A `current` link inside `<name>/` selects the active version; Vis loads

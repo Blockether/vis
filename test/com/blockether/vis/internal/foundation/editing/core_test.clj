@@ -44,6 +44,105 @@
 
 (defn- private-fn [name] (deref (private-var name)))
 
+(defn- string-end
+  "Where the string opened at index `i` of `s` ends, as [index line col] just past its
+   closing quote, or nil when it never closes."
+  [^String s ^long i ^long line ^long col]
+  (let [n (.length s)]
+    (loop [j (inc i)
+           l line
+           c (inc col)]
+
+      (let [ch (when (< j n) (.charAt s (int j)))]
+        (cond (nil? ch) nil
+              (= ch \\) (recur (+ j 2) l (+ c 2))
+              (= ch \") [(inc j) l (inc c)]
+              (= ch \newline) (recur (inc j) (inc l) 0)
+              :else (recur (inc j) l (inc c)))))))
+
+(defn- delimiter-verdict
+  "A fixture SYNTAX verdict in the JSON spelling a Python language surface answers:
+   the balance of `()`, `[]` and `{}` outside strings, comments and character
+   literals. Vis owns no parser, so the gate these tests exercise exists only while a
+   surface like this one is registered. It is no parser either — it reports the first
+   unbalanced delimiter or unterminated string and stops."
+  [{:keys [language source]}]
+  (let [^String s
+        (str source)
+
+        n
+        (.length s)
+
+        lines
+        (string/split-lines s)
+
+        comment-char
+        (if (= "python" (str language)) \# \;)
+
+        openers
+        {\( \) \[ \] \{ \}}
+
+        fault
+        (fn [kind ch line col]
+          {"language" language
+           "is_clean" false
+           "findings" [{"line" line
+                        "col" col
+                        "kind" kind
+                        "delimiter" (str ch)
+                        "text" (nth lines (dec (long line)) "")}]})]
+
+    (loop [i
+           0
+
+           line
+           1
+
+           col
+           0
+
+           stack
+           []]
+
+      (if (>= i n)
+        (if-let [[ch l c] (peek stack)]
+          (fault "unclosed" ch l c)
+          {"language" language "is_clean" true "findings" []})
+        (let [ch (.charAt s (int i))]
+          (cond (= ch \newline) (recur (inc i) (inc line) 0 stack)
+                (= ch \\) (recur (+ i 2) line (+ col 2) stack)
+                (= ch comment-char) (let [j (.indexOf s "\n" (int i))]
+                                      (if (neg? j)
+                                        (recur (long n) line col stack)
+                                        (recur (long (inc j)) (inc line) 0 stack)))
+                (= ch \") (if-let [[j l c] (string-end s i line col)]
+                            (recur (long j) (long l) (long c) stack)
+                            (fault "unclosed" ch line col))
+                (contains? openers ch) (recur (inc i) line (inc col) (conj stack [ch line col]))
+                (contains? #{\) \] \}} ch) (let [open (first (peek stack))]
+                                             (if (and open (= ch (get openers open)))
+                                               (recur (inc i) line (inc col) (pop stack))
+                                               (fault "unexpected" ch line col)))
+                :else (recur (inc i) line (inc col) stack)))))))
+
+(defn- with-syntax-surface
+  "Run `f` with [[delimiter-verdict]] registered as the SYNTAX surface for clojure and
+   python, the way the bundled `language-surface-*` extensions register one at
+   runtime. Everything already registered stays registered: the Clojure pack's
+   delimiter repair is part of what these tests exercise."
+  [f]
+  (let [registered
+        extension/registered-extensions
+
+        surface
+        {:ext/name "fixture-language-surface"
+         :ext/language-tools [{:language "clojure" :syntax-fn delimiter-verdict}
+                              {:language "python" :syntax-fn delimiter-verdict}]}]
+
+    (with-redefs-fn {#'extension/registered-extensions (fn []
+                                                         (concat (registered) [surface]))}
+      f)))
+
 (defn- anchor-at
   "The anchor `cat`/`patch`/`grep` printed for line `n` in one anchored text
    block. Splitting on the gutter is exactly what the model does, so the tests
@@ -1513,78 +1612,89 @@
 
 (defdescribe
   patch-parse-gate-test
+  "The gate only exists while a registered language surface JUDGES the file's
+   language, so these tests register one exactly as a bundled extension does."
   (it "a write that would break the parse beyond repair is refused and nothing lands"
       ;; A dropped delimiter is no longer the interesting case — a language pack that
       ;; publishes a repair gets it fixed in place (see `patch-delimiter-repair-test`).
       ;; What still refuses, pack or no pack, is a break no delimiter can close.
-      (let [rel
-            (write-temp! "patch/gate.clj" "(ns gate)\n\n(defn ok [] 1)\n")
+      (with-syntax-surface
+        (fn []
+          (let [rel
+                (write-temp! "patch/gate.clj" "(ns gate)\n\n(defn ok [] 1)\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+                cat-tool
+                (comp :result (private-fn "cat-tool"))
 
-            a3
-            (anchor-at (cat-tool rel) 3)
+                a3
+                (anchor-at (cat-tool rel) 3)
 
-            thrown
-            (try (patch-span rel a3 a3 "(defn ok [] \"unterminated")
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+                thrown
+                (try (patch-span rel a3 a3 "(defn ok [] \"unterminated")
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (some? thrown))
-        (expect (= :parse-broken (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "would not parse"))
-        (expect (string/includes? (ex-message thrown) "clojure: ERROR at replacement line "))
-        (expect (<= (count (string/split-lines (ex-message thrown))) 3))
-        (expect (not (string/includes? (ex-message thrown) "parsed clean before this edit")))
-        (expect (= "(ns gate)\n\n(defn ok [] 1)\n" (slurp rel)))))
+            (expect (some? thrown))
+            (expect (= :parse-broken (:reason (ex-data thrown))))
+            (expect (string/includes? (ex-message thrown) "would not parse"))
+            (expect (string/includes? (ex-message thrown) "clojure: ERROR at replacement line "))
+            (expect (<= (count (string/split-lines (ex-message thrown))) 3))
+            (expect (not (string/includes? (ex-message thrown) "parsed clean before this edit")))
+            (expect (= "(ns gate)\n\n(defn ok [] 1)\n" (slurp rel)))))))
   (it "an ALREADY broken file still accepts an edit — you must be able to repair it"
-      (let [rel
-            (write-temp! "patch/broken.clj" "(ns broken)\n\n(defn oops [] 1\n")
+      (with-syntax-surface (fn []
+                             (let [rel
+                                   (write-temp! "patch/broken.clj"
+                                                "(ns broken)\n\n(defn oops [] 1\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+                                   cat-tool
+                                   (comp :result (private-fn "cat-tool"))
 
-            a3
-            (anchor-at (cat-tool rel) 3)
+                                   a3
+                                   (anchor-at (cat-tool rel) 3)
 
-            out
-            (:result (patch-span rel a3 a3 "(defn oops [] 1)"))]
+                                   out
+                                   (:result (patch-span rel a3 a3 "(defn oops [] 1)"))]
 
-        (expect (string/starts-with? out "patched "))
-        (expect (= "(ns broken)\n\n(defn oops [] 1)\n" (slurp rel)))))
-  (it "an unsupported language has no parse gate and no parse clause"
-      (let
-        ;; An extension tree-sitter has no grammar for: prose and config are
-        ;; exactly what `patch` exists to reach, and they must not be gated.
-        [rel
-         (write-temp! "patch/plain.zzz" "hello\nworld\n")
+                               (expect (string/starts-with? out "patched "))
+                               (expect (= "(ns broken)\n\n(defn oops [] 1)\n" (slurp rel)))))))
+  (it "a language no surface claims has no parse gate and no parse clause"
+      (with-syntax-surface
+        (fn []
+          (let
+            ;; A file type nothing judges: prose and config are exactly what `patch`
+            ;; exists to reach, and they must not be gated.
+            [rel
+             (write-temp! "patch/plain.zzz" "hello\nworld\n")
 
-         cat-tool
-         (comp :result (private-fn "cat-tool"))
+             cat-tool
+             (comp :result (private-fn "cat-tool"))
 
-         out
-         (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil "there"))]
+             out
+             (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil "there"))]
 
-        (expect (not (string/includes? out "parse:")))
-        (expect (= "hello\nthere\n" (slurp rel)))))
-  ;; Regression: the gate ran for EVERY grammar `detect-language` knows, and it
-  ;; knows `.txt` as `vimdoc` — whose grammar reports an ERROR node on ordinary
-  ;; prose. So every prose patch ended `parse: still broken at line N`, naming a
-  ;; line the file often did not even have. Only a CODE language may gate.
-  (it "prose and markdown carry no parse verdict, but code still does"
-      (let [cat-tool
-            (comp :result (private-fn "cat-tool"))
+            (expect (not (string/includes? out "parse:")))
+            (expect (= "hello\nthere\n" (slurp rel)))))))
+  ;; Regression: the gate ran for EVERY language detection knew, and detection knew
+  ;; `.txt` as `vimdoc` — a prose grammar that reports an ERROR node on ordinary
+  ;; prose. So every prose patch ended `parse: still broken at line N`, naming a line
+  ;; the file often did not even have. Only a language a surface JUDGES may gate.
+  (it
+    "prose and markdown carry no parse verdict, but code still does"
+    (with-syntax-surface
+      (fn []
+        (let [cat-tool
+              (comp :result (private-fn "cat-tool"))
 
-            edit
-            (fn [rel content replacement]
-              (let [rel (write-temp! rel content)]
-                (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil replacement))))]
+              edit
+              (fn [rel content replacement]
+                (let [rel (write-temp! rel content)]
+                  (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil replacement))))]
 
-        (expect (not (string/includes? (edit "patch/prose.txt" "alpha\nbeta\n" "BETA") "parse:")))
-        (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
-        (expect (string/includes? (edit "patch/code.py" "def f():\n    return 1\n" "    return 2")
-                                  "parse: clean")))))
+          (expect (not (string/includes? (edit "patch/prose.txt" "alpha\nbeta\n" "BETA") "parse:")))
+          (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
+          (expect (string/includes? (edit "patch/code.py" "def f():\n    return 1\n" "    return 2")
+                                    "parse: clean")))))))
 
 (defdescribe
   patch-delimiter-repair-test
@@ -1603,8 +1713,9 @@
 
         with-balancer
         (fn [candidate f]
-          (with-redefs-fn {(private-var "language-balancer") (constantly (constantly candidate))}
-            f))
+          (with-syntax-surface #(with-redefs-fn {(private-var "language-balancer")
+                                                 (constantly (constantly candidate))}
+                                  f)))
 
         patch-line-3-of
         (fn [name source candidate replacement]
@@ -1681,9 +1792,11 @@
               (anchor-at (cat-tool rel) 3)
 
               out
-              (with-redefs-fn {(private-var "language-balancer") (constantly nil)}
-                #(try (patch-span rel a3 a3 "(defn ok [] (inc 1)")
-                      (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+              (with-syntax-surface
+                #(with-redefs-fn {(private-var "language-balancer") (constantly nil)}
+                   (fn []
+                     (try (patch-span rel a3 a3 "(defn ok [] (inc 1)")
+                          (catch clojure.lang.ExceptionInfo e (ex-message e))))))]
 
           (expect (string/includes? out "would not parse"))
           (expect (not (string/includes? out "delimiter repair")))

@@ -1855,10 +1855,68 @@
                [p (dissoc e :context :ext)]))
         @loaded))
 
+(def ^:no-doc bundled-extension-sources
+  "The extension files Vis SHIPS, as classpath resources under `vis-extensions/`.
+
+   Explicit, like the registration manifest: a native image lists no resource
+   DIRECTORY, so the bundled set is written down here or it does not exist. The
+   entry files are the three language surfaces; `vis_language_surface/` is the
+   package they import, and it is NEVER scanned as an entry of its own."
+  ["language_surface.py" "language_surface_clojure.py" "language_surface_python.py"
+   "vis_language_surface/__init__.py" "vis_language_surface/clojure.py"
+   "vis_language_surface/data.py" "vis_language_surface/python.py"])
+
+(defn ^:no-doc materialize-bundled-extensions!
+  "Write the bundled extension sources into `dir` and answer `dir`, or nil when
+   anything about the copy fails — a shipped surface is a convenience and must
+   never fail startup.
+
+   A file is rewritten only when its bytes differ, so every scan after the first
+   costs a read; a `.py` file this version no longer ships is DELETED, because the
+   directory belongs to Vis and a stale surface would keep claiming its language."
+  ^File [^File dir]
+  (try (let [sources
+             (into {}
+                   (map (fn [rel]
+                          [rel (classpath-src (str "vis-extensions/" rel))]))
+                   bundled-extension-sources)
+
+             wanted
+             (into #{}
+                   (map (fn [rel]
+                          (.getCanonicalPath (io/file dir rel))))
+                   (keys sources))]
+
+         (doseq [[rel content] sources]
+           (let [target (io/file dir rel)]
+             (io/make-parents target)
+             (when-not (and (.isFile target) (= content (slurp target))) (spit target content))))
+         (doseq [^File f (file-seq dir)]
+           (when (and (.isFile f)
+                      (str/ends-with? (.getName f) ".py")
+                      (not (wanted (.getCanonicalPath f))))
+             (.delete f)))
+         dir)
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::bundled-extensions-unavailable
+                    :data {:dir (str dir) :error (ex-message t)}})
+         nil)))
+
+(defn ^:no-doc bundled-extensions-dir
+  "`~/.vis/extensions-bundled`, holding the surfaces Vis ships, or nil when they
+   could not be written. Scanned FIRST, so a user or project file registering the
+   same extension name replaces a bundled one."
+  []
+  (materialize-bundled-extensions!
+    (io/file (System/getProperty "user.home") ".vis" "extensions-bundled")))
+
 (defn ^:no-doc default-extension-dirs
   []
-  [(io/file (System/getProperty "user.home") ".vis" "extensions")
-   (io/file (System/getProperty "user.dir") ".vis" "extensions")])
+  (into []
+        (remove nil?)
+        [(bundled-extensions-dir) (io/file (System/getProperty "user.home") ".vis" "extensions")
+         (io/file (System/getProperty "user.dir") ".vis" "extensions")]))
 
 (defn ^:no-doc test-file?
   "A `test_*.py` / `*_test.py` module — a Python test, never an extension entry."

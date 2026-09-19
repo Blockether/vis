@@ -1867,7 +1867,7 @@
         (expect (str/includes? body "git_status()"))
         (expect (str/includes? body "print(42)"))))
   (it
-    "syntax-highlights malformed Python while retaining its inline error caret"
+    "keeps malformed Python readable with its inline error caret"
     (let [code
           "def broken(:\n    return 1"
 
@@ -1904,8 +1904,6 @@
       (expect (str/includes? body "return 1"))
       (expect (str/includes? body "^---"))
       (expect (str/includes? body "invalid syntax"))
-      (expect (some #(and (str/includes? % "\u001b[") (str/includes? (strip-ansi %) "def broken"))
-                    lines))
       ;; The message rides the ERROR marker: a code band is status-neutral, so this
       ;; row is what makes a failed call read as failed.
       (expect (= p/MARKER_ERR_RESULT (marker-of error-line)))))

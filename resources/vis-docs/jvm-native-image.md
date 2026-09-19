@@ -138,9 +138,9 @@ supply their own configuration:
   per-namespace `--initialize-at-build-time` flags are needed.
 - The manifest's initialization vector is the native root set; `build.clj`
   derives entry points from it.
-- Native libraries such as the tree-sitter language pack are reached through
-  the Foreign Function and Memory API, enabled by the pack's own
-  `-H:+ForeignAPISupport` and `-H:+SharedArenaSupport`.
+- Native libraries such as fff, ruff, rift and imaging are reached through the
+  Foreign Function and Memory API. Each binding jar enables it with its own
+  `-H:+ForeignAPISupport` and `--enable-native-access`.
 
 The Python runtime files are copied into `target/vis-agent-python/` beside the
 binary rather than included in it. CPython loads files from this directory.

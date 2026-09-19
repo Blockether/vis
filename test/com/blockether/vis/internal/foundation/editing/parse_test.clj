@@ -1,116 +1,11 @@
 (ns com.blockether.vis.internal.foundation.editing.parse-test
-  "Language detection and located parse errors — the two verdicts `patch`'s
-   syntax gate spends, from tree-sitter and from a registered language surface."
+  "Language detection and located parse errors — the two verdicts `patch`'s syntax
+   gate spends. Vis owns no parser, so every verdict here comes from a registered
+   language surface and a language nobody claims stays unguarded."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
-
-(deftest detect-language-test
-  (testing "the pack's own table answers for ordinary source"
-    (is (= "clojure" (parse/detect-language "src/a/b.clj")))
-    (is (= "python" (parse/detect-language "a/b/c.py"))))
-  (testing "representative expanded languages are reachable from real filenames"
-    (is (= "solidity" (parse/guarded-language "contracts/token.sol")))
-    (is (= "powershell" (parse/guarded-language "scripts/build.ps1")))
-    (is (= "proto" (parse/guarded-language "wire/session.proto")))
-    (is (= "json5" (parse/guarded-language "config/settings.json5")))
-    (is (= "wgsl" (parse/guarded-language "shaders/main.wgsl"))))
-  (testing "Clojure-family extensions the pack omits fall back to the clojure grammar"
-    (is (= "clojure" (parse/detect-language "a/b/manifest.edn"))))
-  (testing "detection stays broad — prose grammars are recognized, then excluded by policy"
-    (is (= "vimdoc" (parse/detect-language "a.txt")))
-    (is (contains? parse/code-languages "clojure"))
-    (is (not (contains? parse/code-languages "vimdoc")))
-    (is (not (contains? parse/code-languages "markdown")))))
-
-(deftest expanded-code-languages-test
-  (testing "newly guarded grammars accept a minimal document and reject a stray closer"
-    (doseq [lang #{"ada" "bicep" "c3" "cairo" "capnp" "clarity" "commonlisp" "crystal" "cuda" "cue"
-                   "d" "dhall" "elisp" "erlang" "fish" "fortran" "fsharp" "gdscript" "gleam" "glsl"
-                   "haxe" "hlsl" "json5" "jsonnet" "kdl" "matlab" "nim" "objc" "odin" "pascal" "pkl"
-                   "powershell" "prisma" "proto" "purescript" "racket" "rego" "rescript" "ron"
-                   "scheme" "solidity" "starlark" "systemverilog" "tcl" "thrift" "typespec" "v"
-                   "verilog" "vhdl" "wat" "wgsl" "zsh"}]
-      (is (empty? (parse/error-nodes lang
-                                     (get {"jsonnet" "{}"
-                                           "json5" "{}"
-                                           "ron" "()"
-                                           "powershell" "$x = 1"
-                                           "dhall" "True"
-                                           "prisma"
-                                           "generator client { provider = \"prisma-client-js\" }"}
-                                          lang
-                                          "")))
-          lang)
-      (is (seq (parse/error-nodes lang ")")) lang))))
-
-(deftest error-nodes-test
-  (testing "each ERROR/MISSING node carries a 1-based line, and the expected delimiter"
-    ;; a `[` closed with `)` — the classic bracket-TYPE mismatch
-    (let [errs (parse/error-nodes "clojure" "(defn f [x)\n  (+ x 1))\n")]
-      (is (seq errs))
-      (is (some (fn [e]
-                  (and (:missing? e) (= "]" (:kind e))))
-                errs))
-      (is (every? (fn [e]
-                    (pos? (long (:line e))))
-                  errs))))
-  (testing "clean source has no error nodes"
-    (is (empty? (parse/error-nodes "clojure" "(defn f [x] (+ x 1))\n"))))
-  (testing "an unclosed form is located at the FORM, not at the file's first line"
-    ;; tree-sitter opens ONE ERROR node over the whole file when a form is left
-    ;; unclosed, so the node's own start is line 1 — reporting that sent every
-    ;; refusal to the `ns` form instead of to the edit that broke.
-    (let [src
-          (str "(ns demo.core)\n\n" (apply str (repeat 40 "(defn ok [x] (inc x))\n"))
-               "(defn boom [x]\n  (let [y (inc x)]\n    {:a y})\n\n"
-               (apply str (repeat 5 "(defn after [x] (dec x))\n")))
-
-          errs
-          (parse/error-nodes "clojure" src)]
-
-      (is (= 43 (long (:line (first errs)))))
-      (is (= "(" (:delimiter (first errs))))
-      ;; the ERROR node itself still starts at line 1 — that is the artefact
-      (is (= 1 (long (:error-line (first errs)))))))
-  (testing "Unicode and CRLF do not shift the reported column"
-    ;; `é` occupies two UTF-8 bytes but one user-facing character column.
-    (let [src
-          "class Demo {\r\n  String boom() { String café = \"unterminated\r\n}\r\n"
-
-          err
-          (first (parse/error-nodes "java" src))]
-
-      (is (= 2 (long (:line err))))
-      (is (= 32 (long (:col err))))
-      (is (= 33 (long (:byte-col err))))))
-  (testing "an unparseable language fails open with no rows"
-    (is (= [] (parse/error-nodes nil "(defn f [x)")))))
-
-(deftest transition-verdict-test
-  (testing "one shared verdict distinguishes clean, introduced, and pre-existing errors"
-    (is (= :clean (:status (parse/transition-verdict "clojure" "(def x 1)" "(def x 2)"))))
-    (is (= :introduced-error (:status (parse/transition-verdict "clojure" "(def x 1)" ")"))))
-    (is (= :still-broken (:status (parse/transition-verdict "clojure" "(" ")"))))
-    (is (= :unguarded (:status (parse/transition-verdict nil "anything" ")"))))))
-
-(deftest top-level-nodes-test
-  (testing "the root's NAMED children, one level deep, in document order"
-    (let [nodes (parse/top-level-nodes
-                  "toml"
-                  "# [tool.uv] in a comment\n[tool.uv]\nx = 1\n\n[[tool.uv.index]]\n")]
-      (is (= ["comment" "table" "table_array_element"] (mapv :kind nodes)))
-      ;; punctuation is skipped, so a table's header key is its child 0 — the
-      ;; whole point for a caller reading DECLARATIONS out of a config file.
-      (is (= ["tool.uv" "x = 1"] (mapv :text (:children (nth nodes 1)))))
-      (is (= "tool.uv.index" (:text (first (:children (nth nodes 2))))))))
-  (testing "a declaration written inside prose is not a declaration"
-    (let [nodes (parse/top-level-nodes "toml" "desc = \"see [tool.uv]\"\n")]
-      (is (= ["pair"] (mapv :kind nodes)))))
-  (testing "no language answers nothing, and unparseable input declares nothing"
-    (is (= [] (parse/top-level-nodes nil "[tool.uv]\n")))
-    (is (= ["ERROR"] (mapv :kind (parse/top-level-nodes "toml" "[[[ broken"))))))
 
 (defn- exclamation-verdict
   "A fixture syntax verdict in the JSON spelling a Python surface answers: a line
@@ -128,22 +23,72 @@
     {"language" language "is_clean" (empty? faults) "findings" faults}))
 
 (defn- fixture-surface
-  "One extension declaring a language surface for `.vislang` files — a language
-   tree-sitter has no grammar for — whose syntax verdict is `syntax-fn`."
+  "One extension declaring a language surface for `.vislang` files — a file type vis
+   has no built-in name for — whose syntax verdict is `syntax-fn`."
   [syntax-fn]
   [{:ext/name "fixture-language"
     :ext/language-tools [{:language "fictional" :extensions ["vislang"] :syntax-fn syntax-fn}]}])
 
 (defn- clojure-surface
-  "One extension claiming the SYNTAX verdict for clojure, which tree-sitter already
-   parses — the precedence D2 grants a declared handler."
+  "One extension claiming the SYNTAX verdict for clojure, a language vis detects on
+   its own but never judges by itself."
   [syntax-fn]
   [{:ext/name "rival-language" :ext/language-tools [{:language "clojure" :syntax-fn syntax-fn}]}])
 
+(defmacro ^:private with-no-surfaces
+  "Body runs with an empty extension registry, so a verdict that never arrives is
+   this test's own doing and not another namespace's leftover registration."
+  [& body]
+  `(with-redefs [extension/registered-extensions (constantly [])]
+     ~@body))
+
+(deftest detect-language-test
+  (testing "the built-in table names the languages vis ships tools for"
+    (is (= "clojure" (parse/detect-language "src/a/b.clj")))
+    (is (= "clojure" (parse/detect-language "a/b/manifest.edn")))
+    (is (= "clojure" (parse/detect-language "bb.edn")))
+    (is (= "python" (parse/detect-language "a/b/c.py")))
+    (is (= "python" (parse/detect-language "A/B/C.PY"))))
+  (testing "every other file type is nameless until a surface claims it"
+    (with-no-surfaces (is (nil? (parse/detect-language "a.txt")))
+                      (is (nil? (parse/detect-language "README.md")))
+                      (is (nil? (parse/detect-language "contracts/token.sol")))
+                      (is (nil? (parse/detect-language "Makefile"))))))
+
+(deftest guarded-language-test
+  (testing "detection alone gates nothing — vis carries no parser of its own"
+    (with-no-surfaces (is (nil? (parse/guarded-language "src/a/b.clj")))
+                      (is (nil? (parse/guarded-language "a/b/c.py")))
+                      (is (nil? (parse/guarded-language "notes/prose.txt")))))
+  (testing "the surface that judges a language is what makes it guarded"
+    (with-redefs [extension/registered-extensions (constantly (clojure-surface
+                                                                exclamation-verdict))]
+      (is (= "clojure" (parse/guarded-language "src/a/b.clj")))
+      (is (= "clojure" (parse/guarded-language "deps.edn")))
+      (is (nil? (parse/guarded-language "a/b/c.py"))))))
+
+(deftest error-nodes-test
+  (testing "no registered verdict means no faults to report"
+    (with-no-surfaces (is (= [] (parse/error-nodes "clojure" "(defn f [x)")))
+                      (is (= [] (parse/error-nodes nil "(defn f [x)")))
+                      (is (= [] (parse/error-nodes "fictional" "broken!"))))))
+
+(deftest transition-verdict-test
+  (testing "an unjudged write is UNGUARDED, never a clean bill of health"
+    (with-no-surfaces (is (= :unguarded (:status (parse/transition-verdict nil "anything" ")"))))
+                      (is (= :unguarded
+                             (:status (parse/transition-verdict "clojure" "(def x 1)" ")"))))))
+  (testing "one shared verdict distinguishes clean, introduced, and pre-existing errors"
+    (with-redefs [extension/registered-extensions (constantly (clojure-surface
+                                                                exclamation-verdict))]
+      (is (= :clean (:status (parse/transition-verdict "clojure" "(def x 1)" "(def x 2)"))))
+      (is (= :introduced-error (:status (parse/transition-verdict "clojure" "(def x 1)" "oops!"))))
+      (is (= :still-broken (:status (parse/transition-verdict "clojure" "bad!" "worse!")))))))
+
 (deftest surface-declared-language-test
-  (testing "a file type tree-sitter does not map is neither detected nor guarded"
-    (is (nil? (parse/detect-language "notes/thing.vislang")))
-    (is (nil? (parse/guarded-language "notes/thing.vislang"))))
+  (testing "a file type vis has no built-in name for is neither detected nor guarded"
+    (with-no-surfaces (is (nil? (parse/detect-language "notes/thing.vislang")))
+                      (is (nil? (parse/guarded-language "notes/thing.vislang")))))
   (testing "a registered surface claims the extension and guards its language"
     (with-redefs [extension/registered-extensions (constantly (fixture-surface
                                                                 exclamation-verdict))]
@@ -162,11 +107,10 @@
     (with-redefs [extension/registered-extensions (constantly (fixture-surface
                                                                 exclamation-verdict))]
       (is (= "clojure" (parse/detect-language "src/a/b.clj")))
-      (is (= "clojure" (parse/guarded-language "src/a/b.clj")))
-      (is (= "python" (parse/guarded-language "a/b/c.py"))))))
+      (is (= "python" (parse/detect-language "a/b/c.py"))))))
 
 (deftest surface-syntax-verdict-test
-  (testing "a registered verdict answers for a language tree-sitter cannot parse"
+  (testing "a registered verdict answers for a language vis cannot parse"
     (with-redefs [extension/registered-extensions (constantly (fixture-surface
                                                                 exclamation-verdict))]
       (is (= [] (parse/error-nodes "fictional" "fine\n")))
@@ -210,19 +154,19 @@
         (is (= 1 (long (:line err))))
         (is (= "parse" (:kind err)))))))
 
-(deftest surface-syntax-fallback-test
-  (testing "a throwing handler falls back to the built-in verdict"
+(deftest surface-syntax-failure-test
+  (testing "a throwing handler leaves the language unguarded instead of wedging the editor"
     (with-redefs [extension/registered-extensions
                   (constantly (clojure-surface (fn [_]
                                                  (throw (ex-info "handler is broken" {})))))]
-      (is (seq (parse/error-nodes "clojure" "(defn f [x)")))
-      (is (empty? (parse/error-nodes "clojure" "(defn f [x] x)")))))
-  (testing "a result the contract refuses falls back to the built-in verdict"
+      (is (= [] (parse/error-nodes "clojure" "(defn f [x)")))
+      (is (= :unguarded (:status (parse/transition-verdict "clojure" "(def x 1)" ")"))))))
+  (testing "a result the contract refuses reads the same way"
     (with-redefs [extension/registered-extensions (constantly (clojure-surface (fn [_]
                                                                                  {"is_clean"
                                                                                   false})))]
-      (is (seq (parse/error-nodes "clojure" "(defn f [x)")))
-      (is (empty? (parse/error-nodes "clojure" "(defn f [x] x)")))))
-  (testing "a language name no grammar answers to stays unguarded instead of throwing"
-    (is (= [] (parse/error-nodes "fictional" "broken!")))
-    (is (nil? (parse/guarded-language "notes/thing.vislang")))))
+      (is (= [] (parse/error-nodes "clojure" "(defn f [x)")))
+      (is (= :unguarded (:status (parse/transition-verdict "clojure" "(def x 1)" ")"))))))
+  (testing "a language no surface serves stays unguarded instead of throwing"
+    (with-no-surfaces (is (= [] (parse/error-nodes "fictional" "broken!")))
+                      (is (nil? (parse/guarded-language "notes/thing.vislang"))))))

@@ -41,9 +41,6 @@
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/ruff {:mvn/version "0.3.5"}
         com.blockether/svar {:mvn/version "0.7.172"}
-        ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
-        ;; mistakes bare upstream versions for newer).
-        com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
         ;; The embedded CPython the sandbox runs, replacing GraalPy. The JVM bridge is
         ;; pinned to an immutable runtime commit; its per-platform interpreter ships as
         ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
@@ -115,8 +112,8 @@
         ;; (`System/getenv`) are Clojure 1.12 syntax.
         org.clojure/clojure {:mvn/version "1.12.5"}
         org.clojure/core.memoize {:mvn/version "1.2.281"}
-        ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
-        ;; tree-sitter) on the plain-JVM path — never used by the native binary. EXCLUDE the
+        ;; Runtime downloader for the per-platform FFM native jars (fff/rift/ruff/
+        ;; imaging) on the plain-JVM path — never used by the native binary. EXCLUDE the
         ;; S3 transporter: it exists only for `s3://` maven repos (vis has none) and it is
         ;; the sole reason com.cognitect.aws/{api,s3,endpoints} + their slf4j/jackson tail
         ;; get resolved, downloaded and logged during every cold CI native build — and they

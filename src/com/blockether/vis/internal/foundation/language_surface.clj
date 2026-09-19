@@ -199,8 +199,8 @@
 (defn- opts-language [opts] (get opts "language"))
 
 (def ^:private language-aliases
-  "Grammar VARIANTS that share a base language's TOOLING. `tsx`/`jsx` are distinct
-   tree-sitter grammars (the distinction matters for PARSING), but Bun/Node run
+  "Dialect VARIANTS that share a base language's TOOLING. `tsx`/`jsx` are distinct
+   dialects (the distinction matters to a SYNTAX surface), but Bun/Node run
    them exactly like their base language, so a tool request for a variant resolves
    to the base family's handler when no exact handler is registered. The
    `.mjs/.cjs/.mts/.cts` module variants already collapse in the workspace scan,

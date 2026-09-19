@@ -7,6 +7,10 @@ functions, and `format_code`, `lint_code`, `run_tests`, `repl_eval` and
 handler before they write, so an edit that would break one of your files is
 refused instead of saved.
 
+Vis carries no parser of its own. Every syntax verdict it uses comes from a
+surface like the one you are about to write, including the ones Vis ships with —
+listed further down, and replaceable by yours.
+
 ## Before you start
 
 Write this extension for the host — the Vis that runs in your project. It loads
@@ -147,8 +151,27 @@ the finding you reported. Each finding carries `line`, `col` and a `kind` of
 `balance` is the second chance. When an edit would leave delimiters unpaired,
 Vis offers your handler the source and writes back the repaired text you return;
 returning `None` leaves the edit refused. If a handler raises or breaks the
-result contract, Vis falls back to its own parser instead of trusting the
-answer, so a misbehaving extension never opens the write gate.
+result contract, Vis discards the answer instead of trusting it, and the file is
+written unchecked: a language nothing judged is unguarded, exactly like a
+language no surface claims. Keep your handler total and report a fault rather
+than raising one.
+
+## The surfaces Vis ships
+
+Vis' own syntax verdicts come from three bundled extensions, written with exactly
+the API on this page:
+
+| Extension | Files | How it decides |
+| --- | --- | --- |
+| `language-surface` | `.json`, `.toml` | `json.loads` and `tomllib`, so a verdict matches the file a build reads |
+| `language-surface-python` | `.py`, `.pyi`, `.pyw` | `compile`, the interpreter's own parser |
+| `language-surface-clojure` | `.clj`, `.cljs`, `.cljc`, `.cljd`, `.cljr`, `.bb`, `.edn` | a scanner that follows comments, strings, regex and character literals and reports unpaired delimiters |
+
+Vis refreshes them under `~/.vis/extensions-bundled/` when it starts and scans
+that directory first, so a file of the same name in `~/.vis/extensions/` or
+`<project>/.vis/extensions/` replaces the one Vis ships. Formatting, linting,
+tests and the REPL for Clojure and Python stay with Vis' built-in packs: the
+bundled surfaces own the syntax verdict and nothing else.
 
 ## Install it and try it
 
