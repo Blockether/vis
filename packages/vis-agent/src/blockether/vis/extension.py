@@ -589,6 +589,7 @@ class Extension:
         prompt: Instructions as text or a host callback.
         slash_commands: `SlashCommand` declarations.
         op_hooks: `OpHook` declarations for host lifecycle operations.
+        language_tools: `LanguageSurface` declarations for one language each.
         ctx: Optional host context callback.
         providers: `Provider` declarations.
         network_filters: `NetworkFilter` declarations.
@@ -616,6 +617,7 @@ class Extension:
     prompt: str | Callable[..., Any] | None = None
     slash_commands: Sequence[SlashCommand] = ()
     op_hooks: Sequence[OpHook] = ()
+    language_tools: Sequence[LanguageSurface] = ()
     ctx: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
     network_filters: Sequence[NetworkFilter] = ()
@@ -648,6 +650,7 @@ class Extension:
             ("symbols", Symbol),
             ("slash_commands", SlashCommand),
             ("op_hooks", OpHook),
+            ("language_tools", LanguageSurface),
             ("providers", Provider),
             ("network_filters", NetworkFilter),
         ):
@@ -680,6 +683,7 @@ class Extension:
             "symbols",
             "slash_commands",
             "op_hooks",
+            "language_tools",
             "providers",
             "network_filters",
         }
@@ -1793,6 +1797,123 @@ class OpHook:
             "ops": list(self.ops),
             "fn": self.fn,
             "phase": self.phase,
+        }
+
+
+_LANGUAGE_CAPABILITIES = (
+    "syntax",
+    "balance",
+    "format",
+    "lint",
+    "test",
+    "repl_eval",
+    "repl_start",
+)
+
+
+def _is_language_name(value: object) -> bool:
+    """True for a lowercase language name, the spelling the surface contract accepts."""
+    if not isinstance(value, str) or not value:
+        return False
+    if not ("a" <= value[0] <= "z"):
+        return False
+    return all(
+        "a" <= char <= "z" or "0" <= char <= "9" or char in "_+-" for char in value[1:]
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LanguageSurface:
+    """Serve one language's formatting, linting, tests, REPL and syntax verdict.
+
+    The tool names stay the same: people and models call `format_code`,
+    `lint_code`, `run_tests`, `repl_eval` and `repl_start`, and Vis routes the
+    call to the surface registered for that language. `syntax` decides whether an
+    edit in that language parses before it is written, and `balance` may repair
+    the delimiters of a file an edit would otherwise break. Declare at least one
+    handler; the language gains exactly the capabilities you declare.
+
+    Handlers receive plain data and return plain data:
+
+    - `syntax({"language": ..., "source": ...})` returns a `syntax_result`:
+      `language`, `is_clean` and `findings`, each finding with `line`, `col` and
+      `kind` (`"unclosed"`, `"unexpected"`, `"missing"` or `"parse"`).
+    - `balance(source)` returns repaired source text, or None to leave it alone.
+    - `format(options)`, `lint(options)`, `test(options)` and `repl_eval(options)`
+      receive the tool's options dict and return a `format_result`, `lint_result`,
+      `test_result` or REPL result dict.
+    - `repl_start(op, options)` serves the REPL lifecycle: `"start"`, `"status"`,
+      `"stop"` and `"connect"`.
+
+    Vis validates every result against the language-surface contract, so a
+    malformed one is refused with its schema explanation instead of reaching a
+    file. A handler is not a tool of its own: the engine's language tools already
+    present this work to people, so a surface declares no Activity.
+
+    Args:
+        language: Lowercase language name, such as `"toml"`; the first character
+            is a letter and the rest are letters, digits, `_`, `+` or `-`.
+        extensions: File suffixes this language owns, such as `["toml"]`.
+        is_exact_syntax: Whether `syntax` parses the language exactly rather than
+            approximating it.
+        syntax: Syntax verdict for one source text.
+        balance: Delimiter repair for one source text.
+        format: `format_code` handler.
+        lint: `lint_code` handler.
+        test: `run_tests` handler.
+        repl_eval: `repl_eval` handler.
+        repl_start: REPL lifecycle handler.
+
+    Raises:
+        ValueError: The language, a file extension or an empty handler set is invalid.
+        TypeError: A handler is not callable, or a field has the wrong type.
+    """
+
+    language: str
+    extensions: Sequence[str] = ()
+    is_exact_syntax: bool = False
+    syntax: Callable[..., Any] | None = None
+    balance: Callable[..., Any] | None = None
+    format: Callable[..., Any] | None = None
+    lint: Callable[..., Any] | None = None
+    test: Callable[..., Any] | None = None
+    repl_eval: Callable[..., Any] | None = None
+    repl_start: Callable[..., Any] | None = None
+
+    def __post_init__(self):
+        if not _is_language_name(self.language):
+            raise ValueError(
+                "vis.LanguageSurface requires language=<lowercase name>, such as 'toml'"
+            )
+        if not isinstance(self.extensions, (tuple, list)) or not all(
+            isinstance(item, str) and item.strip() for item in self.extensions
+        ):
+            raise ValueError(
+                "vis.LanguageSurface extensions must be file suffixes, such as ['toml']"
+            )
+        if not isinstance(self.is_exact_syntax, bool):
+            raise TypeError("vis.LanguageSurface is_exact_syntax must be a boolean")
+        for name in _LANGUAGE_CAPABILITIES:
+            handler = getattr(self, name)
+            if handler is not None and not callable(handler):
+                raise TypeError(f"vis.LanguageSurface {name} must be a callable")
+        if not any(getattr(self, name) for name in _LANGUAGE_CAPABILITIES):
+            raise ValueError(
+                "vis.LanguageSurface requires at least one handler, such as format=<callable>"
+            )
+        object.__setattr__(self, "extensions", tuple(self.extensions))
+
+    def _spec(self):
+        return {
+            "marker": "language_surface",
+            "language": self.language,
+            "extensions": list(self.extensions),
+            "is_exact_syntax": self.is_exact_syntax,
+            **{
+                name: getattr(self, name)
+                for name in _LANGUAGE_CAPABILITIES
+                if getattr(self, name) is not None
+            },
         }
 
 

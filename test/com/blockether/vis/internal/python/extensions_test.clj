@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.surface :as contract-surface]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.python.env :as ep]
@@ -31,6 +32,7 @@
             [com.blockether.vis.internal.provider.limits-format :as limits-format]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -5941,3 +5943,153 @@ vis.register_extension(vis.Extension(
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (= "positional!\nkeyword!\nok\n" (:stdout answer))))
             (finally (ep/dispose-python-context! ctx))))))))
+
+;; Language surfaces — a Python pack behind the engine's own language tools
+
+(def ^:private language-surface-py
+  "\"\"\"Language surface fixture: one Python pack serving a made-up language.\"\"\"
+
+import blockether.vis.extension as vis
+
+
+def _format(options):
+    if options.get(\"broken\"):
+        # A result without `op` breaks the format_result contract on purpose.
+        return {\"changed\": 0}
+    paths = options.get(\"paths\", [])
+    return {
+        \"op\": \"format_code\",
+        \"changed\": len(paths),
+        \"files\": [{\"path\": path, \"changed\": True, \"formatter\": \"fixture\"} for path in paths],
+    }
+
+
+def _lint(options):
+    return {\"findings\": [{\"level\": \"warning\", \"message\": \"stray section\", \"line\": 2}]}
+
+
+def _test(options):
+    return {
+        \"mode\": \"cli\",
+        \"pass\": 2,
+        \"fail\": 1,
+        \"failures\": [{\"test\": \"parses\", \"type\": \"error\", \"message\": \"boom\"}],
+    }
+
+
+def _syntax(request):
+    findings = [
+        {\"line\": number, \"col\": 0, \"kind\": \"unclosed\", \"delimiter\": \"(\", \"text\": line}
+        for number, line in enumerate(request[\"source\"].splitlines(), 1)
+        if line.rstrip().endswith(\"(\")
+    ]
+    return {
+        \"language\": request[\"language\"],
+        \"is_clean\": not findings,
+        \"findings\": findings,
+    }
+
+
+def _balance(source):
+    return source + \")\\n\" if source.rstrip().endswith(\"(\") else source
+
+
+vis.register_extension(vis.Extension(
+    name=\"fixture-language\",
+    description=\"Language surface fixture extension.\",
+    kind=\"language\",
+    language_tools=[
+        vis.LanguageSurface(
+            language=\"fixturelang\",
+            extensions=[\"vfix\"],
+            is_exact_syntax=True,
+            format=_format,
+            lint=_lint,
+            test=_test,
+            syntax=_syntax,
+            balance=_balance,
+        )
+    ],
+))
+")
+
+(defn- fixture-surface
+  "The one language-tool entry the fixture extension registers."
+  []
+  (first (:ext/language-tools (registered "fixture-language"))))
+
+(defdescribe
+  language-surface-test
+  (it "decodes a Python surface into the language-tool entry the engine dispatches"
+      (with-loaded {"fixturelang.py" language-surface-py}
+                   (fn [result _]
+                     (expect (zero? (:failed result)) (pr-str result))
+                     (let [entry (fixture-surface)]
+                       (expect (= "fixturelang" (:language entry)))
+                       (expect (= ["vfix"] (:extensions entry)))
+                       (expect (true? (:is-exact-syntax entry)))
+                       ;; A surface gains exactly the capabilities its Python declaration implements.
+                       (expect (= #{"format" "lint" "test" "syntax" "balance"}
+                                  (set (get (contract-surface/->surface entry) "capabilities"))))
+                       (expect (contract-surface/valid-surface? entry))))))
+  (it "answers format_code and lint_code with checked results in a success envelope"
+      (with-loaded {"fixturelang.py" language-surface-py}
+                   (fn [_ _]
+                     (let [entry
+                           (fixture-surface)
+
+                           formatted
+                           ((:format-fn entry) {} {"paths" ["notes.vfix"]})
+
+                           linted
+                           ((:lint-fn entry) {} {})]
+
+                       (expect (extension/envelope-success? formatted))
+                       (expect (= "format_code" (get-in formatted [:result "op"])))
+                       (expect (= [{"path" "notes.vfix" "changed" true "formatter" "fixture"}]
+                                  (get-in formatted [:result "files"])))
+                       (expect (extension/envelope-success? linted))
+                       (expect (= "stray section"
+                                  (get-in linted [:result "findings" 0 "message"])))))))
+  (it "refuses a malformed handler result with the contract's own explanation"
+      (with-loaded {"fixturelang.py" language-surface-py}
+                   (fn [_ _]
+                     (let [res ((:format-fn (fixture-surface)) {} {"broken" true})]
+                       (expect (extension/envelope-failure? res))
+                       (expect (str/includes? (str (get-in res [:error :message]))
+                                              "contract violation"))))))
+  (it "completes a partial run_tests result before it leaves the extension"
+      (with-loaded {"fixturelang.py" language-surface-py}
+                   (fn [_ _]
+                     (let [res
+                           ((:test-fn (fixture-surface)) {} {})
+
+                           result
+                           (:result res)]
+
+                       (expect (extension/envelope-success? res))
+                       ;; The runner reported counts; the contract owns the rest.
+                       (expect (= "fixturelang" (get result "language")))
+                       (expect (= 3 (get result "total")))
+                       (expect (= 1 (get result "errored")))
+                       (expect (false? (get result "is_pass")))
+                       (expect (= "boom" (get-in result ["failures" 0 "message"])))))))
+  (it "owns the syntax verdict and the delimiter repair for the language it claims"
+      (with-loaded {"fixturelang.py" language-surface-py}
+                   (fn [_ _]
+                     (let [dirty
+                           "value = (\n"
+
+                           findings
+                           (parse/error-nodes "fixturelang" dirty)]
+
+                       ;; The surface adds its file type, and claiming the verdict guards it.
+                       (expect (= "fixturelang" (parse/detect-language "notes.vfix")))
+                       (expect (= "fixturelang" (parse/guarded-language "notes.vfix")))
+                       (expect (= [1] (mapv :line findings)))
+                       (expect (= "unclosed" (:kind (first findings))))
+                       (expect (empty? (parse/error-nodes "fixturelang" "value = 1\n")))
+                       (expect (= :introduced-error
+                                  (:status
+                                    (parse/transition-verdict "fixturelang" "value = 1\n" dirty))))
+                       (expect (= "value = (\n)\n" ((:balance-fn (fixture-surface)) dirty))))))))

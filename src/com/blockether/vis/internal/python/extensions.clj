@@ -48,6 +48,7 @@
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
@@ -1194,6 +1195,89 @@
           (assoc :error @err))
         {:allow? true}))))
 
+;; Language surfaces — one Python pack per language, behind the engine's own
+;; `format_code` / `lint_code` / `run_tests` / `repl_*` verbs and the write
+;; gate's syntax verdict. A handler is NOT a tool of its own: the foundation
+;; surface owns the Activity those verbs present, and these adapters only carry
+;; data across the boundary. Every dispatcher reads `:ext/language-tools` from
+;; the registry per call, so a `/reload` replaces the entry itself and nothing
+;; here can serve a callable from a closed context.
+
+(def ^:private language-capability
+  "Python `vis.LanguageSurface` key -> the language-tool key dispatchers read."
+  {"format" :format-fn
+   "lint" :lint-fn
+   "test" :test-fn
+   "repl_eval" :repl-eval-fn
+   "repl_start" :start-repl-fn
+   "syntax" :syntax-fn
+   "balance" :balance-fn})
+
+(defn- checked-language-result
+  "A handler result, refused when its capability has a schema and the result
+   breaks it. A `run_tests` result is completed first, so a runner reporting only
+   its own counts still answers the full `test_result` the tool promises."
+  [capability language result]
+  (surface/check
+    capability
+    (if (= :test-fn capability) (surface/complete-test-result language result) result)))
+
+(defn- language-call-adapter
+  "`format_code` / `lint_code` / `run_tests` / `repl_eval` handler for one Python
+   language surface. The callable receives that tool's OPTIONS dict (string keys)
+   and answers the capability's result dict; a Python error or a contract
+   violation becomes a failure envelope naming the extension and the capability."
+  [ext-name ctx capability language pyfn]
+  (fn [env payload]
+    (try (let [result (plainify
+                        (call-py-ext ext-name env ctx pyfn [(stringify-deep (or payload {}))]))]
+           (extension/success {:result (checked-language-result capability language result)}))
+         (catch Throwable t
+           (extension/failure
+             {:result nil
+              :throwable t
+              :metadata {:extension ext-name :language language :capability (name capability)}})))))
+
+(defn- language-repl-adapter
+  "REPL lifecycle handler: the callable receives the op (`\"start\"`, `\"status\"`,
+   `\"stop\"` or `\"connect\"`) and that call's options dict."
+  [ext-name ctx language pyfn]
+  (fn [env op opts]
+    (try (let [result
+               (plainify
+                 (call-py-ext ext-name env ctx pyfn [(str op) (stringify-deep (or opts {}))]))]
+           (extension/success {:result result}))
+         (catch Throwable t
+           (extension/failure
+             {:result nil
+              :throwable t
+              :metadata {:extension ext-name :language language :capability "repl_start"}})))))
+
+(defn- language-syntax-adapter
+  "Syntax verdict for the write gate. The callable receives
+   `{'language','source'}` and answers a `syntax_result` document — not an
+   envelope, because `editing.parse` reads the verdict itself. A malformed
+   verdict throws there, which leaves that edit to the engine's own parser."
+  [ext-name ctx pyfn]
+  (fn [request]
+    (surface/check :syntax-fn
+                   (plainify
+                     (call-py-ext ext-name nil ctx pyfn [(stringify-deep (or request {}))])))))
+
+(defn- language-balance-adapter
+  "Delimiter repair for one spliced file. A repair that is not source text — and
+   a handler that fails — answers nil, so the editors refuse that splice exactly
+   as they do for a language with no repair at all."
+  [ext-name ctx language pyfn]
+  (fn [source]
+    (try (let [repaired (call-py-ext ext-name nil ctx pyfn [(str source)])]
+           (when (string? repaired) repaired))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::language-balance-failed
+                      :data {:extension ext-name :language language :error (ex-message t)}})
+           nil))))
+
 ;; Registration dict -> extension spec
 
 (defn- symbol-name
@@ -1259,6 +1343,46 @@
                :fn
                (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))}))
           (get spec "ops"))))
+
+(defn- ->language-surface
+  "One `vis.LanguageSurface(...)` registration -> the `:ext/language-tools` entry
+   the engine dispatches on, so a Python pack and a bundled Clojure pack are
+   indistinguishable from the registry's side. Only declared handlers appear, and
+   the entry's capabilities are exactly what the surface implements."
+  [ext-name ctx spec]
+  (let [language
+        (str (get spec "language"))
+
+        extensions
+        (mapv str (get spec "extensions"))
+
+        entry
+        (reduce (fn [acc [py-key capability]]
+                  (let [pyfn (get spec py-key)]
+                    (if-not (fn? pyfn)
+                      acc
+                      (assoc acc
+                        capability
+                        (case capability
+                          :syntax-fn
+                          (language-syntax-adapter ext-name ctx pyfn)
+
+                          :balance-fn
+                          (language-balance-adapter ext-name ctx language pyfn)
+
+                          :start-repl-fn
+                          (language-repl-adapter ext-name ctx language pyfn)
+
+                          (language-call-adapter ext-name ctx capability language pyfn))))))
+                {:language language}
+                language-capability)]
+
+    (cond-> entry
+      (seq extensions)
+      (assoc :extensions extensions)
+
+      (some? (get spec "is_exact_syntax"))
+      (assoc :is-exact-syntax (boolean (get spec "is_exact_syntax"))))))
 
 ;; ── Providers: DECODED against a declared shape, never walked ────────────────
 ;; A typed `vis.Provider(...)` declaration -> a canonical provider descriptor entry, and a
@@ -1600,6 +1724,9 @@
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
+        language-tools
+        (mapv #(->language-surface ext-name ctx %) (get reg "language_tools"))
+
         prompt
         (get reg "prompt")
 
@@ -1637,6 +1764,9 @@
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)
+
+      (seq language-tools)
+      (assoc :ext/language-tools language-tools)
 
       (string? prompt)
       (assoc :ext/prompt-fn prompt)
