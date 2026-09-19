@@ -101,8 +101,16 @@
 
     (.startsWith child ^Path ancestor)))
 
+(defn- blanket-grant?
+  "True for a whole-filesystem grant (`/`, `C:\\`) rather than a project checkout. A
+   disabled jail grants every host filesystem root, and protecting one of those
+   refuses every host write in a drafted session — the private draft copy included."
+  [path]
+  (nil? (.getParentFile (java.io.File. (str path)))))
+
 (defn draft-source-roots
-  "Project originals protected by the draft prerequisite; dependency caches stay available."
+  "Project originals protected by the draft prerequisite; dependency caches and
+   whole-filesystem grants stay available."
   [env]
   (let [ws
         (or (some-> (:workspace-atom env)
@@ -117,21 +125,22 @@
                   (concat (:security/no-search-roots env)
                           (get-in policy [:process-jail :no-search]))))]
 
-    (vec (distinct (keep workspace/normalize-root
-                         (concat [(or (:repo-root ws) (:workspace/root env))]
-                                 (:workspace/draft-protected-roots env)
-                                 (keep (fn [[path draft-policy]]
-                                         (when (contains? #{:copy-only :copy-and-apply}
-                                                          (workspace/draft-policy-id draft-policy))
-                                           path))
-                                       (:draft-policies policy))
-                                 (map :repo-root (workspace/draft-roots ws))
-                                 (remove (fn [path]
-                                           (and (contains? no-search
-                                                           (workspace/normalize-root path))
-                                                (not (.exists (java.io.File. (str path) ".git")))))
-                                   (concat (vals (:project-paths policy))
-                                           (:security/filesystem-roots env)))))))))
+    (vec (distinct (remove blanket-grant?
+                     (keep workspace/normalize-root
+                           (concat
+                             [(or (:repo-root ws) (:workspace/root env))]
+                             (:workspace/draft-protected-roots env)
+                             (keep (fn [[path draft-policy]]
+                                     (when (contains? #{:copy-only :copy-and-apply}
+                                                      (workspace/draft-policy-id draft-policy))
+                                       path))
+                                   (:draft-policies policy))
+                             (map :repo-root (workspace/draft-roots ws))
+                             (remove (fn [path]
+                                       (and (contains? no-search (workspace/normalize-root path))
+                                            (not (.exists (java.io.File. (str path) ".git")))))
+                               (concat (vals (:project-paths policy))
+                                       (:security/filesystem-roots env))))))))))
 
 (defn draft-policy
   "Narrow a child policy to private copies and caches, keeping originals readable.
@@ -159,11 +168,20 @@
           (update :allow-read #(vec (distinct (concat % roots (:allow-read-write policy) sources))))
           (update :deny-write #(vec (distinct (concat % sources))))))))
 
+(defn- draft-copy?
+  "True when `path` lies in the private clone store. That store is where the draft
+   prerequisite steers writes TO, so a grant that happens to contain it (`~/.vis`, or a
+   `vis.drafts.dir` inside a checkout) never turns a draft copy back into an original."
+  [env path]
+  (boolean (some #(beneath? path %)
+                 (keep identity [(:workspace/drafts-home env) (workspace/drafts-store-path)]))))
+
 (defn draft-write-refusal
   "Actionable host-writer refusal for an original path, independent of extension hooks."
   [env path]
   (when (and path
              (not= :off (workspace/draft-backend-setting))
+             (not (draft-copy? env path))
              (some #(beneath? path %) (draft-source-roots env)))
     draft-required-message))
 
