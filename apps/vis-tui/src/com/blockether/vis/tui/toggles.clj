@@ -631,21 +631,6 @@
        :owner :vis
        :group :experimental
        :persist? true})
-    ;; Mirrors the engine's `draft_backend` row (internal/foundation/drafts.clj)
-    ;; so this dialog offers the same experimental opt-in; the gateway still owns
-    ;; the effective value and its persistence.
-    (register-toggle!
-      {:id "draft_backend"
-       :label "Draft backend"
-       :description
-       "Off by default. Enable drafts for changes with auto, git worktree or Rift clone."
-       :type :enum
-       :choices ["auto" "worktree" "rift" "off"]
-       :default "off"
-       :experimental? true
-       :owner :vis
-       :group :experimental
-       :persist? true})
     (register-toggle! {:id "improve_mode"
                        :label "Improve mode"
                        :description

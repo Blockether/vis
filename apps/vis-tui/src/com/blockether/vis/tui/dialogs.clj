@@ -3052,40 +3052,117 @@
 
 (declare titleize-label)
 
-(defn- registry-toggle-rows
-  "Settings rows for registered feature toggles accepted by `include?`.
+(def ^:private settings-inventory
+  "Cached gateway settings catalog rendered INSIDE Settings.
 
-   Pure projection over `(vis/registered-toggles)`: any toggle
-   registered by the host or by an extension shows up in the matching
-   tab without a per-row patch. The `:registry-toggle` row type carries
-   `:toggle-id` so the apply path flips the registry value (which then
-   fan-outs to listeners — persist + render bump — wired in
-   `screen/run-chat!`). Returns nil when no matching toggle is
-   registered so the section header stays hidden on a bare install."
-  ([] (registry-toggle-rows (constantly true)))
-  ([include?]
-   ;; `toggles-for-channel` drops provider-specific knobs whose provider
-   ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
-   ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
-   ;; Grouped by `:group` into one section per group — the SAME flat, grouped
-   ;; shape the web settings modal uses (no tabs, no single "Feature Toggles"
-   ;; bucket). Returns nil when nothing matches so no empty header shows.
-   (let [specs (->> (vis/toggles-for-channel :tui)
-                    (filter include?))]
-     (when (seq specs)
-       (vec (mapcat (fn [[group group-specs]]
-                      (cons
-                        {:type :section :label (titleize-label (name (or group :other)))}
-                        (for [{:keys [id label description owner]} (sort-by :id group-specs)]
-                          {:key (keyword (str "toggle::" id))
-                           :type :registry-toggle
-                           :toggle-id id
-                           :label (or label
-                                      (titleize-label (str (or (namespace id) "") " " (name id))))
-                           :description (str (or description "")
-                                             (when (and owner (not= owner :vis))
-                                               (str "  [" (titleize-label (name owner)) "]")))})))
-                    (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
+   Stays `:unloaded` until a dialog asks for it, so `settings-rows` keeps
+   working — and stays gateway-free — for callers and tests without one."
+  (atom {:status :unloaded :groups [] :error nil}))
+
+(defn- mirror-setting-value!
+  "Mirror ONE catalog row's value onto the process registry when this binary
+   registers that id itself, so local reads (`plans` in the annotator,
+   `codex_fast_mode` in the footer) honour what the daemon holds. Ids only the
+   daemon knows stay OUT of the registry: their rows render from the catalog."
+  [row]
+  (let [id
+        (get row "id")
+
+        value
+        (if (contains? row "enabled") (get row "enabled") (get row "value"))]
+
+    (when (and (some? value) (vis/toggle-spec id))
+      (try (vis/toggle-set-value! id value) (catch Throwable _ nil)))))
+
+(defn load-settings-inventory!
+  "Refresh the cached settings catalog from the gateway. Never throws: a daemon
+   that cannot answer keeps the catalog Settings last read — and, before the
+   first answer, the process-registry projection — instead of a blank pane."
+  []
+  (let [answer (try
+                 {:status :ok :groups (vec (get (vis/gateway-settings :tui) "groups")) :error nil}
+                 (catch Exception e {:status :error :error (ex-message e)}))]
+    (if (= :ok (:status answer))
+      (do (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer)))
+          (reset! settings-inventory answer))
+      (swap! settings-inventory assoc :status :error :error (:error answer)))))
+
+(defn- cache-setting-row!
+  "Fold ONE refreshed gateway row back into the cached catalog, so the frame
+   after a flip renders the value the daemon just confirmed without a re-read."
+  [row]
+  (when-let [id (get row "id")]
+    (swap! settings-inventory update
+      :groups
+      (fn [groups]
+        (mapv (fn [group]
+                (update group
+                        "toggles"
+                        (fn [rows]
+                          (mapv #(if (= id (get % "id")) (merge % row) %) rows))))
+              (or groups []))))))
+
+(defn- catalog-toggle-rows
+  "Settings rows projected from the gateway's OWN catalog: the same groups, in
+   the same order, carrying the same labels, values and experimental marks the
+   companion app draws from `GET /v1/settings`. Each row carries its type and
+   value because the DAEMON, not this process, owns them.
+
+   Settings edits the agent name through its own row above and the TUI has no
+   control for any other string setting, so only boolean and enum rows pass."
+  [groups]
+  (vec
+    (mapcat (fn [group]
+              (let [rows (filterv #(contains? #{"boolean" "enum"} (get % "type"))
+                           (get group "toggles"))]
+                (when (seq rows)
+                  (cons {:type :section :label (str (get group "title"))}
+                        (for [row rows]
+                          (let [enum? (= "enum" (get row "type"))]
+                            (cond-> {:key (keyword (str "toggle::" (get row "id")))
+                                     :type :registry-toggle
+                                     :toggle-id (get row "id")
+                                     :toggle-type (if enum? :enum :boolean)
+                                     :toggle-value
+                                     (if enum? (get row "value") (boolean (get row "enabled")))
+                                     :experimental? (boolean (get row "is_experimental"))
+                                     :label (str (get row "label"))
+                                     :description (str (get row "description"))}
+                              enum?
+                              (assoc :choices (vec (get row "choices"))))))))))
+            (or groups []))))
+
+(defn- registry-toggle-rows
+  "Settings rows for the feature toggles this channel shows.
+
+   The gateway owns the catalog: once `load-settings-inventory!` has answered,
+   every row is a projection of `GET /v1/settings?channel=tui` — the SAME
+   groups, order and rows the companion app renders, so a toggle the engine or
+   an extension registers shows up here without a mirrored registration in this
+   binary. Until that first answer, and whenever the daemon cannot be reached,
+   the process registry renders the pane instead of leaving it blank."
+  []
+  (let [groups (:groups @settings-inventory)]
+    (if (seq groups)
+      (catalog-toggle-rows groups)
+      ;; `toggles-for-channel` drops provider-specific knobs whose provider
+      ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
+      ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
+      (let [specs (vis/toggles-for-channel :tui)]
+        (when (seq specs)
+          (vec (mapcat
+                 (fn [[group group-specs]]
+                   (cons {:type :section :label (titleize-label (name (or group :other)))}
+                         (for [{:keys [id label description owner]} (sort-by :id group-specs)]
+                           {:key (keyword (str "toggle::" id))
+                            :type :registry-toggle
+                            :toggle-id id
+                            :label (or label
+                                       (titleize-label (str (or (namespace id) "") " " (name id))))
+                            :description (str (or description "")
+                                              (when (and owner (not= owner :vis))
+                                                (str "  [" (titleize-label (name owner)) "]")))})))
+                 (sort-by (comp str key) (group-by #(or (:group %) :other) specs)))))))))
 
 (defn- settings-content-width [cols] (default-content-width cols))
 
@@ -3350,23 +3427,30 @@
                                   (catch Exception e {"error" (ex-message e)}))))
 
 (defn- mark-inventories-loading!
-  "Arm both gateway-backed inventories for a refresh WITHOUT clearing what they
+  "Arm every gateway-backed inventory for a refresh WITHOUT clearing what they
    already hold: a re-opened Settings shows the fleet it last read and refreshes
    it in place, and a first open shows a `Loading…` row — never a blank pane and
    never a wait before the frame."
   []
   (swap! provider-inventory assoc :status :loading)
-  (swap! mcp-inventory assoc :status :loading))
+  (swap! mcp-inventory assoc :status :loading)
+  (swap! settings-inventory assoc :status :loading))
 
 (defn- load-inventories!
-  "Read the gateway name, MCP inventory and provider fleet in parallel. Called
-   only AFTER the settings frame is on the terminal."
+  "Read the gateway name, settings catalog, MCP inventory and provider fleet in
+   parallel. Called only AFTER the settings frame is on the terminal."
   []
-  (let [mcp (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)]
+  (let [mcp
+        (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)
+
+        catalog
+        (vis/worker-future "vis-tui-settings-catalog" load-settings-inventory!)]
+
     (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
       (load-provider-inventory!)
       @agent)
     @mcp
+    @catalog
     nil))
 
 (defn- settings-rows
@@ -3385,7 +3469,7 @@
                (or (mcp-settings-rows) []))))
 
 (defn- settings-option-label
-  [{:keys [key label type choices toggle-id]} values]
+  [{:keys [key label type choices toggle-id toggle-type toggle-value experimental?]} values]
   (case type
     :agent-name
     (str label ": " (or (get @agent-name-setting "value") "unavailable — Enter to retry"))
@@ -3398,15 +3482,26 @@
     :set-toggle
     label
 
+    ;; A catalog row carries the daemon's type, value and experimental mark; a
+    ;; row projected from the process registry looks all three up locally.
     :registry-toggle
     (let [spec
           (vis/toggle-spec toggle-id)
 
-          toggle-val
-          (vis/toggle-value toggle-id)]
+          kind
+          (or toggle-type (:type spec))
 
-      (str (if (= :enum (:type spec)) (str label ": " (clojure.core/name toggle-val)) label)
-           (when (:experimental? spec) "  [Experimental]")))
+          current
+          (if (some? toggle-value) toggle-value (vis/toggle-value toggle-id))]
+
+      (str (if (= :enum kind)
+             (str label
+                  ": "
+                  (some-> current
+                          clojure.core/name))
+             label)
+           (when (if (some? experimental?) experimental? (:experimental? spec))
+             "  [Experimental]")))
 
     label))
 
@@ -3414,7 +3509,7 @@
   "Leading status glyph + its color for a settings row. Provider rows use
    the daemon's four auth states: green verified, red rejected, yellow degraded,
    and a neutral hollow dot when unverified/off. Returns `[glyph fg-color]`."
-  [{:keys [key type set-key item-id toggle-id server auth]} values]
+  [{:keys [key type set-key item-id toggle-id toggle-type toggle-value server auth]} values]
   (let [on
         [p/STATUS_ON t/status-ok]
 
@@ -3459,9 +3554,9 @@
             (vis/toggle-spec toggle-id)
 
             tv
-            (vis/toggle-value toggle-id)]
+            (if (some? toggle-value) toggle-value (vis/toggle-value toggle-id))]
 
-        (cond (= :enum (:type spec)) val
+        (cond (= :enum (or toggle-type (:type spec))) val
               (boolean tv) on
               :else off))
 
@@ -3499,24 +3594,23 @@
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 
 (defn- apply-registry-toggle
-  [values {:keys [toggle-id value]}]
+  [values {:keys [toggle-id toggle-type value]}]
   (try
-    (let [spec
-          (vis/toggle-spec toggle-id)
+    (let [kind
+          (or toggle-type (:type (vis/toggle-spec toggle-id)))
 
           remote-row
-          (case (:type spec)
+          (case kind
             :boolean
             (vis/gateway-toggle-setting! toggle-id)
 
             :enum
             (vis/gateway-set-setting-value! toggle-id value)
 
-            (throw (ex-info "Unsupported registry setting type"
-                            {:toggle-id toggle-id :type (:type spec)})))
+            (throw (ex-info "Unsupported registry setting type" {:toggle-id toggle-id :type kind})))
 
           remote-value
-          (case (:type spec)
+          (case kind
             :boolean
             (if (and (= "boolean" (get remote-row "type")) (contains? remote-row "enabled"))
               (get remote-row "enabled")
@@ -3531,8 +3625,11 @@
 
       ;; The daemon owns the effective value and atomically changes it. Mirror its
       ;; answer only after success so the Settings glyph never promises a local
-      ;; preference the session runtime did not receive.
-      (vis/toggle-set-value! toggle-id remote-value)
+      ;; preference the session runtime did not receive: into the catalog every
+      ;; row renders from, and into the process registry when this binary reads
+      ;; that toggle itself.
+      (cache-setting-row! remote-row)
+      (when (vis/toggle-spec toggle-id) (vis/toggle-set-value! toggle-id remote-value))
       values)
     (catch Throwable t
       (vis/notify! (str "Setting was not changed: " (or (ex-message t) "gateway request failed"))
@@ -3730,12 +3827,12 @@
 
 (defn- pick-setting-value!
   "Open the enum's choice list on its saved value; Escape leaves it unchanged."
-  [screen {:keys [label toggle-id]}]
+  [screen {:keys [label toggle-id choices toggle-value]}]
   (let [choices
-        (vec (:choices (vis/toggle-spec toggle-id)))
+        (vec (or (seq choices) (:choices (vis/toggle-spec toggle-id))))
 
         current
-        (vis/toggle-value toggle-id)
+        (if (some? toggle-value) toggle-value (vis/toggle-value toggle-id))
 
         items
         (mapv (fn [choice]
@@ -3769,14 +3866,22 @@
 
     :registry-toggle
     (let [enum?
-          (= :enum (:type (vis/toggle-spec (:toggle-id row))))
+          (= :enum (or (:toggle-type row) (:type (vis/toggle-spec (:toggle-id row)))))
+
+          current
+          (if (some? (:toggle-value row)) (:toggle-value row) (vis/toggle-value (:toggle-id row)))
 
           value
           (when enum? (pick-setting-value! screen row))]
 
-      (when (or (not enum?) (and value (not= value (vis/toggle-value (:toggle-id row)))))
+      (when (or (not enum?) (and value (not= value current)))
         (->> (swap! values apply-settings-option (assoc row :value value))
-             (notify-settings-change! callbacks))))
+             (notify-settings-change! callbacks))
+        ;; A feature flag can reveal or hide dependent rows — Improve mode shows
+        ;; only while Improve is on — exactly as it does in the app, so re-read
+        ;; the catalog it just changed instead of waiting for the next open.
+        (when (and (:experimental? row) (seq (:groups @settings-inventory)))
+          (load-settings-inventory!))))
 
     :action
     (when-let [f (get callbacks (:id row))]
