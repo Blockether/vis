@@ -185,7 +185,8 @@ filesystem requirements.
 ### Notifications on the desktop
 
 The desktop app raises a system alert when a session on a connected machine answers you or asks
-you a question. Turn it on for each machine in Settings, under Notifications: pick the machine and
+you a question. The alert carries the session's name and what Vis said, the same as the alert on
+your phone. Turn it on for each machine in Settings, under Notifications: pick the machine and
 switch its notifications on. macOS asks for permission the first time, and System Settings, under
 Notifications, controls how those alerts appear.
 

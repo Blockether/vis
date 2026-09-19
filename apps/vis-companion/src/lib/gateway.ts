@@ -3737,6 +3737,16 @@ export class GatewayClient {
   }
 
   /**
+   * The session's NEWEST settled turn on its own, past every transcript cache: a system alert
+   * says what vis said without disturbing the window a screen is paging, and one row is all a
+   * banner can hold (`lib/desktop-notify.ts`).
+   */
+  async newestTurn(sid: string, signal?: AbortSignal): Promise<TranscriptTurn | null> {
+    const page = await this.fetchTranscriptPage(sid, { limit: 1 }, signal);
+    return page.turns[page.turns.length - 1] ?? null;
+  }
+
+  /**
    * ONE produced artifact's retained source —
    * `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`, the endpoint the
    * `iteration.completed` / transcript descriptors index. `<img src>` cannot

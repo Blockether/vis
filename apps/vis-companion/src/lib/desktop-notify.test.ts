@@ -21,6 +21,27 @@ vi.mock('@capacitor/preferences', () => ({
   },
 }));
 
+/** What the machine that raised the banner says about the session, when it can be reached. */
+const remote = vi.hoisted(() => ({
+  turn: null as { request_kind?: string; content?: unknown[] } | null,
+  requests: [] as { title?: string; description?: string }[],
+  isReachable: true,
+}));
+
+vi.mock('./gateway', () => ({
+  GatewayClient: class {
+    async newestTurn() {
+      if (!remote.isReachable) throw new Error('machine unreachable');
+      return remote.turn;
+    }
+
+    async inputViews() {
+      if (!remote.isReachable) throw new Error('machine unreachable');
+      return remote.requests;
+    }
+  },
+}));
+
 import { notifyDesktopFleet, resetDesktopAlerts } from './desktop-notify';
 import { setGatewayNotify } from './storage';
 import type { FleetMachine } from './fleet';
@@ -55,6 +76,9 @@ const alerts = (invoke: ReturnType<typeof stubDesktopHost>) =>
 
 beforeEach(async () => {
   native.store.clear();
+  remote.turn = null;
+  remote.requests = [];
+  remote.isReachable = true;
   resetDesktopAlerts();
   await setGatewayNotify(MACHINE, true);
 });
@@ -128,4 +152,74 @@ it('is inert in a browser tab, which has real push instead', async () => {
   await notifyDesktopFleet(fleet([session('a', { answer_count: 5 })]));
 
   expect(alerts(invoke)).toEqual([]);
+});
+
+it('says what vis said, the way the phone does', async () => {
+  const invoke = stubDesktopHost();
+  await notifyDesktopFleet(fleet([session('deploy', { answer_count: 3 })]));
+  remote.turn = {
+    content: [
+      {
+        id: 'prose-1',
+        type: 'prose',
+        markdown: '## Done\n\n- Shipped **v2** to `prod`\n- [Release notes](https://example.com/r)',
+      },
+    ],
+  };
+
+  await notifyDesktopFleet(fleet([session('deploy', { answer_count: 4 })]));
+
+  expect(alerts(invoke)).toEqual([
+    { title: 'deploy', body: 'Done • Shipped v2 to prod • Release notes' },
+  ]);
+});
+
+it('names the question the run is parked on', async () => {
+  const invoke = stubDesktopHost();
+  await notifyDesktopFleet(fleet([session('deploy', { answer_count: 3 })]));
+  remote.requests = [
+    { title: 'Which branch should I deploy?', description: 'main is two commits ahead of the tag.' },
+  ];
+
+  await notifyDesktopFleet(
+    fleet([session('deploy', { answer_count: 3, is_awaiting_input: true })]),
+  );
+
+  expect(alerts(invoke)).toEqual([
+    {
+      title: 'Action needed — Which branch should I deploy?',
+      body: 'main is two commits ahead of the tag.',
+    },
+  ]);
+});
+
+it('still alerts when the machine cannot say what it answered', async () => {
+  const invoke = stubDesktopHost();
+  await notifyDesktopFleet(fleet([session('a', { answer_count: 3 })]));
+  remote.isReachable = false;
+
+  await notifyDesktopFleet(fleet([session('a', { answer_count: 4 })]));
+
+  expect(alerts(invoke)).toEqual([{ title: 'a', body: 'Vis answered on buildbox.' }]);
+});
+
+it('names the machine only while more than one is watched', async () => {
+  const invoke = stubDesktopHost();
+  const laptop = 'http://10.0.0.6:7890';
+  await setGatewayNotify(laptop, true);
+  const pair = (answers: number): FleetMachine[] => [
+    ...fleet([session('deploy', { answer_count: answers })]),
+    {
+      conn: { url: laptop, label: 'laptop' },
+      sessions: [session('notes')],
+      error: null,
+    } as FleetMachine,
+  ];
+  await notifyDesktopFleet(pair(3));
+
+  await notifyDesktopFleet(pair(4));
+
+  expect(alerts(invoke)).toEqual([
+    { title: 'deploy — buildbox', body: 'Vis answered on buildbox.' },
+  ]);
 });
