@@ -185,6 +185,8 @@ def summarize_results(results):
                 row["converged"] and row["correct"] and row["errors"] == 0
                 for row in rows
             ),
+            "measurement": any(row.get("measurement") for row in rows),
+            "behavior_passed": sum(not row.get("behavior") for row in rows),
             "token_samples": len(valid),
         }
         totals = {
@@ -289,9 +291,10 @@ def helper_reuse_evidence(forms, want):
     """Prove a helper was defined once and then CALLED by a later sandbox form.
 
     Saved definitions persist, so reuse means a later top-level form calls a
-    function an earlier form defined. The audit is name-agnostic: retyping the
-    same definition instead of calling it fails, and so does a helper that no
-    later form ever uses.
+    function an earlier form defined. The audit is name-agnostic and accepts a
+    `def` or a name bound to a `lambda`, the two shapes the runtime saves as a
+    helper. Retyping the same definition instead of calling it fails, and so
+    does a helper that no later form ever uses.
     """
     if want is True:
         wanted = 1
@@ -300,6 +303,7 @@ def helper_reuse_evidence(forms, want):
     else:
         return {}, ["want_helper_reuse must be true or a positive integer"]
     defined = {}
+    lambdas = set()
     sources = collections.defaultdict(set)
     reuse = collections.defaultdict(set)
     retyped = set()
@@ -310,11 +314,22 @@ def helper_reuse_evidence(forms, want):
             continue
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                defined.setdefault(node.name, index)
-                source = ast.unparse(node)
-                if source in sources[node.name]:
-                    retyped.add(node.name)
-                sources[node.name].add(source)
+                name = node.name
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Lambda)
+            ):
+                name = node.targets[0].id
+                lambdas.add(name)
+            else:
+                continue
+            defined.setdefault(name, index)
+            source = ast.unparse(node)
+            if source in sources[name]:
+                retyped.add(name)
+            sources[name].add(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 first = defined.get(node.func.id)
@@ -322,6 +337,7 @@ def helper_reuse_evidence(forms, want):
                     reuse[node.func.id].add(index)
     metrics = {
         "helpers_defined": len(defined),
+        "lambda_helpers": len(lambdas),
         "reused_helpers": len(reuse),
         "reuse_forms": max((len(seen) for seen in reuse.values()), default=0),
         "retyped_helpers": len(retyped),
@@ -1055,11 +1071,16 @@ def run_one(job):
             )
             detail.extend(discovery_failures)
         helper_reuse = {}
+        behavior = []
+        measurement = bool(sc.get("measurement"))
         if "want_helper_reuse" in sc:
             helper_reuse, helper_failures = helper_reuse_evidence(
                 forms, sc["want_helper_reuse"]
             )
-            detail.extend(helper_failures)
+            if measurement:
+                behavior.extend(helper_failures)
+            else:
+                detail.extend(helper_failures)
         if detail:
             correct = False
         total_limit = sc.get("max_total_output_chars")
@@ -1308,9 +1329,11 @@ def run_one(job):
             "incomplete_activities": len(incomplete_activities),
             "discovery": discovery,
             "helper_reuse": helper_reuse,
+            "measurement": measurement,
             "used_patch": used_patch,
             "edit_path": path,
             "detail": detail,
+            "behavior": behavior,
             "evidence": evidence,
         }
     finally:
@@ -1392,6 +1415,8 @@ def main():
         )
         for d in r["detail"]:
             print(f"    ! {d}")
+        for b in r["behavior"]:
+            print(f"    ~ {b}")
         for item in r["evidence"]:
             print(f"    · {item}")
         for e in r["err_msgs"]:
@@ -1400,7 +1425,9 @@ def main():
     # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
     # produced correct output, and had no loop/tool errors. `PATCH(fast)`
     # remains a performance/adherence metric because some scenarios legitimately
-    # answer from the REPL instead of editing a file.
+    # answer from the REPL instead of editing a file. A scenario marked
+    # `measurement` reports its behavior rate instead of gating on it: a model's
+    # habits vary between runs, while its answer, errors and edits do not.
     by_scn = {}
     for r in results:
         by_scn.setdefault(r["id"], []).append(
@@ -1422,6 +1449,10 @@ def main():
         print(
             f"SUMMARY {summary['id']} {summary['provider']}/{summary['model']}: {summary['passed']}/{summary['runs']} passed; token samples={summary['token_samples']}"
         )
+        if summary["measurement"]:
+            print(
+                f"    BEHAVIOR (measured, not gated): {summary['behavior_passed']}/{summary['runs']} runs met the behavior check"
+            )
         if summary["token_samples"]:
             print(
                 "    token medians="

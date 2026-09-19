@@ -10,5 +10,6 @@
     "18.5"
   ],
   "want_helper_reuse": 2,
+  "measurement": true,
   "timeout_s": 480
 }

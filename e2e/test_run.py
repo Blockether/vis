@@ -25,6 +25,7 @@ class ScenarioFilesTest(unittest.TestCase):
     def test_helper_reuse_scenario_repeats_one_audit_across_blocks(self):
         scenario = run.load_scenarios(["session-helper-reuse"])[0]
         self.assertEqual(2, scenario["want_helper_reuse"])
+        self.assertIs(True, scenario["measurement"])
         self.assertIn("one log per python_execution block", scenario["prompt"])
         self.assertEqual(["187", "23", "charlie", "18.5"], scenario["want_answer"])
         with tempfile.TemporaryDirectory() as work:
@@ -541,6 +542,29 @@ class HelperReuseEvidenceTest(unittest.TestCase):
         self.assertEqual(1, metrics["helpers_defined"])
         self.assertEqual(2, metrics["reuse_forms"])
         self.assertEqual(0, metrics["retyped_helpers"])
+        self.assertEqual(0, metrics["lambda_helpers"])
+
+    def test_named_lambda_helper_counts_like_a_def(self):
+        forms = [
+            "audit = lambda name: len(open(name).read())\nprint(audit('a'))",
+            "print(audit('b'))",
+            "print(audit('c'))",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["helpers_defined"])
+        self.assertEqual(1, metrics["lambda_helpers"])
+        self.assertEqual(2, metrics["reuse_forms"])
+
+    def test_retyped_lambda_helper_fails_like_a_retyped_def(self):
+        body = "audit = lambda name: name.strip()\n"
+        forms = [body + "print(audit('a'))", body + "print(audit('b'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual(1, metrics["retyped_helpers"])
+        self.assertEqual(
+            ["helper 'audit' was retyped in a later form instead of called"],
+            failures,
+        )
 
     def test_defining_and_calling_inside_one_form_is_not_reuse(self):
         forms = ["def summarize(path):\n    return path\nprint(summarize('a'))"]
@@ -914,6 +938,33 @@ class EvaluationSummaryTest(unittest.TestCase):
         self.assertEqual(50.0, summary["cached_input_percent"])
         self.assertEqual({"min": 100, "median": 200.0, "max": 300}, summary["input"])
         self.assertEqual({"min": 10, "median": 15.0, "max": 20}, summary["wall"])
+
+    def test_measurement_runs_report_a_behavior_rate_instead_of_gating(self):
+        rows = [
+            {
+                "id": "probe",
+                "provider": "test",
+                "model": "model",
+                "repeat": index,
+                "converged": True,
+                "correct": True,
+                "errors": 0,
+                "measurement": True,
+                "behavior": [] if index == 1 else ["no helper was reused"],
+                "tokens": {},
+                "token_errors": [],
+                "wall": 10,
+                "forms": 5,
+                "provider_calls": 3,
+                "max_form_output_chars": 4,
+                "total_output_chars": 5,
+            }
+            for index in (1, 2)
+        ]
+        summary = run.summarize_results(rows)[0]
+        self.assertTrue(summary["measurement"])
+        self.assertEqual(2, summary["passed"])
+        self.assertEqual(1, summary["behavior_passed"])
 
     def test_reuse_seeds_one_canonical_fixture_and_rejects_path_escape(self):
         scenario = run.load_scenarios(["extension-known-contract"])[0]

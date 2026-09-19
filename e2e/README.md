@@ -45,8 +45,12 @@ e2e/
   is not a Python execution tracer or a security boundary.
 - **want_helper_reuse** — `true`, or the number of later forms required: a function
   defined in one sandbox form must be called by that many later forms. The audit is
-  name-agnostic. Retyping the same definition instead of calling it fails, as does a
+  name-agnostic and counts a `def` or a name bound to a `lambda`, the two shapes the
+  runtime saves. Retyping the same definition instead of calling it fails, as does a
   helper no later form uses; a definition and its call inside one form prove nothing.
+- **measurement** — `true` reports the scenario's behavior check instead of gating on it.
+  The run must still converge, answer correctly and stay error-free; a missed behavior
+  check prints with `~` and is counted in that scenario's `BEHAVIOR` rate.
 - **want_requested_route** — all provider markers and billed results must use
   the requested provider and model. Fallbacks fail the test.
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
@@ -117,8 +121,10 @@ and discovery counts are separate measurements. Reasoning is `unavailable` unles
 the provider's result supplies it; persisted usage counters are reported separately.
 
 `want_helper_reuse` measures a behavior rather than one edit, so read it over repeats:
-a model that factors a helper in most runs can still retype the same block in one. Raise
-`VIS_E2E_REPEATS`, compare the pass count, and expect small models to be less consistent.
+a model that factors a helper in most runs can still retype the same block in one. That is
+why `session-helper-reuse` sets `measurement` — the gate covers its answer and errors, and
+helper reuse is reported as a rate. Raise `VIS_E2E_REPEATS`, compare the `BEHAVIOR` count
+across prompt revisions, and expect small models to be less consistent.
 
 Repeats report minimum, median and maximum, plus the number of valid token samples.
 There is no fixed token/cache target: changing model, route, prompt or cache state
