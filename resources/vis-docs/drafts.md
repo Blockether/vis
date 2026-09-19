@@ -13,7 +13,10 @@ in the draft. If no backend can create one, Vis reports the blocker instead of
 editing your current checkout. Original project repositories stay read-only to
 sandbox writers; select every repository you need to change.
 
-Draft write protection requires the jail to be enabled. If you change the draft
+Draft write protection does not require the jail: while drafts are enabled, Vis'
+file tools refuse writes to the original repositories whether or not the jail is
+on. The jail adds OS-level confinement for shell children and the Python sandbox,
+so with it off a raw shell command can still reach your checkout. If you change the draft
 backend while a Python context is open, start a new turn so Vis can rebuild that
 context safely. Python variables are not silently migrated across that boundary.
 

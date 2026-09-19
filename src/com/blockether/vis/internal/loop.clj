@@ -1429,12 +1429,7 @@
       (throw
         (ex-info
           "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."
-          {:type :draft/policy-changed})))
-    (when (and (:draft-required? opts) (not (:jail-enabled? opts)))
-      (throw
-        (ex-info
-          "Draft write protection requires the jail. Enable jail.enabled or turn Draft backend off, then start a new turn."
-          {:type :draft/jail-required}))))
+          {:type :draft/policy-changed}))))
   ;; Running a block is exactly what a sandbox is FOR, so this is the ask that
   ;; builds one on a session whose first turn executes code.
   (let [python-context
