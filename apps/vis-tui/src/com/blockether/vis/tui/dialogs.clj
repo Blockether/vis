@@ -18,7 +18,7 @@
     [com.googlecode.lanterna Symbols TerminalPosition TerminalRectangle TerminalSize TextCharacter]
     [com.googlecode.lanterna.gui2 Direction HitRegionMap ScrollBar ScrollBar$DragResult]
     [com.googlecode.lanterna.input InputCoalescer KeyStroke KeyType MouseAction MouseActionType]
-    [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
+    [com.googlecode.lanterna.screen TerminalScreen]
     [java.text SimpleDateFormat]
     [java.util Locale TimeZone]))
 
@@ -95,7 +95,7 @@
 (defn- modal-size!
   "Apply a pending resize and clear the old back buffer before the next paint."
   ^TerminalSize [^TerminalScreen screen]
-  (if-let [size (.doResizeIfNecessary screen)]
+  (if-let [size (frame/resize! screen)]
     (clear-screen-buffer! screen size)
     (.getTerminalSize screen)))
 
@@ -104,7 +104,7 @@
    to cleanly replace the current dialog (wizard step pattern)."
   [^TerminalScreen screen]
   (clear-screen-buffer! screen (modal-size! screen))
-  (.refresh screen Screen$RefreshType/DELTA))
+  (frame/refresh! screen))
 
 (defn frame-restorer
   "Snapshot the screen's back buffer NOW and return `(fn [] …)` / `(fn [from to])`
@@ -307,7 +307,7 @@
   "Return queued input, or one harmless wake key after applying a resize."
   ^KeyStroke [^TerminalScreen screen]
   (or (.pollInput screen)
-      (when-let [size (.doResizeIfNecessary screen)]
+      (when-let [size (frame/resize! screen)]
         (clear-screen-buffer! screen size)
         (KeyStroke. KeyType/Unknown))))
 
@@ -498,7 +498,7 @@
    :hint-bar! draw-hint-bar!
    :refresh! (fn []
                (.setCursorPosition screen nil)
-               (.refresh screen Screen$RefreshType/DELTA))
+               (frame/refresh! screen))
    :read-key!
    (fn []
      (let [key (read-modal-key! screen)]
@@ -1064,7 +1064,7 @@
       ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
       ;; same fix applied to every band dialog); a text field returns its cell.
       (.setCursorPosition screen cursor)
-      (.refresh screen Screen$RefreshType/DELTA)
+      (frame/refresh! screen)
       (let [key (read-key screen)]
         (if (nil? key)
           (recur state)
@@ -1979,7 +1979,7 @@
                                      (nth items idx))))))
         (draw-hint-bar! g left hint-row inner-w footer)
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (if (nil? key)
             (recur)
@@ -2107,7 +2107,7 @@
                           :always
                           (conj ["Enter/Esc" "close"])))
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key
               (read-modal-key! screen)
 
@@ -2281,7 +2281,7 @@
         ;; Read-only viewer — no text field, so hide the terminal cursor (nil)
         ;; instead of parking it at 0,0, where it blinks in the top-left corner.
         (.setCursorPosition screen nil)
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key
               (read-modal-key! screen)
 
@@ -2464,7 +2464,7 @@
                         inner-w
                         [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen cursor-pos)
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (when key
             (cond
@@ -2630,7 +2630,7 @@
                         inner-w
                         [["<-/->" "switch"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (when key
             (condp = (key-type key)
@@ -2735,7 +2735,7 @@
                               placeholder)]
 
         (.setCursorPosition screen pos)
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (if (nil? key)
             (recur)
@@ -2840,7 +2840,7 @@
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/put-str! g (+ (long left) 2) row (ellipsize (str (line-fn)) text-w))
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (if (some-> (.pollInput screen)
                     modal-escape-key?)
           nil
@@ -2881,7 +2881,7 @@
         (doseq [[i line] (map-indexed vector (take height (drop offset lines)))]
           (p/put-str! g (+ (long left) 2) (+ (long top) (long i)) line))
         (.setCursorPosition screen nil)
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)
               kt (when key (key-type key))
               c (when key (key-character key))
@@ -4526,9 +4526,7 @@
                             inner-w
                             [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
                              ["Esc" "clear/close"]])
-            (when-not paint-only?
-              (.setCursorPosition screen search-cursor)
-              (.refresh screen Screen$RefreshType/DELTA))
+            (when-not paint-only? (.setCursorPosition screen search-cursor) (frame/refresh! screen))
             (when-not paint-only?
               (if @inventories-pending
                 ;; The frame is ON the terminal now — only then pay for the gateway,
@@ -5002,7 +5000,7 @@
                         [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"]
                          ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (when key
             (if-let [wheel-step (ScrollBar/wheelStep ^KeyStroke key)]
@@ -5894,7 +5892,7 @@
                                 (if @show-empty-untitled? "hide empty" "show empty")]
                                ["Esc" "cancel"]])
               (.setCursorPosition screen cursor-pos)
-              (.refresh screen Screen$RefreshType/DELTA))
+              (frame/refresh! screen))
             (let [key (read-navigator-key! screen
                                            search-task
                                            search-result
@@ -6061,7 +6059,7 @@
     (try (body g region)
          (finally (when restore! (restore!))
                   (.setCursorPosition screen nil)
-                  (.refresh screen Screen$RefreshType/DELTA)))))
+                  (frame/refresh! screen)))))
 
 (defn session-band!
   "Run ONE transient as a BAND inside the LIVE SESSION frame — the same
@@ -6379,7 +6377,7 @@
               (p/set-char! g scroll-col (+ (long content-top) (long thumb-pos) (long r)) \█))))
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+        (frame/refresh! screen)
         (let [key (read-modal-key! screen)]
           (when key
             (condp = (key-type key)
@@ -6531,7 +6529,7 @@
                 (p/set-char! g scroll-col (+ (long content-top) (long thumb-pos) (long r)) \█))))
           (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Esc" "close"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
-          (.refresh screen Screen$RefreshType/DELTA)
+          (frame/refresh! screen)
           (let [key (read-modal-key! screen)]
             (when key
               (condp = (key-type key)

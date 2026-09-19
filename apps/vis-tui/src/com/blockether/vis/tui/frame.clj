@@ -12,7 +12,8 @@
            [com.googlecode.lanterna.gui2 Component GridLayout GridLayout$Alignment Panel
             Panel$DefaultPanelRenderer TextGraphicsComponent TextGraphicsComponent$Painter
             TextGUIGraphics]
-           [com.googlecode.lanterna.screen Screen]))
+           [com.googlecode.lanterna.screen Screen Screen$RefreshType]
+           [java.util.concurrent.atomic AtomicBoolean]))
 
 (def ^:dynamic *column-offset*
   "Physical origin of the current paint surface; layout and selection stay local."
@@ -37,6 +38,33 @@
                       (when position
                         (TerminalPosition. (int (screen-column (.getColumn position)))
                                            (.getRow position)))))
+
+(def ^:private ^AtomicBoolean full-repaint-pending
+  "Armed when a terminal resize has been applied to the screen. Lanterna resizes
+   its own front buffer, but the terminal keeps whatever the emulator did with
+   the old cells, so the next flush has to rewrite every one of them."
+  (AtomicBoolean. false))
+
+(defn resize!
+  "Apply a pending terminal resize and arm the full repaint it needs. Returns the
+   new size, or nil when nothing was pending. Whoever consumes the resize owns
+   the invalidated terminal, and a modal loop consumes it exactly like the render
+   thread, so both go through here."
+  ^TerminalSize [^Screen screen]
+  (when-let [size (.doResizeIfNecessary screen)]
+    (.set full-repaint-pending true)
+    size))
+
+(defn refresh!
+  "Flush the back buffer: a DELTA refresh, except for the first flush after a
+   resize, which repaints every cell. An explicit DELTA ignores Lanterna's own
+   `fullRedrawHint`, so a resize under a modal left the pre-resize frame's cells
+   on the terminal. A full repaint that throws stays armed for the next flush."
+  [^Screen screen]
+  (if (.compareAndSet full-repaint-pending true false)
+    (try (.refresh screen Screen$RefreshType/COMPLETE)
+         (catch Throwable t (.set full-repaint-pending true) (throw t)))
+    (.refresh screen Screen$RefreshType/DELTA)))
 
 (def section-order
   "Stable paint/layout order for the complete application frame."

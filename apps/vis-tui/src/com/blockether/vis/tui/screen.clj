@@ -2897,11 +2897,12 @@
    held (or before the render thread is started) because
    `doResizeIfNecessary` reallocates the back buffer."
   ^com.googlecode.lanterna.TerminalSize [^TerminalScreen screen]
-  (if-let [new-size (.doResizeIfNecessary screen)]
-    (do (try (.refresh screen Screen$RefreshType/COMPLETE)
+  (if-let [new-size (frame/resize! screen)]
+    (do (try (frame/refresh! screen)
              (catch NullPointerException _
                ;; Lanterna buffer may have null cells after resize before first
-               ;; full render.  DELTA is safe because it only touches dirty cells.
+               ;; full render. DELTA is safe because it only touches dirty cells,
+               ;; and the full repaint stays armed for the next flush.
                (try (.refresh screen Screen$RefreshType/DELTA) (catch Exception _ nil))))
         new-size)
     (.getTerminalSize screen)))
@@ -3460,7 +3461,7 @@
       (render/draw-detail-labels! g (:detail-labels-active? db) (:detail-labels db))
       (when-not *skip-frame-refresh?*
         (let [refresh-start-ns (System/nanoTime)]
-          (.refresh screen Screen$RefreshType/DELTA)
+          (frame/refresh! screen)
           (let [frame-end-ns (System/nanoTime)
                 total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
@@ -3553,7 +3554,7 @@
    single delta (no flicker). Best-effort — never throws into the modal loop."
   [^TerminalScreen screen]
   (try (binding [*skip-frame-refresh?* true]
-         (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+         (let [size (or (frame/resize! screen) (.getTerminalSize screen))
                cols (.getColumns size)
                rows (.getRows size)]
 
@@ -3812,7 +3813,7 @@
     (binding [header/*register-click-regions?* false]
       (header/draw-header! g db 0 cols))
     (let [refresh-ns (System/nanoTime)]
-      (.refresh screen Screen$RefreshType/DELTA)
+      (frame/refresh! screen)
       (let [ended-ns (System/nanoTime)]
         (record-frame-phases! {:total-ms (nanos->ms started-ns ended-ns)
                                :paint-ms (nanos->ms started-ns refresh-ns)
@@ -4144,7 +4145,7 @@
     ;; streaming ticks instead of only appearing on full frames.
     (paint-search-hits! screen layout text-top inner-h cols db)
     (let [refresh-start-ns (System/nanoTime)]
-      (.refresh screen Screen$RefreshType/DELTA)
+      (frame/refresh! screen)
       (let [refresh-end-ns (System/nanoTime)]
         (record-frame-phases!
           {:path "live"
@@ -4307,7 +4308,7 @@
     ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)
     (let [refresh-start-ns (System/nanoTime)]
-      (.refresh screen Screen$RefreshType/DELTA)
+      (frame/refresh! screen)
       (let [frame-end-ns (System/nanoTime)
             total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
@@ -4396,7 +4397,7 @@
                           :slash-suggestions slash-suggestions
                           :slash-command-index slash-command-index})
     (let [refresh-ns (System/nanoTime)]
-      (.refresh screen Screen$RefreshType/DELTA)
+      (frame/refresh! screen)
       (let [ended-ns (System/nanoTime)]
         (record-frame-phases! {:total-ms (nanos->ms started-ns ended-ns)
                                :setup-ms (nanos->ms started-ns paint-ns)

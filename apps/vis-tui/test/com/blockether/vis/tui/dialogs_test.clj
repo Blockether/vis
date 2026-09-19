@@ -11,7 +11,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.toggles :as toggles])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal
@@ -2948,3 +2948,64 @@
                (expect (some #(= "plans" (:toggle-id %)) rows))
                (expect (some #(and (= :section (:type %)) (= "Experimental" (:label %))) rows)))
              (finally (reset! inventory original))))))
+
+(defn- back-buffer-text
+  "What the last paint asked the terminal to show, one line per screen row."
+  [^TerminalScreen screen]
+  (let [size (.getTerminalSize screen)]
+    (str/join "\n"
+              (for [row (range (.getRows size))]
+                (str/trimr (apply str
+                             (for [col (range (.getColumns size))]
+                               (.getCharacterString
+                                 (.getBackCharacter screen (int col) (int row))))))))))
+
+(defn- terminal-text
+  "What the terminal is actually showing, one line per terminal row."
+  [^DefaultVirtualTerminal terminal]
+  (let [size (.getTerminalSize terminal)]
+    (str/join "\n"
+              (for [row (range (.getRows size))]
+                (str/trimr (apply str
+                             (for [col (range (.getColumns size))]
+                               (if-let [^TextCharacter cell
+                                        (.getCharacter terminal
+                                                       (TerminalPosition. (int col) (int row)))]
+                                 (.getCharacterString cell)
+                                 " "))))))))
+
+(defdescribe modal-resize-test
+             ;; Regression: resizing the terminal while a dialog was open left the cells of
+             ;; the pre-resize frame on screen - broken borders, leftover glyphs - and the
+             ;; chat behind it stayed broken once the dialog closed. Modals flushed an
+             ;; explicit DELTA refresh, which skips the full repaint Lanterna asks for after
+             ;; a resize, so only the cells that differed from the stale front buffer were
+             ;; rewritten.
+             (it "repaints every cell after a terminal resize inside a modal"
+                 (let [terminal
+                       (DefaultVirtualTerminal. (TerminalSize. 100 30))
+
+                       ^TerminalScreen screen
+                       (doto (TerminalScreen. terminal) (.startScreen))
+
+                       flushes
+                       (atom 0)]
+
+                   ;; Driven by the terminal's own flushes: resize after the dialog's first
+                   ;; frame, close it after the frame that answers the resize.
+                   (.addVirtualTerminalListener
+                     terminal
+                     (reify
+                       VirtualTerminalListener
+                         (onFlush [_]
+                           (let [n (swap! flushes inc)]
+                             (cond (= 1 n) (.setTerminalSize terminal (TerminalSize. 70 20))
+                                   (= 2 n) (.addInput terminal (KeyStroke. KeyType/Escape)))))
+                         (onBell [_])
+                         (onClose [_])
+                         (onResized [_ _terminal _size])))
+                   (try (dlg/list-dialog! screen "Resize" ["alpha" "beta" "gamma"] {})
+                        (expect (= 2 @flushes))
+                        (expect (= (TerminalSize. 70 20) (.getTerminalSize screen)))
+                        (expect (= (back-buffer-text screen) (terminal-text terminal)))
+                        (finally (.stopScreen screen))))))
