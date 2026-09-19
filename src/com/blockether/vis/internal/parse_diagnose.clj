@@ -7,9 +7,9 @@
 
      diagnose-quote-balance
        Odd number of unescaped double quotes in the source. Pinpoints the
-       1-based line where the running count first becomes odd. parinferish
-       does indent-mode paren balancing only; string-quote imbalance needs
-       its own walker.
+       1-based line where the running count first becomes odd. The Clojure
+       surface's delimiter repair does indent-mode paren balancing only;
+       string-quote imbalance needs its own walker.
 
      diagnose-bracket-balance
        Unbalanced (), [], {}. Walks a bracket stack skipping string/char

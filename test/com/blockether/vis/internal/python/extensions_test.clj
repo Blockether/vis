@@ -5990,8 +5990,11 @@ def _syntax(request):
     }
 
 
-def _balance(source):
-    return source + \")\\n\" if source.rstrip().endswith(\"(\") else source
+def _balance(request):
+    source = request[\"source\"]
+    if not source.rstrip().endswith(\"(\"):
+        return None
+    return {\"ok\": True, \"content\": source + \")\\n\", \"notes\": [\"closed one form\"]}
 
 
 vis.register_extension(vis.Extension(
@@ -6092,7 +6095,9 @@ vis.register_extension(vis.Extension(
                        (expect (= :introduced-error
                                   (:status
                                     (parse/transition-verdict "fixturelang" "value = 1\n" dirty))))
-                       (expect (= "value = (\n)\n" ((:balance-fn (fixture-surface)) dirty))))))))
+                       (expect (= {:ok? true :content "value = (\n)\n" :notes ["closed one form"]}
+                                  ((:balance-fn (fixture-surface))
+                                    {"language" "fixturelang" "source" dirty}))))))))
 
 (defn- bundled-sources
   "The shipped surfaces as the `{filename -> source}` map the loader writes, read
@@ -6145,9 +6150,18 @@ vis.register_extension(vis.Extension(
           (doseq [[language entry] entries]
             (expect (contract-surface/valid-surface? entry) language)
             (expect (ifn? (:syntax-fn entry)) language)
-            ;; A shipped surface judges syntax and nothing else: the JVM packs keep
-            ;; formatting, linting, tests and the REPL.
-            (expect (= ["syntax"] (get (contract-surface/->surface entry) "capabilities"))
+            ;; A shipped surface judges syntax, plus exactly what moved OUT of the JVM
+            ;; packs: Clojure's delimiter repair and Python's REPL. Formatting, linting
+            ;; and tests stay with those packs.
+            (expect (= (case language
+                         "clojure"
+                         #{"syntax" "balance"}
+
+                         "python"
+                         #{"syntax" "repl_start" "repl_eval"}
+
+                         #{"syntax"})
+                       (set (get (contract-surface/->surface entry) "capabilities")))
                     language)))
         ;; Claiming the verdict is what guards a file type.
         (expect (= "clojure" (parse/guarded-language "src/app.clj")))

@@ -106,8 +106,9 @@ the language gains exactly the capabilities you implement.
 `format`, `lint`, `test` and `repl_eval` receive the options the tool was called
 with: the `language`, the project directory as `cwd`, and either `code` for one
 snippet or `path` and `paths` for files. `syntax` receives
-`{"language": ..., "source": ...}`, and `balance` receives the source text
-itself.
+`{"language": ..., "source": ...}`. `balance` receives the whole file an edit
+would write, the text it replaced and the line spans it touched:
+`{"language": ..., "source": ..., "original": ..., "spans": [[1, 4]]}`.
 
 | Handler | Tool | What you return |
 | --- | --- | --- |
@@ -117,7 +118,7 @@ itself.
 | `repl_eval` | `repl_eval` | Your REPL's answer for one evaluation. |
 | `repl_start` | the REPL lifecycle | Called as `repl_start(op, options)`, with `op` of `"start"`, `"status"`, `"stop"` or `"connect"`. |
 | `syntax` | every writer that edits a file | `language`, `is_clean` and `findings`. |
-| `balance` | the same writers | Repaired source text, or `None` to leave the edit refused. |
+| `balance` | the same writers | `{"ok": True, "content": ..., "notes": [...]}` to write the repair, `{"ok": False, "why": ...}` to refuse it, or `None` when there is none. |
 
 The tool names never change: people and models keep calling `format_code` and
 `run_tests`, and Vis routes the call to the surface registered for that
@@ -148,13 +149,19 @@ the finding you reported. Each finding carries `line`, `col` and a `kind` of
 `"unclosed"`, `"unexpected"`, `"missing"` or `"parse"`; `end_line`, `end_col`,
 `delimiter`, `expected`, `message` and `text` are optional detail.
 
-`balance` is the second chance. When an edit would leave delimiters unpaired,
-Vis offers your handler the source and writes back the repaired text you return;
-returning `None` leaves the edit refused. If a handler raises or breaks the
-result contract, Vis discards the answer instead of trusting it, and the file is
-written unchecked: a language nothing judged is unguarded, exactly like a
-language no surface claims. Keep your handler total and report a fault rather
-than raising one.
+`balance` is the second chance. When an edit would leave delimiters unpaired, Vis
+offers your handler the whole file that edit would write, the text it replaced and
+the line spans it touched, and you decide what may happen. Answer
+`{"ok": True, "content": ..., "notes": [...]}` and Vis writes that content instead
+and reports your notes with the edit. Answer `{"ok": False, "why": ...}` to refuse
+the edit and tell the caller what to look for. Answer `None` when you found no
+repair.
+
+The policy is entirely yours: Vis judges nothing about the text you return, so
+decide for yourself which repairs are safe to write. If your handler raises, Vis
+discards the answer and the edit is refused exactly as it would be for a language
+with no `balance` handler. Keep your handler total and report a fault rather than
+raising one.
 
 ## The surfaces Vis ships
 
@@ -164,14 +171,15 @@ the API on this page:
 | Extension | Files | How it decides |
 | --- | --- | --- |
 | `language-surface` | `.json`, `.toml` | `json.loads` and `tomllib`, so a verdict matches the file a build reads |
-| `language-surface-python` | `.py`, `.pyi`, `.pyw` | `compile`, the interpreter's own parser |
-| `language-surface-clojure` | `.clj`, `.cljs`, `.cljc`, `.cljd`, `.cljr`, `.bb`, `.edn` | a scanner that follows comments, strings, regex and character literals and reports unpaired delimiters |
+| `language-surface-python` | `.py`, `.pyi`, `.pyw` | `compile`, the interpreter's own parser; it also runs the Python REPL |
+| `language-surface-clojure` | `.clj`, `.cljs`, `.cljc`, `.cljd`, `.cljr`, `.bb`, `.edn` | a scanner that follows comments, strings, regex and character literals and reports unpaired delimiters, and repairs them for an edit |
 
 Vis refreshes them under `~/.vis/extensions-bundled/` when it starts and scans
 that directory first, so a file of the same name in `~/.vis/extensions/` or
 `<project>/.vis/extensions/` replaces the one Vis ships. Formatting, linting,
-tests and the REPL for Clojure and Python stay with Vis' built-in packs: the
-bundled surfaces own the syntax verdict and nothing else.
+tests for Clojure and Python stay with Vis' built-in packs, and so does the
+Clojure REPL. The bundled surfaces own the syntax verdict, the delimiter repair
+for Clojure and the Python REPL.
 
 ## Install it and try it
 

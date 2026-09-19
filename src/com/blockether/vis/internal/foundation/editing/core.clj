@@ -15,7 +15,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
-            [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
@@ -3376,31 +3375,6 @@
            (when edit-count (str " at edit " (inc (long edit-index)) " of " edit-count))
            " — nothing was written."))))
 
-(defn- language-balancer
-  "The `:balance-fn` an active language pack registered for `lang` — the delimiter
-   repair the editors may try on a splice that would otherwise be refused — or nil
-   when the language has no pack, in which case a broken splice is refused exactly
-   as it always was.
-
-   The lookup lives HERE, at the tool boundary, and not inside `balance`:
-   the repair is a POLICY of the model-facing editors, so the balancer under
-   them stays deterministic — an internal caller or a test gets precisely the splice
-   it asked for unless a tool hands the balancer down."
-  [lang]
-  (when-let [want (some-> lang
-                          name
-                          str/lower-case)]
-    (some (fn [entry]
-            (let [f (:balance-fn entry)]
-              (when (and (ifn? f)
-                         (= want
-                            (some-> (:language entry)
-                                    str
-                                    str/lower-case)))
-                f)))
-          (try (mapcat :ext/language-tools (extension/registered-extensions))
-               (catch Throwable _ nil)))))
-
 (defn- patch-parse-gate
   "Run the shared parse transition check after splicing and before writing. `patch`
    alone may repair delimiters, confined to the lines this call changed; raw writers
@@ -3418,14 +3392,11 @@
       {:content updated :clause (str "  parse: still broken at line " (:line (first after)))}
 
       :introduced-error
-      (let [clean? (fn [^String s]
-                     (empty? (parse/error-nodes lang s)))
-            e (first after)
-            repair (balance/rebalance {:balancer (language-balancer lang)
-                                       :parses-clean? clean?
-                                       :source updated
-                                       :spans spans
-                                       :original original})]
+      (let [e (first after)
+            repair (parse/repair {:language lang
+                                  :source updated
+                                  :original original
+                                  :spans spans})]
 
         (if (:ok? repair)
           {:content (:content repair)

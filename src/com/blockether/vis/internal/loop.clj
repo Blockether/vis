@@ -6013,7 +6013,7 @@
                              ;; merges into the long-lived per-env LRU.
                              :lru (or (:lru execution) {})
                              ;; If the engine auto-repaired delimiter
-                             ;; mistakes (parinferish) before eval, the
+                             ;; mistakes (delimiter repair) before eval, the
                              ;; repaired source flows here so the trailer
                              ;; can disclose the diff and the model can
                              ;; correct itself if the repair was wrong.

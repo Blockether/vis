@@ -10,9 +10,7 @@
             [com.blockether.vis.internal.language.clojure.format :as fmt]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
             [com.blockether.vis.internal.language.clojure.test-runner :as test-runner]
-            [com.blockether.vis.internal.language.clojure.paren-repair :as repair]
-            [com.blockether.parinferish.balance :as balance]
-            [com.blockether.vis.internal.foundation.editing.parse :as parse]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -73,22 +71,23 @@
                  (let [engine (:ext/engine core/vis-extension)]
                    (expect (nil? (:ext.engine/alias engine)))
                    (expect (empty? (:ext.engine/symbols engine)))))
-             (it "hands the editors a `:balance-fn` instead of wrapping their ops"
-                 ;; The pack no longer intercepts `patch` to repair the FRAGMENT a
-                 ;; caller passed — that turned an informative refusal into a silently corrupt
-                 ;; write. It publishes the repair as data on its language tools and the
-                 ;; foundation decides, per edit, whether the repaired FILE is safe to keep.
-                 (let [tools
-                       (:ext/language-tools core/vis-extension)
+             (it
+               "publishes no repair of its own — that hook belongs to whatever pack claims Clojure"
+               ;; The pack no longer intercepts `patch` to repair the FRAGMENT a caller passed —
+               ;; that turned an informative refusal into a silently corrupt write — and it no
+               ;; longer carries the repair at all. The language surface that claims Clojure
+               ;; answers `:balance-fn`, and the foundation decides, per edit, whether the
+               ;; repaired FILE is safe to keep.
+               (let [tools
+                     (:ext/language-tools core/vis-extension)
 
-                       clj-tools
-                       (first (filter #(= "clojure" (:language %)) tools))]
+                     clj-tools
+                     (first (filter #(= "clojure" (:language %)) tools))]
 
-                   (expect (nil? (:ext/op-hooks core/vis-extension)))
-                   (expect (some? clj-tools))
-                   (expect (= repair/fix-delimiters (:balance-fn clj-tools)))
-                   ;; the function is REAL, not a placeholder the foundation would call into a hole
-                   (expect (= "(defn f [])" ((:balance-fn clj-tools) "(defn f ["))))))
+                 (expect (nil? (:ext/op-hooks core/vis-extension)))
+                 (expect (some? clj-tools))
+                 (expect (nil? (:balance-fn clj-tools)))
+                 (expect (nil? (:syntax-fn clj-tools))))))
 
 (defdescribe repl-resource-logs-test
              (it "registers managed nREPL resources with tail-able launcher logs"
@@ -122,17 +121,38 @@
                           (expect (= ["booting" "ready"] (vis/resource-logs sid rid))))
                         (finally (vis/unregister-resource! sid rid) (cleanup dir))))))
 
+(defn- with-repair
+  "Run `f` with `answer` registered as the delimiter repair for Clojure, the way the
+   bundled `language-surface-clojure` pack registers its own at runtime. `format`
+   carries no repair of its own: it asks whichever pack claims the language."
+  [answer f]
+  (let [registered
+        extension/registered-extensions
+
+        surface
+        {:ext/name "fixture-clojure-repair"
+         :ext/language-tools [{:language "clojure" :balance-fn (constantly answer)}]}]
+
+    ;; FIRST registration answers, so the fixture must outrank a bundled pack another
+    ;; namespace left loaded.
+    (with-redefs-fn {#'extension/registered-extensions (fn []
+                                                         (cons surface (registered)))}
+      f)))
+
 (defdescribe combined-format-test
-             (it "format does BOTH parinfer delimiter repair AND cljfmt"
+             (it "format does BOTH the pack's delimiter repair AND cljfmt"
                  (let [src
                        "(defn f [x]\n  (+ x 1)"
 
                        ; missing close paren
+                       accepted
+                       {:ok? true :content "(defn f [x]\n  (+ x 1))" :notes ["line 2 added `)`"]}
+
                        r
-                       (core/clj-format-fn src)
+                       (with-repair accepted #(core/clj-format-fn src))
 
                        out
-                       (core/clj-repair+format src)]
+                       (with-repair accepted #(core/clj-repair+format src))]
 
                    (expect (:success? r))
                    (expect (true? (get-in r [:result "repaired"]))) ; a ) was added
@@ -142,43 +162,50 @@
                    (expect (not (contains? (:result r) "text")))
                    ;; the result NAMES the backend that ran (zprint | cljfmt)
                    (expect (contains? #{"zprint" "cljfmt"} (get-in r [:result "formatter"])))
-                   ;; the repaired output is stable: re-running the formatter is a no-op
+                   ;; the repaired output is stable: re-running the formatter is a no-op, and a
+                   ;; file whose delimiters balance asks nothing of the pack
                    (expect (= out (core/clj-repair+format out))))))
 
 ;; Regression: `format_code` ran parinfer with NO direction rule, so a file that lost an
 ;; opening `(` — character for character a file with one `)` too many — was "repaired" by
-;; DELETING that `)`, rewritten on disk, and reported as `"repaired": true`. `(def defaults
-;; {..})` became three loose top-level forms and nothing in the result named a line.
-(defdescribe format-repair-is-add-only-test
-             (it "adds a closer the file omitted and NAMES the line it completed"
-                 (let [dir (tmp-dir)]
-                   (try (let [f (io/file dir "add.clj")]
-                          (spit f "(defn f [x]\n  (inc x)\n")
-                          (let [result (:result (core/clj-format-fn {:workspace/root (str dir)}
-                                                                    {"path" "add.clj"}))]
-                            (expect (true? (get result "repaired")))
-                            (expect (= ["line 2 added `)` → `(inc x))`"] (get result "repairs")))
-                            (expect (nil? (get result "unbalanced")))
-                            (expect (= "(defn f [x]\n  (inc x))\n" (slurp f)))))
-                        (finally (cleanup dir)))))
-             (it "refuses a repair that would DELETE a delimiter, leaving the file as written"
-                 (let [dir (tmp-dir)]
-                   (try (let [f (io/file dir "lost_opener.clj")
-                              src
-                              "(ns demo.core)\n\ndef defaults\n  {:retries 3\n   :timeout 500})\n"]
+;; DELETING that `)`, rewritten on disk, and reported as `"repaired": true`. That decision
+;; belongs to the pack behind `:balance-fn` now, and `format` writes only what it accepts.
+(defdescribe
+  format-repair-hook-test
+  (it "writes the repair its pack accepts and NAMES the line it completed"
+      (let [dir (tmp-dir)]
+        (try (let [f (io/file dir "add.clj")]
+               (spit f "(defn f [x]\n  (inc x)\n")
+               (let [result (with-repair {:ok? true
+                                          :content "(defn f [x]\n  (inc x))\n"
+                                          :notes ["line 2 added `)` → `(inc x))`"]}
+                                         #(:result (core/clj-format-fn {:workspace/root (str dir)}
+                                                                       {"path" "add.clj"})))]
+                 (expect (true? (get result "repaired")))
+                 (expect (= ["line 2 added `)` → `(inc x))`"] (get result "repairs")))
+                 (expect (nil? (get result "unbalanced")))
+                 (expect (= "(defn f [x]\n  (inc x))\n" (slurp f)))))
+             (finally (cleanup dir)))))
+  (it "leaves the file exactly as written when its pack refuses the repair"
+      (let [dir (tmp-dir)]
+        (try (let [f (io/file dir "lost_opener.clj")
+                   src "(ns demo.core)\n\ndef defaults\n  {:retries 3\n   :timeout 500})\n"]
 
-                          (spit f src)
-                          (let [result (:result (core/clj-format-fn {:workspace/root (str dir)}
-                                                                    {"paths" [(str f)]}))
-                                file-result (first (get result "files"))]
+               (spit f src)
+               (let [result (with-repair {:ok? false
+                                          :why
+                                          "a repair exists but it would delete `)` this file has"}
+                                         #(:result (core/clj-format-fn {:workspace/root (str dir)}
+                                                                       {"paths" [(str f)]})))
+                     file-result (first (get result "files"))]
 
-                            (expect (false? (get file-result "repaired")))
-                            (expect (false? (get file-result "wrote")))
-                            (expect (str/includes? (get file-result "unbalanced")
-                                                   "would delete `)` this file has"))
-                            ;; the whole point: on disk, character for character what was written
-                            (expect (= src (slurp f)))))
-                        (finally (cleanup dir))))))
+                 (expect (false? (get file-result "repaired")))
+                 (expect (false? (get file-result "wrote")))
+                 (expect (str/includes? (get file-result "unbalanced")
+                                        "would delete `)` this file has"))
+                 ;; the whole point: on disk, character for character what was written
+                 (expect (= src (slurp f)))))
+             (finally (cleanup dir))))))
 
 (defdescribe multi-file-format-test
              (it "formats every file in {\"paths\": [...]} IN PLACE and rolls up per-file changes"
@@ -532,832 +559,3 @@
                  ;; the REPL is looked up at services/svc, where deps.edn lives
                  (expect (= (.getCanonicalPath svc) (.getCanonicalPath (io/file @seen))))))
              (finally (cleanup root))))))
-
-(defn- clj-balancer
-  "The delimiter repair the pack publishes for Clojure on its language tools — the
-   exact function the foundation's editors look up."
-  []
-  (:balance-fn (first (filter #(= "clojure" (:language %))
-                              (:ext/language-tools core/vis-extension)))))
-
-(def ^:private shapes-corpus
-  "The shapes a model actually edits, in one file: `ns` with `:require`/`:import`, a
-   `def` map, a threading `defn`, a `let` over interop and `println` inside `if`/`do`,
-   a `loop`/`recur` and a comment tail. Every case below drops closers off ITS lines."
-  (str/join
-    "\n"
-    ["(ns app.scan" "  (:require [clojure.string :as str])" "  (:import (java.io File)))" ""
-     "(def ^:private limit 42)" "" "(def defaults" "  {:retries 3" "   :timeout-ms 500})" ""
-     "(defn- normalize [s]" "  (-> s str/trim str/lower-case))" "" "(defn tally [xs]" "  (->> xs"
-     "       (map normalize)" "       (into (sorted-map))))" "" "(defn scan [^File dir]"
-     "  (let [names (mapv (fn [^File f] (.getName f)) (.listFiles dir))]" "    (if (seq names)"
-     "      (do (println \"scanned\" (count names))" "          {:names names})"
-     "      {:names []})))" "" "(defn crawl [root]" "  (loop [queue [root] acc []]"
-     "    (if-let [d (first queue)]" "      (recur (rest queue) (conj acc (:name d))) ; keep going"
-     "      acc)))" "" "(defn describe [x]" "  (cond" "    (map? x) (str \"map of \" (count x))"
-     "    (vector? x) (str \"vector of \" (count x))" "    :else (str x)))" ""]))
-
-(defn- code-part
-  "`line` up to a trailing comment, right-trimmed, and the comment itself."
-  [^String line]
-  (let [i (str/index-of line ";")]
-    [(str/trimr (if i (subs line 0 i) line)) (if i (str " " (str/triml (subs line i))) "")]))
-
-(defn- drop-closers
-  "`line` with the last `n` closers of its code part gone — the mistake this whole
-   decision exists for. nil when the line has fewer than `n` to drop."
-  [^String line n]
-  (let [[code tail]
-        (code-part line)
-
-        kept
-        (loop [s
-               code
-
-               k
-               0]
-
-          (if (and (< k (long n)) (seq s) (#{\) \] \}} (last s)))
-            (recur (subs s 0 (dec (count s))) (inc k))
-            (when (= k (long n)) s)))]
-
-    (when kept (str kept tail))))
-
-(defn- inside-drops
-  "Every way to drop ONE delimiter from `line` that is not one of its trailing closers:
-   a closer omitted in the MIDDLE, which the caller's indentation cannot place — it
-   comes back at the line's END and regroups the arguments between."
-  [^String line]
-  (let [[code tail]
-        (code-part line)
-
-        trailing
-        (count (take-while #{\) \] \}} (reverse code)))
-
-        body
-        (subs code 0 (- (count code) trailing))]
-
-    (for [i
-          (range (count body))
-
-          :when (#{\( \) \[ \] \{ \}} (nth body i))]
-
-      (str (subs code 0 i) (subs code (inc (long i))) tail))))
-
-(defn- drop-opener
-  "`line` without its first opening delimiter — an opener the model lost, which leaves
-   character for character what one closer too many leaves."
-  [^String line]
-  (let [[code tail]
-        (code-part line)
-
-        i
-        (first (keep-indexed (fn [i c]
-                               (when (#{\( \[ \{} c) i))
-                             code))]
-
-    (when i (str (subs code 0 (long i)) (subs code (inc (long i))) tail))))
-
-(defn- retypes
-  "Every way to RETYPE one delimiter of `line` as a different one: the code stays
-   identical, so only the text the line replaced can say the delimiter is not the one
-   the caller meant."
-  [^String line]
-  (let [[code tail] (code-part line)]
-    (for [i (range (count code))
-          :when (#{\( \) \[ \] \{ \}} (nth code i))
-          c (disj #{\( \) \[ \] \{ \}} (nth code i))]
-
-      (str (subs code 0 i) c (subs code (inc (long i))) tail))))
-
-(defn- rename-token
-  "`line` with its last code token renamed — an edit that REWROTE the line as well as
-   breaking it, so its skeleton no longer matches the line it replaced. nil when the
-   line ends in no closer to rename in front of."
-  [^String line]
-  (let [[code tail]
-        (code-part line)
-
-        trailing
-        (count (take-while #{\) \] \}} (reverse code)))
-
-        cut
-        (- (count code) trailing)]
-
-    (when (pos? trailing) (str (subs code 0 cut) "x" (subs code cut) tail))))
-
-(defdescribe
-  balance-fn-boundary-test
-  "The pack's repair reaching the foundation's editors: the SAME `:balance-fn` the
-   manifest publishes, run through the foundation's decision, which keeps a repaired
-   file only when the repair stayed inside the lines the edit wrote."
-  ;; Regression, session 621ba390: a Clojure edit whose replacement was an unbalanced FRAGMENT
-  ;; parinfer-repaired ON ITS OWN and retried, so a partial form silently closed itself
-  ;; and overwrote a good line; the caller was told only "(delimiters repaired)".
-  (it "repairs a dropped closer on the line the edit wrote, and names it"
-      (let [source
-            "(ns ok)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
-
-            spliced
-            (str/replace source "(defn ok [] 1)" "(defn ok [] (inc 1)")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source spliced
-                                :spans [[3 3]]
-                                :original "(defn ok [] 1)"})]
-
-        (expect (true? (:ok? verdict)))
-        (expect (= "(ns ok)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" (:content verdict)))
-        ;; the repair is NAMED with the character and the line, never a silent footnote
-        (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"] (:notes verdict)))))
-  (it "refuses the reported case: the repair balances a line the edit never wrote"
-      (let [;; the file from the report — the caller's anchor had drifted onto the binding
-            ;; VALUE line, and the replacement was the destructuring fragment
-            source
-            "(defn f []\n  (let\n    [{:keys [a b]}\n     form\n\n     x\n     1]\n\n    x))\n"
-
-            broken
-            (str/replace source "     form\n" "    [{:keys [a b c]}\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source broken
-                                :spans [[4 4]]})]
-
-        ;; repairing the FRAGMENT alone is what used to be written — a complete, wrong form
-        (expect (= "    [{:keys [a b c]}]" ((clj-balancer) "    [{:keys [a b c]}")))
-        ;; the whole-file repair instead closes line 3, which this edit never touched
-        (expect (false? (:ok? verdict)))
-        (expect (str/includes? (:why verdict) "line 3"))))
-  ;; A replacement that dropped a QUOTE is not a missing bracket: parinfer has no repair to
-  ;; offer, and "no delimiter repair was found" sent the caller looking for a paren.
-  (it "names the unterminated string the pack's repair cannot close"
-      (let [broken
-            "(ns ok)\n\n(defn ok [] \"1)\n"
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source broken
-                                :spans [[3 3]]})]
-
-        (expect (false? (:ok? verdict)))
-        (expect (str/includes? (:why verdict) "line 3 opens a string that is never closed"))))
-  ;; Regression, Vis session 6342aada: a rewritten docstring line gained a premature
-  ;; quote, and the boundary refused the whole edit instead of removing that one character.
-  (it "removes one proven premature quote through the published Clojure balancer"
-      (let [original
-            "(def retry-budget\n  \"Old policy line.\n   Measured evidence.\"\n  180000)\n"
-
-            source
-            "(def retry-budget\n  \"Rewritten policy line.\"\n   Measured evidence.\"\n  180000)\n"
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[2 2]]})]
-
-        (expect (true? (:ok? verdict)))
-        (expect
-          (= "(def retry-budget\n  \"Rewritten policy line.\n   Measured evidence.\"\n  180000)\n"
-             (:content verdict)))
-        (expect (= ["line 2 removed `\"` → `\"Rewritten policy line.`"] (:notes verdict)))))
-  ;; Regression: `(defn ok [] (inc 1))` typed with an opening paren lost carries a surplus
-  ;; closer, and parinfer's answer to that is the file with the closer DELETED — which
-  ;; parses, reads as loose symbols, and is character-for-character the same repair as the
-  ;; honest `)` too many. Only the DIRECTION of the change can refuse it.
-  (it "refuses the pack's own repair when it deletes a closer the caller wrote"
-      (let [broken
-            "(ns ok)\n\n(defn ok [] inc 1))\n"
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source broken
-                                :spans [[3 3]]})]
-
-        ;; what parinfer alone would have written
-        (expect (= "(ns ok)\n\n(defn ok [] inc 1)\n" ((clj-balancer) broken)))
-        (expect (false? (:ok? verdict)))
-        (expect (str/includes? (:why verdict) "would delete `)` this edit wrote"))))
-  ;; Regression, issue #158: adding a closer to separate two forms was refused because the
-  ;; pack removed the new closer instead of relocating the now-surplus old one.
-  (it "relocates one proven surplus closer outside the edited line"
-      (let [original
-            (str "(deftest first-test\n"
-                 "  (testing \"first\"\n" "    (is true))\n"
-                 "\n" "  (deftest second-test\n"
-                 "    (testing \"second\"\n" "      (is true))))\n")
-
-            source
-            (str/replace original "    (is true))\n" "    (is true)))\n")
-
-            expected
-            (str/replace source "      (is true))))\n" "      (is true)))\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[3 3]]})]
-
-        (expect (true? (:ok? verdict)))
-        (expect (= expected (:content verdict)))
-        (expect (= ["line 7 removed `)` → `(is true)))`"] (:notes verdict)))))
-  ;; One, two and three closers off the END of every line that has them, over every shape
-  ;; above: this is the mistake the repair exists for, and each one has to come back
-  ;; byte-identical — a repair that lands anywhere else would be a silent rewrite.
-  (it
-    "restores every closer a model drops off the end of a line, in every shape"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          mutate
-          (fn [ln text]
-            (str/join "\n"
-                      (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
-
-          verdicts
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                n
-                [1 2 3]
-
-                :let [mut
-                      (drop-closers (nth lines (dec ln)) n)]
-                :when mut]
-
-            [ln n
-             (balance/rebalance {:balancer (clj-balancer)
-                                 :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                 :source (mutate ln mut)
-                                 :spans [[ln ln]]})])]
-
-      ;; the matrix is worth nothing if it silently stopped covering the file
-      (expect (<= 45 (count verdicts)))
-      (expect (= []
-                 (vec (for [[ln n v]
-                            verdicts
-
-                            :when (not= shapes-corpus (:content v))]
-
-                        [ln n (or (:why v) :wrong-content)]))))))
-  ;; The same lines with one closer TOO MANY. Parinfer answers both that and a lost
-  ;; opener by DELETING the surplus, so accepting it would write `(def x 1)` typed as
-  ;; `def x 1)` as three loose top-level forms that parse. Never accepted, in any shape.
-  (it "never accepts a repair that deletes a closer, in any shape"
-      (let [lines
-            (str/split-lines shapes-corpus)
-
-            mutate
-            (fn [ln text]
-              (str/join "\n"
-                        (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
-
-            accepted
-            (for [ln
-                  (range 1 (inc (count lines)))
-
-                  :let [line
-                        (nth lines (dec ln))]
-                  :when (and (seq (str/trim line)) (nil? (str/index-of line ";")))
-                  :let [v
-                        (balance/rebalance {:balancer (clj-balancer)
-                                            :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                            :source (mutate ln (str (str/trimr line) ")"))
-                                            :spans [[ln ln]]})]
-                  :when (:ok? v)]
-
-              [ln (:notes v)])]
-
-        (expect (= [] (vec accepted)))))
-  ;; Regression: parinfer's own answer to a `[` mistyped as `(` is `(foo (1 2 3))` — the
-  ;; caller's VECTOR turned into a call that swallowed the argument standing after it. That
-  ;; candidate parses, keeps the line count and the final newline, changes only the line the
-  ;; edit wrote and leaves the skeleton identical, so the ORDER of the caller's own
-  ;; delimiters is the only thing left that can refuse it.
-  (it "refuses the pack's own repair when it retypes a delimiter the caller wrote"
-      (let [broken
-            "(ns ok)\n\n(defn ok [] (foo (1 2] 3))\n"
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source broken
-                                :spans [[3 3]]})]
-
-        ;; what the pack answers on its own is the corruption
-        (expect (= "(ns ok)\n\n(defn ok [] (foo (1 2 3)))\n" ((clj-balancer) broken)))
-        (expect (false? (:ok? verdict)))
-        (expect (str/includes? (:why verdict) "retype"))))
-  ;; Regression, session 2224a346: a 36-line block inserted into the MIDDLE of a form was one `)`
-  ;; short. Parinfer reads INDENTATION, so it closed the form ABOVE the insertion and took a closer
-  ;; off the edit's own last line — both refused, and the whole patch with them; the same block was
-  ;; re-sent with one more `)` an iteration later.
-  (it "closes an inserted block the pack's repair would close above the insertion"
-      (let [original
-            (str "(defdescribe outer-test\n"
-                 "  (it \"reads a document\"\n" "      (with-fs-context\n"
-                 "\n" "        (expect true))))\n")
-
-            source
-            (str "(defdescribe outer-test\n" "  (it \"reads a document\"\n"
-                 "      (with-fs-context\n" "\n"
-                 ";; A memo of its own\n" "(it \"inserted\"\n"
-                 "    (expect (= [\"a\" \"b\"]\n" "               (mapv str [\"a\" \"b\"])))\n"
-                 "\n" "        (expect true))))\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[4 9]]})]
-
-        ;; what the pack answers on its own: line 3, which this edit never touched, closed three times
-        (expect (str/includes? ((clj-balancer) source) "      (with-fs-context)))"))
-        (expect (true? (:ok? verdict)))
-        (expect (= ["line 8 added `)` → `(mapv str [\"a\" \"b\"]))))`"] (:notes verdict)))
-        (expect (= (str/replace source
-                                "               (mapv str [\"a\" \"b\"])))\n"
-                                "               (mapv str [\"a\" \"b\"]))))\n")
-                   (:content verdict)))
-        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
-  ;; Regression, session cc1ca6dd: a replacement dropped a docstring's closing `"`. A repair only
-  ;; puts back `()[]{}`, so the pack had nothing to answer with and the refusal named a line 56
-  ;; BELOW the edit as the one opening an unclosed string — the same replacement was re-sent twice.
-  (it "puts back a docstring quote no delimiter repair can supply"
-      (let [original
-            (str "(ns a)\n\n(defn f\n  \"Doc line one.\n"
-                 "   The rule above it stays a border.\"\n  []\n  (inc 1))\n")
-
-            source
-            (str "(ns a)\n\n(defn f\n  \"Doc line one.\n"
-                 "   The rule below it is a slab over the frame.\n  []\n  (inc 1))\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[5 5]]})]
-
-        (expect (nil? ((clj-balancer) source)))
-        (expect (true? (:ok? verdict)))
-        (expect (= ["line 5 added `\"` → `The rule below it is a slab over the frame.\"`"]
-                   (:notes verdict)))
-        (expect (= (str/replace source "over the frame.\n" "over the frame.\"\n")
-                   (:content verdict)))
-        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
-  ;; ClojureScript rides the same grammar, the same pack and the same repair as Clojure, and it had
-  ;; no coverage at all: a `#js` literal, a reader conditional or `js/` interop the parser or
-  ;; parinfer stumbled on would refuse every cljs edit over a delimiter it could not place.
-  (it "closes an inserted ClojureScript block at its own tail"
-      (let [original
-            (str "(ns app.panel)\n" "\n"
-                 "(defn view [d]\n" "  (let [props #js {:className \"row\"}]\n"
-                 "\n" "    [:div.row props]))\n")
-
-            source
-            (str "(ns app.panel)\n" "\n"
-                 "(defn view [d]\n" "  (let [props #js {:className \"row\"}]\n"
-                 "\n" ";; A memo of its own\n"
-                 "(when ^boolean js/goog.DEBUG\n" "  (js/console.log \"row\" (pr-str (:id d)))\n"
-                 "\n" "    [:div.row props]))\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[5 9]]})]
-
-        ;; what the pack answers on its own: line 4, which this edit never touched, closed twice
-        (expect (str/includes? ((clj-balancer) source) "  (let [props #js {:className \"row\"}]))"))
-        (expect (true? (:ok? verdict)))
-        (expect (= ["line 8 added `)` → `(js/console.log \"row\" (pr-str (:id d))))`"]
-                   (:notes verdict)))
-        (expect (= (str/replace source
-                                "  (js/console.log \"row\" (pr-str (:id d)))\n"
-                                "  (js/console.log \"row\" (pr-str (:id d))))\n")
-                   (:content verdict)))
-        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
-  (it "puts back a quote a ClojureScript docstring dropped"
-      (let [original
-            (str "(ns app.panel)\n"
-                 "\n" "(defn view\n"
-                 "  \"Row for one device.\n" "   Reads `js/undefined` as a missing value.\"\n"
-                 "  [d]\n" "  [:div.row (:name d)])\n")
-
-            source
-            (str/replace original "missing value.\"\n" "missing value.\n")
-
-            verdict
-            (balance/rebalance {:balancer (clj-balancer)
-                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                :source source
-                                :original original
-                                :spans [[5 5]]})]
-
-        (expect (nil? ((clj-balancer) source)))
-        (expect (true? (:ok? verdict)))
-        (expect (= ["line 5 added `\"` → `Reads `js/undefined` as a missing value.\"`"]
-                   (:notes verdict)))
-        (expect (= original (:content verdict)))
-        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
-  ;; The INSERTED block, in every shape. A model that writes a fresh form into the middle of a file
-  ;; replaced a blank line, so the text it replaced witnesses nothing, and parinfer answers by
-  ;; INDENTATION — it closes the form ABOVE the insertion. What the deficit belongs to is the last
-  ;; line this call actually wrote.
-  (it
-    "closes an inserted block at its own tail, at every insertion point"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          clean?
-          (fn [s]
-            (empty? (parse/error-nodes "clojure" s)))
-
-          weave
-          (fn [ln body]
-            (str/join "\n" (concat (take (long ln) lines) body (drop (long ln) lines) [""])))
-
-          block
-          ["(defn inserted [x]" "  (when (pos? x)" "    (inc x)))"]
-
-          short-one
-          (conj (vec (butlast block)) (drop-closers (last block) 1))
-
-          verdicts
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                :let [whole
-                      (weave ln block)
-
-                      source
-                      (weave ln short-one)]
-                :when (and (clean? whole) (not (clean? source)))]
-
-            [ln whole
-             (balance/rebalance {:balancer (clj-balancer)
-                                 :parses-clean? clean?
-                                 :source source
-                                 :original shapes-corpus
-                                 :spans [[(inc (long ln)) (+ (long ln) (count block))]]})])]
-
-      ;; the matrix is worth nothing if it silently stopped covering the file
-      (expect (<= 30 (count verdicts)))
-      (expect (= []
-                 (vec (for [[ln whole v]
-                            verdicts
-
-                            :when (not= whole (:content v))]
-
-                        [ln (or (:why v) :wrong-content)]))))))
-  ;; The dropped `"`, in every shape. A repair only puts back `()[]{}`, so a docstring left open is
-  ;; refused against a line far below the edit — and the text the edit replaced is the whole licence
-  ;; for putting one back. Where that text did not end with a quote, nothing may be written: a quote
-  ;; in the wrong seat PARSES, so the parse gate proves far less here than it does for a bracket.
-  (it
-    "puts back a docstring quote only where the replaced line ended with one"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          clean?
-          (fn [s]
-            (empty? (parse/error-nodes "clojure" s)))
-
-          weave
-          (fn [ln body]
-            (str/join "\n" (concat (take (long ln) lines) body (drop (long ln) lines) [""])))
-
-          documented
-          ["(defn documented" "  \"What it does, in one line." "   And the rule under it.\"" "  [x]"
-           "  (inc x))"]
-
-          carried
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                :let [whole
-                      (weave ln documented)
-
-                      source
-                      (weave ln (assoc (vec documented) 2 "   And the rule under it."))]
-                :when (and (clean? whole) (not (clean? source)))]
-
-            [ln whole
-             (balance/rebalance {:balancer (clj-balancer)
-                                 :parses-clean? clean?
-                                 :source source
-                                 :original whole
-                                 :spans [[(+ (long ln) 3) (+ (long ln) 3)]]})])
-
-          ungrounded
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                :let [line
-                      (nth lines (dec (long ln)))]
-                i
-                (range (count line))
-
-                :when (= \" (nth line i))
-                :let [source
-                      (str/join "\n"
-                                (concat (take (dec (long ln)) lines)
-                                        [(str (subs line 0 (long i)) (subs line (inc (long i))))]
-                                        (drop (long ln) lines)
-                                        [""]))]
-                :when (not (clean? source))]
-
-            [ln i
-             (balance/rebalance {:balancer (clj-balancer)
-                                 :parses-clean? clean?
-                                 :source source
-                                 :original shapes-corpus
-                                 :spans [[ln ln]]})])]
-
-      (expect (<= 30 (count carried)))
-      (expect (= []
-                 (vec (for [[ln whole v]
-                            carried
-
-                            :when (not= whole (:content v))]
-
-                        [ln (or (:why v) :wrong-content)]))))
-      ;; the same character dropped where the replaced line does not end with one: never written
-      (expect (<= 6 (count ungrounded)))
-      (expect (= []
-                 (vec (for [[ln i v]
-                            ungrounded
-
-                            :when (:ok? v)]
-
-                        [ln i (:content v)]))))))
-  ;; A closer omitted INSIDE a line is the one place indentation cannot help: parinfer closes at
-  ;; the line's end, and `(map? x) (str …)` came back as `(map? x (str …))` — a cond clause turned
-  ;; into a call, parsing, and written. The text the edit replaced says where it sat instead.
-  (it "seats a closer dropped inside a line where the replaced text had it, in every shape"
-      (let [lines
-            (str/split-lines shapes-corpus)
-
-            mutate
-            (fn [ln text]
-              (str/join "\n"
-                        (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
-
-            verdicts
-            (for [ln
-                  (range 1 (inc (count lines)))
-
-                  mut
-                  (inside-drops (nth lines (dec (long ln))))]
-
-              [ln mut
-               (balance/rebalance {:balancer (clj-balancer)
-                                   :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                   :source (mutate ln mut)
-                                   :original shapes-corpus
-                                   :spans [[ln ln]]})])]
-
-        ;; the matrix is worth nothing if it silently stopped covering the file
-        (expect (<= 50 (count verdicts)))
-        (expect (= []
-                   (vec (for [[ln mut v]
-                              verdicts
-
-                              :when (not= shapes-corpus (:content v))]
-
-                          [ln mut (or (:why v) :wrong-content)]))))))
-  ;; The lost OPENER, in every shape. On its own it is the same string as one closer too many and
-  ;; is refused as such; against the line it replaced it is the one that can be proved, and the
-  ;; file comes back byte-identical instead of being written as loose top-level forms.
-  (it "restores an opener the edit lost, in every shape"
-      (let [lines
-            (str/split-lines shapes-corpus)
-
-            verdicts
-            (for [ln
-                  (range 1 (inc (count lines)))
-
-                  :let [mut
-                        (drop-opener (nth lines (dec (long ln))))]
-                  :when mut]
-
-              [ln mut
-               (balance/rebalance
-                 {:balancer (clj-balancer)
-                  :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                  :source (str/join
-                            "\n"
-                            (concat (take (dec (long ln)) lines) [mut] (drop (long ln) lines) [""]))
-                  :original shapes-corpus
-                  :spans [[ln ln]]})])]
-
-        (expect (<= 20 (count verdicts)))
-        (expect (= []
-                   (vec (for [[ln mut v]
-                              verdicts
-
-                              :when (not= shapes-corpus (:content v))]
-
-                          [ln mut (or (:why v) :wrong-content)])))))))
-
-(defdescribe
-  seated-repair-in-every-shape-test
-  "The text an edit REPLACED, over the shapes a model actually edits and with the real
-   parinfer behind it: what a repair can put back from it, and what it must refuse
-   instead of guessing at."
-  ;; Regression: a closer the model RETYPED as an opener — `(:require [clojure.string :as str])`
-  ;; sent as `… :as str()` — passed every rule there was: the code is identical, the repair only
-  ;; ADDED, and it stayed on the edited line. `[… str ()]` parses, so it was written. The line the
-  ;; edit replaced is the only witness that the `(` was never meant.
-  (it
-    "refuses every retyped delimiter, in every shape"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          verdicts
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                mut
-                (retypes (nth lines (dec (long ln))))]
-
-            [ln mut
-             (balance/rebalance
-               {:balancer (clj-balancer)
-                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                :source (str/join
-                          "\n"
-                          (concat (take (dec (long ln)) lines) [mut] (drop (long ln) lines) [""]))
-                :original shapes-corpus
-                :spans [[ln ln]]})])]
-
-      (expect (<= 300 (count verdicts)))
-      ;; not one of them may be written, whatever the repair would have made of it
-      (expect (= []
-                 (vec (for [[ln mut v]
-                            verdicts
-
-                            :when (:ok? v)]
-
-                        [ln mut (:content v)]))))
-      ;; and the refusal names the substitution, not just "a delimiter moved"
-      (expect (<= 100
-                  (count (filter (fn [[_ _ v]]
-                                   (str/includes? (str (:why v)) "retyped or added, not omitted"))
-                                 verdicts))))))
-  ;; A line the edit REWROTE as well as broke: its skeleton no longer matches, so the delimiters
-  ;; are the caller's own — but it is still the same line, and the text it replaced still says
-  ;; where the one it KEPT used to sit. Without that, parinfer closes at the line's end.
-  (it
-    "seats a delimiter into a line the edit also rewrote, in every shape"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          splice
-          (fn [ln text]
-            (str/join "\n"
-                      (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
-
-          cases
-          (for [ln
-                (range 1 (inc (count lines)))
-
-                :let [rewrote
-                      (rename-token (nth lines (dec (long ln))))]
-                :when rewrote
-                :let [intended
-                      (splice ln rewrote)]
-                :when (empty? (parse/error-nodes "clojure" intended))
-                mut
-                (inside-drops rewrote)]
-
-            [ln mut intended
-             (balance/rebalance {:balancer (clj-balancer)
-                                 :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                                 :source (splice ln mut)
-                                 :original shapes-corpus
-                                 :spans [[ln ln]]})])]
-
-      (expect (<= 50 (count cases)))
-      (expect (= []
-                 (vec (for [[ln mut intended v]
-                            cases
-
-                            :when (not= intended (:content v))]
-
-                        [ln mut (or (:why v) :wrong-content)]))))))
-  ;; Regression, the third face: the edit SWAPPED two lines and dropped one closer; parinfer closed
-  ;; the OTHER line — one this edit left exactly as it found it — the file parsed, and `(if (seq
-  ;; names)` with two branches became a call with none.
-  (it
-    "never closes a line the edit left as it found it, in every shape"
-    (let [lines
-          (str/split-lines shapes-corpus)
-
-          file
-          (fn [ls]
-            (str (str/join "\n" ls) "\n"))
-
-          cases
-          (for [i
-                (range (dec (count lines)))
-
-                :let [a
-                      (nth lines i)
-
-                      b
-                      (nth lines (inc (long i)))
-
-                      broken
-                      (drop-closers a 1)]
-                :when broken
-                :let [intended
-                      (file (concat (take i lines) [b a] (drop (+ (long i) 2) lines)))]
-                :when (empty? (parse/error-nodes "clojure" intended))]
-
-            [(inc (long i)) intended
-             (balance/rebalance
-               {:balancer (clj-balancer)
-                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-                :source (file (concat (take i lines) [b broken] (drop (+ (long i) 2) lines)))
-                :original shapes-corpus
-                :spans [[(inc (long i)) (+ (long i) 2)]]})])]
-
-      (expect (<= 8 (count cases)))
-      ;; every case is the file the caller meant, or a refusal — never a third file
-      (expect (= []
-                 (vec (for [[ln intended v]
-                            cases
-
-                            :when (and (:ok? v) (not= intended (:content v)))]
-
-                        [ln (:content v)]))))))
-  ;; A rebalance is a repair the caller is WAITING for, and parinfer re-reads the text it has
-  ;; already placed: asking it about a whole file is quadratic, and this repo's own 11k-line
-  ;; namespace cost seconds to repair before the foundation started showing a balancer nothing
-  ;; but the edit's own region.
-  (it
-    "asks the pack's repair about the edit's own region, not the whole file"
-    (let [form
-          (fn [i]
-            [(str "(defn f" i " [x]") "  (let [y (inc x)"
-             "        z (when (pos? y) (reduce + (map inc (range y))))]"
-             "    (cond (nil? z) {:a [1 2 3] :b #{:x :y}}"
-             (str "          (odd? z) (into [] (comp (map inc) (filter even?)) (range " i "))")
-             "          :else (str \"z=\" z))))" ""])
-
-          lines
-          (into ["(ns big.core)" ""] (mapcat form (range 1700)))
-
-          source
-          (str (str/join "\n" lines) "\n")
-
-          block
-          ["(defn probe [x]" "  (let [y (inc x)]" "    (+ y 1))"]
-
-          at
-          (quot (count lines) 2)
-
-          shown
-          (atom 0)
-
-          balance-fn
-          (let [pack (clj-balancer)]
-            (fn [s]
-              (swap! shown max (count (str/split-lines s)))
-              (pack s)))
-
-          t0
-          (System/nanoTime)
-
-          verdict
-          (balance/rebalance
-            {:balancer balance-fn
-             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
-             :source (str (str/join "\n" (concat (take at lines) block (drop at lines))) "\n")
-             :original source
-             :spans [[(inc (long at)) (+ (long at) (count block))]]})
-
-          ms
-          (/ (- (System/nanoTime) t0) 1e6)]
-
-      (expect (<= 11000 (count lines)))
-      (expect (true? (:ok? verdict)))
-      (expect (= [(str "line " (+ (long at) (count block)) " added `)` → `(+ y 1)))`")]
-                 (:notes verdict)))
-      (expect (empty? (parse/error-nodes "clojure" (:content verdict))))
-      ;; what the window is FOR: what the balancer reads does not grow with the file
-      (expect (< @shown 40) (str "the balancer was shown " @shown " lines of " (count lines)))
-      (expect (< ms 2000) (str "rebalancing " (count lines) " lines took " ms " ms")))))

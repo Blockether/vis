@@ -11,7 +11,8 @@ form reads. The surface declares `is_exact_syntax=False` for that reason, and a
 file it calls clean can still fail the Clojure reader for another reason.
 """
 
-from . import finding, language_of, source_of, verdict
+from . import balance as policy
+from . import finding, language_of, parinfer, source_of, verdict
 
 OPENERS = {"(": ")", "[": "]", "{": "}"}
 CLOSERS = {")": "(", "]": "[", "}": "{"}
@@ -139,3 +140,44 @@ def scan(source):
 
     findings.sort(key=lambda row: (row["line"], row["col"]))
     return findings
+
+
+def parses_clean(source):
+    """Whether `source` has no delimiter or literal fault.
+
+    Args:
+        source: Clojure source text.
+
+    Returns:
+        True when `scan` finds nothing.
+    """
+    return not scan(source)
+
+
+def balance(request):
+    """Delimiter repair for the whole file one edit would write.
+
+    Args:
+        request: `{"language", "source", "original", "spans"}` — the content the
+            edit would write, the content it replaced (or None) and the 1-based
+            `[from, to]` line spans it wrote.
+
+    Returns:
+        `{"ok": True, "content", "notes"}` for a repair that may be written,
+        `{"ok": False, "why"}` for one that was found and rejected, or None when
+        the source already balances.
+    """
+    source = source_of(request)
+    if parses_clean(source):
+        return None
+    return policy.rebalance(
+        {
+            "balancer": parinfer.repair,
+            "parses_clean": parses_clean,
+            "source": source,
+            "original": request.get("original") if isinstance(request, dict) else None,
+            "spans": (request.get("spans") if isinstance(request, dict) else None)
+            or (),
+            "subject": (request.get("subject") if isinstance(request, dict) else None),
+        }
+    )

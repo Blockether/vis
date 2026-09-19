@@ -6,6 +6,8 @@
      1. what language is this file, and does anything judge its syntax
         (`detect-language`, `guarded-language`)?
      2. where exactly does the new content fail to parse (`error-nodes`)?
+     3. does that language offer a delimiter repair for a splice that would not
+        parse (`repair`)?
 
    `patch` spends both: it re-checks what a write would produce and refuses an edit
    that introduces a syntax error the file did not already have, naming the line
@@ -133,6 +135,39 @@
   (let [lang (detect-language (str path))]
     (when (and lang (some? (syntax-handler lang))) lang)))
 
+(defn- balance-handler
+  "The `:balance-fn` a registered language surface declares for `lang`, or nil. It
+   is called with the whole repair REQUEST and answers the surface's verdict; the
+   first matching registration answers."
+  [lang]
+  (when-let [want (some-> lang
+                          str
+                          str/lower-case
+                          not-empty)]
+    (some (fn [entry]
+            (let [f (:balance-fn entry)]
+              (when (and (ifn? f) (= want (surface-language entry))) f)))
+          (registered-surfaces))))
+
+(defn repair
+  "The delimiter repair a registered language surface offers for one spliced file.
+
+   `request` names the language, the whole `:source` a write would produce, the
+   `:original` text it replaced, the `:spans` of lines that write touched and an
+   optional `:subject` for the refusal wording. Vis judges none of it: the pack
+   decides whether a repair may be written and answers
+
+     `{:ok? true :content <repaired source> :notes [note]}` — write this instead
+     `{:ok? false :why <reason>}`                          — refuse, and say why
+
+   or nil when the language has no pack, the pack found no repair, or its handler
+   failed. Total: a broken splice is then refused exactly as it always was."
+  [{:keys [language] :as request}]
+  (when-let [f (balance-handler language)]
+    (try (let [answer (f (assoc request :language (str language)))]
+           (when (and (map? answer) (or (:ok? answer) (:why answer)))
+             answer))
+         (catch Throwable _ nil))))
 (defn- normalized-finding
   "One handler finding as the row the gate reads — `:line`, `:col`, `:kind`,
    `:missing?` and `:text` — keeping every other field the surface reported. Keys

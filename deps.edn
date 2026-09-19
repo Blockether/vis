@@ -19,7 +19,6 @@
         ;; --- third party -----------------------------------------------------------
         babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
-        borkdude/edamame {:mvn/version "1.6.42"}
         ;; Static analysis for the Clojure `lint_code` surface, run through its
         ;; programmatic API (clj-kondo.core/run!).
         clj-kondo/clj-kondo {:mvn/version "2026.07.24"}
@@ -34,10 +33,6 @@
         ;; fine: mic capture uses `javax.sound.sampled` (the JDK's only microphone API) and
         ;; next.jdbc's `clojure.java.data` uses `java.beans.Introspector`.
         com.blockether/imaging {:mvn/version "0.1.10"}
-        ;; Parinfer for Clojure source in pure Java — Blockether's linear-time rewrite of
-        ;; parinferish 0.8.0 — carrying `com.blockether.parinferish.balance`, the rule that
-        ;; decides whether a language pack's delimiter repair may be written back to a file.
-        com.blockether/parinferish {:mvn/version "0.1.2"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/ruff {:mvn/version "0.3.5"}
         com.blockether/svar {:mvn/version "0.7.172"}

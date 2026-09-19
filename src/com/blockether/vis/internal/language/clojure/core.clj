@@ -3,21 +3,18 @@
 
    Format/test/REPL are exposed through the generic language facade
    (`format`, `test`, `repl_eval`, `repl_start`, `repl_stop`) —
-   `format` here does parinfer delimiter repair + cljfmt, and the same repair is
-   registered as the pack's `:balance-fn`: the foundation's editors call it with
-   the WHOLE spliced file when an edit would not parse, and write the repair only
-   when it stays inside the lines that edit wrote. Both doors are ADD-ONLY: a delimiter
-    you omitted is added back, one you WROTE is never deleted — a lost opening `(` and
-    one `)` too many are the same string, so deleting is a guess that rewrites code, and
-    the text an edit REPLACED is the only thing that tells the two apart."
+   `format` here runs the delimiter repair the `language-surface-clojure` pack
+   publishes as its `:balance-fn` — the same hook the foundation's editors spend on a
+   splice that would not parse — and then cljfmt. That repair is ADD-ONLY: a delimiter
+   you omitted is added back, one you WROTE is never deleted — a lost opening `(` and
+   one `)` too many are the same string, so deleting is a guess that rewrites code."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.foundation.environment.languages :as languages]
             [com.blockether.vis.internal.language.clojure.format :as fmt]
-            [com.blockether.vis.internal.language.clojure.paren-repair :as repair]
             [com.blockether.vis.internal.language.clojure.lint :as lint]
             [com.blockether.vis.internal.language.clojure.reflection :as reflection]
             [com.blockether.vis.internal.language.clojure.nrepl-ctx :as nrepl-ctx]
@@ -467,28 +464,29 @@
 (defn clj-repair-source
   "The delimiter repair `format` is allowed to WRITE, and what it must SAY about it.
 
-   parinfer repairs whatever it is handed, and a file that lost an opening `(` is
-   character-for-character a file with one `)` too many: \"repairing\" it by DELETING
-   that `)` parses, writes, and silently turns `(def defaults {..})` into three loose
-   top-level forms. So the rule the editors use holds here too — a repair is kept only
-   when it ADDED delimiters this file omitted (`balance/rebalance` over the whole file,
-   the only span a formatter has).
+   The repair itself is not here: `parse/repair` asks the language pack that claims
+   Clojure, over the whole file — the only span a formatter has. A file whose
+   delimiters balance, and a language with no pack, answer nothing and are formatted
+   exactly as they were written.
 
    Answers `{:code <what to format> :repaired? bool :repairs [note] :why msg?}`. On a
    refusal the ORIGINAL code goes to the formatter untouched and `:why` names the
    mistake to look for, because a formatter that guesses which of the two happened is
    the corruption it was meant to prevent."
   [^String code]
-  (if-not (repair/delimiter-error? code)
-    {:code code :repaired? false}
-    (let [verdict (balance/rebalance {:balancer repair/fix-delimiters
-                                      :parses-clean? repair/reads-clean?
-                                      :source code
-                                      :spans [[1 (max 1 (count (str/split-lines code)))]]
-                                      :subject "this file has"})]
-      (if (:ok? verdict)
-        {:code (:content verdict) :repaired? true :repairs (:notes verdict)}
-        {:code code :repaired? false :why (:why verdict)}))))
+  (let [verdict (parse/repair {:language "clojure"
+                               :source code
+                               :spans [[1 (max 1 (count (str/split-lines code)))]]
+                               :subject "this file has"})]
+    (cond
+      (:ok? verdict)
+      {:code (:content verdict) :repaired? true :repairs (:notes verdict)}
+
+      (:why verdict)
+      {:code code :repaired? false :why (:why verdict)}
+
+      :else
+      {:code code :repaired? false})))
 
 (defn clj-repair+format
   "The combined Clojure tidy behind `format`: the ADD-ONLY delimiter repair
@@ -938,13 +936,6 @@
                     env
                     arg))
        :repl-eval-fn clj-eval-fn
-       ;; The foundation's `patch` gate hands this
-       ;; the whole spliced FILE — never a lone replacement —
-       ;; and keep the result only when the repair is confined
-       ;; to the edited lines. Repairing a fragment on its own
-       ;; balanced a partial form into a complete one and wrote
-       ;; code the caller never asked for.
-       :balance-fn repair/fix-delimiters
        :start-repl-fn (fn [env op opts]
                         (repl-start-fn env op opts))}]
      :ext/kind "language"}))

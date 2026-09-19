@@ -30,7 +30,7 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 57 unique, across 3 `deps.edn` modules (root + siblings).
+- **Direct dependency coordinates:** 55 unique, across 3 `deps.edn` modules (root + siblings).
 - **Total direct jar size:** ~37 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
@@ -134,12 +134,10 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 |---|---|---|---|---|
 | `babashka/fs` | `0.5.34` | EPL-1.0 | 35 KB | 3rd-party |
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
-| `borkdude/edamame` | `1.6.42` | EPL-1.0 | 32 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.07.24` | EPL-1.0 | 731 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.9` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
-| `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.172` | Apache-2.0 | 619 KB | Blockether (in-house) |
@@ -208,9 +206,9 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 19 |
-| MIT | 14 |
+| EPL-1.0 | 18 |
 | Apache-2.0 | 13 |
+| MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |

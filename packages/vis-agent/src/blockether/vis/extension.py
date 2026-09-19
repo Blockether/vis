@@ -1838,7 +1838,10 @@ class LanguageSurface:
     - `syntax({"language": ..., "source": ...})` returns a `syntax_result`:
       `language`, `is_clean` and `findings`, each finding with `line`, `col` and
       `kind` (`"unclosed"`, `"unexpected"`, `"missing"` or `"parse"`).
-    - `balance(source)` returns repaired source text, or None to leave it alone.
+    - `balance({"language", "source", "original", "spans"})` judges the whole file
+      one edit would write: `{"ok": True, "content": ..., "notes": [...]}` for a
+      delimiter repair Vis may write in its place, `{"ok": False, "why": ...}` for
+      one you refuse, or None when you found none.
     - `format(options)`, `lint(options)`, `test(options)` and `repl_eval(options)`
       receive the tool's options dict and return a `format_result`, `lint_result`,
       `test_result` or REPL result dict.
@@ -1857,7 +1860,7 @@ class LanguageSurface:
         is_exact_syntax: Whether `syntax` parses the language exactly rather than
             approximating it.
         syntax: Syntax verdict for one source text.
-        balance: Delimiter repair for one source text.
+        balance: Delimiter repair for the whole file one edit would write.
         format: `format_code` handler.
         lint: `lint_code` handler.
         test: `run_tests` handler.

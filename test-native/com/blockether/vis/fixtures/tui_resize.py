@@ -43,7 +43,6 @@ def check_resize(binary, home, gateway, mode=None):
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.environ["TERM"] = "xterm-256color"
-        os.environ.pop("TSLP_NATIVE_PATH", None)
         if mode == "images":
             os.environ["TERM_PROGRAM"] = "kitty"
             os.environ.pop("TMUX", None)

@@ -54,6 +54,9 @@
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
@@ -1238,20 +1241,126 @@
               :throwable t
               :metadata {:extension ext-name :language language :capability (name capability)}})))))
 
+(defn- repl-project-dir
+  "The canonical project directory a REPL call names: its `cwd`, expanded and —
+   when relative — resolved against the workspace root, else the root itself.
+   Resolved ONCE here, so every capability of a surface agrees on WHICH directory
+   a REPL belongs to and the worker never has to guess it."
+  ^String [env opts]
+  (let [root
+        (or (:workspace/root env) (System/getProperty "user.dir"))
+
+        dir
+        (paths/expand-home (str (or (get opts "cwd") "")))
+
+        ^java.io.File f
+        (cond (str/blank? dir) (io/file root)
+              (.isAbsolute (io/file dir)) (io/file dir)
+              :else (io/file root dir))]
+
+    (.getCanonicalPath f)))
+
+(defn- register-repl-resource!
+  "Mirror a REPL a Python surface just started into the session's resources, so
+   `ctx`, the footer and `repl_stop <id>` reach a process the worker owns. Only a
+   live pid registers, and its `stop-fn` asks that same surface to end it."
+  [ext-name env language dir result stop!]
+  (when (and (:session-id env) (= "up" (get result "status")) (get result "pid"))
+    (resources/register! (:session-id env)
+                         {:id (str (or (get result "id") (str "repl:" dir)))
+                          :kind :repl
+                          :label (str language " REPL " (.getName (io/file dir)))
+                          :status :up
+                          :detail {"cwd" dir "cmd" (get result "cmd")}
+                          :pid (get result "pid")
+                          :owner (keyword "ext" (str ext-name))
+                          :language (keyword language)}
+                         {:stop-fn stop!})
+    (notifications/notify! (str "● " language " REPL up — " (.getName (io/file dir)))
+                           :level :success
+                           :ttl-ms 4000)))
+
 (defn- language-repl-adapter
   "REPL lifecycle handler: the callable receives the op (`\"start\"`, `\"status\"`,
-   `\"stop\"` or `\"connect\"`) and that call's options dict."
+   `\"stop\"` or `\"connect\"`) and that call's options, with `cwd` already resolved
+   to the project directory.
+
+   A start also carries this call's `env` delta RESOLVED (`{NAME value}`, nil to
+   unset) and its fingerprint: sources — keychain, dotenv, a command — are the
+   engine's to resolve, and only the child may see a value, so what comes back is
+   names and digests. A live REPL started with a different env is refused, never
+   silently replaced."
   [ext-name ctx language pyfn]
   (fn [env op opts]
-    (try (let [result
-               (plainify
-                 (call-py-ext ext-name env ctx pyfn [(str op) (stringify-deep (or opts {}))]))]
-           (extension/success {:result result}))
-         (catch Throwable t
-           (extension/failure
-             {:result nil
-              :throwable t
-              :metadata {:extension ext-name :language language :capability "repl_start"}})))))
+    (let [op
+          (if (string? op) op "status")
+
+          dir
+          (repl-project-dir env opts)
+
+          call
+          (fn [called-op payload]
+            (plainify
+              (call-py-ext ext-name env ctx pyfn [(str called-op) (stringify-deep payload)])))]
+
+      (try
+        (let [values
+              (when (= "start" op) (process-jail/call-env-values (get opts "env")))
+
+              fingerprint
+              (when (= "start" op) (process-jail/env-fingerprint values))
+
+              payload
+              (cond-> (assoc (or opts {}) "cwd" dir)
+                (= "start" op)
+                (assoc "env"
+                  values "env_fingerprint"
+                  fingerprint))]
+
+          (when (= "start" op)
+            (let [running (call "status" {"cwd" dir})]
+              (when-let [refusal (and (= "up" (get running "status"))
+                                      (process-jail/env-mismatch-refusal (str (or (get running "id")
+                                                                                  dir))
+                                                                         (get running "env")
+                                                                         fingerprint))]
+                (throw (ex-info (:message refusal)
+                                {:type ::repl-env-mismatch
+                                 :language language
+                                 :env (:differing refusal)})))))
+          (let [result (call op payload)]
+            (case op
+              "start"
+              (register-repl-resource! ext-name
+                                       env
+                                       language
+                                       dir
+                                       result
+                                       (fn []
+                                         (call "stop" {"cwd" dir})))
+
+              "stop"
+              (some->> (get result "id")
+                       str
+                       (resources/unregister! (:session-id env)))
+
+              nil)
+            (extension/success {:result result})))
+        (catch Throwable t
+          (extension/failure
+            {:result nil
+             :throwable t
+             :metadata {:extension ext-name :language language :capability "repl_start"}}))))))
+
+(defn- language-repl-eval-adapter
+  "`repl_eval` for a Python surface: a bare code string becomes the options map
+   the capability documents, and `cwd` names the project directory whose REPL
+   evaluates it."
+  [ext-name ctx language pyfn]
+  (let [call (language-call-adapter ext-name ctx :repl-eval-fn language pyfn)]
+    (fn [env payload]
+      (let [opts (if (map? payload) payload {"code" (str payload)})]
+        (call env (assoc opts "cwd" (repl-project-dir env opts)))))))
 
 (defn- language-syntax-adapter
   "Syntax verdict for the write gate. The callable receives
@@ -1265,13 +1374,32 @@
                      (call-py-ext ext-name nil ctx pyfn [(stringify-deep (or request {}))])))))
 
 (defn- language-balance-adapter
-  "Delimiter repair for one spliced file. A repair that is not source text — and
-   a handler that fails — answers nil, so the editors refuse that splice exactly
-   as they do for a language with no repair at all."
+  "Delimiter repair for one spliced file. The callable receives
+   `{'language','source','original','spans','subject'}` — the whole file an edit
+   would write, the text it replaced, and that edit's own line spans — and
+   answers `{'ok': True, 'content': …, 'notes': [...]}` for a repair it accepts,
+   `{'ok': False, 'why': …}` for a repair it refuses to write, or nothing when
+   it found none. The whole policy lives in the pack; this only carries the
+   answer back. A handler that fails answers nil, so the editors refuse that
+   splice exactly as they do for a language with no repair at all."
   [ext-name ctx language pyfn]
-  (fn [source]
-    (try (let [repaired (call-py-ext ext-name nil ctx pyfn [(str source)])]
-           (when (string? repaired) repaired))
+  (fn [request]
+    (try (let [answer
+               (plainify (call-py-ext ext-name nil ctx pyfn [(stringify-deep (or request {}))]))
+
+               content
+               (get answer "content")
+
+               why
+               (get answer "why")]
+
+           (cond (not (map? answer)) nil
+                 (and (get answer "ok") (string? content))
+                 {:ok? true
+                  :content content
+                  :notes (into [] (comp (map str) (remove str/blank?)) (get answer "notes"))}
+                 (util/non-blank-string? why) {:ok? false :why (str/trim why)}
+                 :else nil))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::language-balance-failed
@@ -1369,6 +1497,9 @@
 
                           :balance-fn
                           (language-balance-adapter ext-name ctx language pyfn)
+
+                          :repl-eval-fn
+                          (language-repl-eval-adapter ext-name ctx language pyfn)
 
                           :start-repl-fn
                           (language-repl-adapter ext-name ctx language pyfn)
@@ -1863,8 +1994,10 @@
    entry files are the three language surfaces; `vis_language_surface/` is the
    package they import, and it is NEVER scanned as an entry of its own."
   ["language_surface.py" "language_surface_clojure.py" "language_surface_python.py"
-   "vis_language_surface/__init__.py" "vis_language_surface/clojure.py"
-   "vis_language_surface/data.py" "vis_language_surface/python.py"])
+   "vis_language_surface/__init__.py" "vis_language_surface/balance.py"
+   "vis_language_surface/clojure.py" "vis_language_surface/data.py"
+   "vis_language_surface/parinfer.py" "vis_language_surface/python.py"
+   "vis_language_surface/repl.py"])
 
 (defn ^:no-doc materialize-bundled-extensions!
   "Write the bundled extension sources into `dir` and answer `dir`, or nil when

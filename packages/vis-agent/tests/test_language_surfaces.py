@@ -6,6 +6,8 @@
 wrong verdict is caught here rather than in the engine that loads it.
 """
 
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +27,9 @@ from vis_language_surface import (  # noqa: E402  (the path above makes it impor
     source_of,
     verdict,
 )
+from vis_language_surface import balance as policy  # noqa: E402
 from vis_language_surface import python as python_surface  # noqa: E402
+from vis_language_surface import repl as python_repl  # noqa: E402
 
 
 def located(result, language):
@@ -227,3 +231,243 @@ def test_broken_toml_carries_the_parser_position(source, line):
 
 def test_toml_is_available_wherever_the_sandbox_runs():
     assert data.HAS_TOML is True
+
+
+# The delimiter repair the write gate asks for when an edit would not parse. The engine
+# carries none of this: it hands the pack the whole file the edit would write, the file it
+# replaced and the lines that edit touched, and writes only what the pack accepts.
+
+FIXTURE = "(ns reb)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
+
+
+def repair_of(source, original=FIXTURE, spans=((3, 3),)):
+    return clojure.balance(
+        {
+            "language": "clojure",
+            "source": source,
+            "original": original,
+            "spans": [list(span) for span in spans],
+        }
+    )
+
+
+def stubbed(candidate, source, original=FIXTURE, spans=((3, 3),)):
+    # The verdict for a repair a balancer could answer with, whatever parinfer makes of it.
+    return policy.rebalance(
+        {
+            "balancer": lambda _source: candidate,
+            "parses_clean": clojure.parses_clean,
+            "source": source,
+            "original": original,
+            "spans": [list(span) for span in spans],
+        }
+    )
+
+
+def test_balance_answers_nothing_for_a_file_whose_delimiters_balance():
+    assert repair_of(FIXTURE) is None
+
+
+def test_balance_writes_an_in_bounds_repair_and_names_the_line():
+    answer = repair_of("(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2)\n")
+    assert answer["ok"] is True
+    assert answer["content"] == "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
+    assert answer["notes"] == ["line 3 added `)` → `(defn ok [] (inc 1))`"]
+
+
+def test_balance_names_an_unterminated_string_no_repair_can_close():
+    answer = repair_of('(ns reb)\n\n(defn ok [] "1)\n\n(defn two [] 2)\n')
+    assert answer["ok"] is False
+    assert "line 3 opens a string that is never closed" in answer["why"]
+
+
+def test_balance_restores_an_opener_this_edit_lost():
+    # A replacement that dropped its `(` is character for character one `)` too many; only
+    # the line it replaced tells the two apart, and deleting a closer is never the answer.
+    answer = repair_of(
+        "(ns reb)\n\ndefn ok [] (inc 1))\n",
+        original="(ns reb)\n\n(defn ok [] (inc 1))\n",
+    )
+    assert answer["ok"] is True
+    assert answer["content"] == "(ns reb)\n\n(defn ok [] (inc 1))\n"
+    assert answer["notes"] == ["line 3 added `(` → `(defn ok [] (inc 1))`"]
+
+
+def test_balance_seats_a_closer_where_the_replaced_line_had_it():
+    # Indentation alone would put the closer at the end of the line and regroup the
+    # arguments between; the text this edit replaced says where it belongs.
+    answer = repair_of(
+        '(ns reb)\n\n(cond (map? x (str "m" (count x)))\n',
+        original='(ns reb)\n\n(cond (map? x) (str "m" (count x)))\n',
+    )
+    assert answer["ok"] is True
+    assert answer["content"] == '(ns reb)\n\n(cond (map? x) (str "m" (count x)))\n'
+
+
+def test_balance_repairs_a_deletion_on_the_seam_it_left():
+    # A deletion writes no line at all, so the repair belongs on the seam the removed
+    # lines left behind, not on a line the new content no longer has.
+    answer = repair_of(
+        "(ns reb)\n\n(defn ok []\n",
+        original="(ns reb)\n\n(defn ok []\n  1)\n",
+    )
+    assert answer["ok"] is True
+    assert answer["content"] == "(ns reb)\n\n(defn ok [])\n"
+    assert answer["notes"] == ["line 3 added `)` → `(defn ok [])`"]
+
+
+def test_balance_refuses_a_repair_that_retypes_a_delimiter_this_edit_wrote():
+    # `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` comes back as a call that swallowed its
+    # argument: it parses, it is one line, and only the ORDER of the delimiters refuses it.
+    answer = stubbed(
+        "(ns reb)\n\n(defn ok [] (foo (1 2 3)))\n\n(defn two [] 2)\n",
+        "(ns reb)\n\n(defn ok [] (foo (1 2] 3))\n\n(defn two [] 2)\n",
+    )
+    assert answer["ok"] is False
+    assert "would move or retype a delimiter this edit wrote" in answer["why"]
+
+
+def test_balance_refuses_a_repair_that_deletes_a_closer_this_edit_wrote():
+    answer = stubbed(
+        "(ns reb)\n\n(defn ok [] inc 1)\n\n(defn two [] 2)\n",
+        "(ns reb)\n\n(defn ok [] inc 1))\n\n(defn two [] 2)\n",
+    )
+    assert answer["ok"] is False
+    assert "would delete `)` this edit wrote" in answer["why"]
+    assert "closes more than it opens, or an opener was lost" in answer["why"]
+
+
+def test_balance_refuses_a_repair_that_rewrites_code_instead_of_delimiters():
+    answer = stubbed(
+        "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n",
+        "(ns reb)\n\n(defn ok [] (inc 1)))\n\n(defn two [] 2)\n",
+    )
+    assert answer["ok"] is False
+    assert answer["why"] == "the delimiter repair would rewrite code, not delimiters"
+
+
+def test_balance_closes_the_edits_own_line_when_a_repair_would_swallow_another_form():
+    # The balancer's own answer closes the LAST form in the file, which this edit never
+    # touched; what this edit omitted goes back on the line it wrote instead.
+    answer = stubbed(
+        "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2))\n",
+        "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2)\n",
+    )
+    assert answer["ok"] is True
+    assert answer["content"] == "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
+    assert answer["notes"] == ["line 3 added `)` → `(defn ok [] (inc 1))`"]
+
+
+# The managed Python REPL — a real interpreter child, started and stopped here.
+
+
+@pytest.fixture
+def repl_dir(tmp_path):
+    """A project directory whose REPL is stopped however the test ends."""
+    options = {"cwd": str(tmp_path)}
+    yield options
+    python_repl.repl_start("stop", options)
+
+
+def test_repl_status_is_down_before_anything_started_it(repl_dir):
+    answer = python_repl.repl_start("status", repl_dir)
+    assert answer["result"] == "status"
+    assert answer["status"] == "down"
+    assert answer["id"] == "pyrepl:" + os.path.realpath(repl_dir["cwd"])
+    assert "pid" not in answer
+
+
+def test_repl_keeps_globals_between_evaluations(repl_dir):
+    started = python_repl.repl_start("start", repl_dir)
+    assert started["result"] == "started"
+    assert started["status"] == "up"
+    assert started["pid"] > 0
+    assert started["cmd"][-1] == "<vis python driver>"
+
+    python_repl.repl_eval({**repl_dir, "code": "seen = 41"})
+    answer = python_repl.repl_eval({**repl_dir, "code": "seen + 1"})
+    assert answer["ok"] is True
+    assert answer["value"] == "42"
+    assert answer["data"] == 42
+    assert answer["type"] == "int"
+    assert answer["code"] == "seen + 1"
+
+
+def test_repl_reports_output_and_the_traceback_of_a_failure(repl_dir):
+    python_repl.repl_start("start", repl_dir)
+    printed = python_repl.repl_eval({**repl_dir, "code": "print('hi')"})
+    assert printed["ok"] is True
+    assert printed["out"] == "hi\n"
+
+    broken = python_repl.repl_eval({**repl_dir, "code": "1 / 0"})
+    assert broken["ok"] is False
+    assert "ZeroDivisionError" in broken["exc"]
+
+
+def test_repl_eval_without_a_live_repl_says_how_to_start_one(repl_dir):
+    with pytest.raises(python_repl.ReplError) as refused:
+        python_repl.repl_eval({**repl_dir, "code": "1"})
+    assert 'repl_start("python"' in str(refused.value)
+
+
+def test_repl_eval_needs_code(repl_dir):
+    with pytest.raises(ValueError):
+        python_repl.repl_eval({**repl_dir})
+
+
+def test_repl_start_reuses_the_live_interpreter(repl_dir):
+    first = python_repl.repl_start("start", repl_dir)
+    again = python_repl.repl_start("start", repl_dir)
+    assert again["result"] == "already-running"
+    assert again["pid"] == first["pid"]
+
+
+def test_repl_stop_ends_the_process_and_is_no_op_safe(repl_dir):
+    python_repl.repl_start("start", repl_dir)
+    stopped = python_repl.repl_start("stop", repl_dir)
+    assert stopped["result"] == "stopped"
+    assert stopped["status"] == "down"
+    assert python_repl.repl_start("stop", repl_dir)["result"] == "not-managed"
+
+
+def test_repl_start_takes_the_env_delta_and_shows_only_its_fingerprint(repl_dir):
+    started = python_repl.repl_start(
+        "start",
+        {
+            **repl_dir,
+            "env": {"VIS_REPL_TOKEN": "s3cret"},
+            "env_fingerprint": {"VIS_REPL_TOKEN": "abc123def456"},
+        },
+    )
+    assert started["env"] == {"VIS_REPL_TOKEN": "abc123def456"}
+    assert "s3cret" not in json.dumps(started)
+
+    seen = python_repl.repl_eval(
+        {**repl_dir, "code": "import os; os.environ['VIS_REPL_TOKEN']"}
+    )
+    assert seen["data"] == "s3cret"
+
+
+def test_repl_lifecycle_refuses_an_unknown_op(repl_dir):
+    with pytest.raises(ValueError) as refused:
+        python_repl.repl_start("connect", repl_dir)
+    assert "repl_connect" in str(refused.value)
+
+
+def test_detect_command_prefers_a_project_virtualenv(tmp_path):
+    interpreter = tmp_path / ".venv" / "bin"
+    interpreter.mkdir(parents=True)
+    (interpreter / "python").write_text("")
+    assert python_repl.detect_command(str(tmp_path)) == [str(interpreter / "python")]
+
+
+def test_uv_detection_reads_toml_tables_not_substrings(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndescription = "run it with [tool.uv]"\n\n[tool.uvicorn]\nport = 80\n'
+    )
+    assert python_repl._is_uv_project(tmp_path) is False
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.uv.sources]\nvis = { path = "." }\n'
+    )
+    assert python_repl._is_uv_project(tmp_path) is True

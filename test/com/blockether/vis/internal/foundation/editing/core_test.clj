@@ -1698,184 +1698,84 @@
 
 (defdescribe
   patch-delimiter-repair-test
-  "A language pack's delimiter repair, applied to the WHOLE file the edit would have
-   written and kept only when it stays on that edit's own lines. The balancer is
-   stubbed to an exact candidate here: what is under test is the editors' DECISION,
-   not any pack's idea of a repair."
+  "The gate's delimiter-repair HOOK. The repair itself belongs to the language pack —
+   `language-surface-clojure` carries it, in Python, together with the whole policy of
+   which repairs may be written — so what these tests pin is the boundary: the request
+   the gate asks with, and what it does with each answer a pack can give."
   ;; Regression, session 621ba390: an unbalanced replacement used to be repaired as a FRAGMENT and
   ;; the edit retried, so a partial form closed itself, overwrote a line the caller never
   ;; meant to touch, and the call reported only "(delimiters repaired)".
   (let [fixture
         "(ns reb)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
 
+        repaired
+        "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
+
         cat-tool
         (comp :result (private-fn "cat-tool"))
 
-        with-balancer
-        (fn [candidate f]
-          (with-syntax-surface #(with-redefs-fn {(private-var "language-balancer")
-                                                 (constantly (constantly candidate))}
-                                  f)))
+        asked
+        (atom nil)
 
-        patch-line-3-of
-        (fn [name source candidate replacement]
+        with-repair
+        (fn [answer f]
+          (let [registered
+                extension/registered-extensions
+
+                surface
+                {:ext/name "fixture-language-repair"
+                 :ext/language-tools [{:language "clojure"
+                                       :syntax-fn delimiter-verdict
+                                       :balance-fn (fn [request]
+                                                     (reset! asked request)
+                                                     answer)}]}]
+
+            ;; FIRST registration answers, so the fixture must outrank a bundled pack
+            ;; another namespace left loaded.
+            (with-redefs-fn {#'extension/registered-extensions (fn []
+                                                                 (cons surface (registered)))}
+              f)))
+
+        patch-line-3
+        (fn [name answer replacement]
           (let [rel
-                (write-temp! name source)
+                (write-temp! name fixture)
 
                 a3
                 (anchor-at (cat-tool rel) 3)]
 
-            [(try (with-balancer candidate #(:result (patch-span rel a3 a3 replacement)))
-                  (catch clojure.lang.ExceptionInfo e (ex-message e))) (slurp rel)]))
+            [(try (with-repair answer #(:result (patch-span rel a3 a3 replacement)))
+                  (catch clojure.lang.ExceptionInfo e (ex-message e))) (slurp rel)]))]
 
-        patch-line-3
-        (fn [candidate replacement]
-          (patch-line-3-of "patch/rebalance.clj" fixture candidate replacement))]
-
-    (it "writes an in-bounds repair and names the character and the line"
-        (let [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
+    (it "asks the pack about the whole file the edit would write, and writes what it accepts"
+        (let [[out written] (patch-line-3 "patch/rebalance.clj"
+                                          {:ok? true
+                                           :content repaired
+                                           :notes ["line 3 added `)` → `(defn ok [] (inc 1))`"]}
                                           "(defn ok [] (inc 1)")]
           (expect
             (string/includes?
               out
               "parse: clean (delimiters repaired: line 3 added `)` → `(defn ok [] (inc 1))`)"))
-          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
-    ;; A dropped quote is not a missing bracket: a caller told only that no repair was
-    ;; found goes hunting for a paren that is not missing while the quote is on line 3.
-    (it "names an unterminated string instead of a delimiter that is not missing"
-        (let [[out written] (patch-line-3 nil "(defn ok [] \"1)")]
-          (expect (string/includes? out "line 3 opens a string that is never closed"))
+          (expect (= repaired written))
+          ;; the pack is asked about the whole spliced FILE, never the fragment: the file
+          ;; this edit replaced and the lines it wrote are what can confine a repair
+          (expect (= "clojure" (:language @asked)))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2)\n" (:source @asked)))
+          (expect (= fixture (:original @asked)))
+          (expect (= [[3 3]] (:spans @asked)))))
+    (it "refuses the edit and reports the reason the pack gave for its own repair"
+        (let [[out written] (patch-line-3 "patch/rebalance-why.clj"
+                                          {:ok? false
+                                           :why "line 3 opens a string that is never closed"}
+                                          "(defn ok [] \"1)")]
+          (expect (string/includes? out "repair: line 3 opens a string that is never closed"))
           (expect (= fixture written))))
-    ;; Regression, session 2224a346: for a missing closer the pack's repair landed OUTSIDE the
-    ;; edit — it closed the last form in the file — so the whole edit was refused and the same
-    ;; block was re-sent with one more `)` an iteration later. The out-of-bounds candidate is
-    ;; still never written; the closer this edit omitted now goes back on the line it wrote.
-    (it "closes the edit's own line when the repair would swallow a form it never wrote"
-        (let [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2))\n"
-                                          "(defn ok [] (inc 1)")]
-          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
-          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
-    (it "closes the edit's own line when the repair would rewrite code instead of delimiters"
-        (let [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n"
-                                          "(defn ok [] (inc 1)")]
-          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
-          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
-    ;; ClojureScript and `.cljc` ride the SAME grammar and the same pack as `.clj`, and the gate
-    ;; resolves the language from the EXTENSION alone: one that answered no CODE language would
-    ;; skip the gate entirely and write the broken file with no parse clause at all.
-    (it "repairs a ClojureScript or `.cljc` file exactly like a `.clj` one"
-        (doseq [ext ["cljs" "cljc"]]
-          (let [source "(ns reb)\n\n(defn ok [] #js {:n 1})\n\n(defn two [] #?(:cljs 2 :clj 2))\n"
-                [out written] (patch-line-3-of
-                                (str "patch/rebalance-" ext "." ext)
-                                source
-                                ;; the pack's candidate rewrites code, so the fallback closes the
-                                ;; edit's own line — the decision a `.clj` file gets
-                                (string/replace source "#js {:n 1}" "#js {:n (dec 1)}")
-                                "(defn ok [] #js {:n (inc 1)}")]
-
-            (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
-            (expect (= (string/replace source "#js {:n 1}" "#js {:n (inc 1)}") written)))))
-    ;; One closer too many is the shape nothing may answer: it is the same string as a LOST
-    ;; OPENER, so no candidate is built for it and the pack's own repair is judged on its merits
-    ;; alone — the caller is told what is wrong with it and the file stays as it was.
-    (it "refuses a repair that rewrites code, with no candidate left to fall back on"
-        (let [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n"
-                                          "(defn ok [] (inc 1)))")]
-          (expect (string/includes? out "would rewrite code, not delimiters"))
-          (expect (= fixture written))))
-    (it "keeps the plain refusal for a language whose pack publishes no repair"
-        (let [rel
-              (write-temp! "patch/rebalance-none.clj" fixture)
-
-              a3
-              (anchor-at (cat-tool rel) 3)
-
-              out
-              (with-syntax-surface
-                #(with-redefs-fn {(private-var "language-balancer") (constantly nil)}
-                   (fn []
-                     (try (patch-span rel a3 a3 "(defn ok [] (inc 1)")
-                          (catch clojure.lang.ExceptionInfo e (ex-message e))))))]
-
+    (it "keeps the plain refusal when the pack answers no repair at all"
+        (let [[out written] (patch-line-3 "patch/rebalance-none.clj" nil "(defn ok [] (inc 1)")]
           (expect (string/includes? out "would not parse"))
           (expect (not (string/includes? out "delimiter repair")))
-          (expect (= fixture (slurp rel)))))
-    ;; Regression, session 621ba390: `code` that is not a complete form used to be balanced
-    ;; ON ITS OWN and spliced. Over a `match`, which addresses a region in the MIDDLE of a
-    ;; form, that completed `[{:keys [a b]}` into a whole vector and wrote it over the
-    ;; binding it landed on — the file parsed and the caller was told only that a delimiter
-    ;; was added. There is no would-be content here for a repair to be confined to, so
-    ;; there is no repair: the engine's refusal NAMES the unclosed delimiter instead.
-    ;; Regression: a `[` the caller mistyped as `(` came back as a CALL that had swallowed
-    ;; the argument after it — `(foo [1 2] 3)` written as `(foo (1 2 3))`. It parses, it is
-    ;; one line, its skeleton is identical and only delimiters moved, so nothing but the
-    ;; ORDER of the caller's own delimiters could refuse it.
-    (it "refuses a repair that retypes a delimiter instead of adding one"
-        (let [[out written] (patch-line-3
-                              "(ns reb)\n\n(defn ok [] (foo (1 2 3)))\n\n(defn two [] 2)\n"
-                              "(defn ok [] (foo (1 2] 3))")]
-          (expect (string/includes? out "would move or retype a delimiter this edit wrote"))
-          (expect (= fixture written))))
-    ;; Regression: a replacement that lost its OPENING paren carries a surplus closer, and
-    ;; dropping that closer wrote `-> s str/trim` as loose symbols — the same silent
-    ;; rewrite as the fragment repair, reached from the other side. The two are one string
-    ;; to a balancer, so the honest `)` too many is refused with them.
-    (it "refuses a repair that would delete a delimiter the replacement wrote"
-        (let [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] inc 1)\n\n(defn two [] 2)\n"
-                                          "(defn ok [] inc 1))")]
-          (expect (string/includes? out "would delete `)` this edit wrote"))
-          (expect (string/includes? out "it closes more than it opens, or an opener was lost"))
-          (expect (= fixture written))))
-    ;; Regression: a deletion writes NO line, and the span named the line the deleted text
-    ;; used to occupy — a line the new content no longer has — so the repair of a delete
-    ;; always landed "outside the lines this call edited" and every such edit was refused.
-    (it "repairs a deletion on the seam it left, not on the line it removed"
-        (let [rel
-              (write-temp! "patch/rebalance-delete.clj" "(ns reb)\n\n(defn ok []\n  1)\n")
-
-              a4
-              (anchor-at (cat-tool rel) 4)
-
-              out
-              (with-balancer "(ns reb)\n\n(defn ok [])\n" #(:result (patch-span rel a4 a4 "")))]
-
-          (expect (string/includes? out "delimiters repaired: line 3 added `)` → `(defn ok [])`"))
-          (expect (= "(ns reb)\n\n(defn ok [])\n" (slurp rel)))))
-    ;; Regression, session 621ba390 (the other half): a repair had only the caller's indentation to
-    ;; go on, so a closer omitted INSIDE a line came back at that line's END and regrouped the
-    ;; arguments between — `(map? x) (str …)` written as `(map? x (str …))` parses, and was written.
-    (it "seats a closer where the text this edit replaced had it, not at the end of the line"
-        (let [rel
-              (write-temp! "patch/rebalance-seat.clj"
-                           "(ns reb)\n\n(cond (map? x) (str \"m\" (count x)))\n")
-
-              a3
-              (anchor-at (cat-tool rel) 3)
-
-              out
-              (with-balancer "(ns reb)\n\n(cond (map? x (str \"m\" (count x))))\n"
-                             #(:result
-                                (patch-span rel a3 a3 "(cond (map? x (str \"m\" (count x)))")))]
-
-          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
-          (expect (= "(ns reb)\n\n(cond (map? x) (str \"m\" (count x)))\n" (slurp rel)))))
-    ;; Regression: a replacement that lost its OPENING paren is the same string as one closer too
-    ;; many, and dropping that closer wrote `defn`, `ok`, `[]` and `(inc 1)` as four loose forms.
-    ;; Refusing it is right when the replacement is all there is — the line it REPLACED settles it.
-    (it "restores an opener this edit lost instead of deleting the closer it kept"
-        (let [rel
-              (write-temp! "patch/rebalance-opener.clj" "(ns reb)\n\n(defn ok [] (inc 1))\n")
-
-              a3
-              (anchor-at (cat-tool rel) 3)
-
-              out
-              (with-balancer "(ns reb)\n\ndefn ok [] (inc 1)\n"
-                             #(:result (patch-span rel a3 a3 "defn ok [] (inc 1))")))]
-
-          (expect (string/includes? out "delimiters repaired: line 3 added `(`"))
-          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n" (slurp rel)))))))
+          (expect (= fixture written))))))
 
 (defdescribe
   patch-newline-semantics-test

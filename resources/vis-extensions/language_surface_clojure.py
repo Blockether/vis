@@ -25,6 +25,7 @@ vis.register_extension(
                 extensions=["clj", "cljs", "cljc", "cljd", "cljr", "bb", "edn"],
                 is_exact_syntax=False,
                 syntax=clojure_surface.syntax,
+                balance=clojure_surface.balance,
             )
         ],
     )

@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.language.python.core
-  "A managed Python REPL exposed through the generic
-   language facade (repl_start / repl_status / repl_stop / repl_eval). Activates
-   only when the workspace looks like a Python project. The REPL is a subprocess
-   on a project-aware interpreter (uv / poetry / .venv / python3), registered as
-   a session resource so it shows in ctx + the footer and is stoppable by id."
+  "Python formatting, linting and tests behind the generic language facade
+   (format_code / lint_code / run_tests). Activates only when the workspace
+   looks like a Python project. The REPL is NOT here: `repl_start` / `repl_eval`
+   for Python are served by the bundled `language-surface-python` extension,
+   whose worker owns the interpreter process."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.xml :as xml]
@@ -11,7 +11,6 @@
             [com.blockether.vis.contract.test-runner :as contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.language.python.interpreter :as interpreter]
-            [com.blockether.vis.internal.language.python.repl-manager :as repl]
             [com.blockether.vis.internal.language.python.ruff :as pyruff]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
@@ -49,123 +48,6 @@
     (.getCanonicalPath (cond (= "" d) (io/file root)
                              (.isAbsolute (io/file d)) (io/file d)
                              :else (io/file root d)))))
-
-(defn- repl-resource-id
-  [dir id]
-  (let [id (some-> id
-                   str
-                   str/trim)]
-    (if (seq id) id (str "pyrepl:" dir))))
-
-(defn register-repl-resource!
-  "Mirror a managed Python REPL into the session resource registry (ctx + footer
-   + stop by id; no restart — stop, then start). No-op without a session or a live pid."
-  [session dir result & [id]]
-  ;; `result` is repl/start!'s STRING-keyed lifecycle map. The resource map is
-  ;; the CENTRAL resources.clj DATA shape (keyword keys — ->data stringifies its
-  ;; own keys + kind/status/owner/language enums), but `:detail` is passed
-  ;; THROUGH verbatim, so it must already be STRING-keyed for the boundary.
-  (when (and session (= "up" (get result "status")) (get result "pid"))
-    (vis/register-resource! session
-                            {:id (repl-resource-id dir id)
-                             :kind :repl
-                             :label (str "python REPL " (.getName (io/file dir)))
-                             :status (or (get result "status") :up)
-                             :detail {"cwd" dir "cmd" (get result "cmd")}
-                             :pid (get result "pid")
-                             :owner :ext/language-python
-                             :language :python}
-                            {:stop-fn (fn []
-                                        (repl/stop! session dir))})
-    (vis/notify! (str "● python REPL up — " (.getName (io/file dir)))
-                 :level :success
-                 :ttl-ms 4000)))
-
-;; Language-facade handlers
-
-(defn py-start-repl-fn
-  "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
-   `repl_stop` verbs reach a pack as a positional `op` STRING plus opts
-   `{dir, id, env}` — there is NO restart (stop, then start), and a `repl_start`
-   for a REPL already running in THIS session REUSES it, refusing only when this
-   call named a different `env`. Other sessions have independent interpreters.
-   `op` arrives as a STRING from the model — dispatch without keyword minting."
-  [env op opts]
-  (let [root
-        (env-root env)
-
-        ;; A MISSING op must never spawn: every pack defaults to "status", the one
-        ;; step with no side effect.
-        op
-        (if (string? op) op "status")
-
-        id
-        (or (get opts "id") (get opts "repl_id"))
-
-        dir
-        (resolve-dir root (get opts "cwd"))]
-
-    (case op
-      "status"
-      (extension/success {:result (assoc (repl/status (:session-id env) dir)
-                                    "id" (repl-resource-id dir id))})
-
-      "stop"
-      (let [r (assoc (repl/stop! (:session-id env) dir) "id" (repl-resource-id dir id))]
-        (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-        (extension/success {:result r}))
-
-      "start"
-      (let [r (assoc (repl/start! (:session-id env)
-                                  dir
-                                  (assoc (or opts {}) "id" (repl-resource-id dir id)))
-                "id" (repl-resource-id dir id))]
-        (register-repl-resource! (:session-id env) dir r id)
-        (extension/success {:result r}))
-
-      (throw (ex-info (str "python REPL lifecycle: unknown op " (pr-str op)
-                           " — the verbs are repl_start / repl_status / repl_stop; there is no"
-                           " repl_connect for Python, Vis owns the interpreter process.")
-                      {:type :py/bad-args :got op})))))
-
-(defn py-repl-eval-fn
-  "repl_eval handler for Python. Accepts a code string or
-   `{code, dir, timeout_ms}`. Requires this session to own a running REPL for the
-   canonical dir, then evaluates with globals persistent across calls."
-  [env arg]
-  (let [root
-        (env-root env)
-
-        code
-        (cond (string? arg) arg
-              (map? arg) (str (or (get arg "code") (get arg "source")))
-              :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
-                                    {:type :py/bad-args :got arg})))
-
-        dir
-        (resolve-dir root (and (map? arg) (get arg "cwd")))
-
-        tmo
-        (and (map? arg) (get arg "timeout_ms"))]
-
-    (when-not (= "up" (get (repl/status (:session-id env) dir) "status"))
-      ;; Home-homogenized: the message reads `~/vis`, matching the REPL ids in
-      ;; session["resources"] — and `resolve-dir` expands `~` back, so the cwd
-      ;; shown can be pasted straight into the retry call.
-      (let [shown (paths/abbreviate-home (str dir))]
-        (throw (ex-info (str "Python REPL is not up for "
-                             shown
-                             "; call repl_start(\"python\", {\"cwd\": "
-                             (pr-str shown)
-                             "}) first")
-                        {:type :py/no-repl :session-id (:session-id env) :dir dir}))))
-    ;; Carry the evaluated code back on the result (string key) so the shared
-    ;; repl_eval op-card can surface the FORM section — the render fn sees only
-    ;; the result map, not the call args.
-    (let [res (repl/eval! (:session-id env) dir code tmo)]
-      (extension/success {:result (cond-> res
-                                    (map? res)
-                                    (assoc "code" code))}))))
 
 ;; run_tests
 
@@ -598,27 +480,24 @@
 
 ;; Manifest
 
-;; No :ext/prompt-fn — the foundation advertises repl_eval / repl through
-;; the AUTO capability matrix; repl_eval's own result ({ok,out,value,data,type,
-;; exc}; opaque values carry __type__/__attrs__/__opaque__) is self-documenting.
+;; No :ext/prompt-fn — the foundation advertises this pack's verbs through the
+;; AUTO capability matrix, and every result document it answers with is
+;; self-documenting.
 
 (def vis-extension
   (vis/extension
     {:ext/name "language-python"
      :ext/description
-     "Python pack: in-process Ruff `format_code`/`lint_code` and managed uv/Poetry/venv/python3 `repl_start`/`repl_eval`; active in Python workspaces."
+     "Python pack: in-process Ruff `format_code`/`lint_code` and uv/Poetry/venv/python3 `run_tests`; active in Python workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/activation-fn activation-fn
      :ext/language-tools [{:language "python"
-                           :repl-eval-fn py-repl-eval-fn
                            :format-fn pyruff/py-format-fn
                            :lint-fn pyruff/py-lint-fn
-                           :test-fn py-test-fn
-                           :start-repl-fn (fn [env op opts]
-                                            (py-start-repl-fn env op opts))}]
+                           :test-fn py-test-fn}]
      :ext/kind "language"}))
 
 (defn register! [] (vis/register-extension! vis-extension))
