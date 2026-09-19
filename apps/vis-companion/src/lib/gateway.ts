@@ -72,6 +72,7 @@ import type {
   McpTestResult,
   BrowseEntry,
   BrowseListing,
+  SessionAlert,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import { withSavedAttachment } from './artifacts';
@@ -3737,13 +3738,22 @@ export class GatewayClient {
   }
 
   /**
-   * The session's NEWEST settled turn on its own, past every transcript cache: a system alert
-   * says what vis said without disturbing the window a screen is paging, and one row is all a
-   * banner can hold (`lib/desktop-notify.ts`).
+   * The banner this session would raise right now, worded by the GATEWAY: the same two lines
+   * `gateway/push.clj` sends a phone. The desktop app has no push channel and raises its own
+   * alerts (`lib/desktop-notify.ts`), so it reads what they say from here rather than keeping
+   * a second wording of its own.
    */
-  async newestTurn(sid: string, signal?: AbortSignal): Promise<TranscriptTurn | null> {
-    const page = await this.fetchTranscriptPage(sid, { limit: 1 }, signal);
-    return page.turns[page.turns.length - 1] ?? null;
+  sessionAlert(
+    sid: string,
+    reason: 'answer' | 'question',
+    signal?: AbortSignal,
+  ): Promise<SessionAlert> {
+    return this.request<SessionAlert>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/alert?reason=${reason}`,
+      undefined,
+      signal,
+    );
   }
 
   /**
