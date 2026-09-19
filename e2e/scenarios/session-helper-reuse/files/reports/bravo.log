@@ -1,0 +1,40 @@
+# request log for index workers, bravo.log
+
+2026-02-10T08:00:00Z level=info op=index ms=4
+2026-02-10T08:03:07Z level=info op=index ms=9
+2026-02-10T08:06:14Z level=info op=index ms=20
+2026-02-10T08:09:21Z level=info op=index ms=24
+2026-02-10T08:12:28Z level=info op=index ms=12
+2026-02-10T08:15:35Z level=info op=index ms=4
+2026-02-10T08:18:42Z level=info op=index ms=27
+2026-02-10T08:21:49Z level=warn op=index ms=24
+2026-02-10T08:24:56Z level=info op=index ms=11
+2026-02-10T08:27:03Z level=info op=index ms=12
+2026-02-10T08:30:10Z level=info op=index ms=16
+2026-02-10T08:33:17Z level=error op=index ms=11
+2026-02-10T08:36:24Z level=info op=index ms=18
+2026-02-10T08:39:31Z level=info op=index ms=13
+2026-02-10T08:42:38Z level=info op=index ms=29
+2026-02-10T08:45:45Z level=info op=index ms=17
+2026-02-10T08:48:52Z level=info op=index ms=15
+2026-02-10T08:51:59Z level=info op=index ms=7
+
+# worker restarted
+2026-02-10T08:54:06Z level=error op=index ms=11
+2026-02-10T08:57:13Z level=info op=index ms=8
+2026-02-10T09:00:20Z level=error op=index ms=25
+2026-02-10T09:03:27Z level=info op=index ms=6
+2026-02-10T09:06:34Z level=info op=index ms=20
+2026-02-10T09:09:41Z level=info op=index ms=32
+2026-02-10T09:12:48Z level=info op=index ms=4
+2026-02-10T09:15:55Z level=error op=index ms=19
+2026-02-10T09:18:02Z level=info op=index ms=10
+2026-02-10T09:21:09Z level=info op=index ms=18
+2026-02-10T09:24:16Z level=info op=index ms=18
+2026-02-10T09:27:23Z level=error op=index ms=14
+2026-02-10T09:30:30Z level=info op=index ms=15
+2026-02-10T09:33:37Z level=info op=index ms=28
+2026-02-10T09:36:44Z level=info op=index ms=29
+2026-02-10T09:39:51Z level=info op=index ms=26
+2026-02-10T09:42:58Z level=info op=index ms=4
+

@@ -22,9 +22,9 @@ repl_eval); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
 cache-metric arithmetic. Peak/cumulative stdout guards count characters, not tokens.
-Exact JSON answers, JSONL fixture journals, operation sequences and discovery audits
-are described in README.md. Every run reports provider token totals separately from
-output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
+Exact JSON answers, JSONL fixture journals, operation sequences, helper reuse and
+discovery audits are described in README.md. Every run reports provider token totals
+separately from output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
 `workspace_filesystem` registers fixture directories; `files_from` reuses sibling input.
 
 Each scenario runs in its own throwaway git repo through a source-owned gateway on an
@@ -283,6 +283,60 @@ def structured_failures(sc, work, answer, activities):
     for operation in sorted({row["operation"] for row in activities} & forbidden):
         failures.append(f"forbidden tool {operation!r} was used")
     return failures
+
+
+def helper_reuse_evidence(forms, want):
+    """Prove a helper was defined once and then CALLED by a later sandbox form.
+
+    Saved definitions persist, so reuse means a later top-level form calls a
+    function an earlier form defined. The audit is name-agnostic: retyping the
+    same definition instead of calling it fails, and so does a helper that no
+    later form ever uses.
+    """
+    if want is True:
+        wanted = 1
+    elif type(want) is int and want > 0:
+        wanted = want
+    else:
+        return {}, ["want_helper_reuse must be true or a positive integer"]
+    defined = {}
+    sources = collections.defaultdict(set)
+    reuse = collections.defaultdict(set)
+    retyped = set()
+    for index, form in enumerate(forms):
+        try:
+            tree = ast.parse(form)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defined.setdefault(node.name, index)
+                source = ast.unparse(node)
+                if source in sources[node.name]:
+                    retyped.add(node.name)
+                sources[node.name].add(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                first = defined.get(node.func.id)
+                if first is not None and first < index:
+                    reuse[node.func.id].add(index)
+    metrics = {
+        "helpers_defined": len(defined),
+        "reused_helpers": len(reuse),
+        "reuse_forms": max((len(seen) for seen in reuse.values()), default=0),
+        "retyped_helpers": len(retyped),
+    }
+    failures = [
+        f"helper {name!r} was retyped in a later form instead of called"
+        for name in sorted(retyped)
+    ]
+    if not defined:
+        failures.append("no sandbox form defined a helper to reuse")
+    elif metrics["reuse_forms"] < wanted:
+        failures.append(
+            f"a helper was reused in {metrics['reuse_forms']} later form(s), want {wanted}"
+        )
+    return metrics, failures
 
 
 def discovery_evidence(forms, activities, rules):
@@ -1000,6 +1054,12 @@ def run_one(job):
                 {**sc["discovery"], "forbid_tools": sc.get("forbid_tools", [])},
             )
             detail.extend(discovery_failures)
+        helper_reuse = {}
+        if "want_helper_reuse" in sc:
+            helper_reuse, helper_failures = helper_reuse_evidence(
+                forms, sc["want_helper_reuse"]
+            )
+            detail.extend(helper_failures)
         if detail:
             correct = False
         total_limit = sc.get("max_total_output_chars")
@@ -1182,6 +1242,11 @@ def run_one(job):
                 "discovery="
                 + ", ".join(f"{key}:{value}" for key, value in discovery.items())
             )
+        if helper_reuse:
+            evidence.append(
+                "helper_reuse="
+                + ", ".join(f"{key}:{value}" for key, value in helper_reuse.items())
+            )
         if REASONING_EFFORT:
             evidence.append(f"reasoning-effort={REASONING_EFFORT}")
         if sc.get("want_requested_route") or REASONING_EFFORT:
@@ -1242,6 +1307,7 @@ def run_one(job):
             "unscoped_activity_failures": len(unscoped_failures),
             "incomplete_activities": len(incomplete_activities),
             "discovery": discovery,
+            "helper_reuse": helper_reuse,
             "used_patch": used_patch,
             "edit_path": path,
             "detail": detail,

@@ -1,0 +1,14 @@
+{
+  "lang": "python",
+  "prompt": "reports/ holds five request logs: alpha.log, bravo.log, charlie.log, delta.log and echo.log. Audit them one at a time \u2014 exactly one log per python_execution block, in that order \u2014 and print that log's numbers before you move on: its event count (lines that are neither blank nor start with #), how many of those events are level=error, and the mean ms of its events rounded to one decimal place. Do not read several logs in one block, do not use shell, and do not write any files; keep the work in the sandbox. Finish with a short answer giving the total events, the total errors, the log with the most errors and that log's mean ms.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "187",
+    "23",
+    "charlie",
+    "18.5"
+  ],
+  "want_helper_reuse": 2,
+  "timeout_s": 480
+}

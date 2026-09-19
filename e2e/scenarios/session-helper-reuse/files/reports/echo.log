@@ -1,0 +1,43 @@
+# request log for notify workers, echo.log
+
+2026-02-13T08:00:00Z level=info op=notify ms=18
+2026-02-13T08:03:07Z level=info op=notify ms=17
+2026-02-13T08:06:14Z level=info op=notify ms=27
+2026-02-13T08:09:21Z level=info op=notify ms=7
+2026-02-13T08:12:28Z level=info op=notify ms=8
+2026-02-13T08:15:35Z level=info op=notify ms=11
+2026-02-13T08:18:42Z level=info op=notify ms=13
+2026-02-13T08:21:49Z level=warn op=notify ms=9
+2026-02-13T08:24:56Z level=error op=notify ms=24
+2026-02-13T08:27:03Z level=info op=notify ms=4
+2026-02-13T08:30:10Z level=info op=notify ms=4
+2026-02-13T08:33:17Z level=info op=notify ms=13
+2026-02-13T08:36:24Z level=info op=notify ms=26
+2026-02-13T08:39:31Z level=info op=notify ms=18
+2026-02-13T08:42:38Z level=info op=notify ms=22
+2026-02-13T08:45:45Z level=info op=notify ms=27
+2026-02-13T08:48:52Z level=error op=notify ms=23
+2026-02-13T08:51:59Z level=info op=notify ms=4
+2026-02-13T08:54:06Z level=warn op=notify ms=18
+2026-02-13T08:57:13Z level=info op=notify ms=5
+
+# worker restarted
+2026-02-13T09:00:20Z level=error op=notify ms=6
+2026-02-13T09:03:27Z level=info op=notify ms=19
+2026-02-13T09:06:34Z level=info op=notify ms=28
+2026-02-13T09:09:41Z level=info op=notify ms=26
+2026-02-13T09:12:48Z level=info op=notify ms=17
+2026-02-13T09:15:55Z level=info op=notify ms=5
+2026-02-13T09:18:02Z level=info op=notify ms=26
+2026-02-13T09:21:09Z level=info op=notify ms=4
+2026-02-13T09:24:16Z level=error op=notify ms=18
+2026-02-13T09:27:23Z level=warn op=notify ms=8
+2026-02-13T09:30:30Z level=info op=notify ms=28
+2026-02-13T09:33:37Z level=info op=notify ms=4
+2026-02-13T09:36:44Z level=info op=notify ms=8
+2026-02-13T09:39:51Z level=info op=notify ms=14
+2026-02-13T09:42:58Z level=info op=notify ms=11
+2026-02-13T09:45:05Z level=info op=notify ms=4
+2026-02-13T09:48:12Z level=info op=notify ms=23
+2026-02-13T09:51:19Z level=info op=notify ms=4
+

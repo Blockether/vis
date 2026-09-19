@@ -43,6 +43,10 @@ e2e/
   examples. Runtime Activities supply doc/apropos evidence when available; otherwise
   syntax is used. Local helpers hiding discovery are rejected. This bounded audit
   is not a Python execution tracer or a security boundary.
+- **want_helper_reuse** — `true`, or the number of later forms required: a function
+  defined in one sandbox form must be called by that many later forms. The audit is
+  name-agnostic. Retyping the same definition instead of calling it fails, as does a
+  helper no later form uses; a definition and its call inside one form prove nothing.
 - **want_requested_route** — all provider markers and billed results must use
   the requested provider and model. Fallbacks fail the test.
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
@@ -111,6 +115,10 @@ cached-input share uses summed counts, not an average of percentages. Input,
 cached, uncached and output tokens, model calls, forms, wall time, peak/total stdout
 and discovery counts are separate measurements. Reasoning is `unavailable` unless
 the provider's result supplies it; persisted usage counters are reported separately.
+
+`want_helper_reuse` measures a behavior rather than one edit, so read it over repeats:
+a model that factors a helper in most runs can still retype the same block in one. Raise
+`VIS_E2E_REPEATS`, compare the pass count, and expect small models to be less consistent.
 
 Repeats report minimum, median and maximum, plus the number of valid token samples.
 There is no fixed token/cache target: changing model, route, prompt or cache state

@@ -22,6 +22,31 @@ class ScenarioFilesTest(unittest.TestCase):
             self.assertEqual(["library"], config["jail"]["filesystem"]["allow"])
             self.assertIn("return 0", (Path(work) / "library/value.py").read_text())
 
+    def test_helper_reuse_scenario_repeats_one_audit_across_blocks(self):
+        scenario = run.load_scenarios(["session-helper-reuse"])[0]
+        self.assertEqual(2, scenario["want_helper_reuse"])
+        self.assertIn("one log per python_execution block", scenario["prompt"])
+        self.assertEqual(["187", "23", "charlie", "18.5"], scenario["want_answer"])
+        with tempfile.TemporaryDirectory() as work:
+            run.seed_files(scenario, work)
+            logs = sorted((Path(work) / "reports").glob("*.log"))
+            events = [
+                [
+                    line
+                    for line in log.read_text().splitlines()
+                    if line.strip() and not line.startswith("#")
+                ]
+                for log in logs
+            ]
+            self.assertEqual(5, len(logs))
+            self.assertEqual(187, sum(len(rows) for rows in events))
+            self.assertEqual(
+                23, sum(row.count("level=error") for rows in events for row in rows)
+            )
+            charlie = events[logs.index(Path(work) / "reports" / "charlie.log")]
+            latency = [int(row.split("ms=")[1]) for row in charlie]
+            self.assertEqual(18.5, round(sum(latency) / len(latency), 1))
+
     def test_namespace_rename_uses_anchored_edits_and_checks_the_moved_source(self):
         scenario = run.load_scenarios(["clj-ns-rename"])[0]
         self.assertEqual(["patch"], scenario["want_tools"])
@@ -502,6 +527,66 @@ class ReasoningEffortTest(unittest.TestCase):
         self.assertFalse(result["converged"])
         self.assertEqual(1, result["errors"])
         self.assertEqual(["Provider model unavailable"], result["err_msgs"])
+
+
+class HelperReuseEvidenceTest(unittest.TestCase):
+    def test_helper_called_by_later_forms_passes(self):
+        forms = [
+            "def summarize(path):\n    return len(open(path).read())\nprint(summarize('a'))",
+            "print(summarize('b'))",
+            "print([summarize(name) for name in ('c', 'd')])",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["helpers_defined"])
+        self.assertEqual(2, metrics["reuse_forms"])
+        self.assertEqual(0, metrics["retyped_helpers"])
+
+    def test_defining_and_calling_inside_one_form_is_not_reuse(self):
+        forms = ["def summarize(path):\n    return path\nprint(summarize('a'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, True)
+        self.assertEqual(0, metrics["reuse_forms"])
+        self.assertIn("reused in 0 later form(s)", failures[0])
+
+    def test_retyped_definition_fails_even_when_a_later_form_calls_it(self):
+        body = "def summarize(path):\n    return path.strip()\n"
+        forms = [body + "print(summarize('a'))", body + "print(summarize('b'))"]
+        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual(1, metrics["retyped_helpers"])
+        self.assertEqual(1, metrics["reuse_forms"])
+        self.assertEqual(
+            ["helper 'summarize' was retyped in a later form instead of called"],
+            failures,
+        )
+
+    def test_reuse_needs_a_call_not_a_mention(self):
+        forms = [
+            "def summarize(path):\n    return path\n",
+            "summarize = 3\nprint(summarize)",
+        ]
+        metrics, failures = run.helper_reuse_evidence(forms, True)
+        self.assertEqual(0, metrics["reused_helpers"])
+        self.assertTrue(failures)
+
+    def test_unparsable_form_is_skipped(self):
+        forms = [
+            "def summarize(path):\n    return path\n",
+            "print(summarize(",
+            "print(summarize('b'))",
+        ]
+        _, failures = run.helper_reuse_evidence(forms, 1)
+        self.assertEqual([], failures)
+
+    def test_missing_helper_and_invalid_requirements_are_reported(self):
+        _, failures = run.helper_reuse_evidence(["print(1)"], True)
+        self.assertEqual(["no sandbox form defined a helper to reuse"], failures)
+        for want in (0, -1, "2", False, None):
+            with self.subTest(want=want):
+                metrics, failures = run.helper_reuse_evidence([], want)
+                self.assertEqual({}, metrics)
+                self.assertEqual(
+                    ["want_helper_reuse must be true or a positive integer"], failures
+                )
 
 
 class DiscoveryEvaluationTest(unittest.TestCase):
