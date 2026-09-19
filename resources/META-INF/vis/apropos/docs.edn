@@ -28,4 +28,5 @@
  {:kind "doc" :name "drafts" :resource "vis-docs/drafts.md"}
  {:kind "doc" :name "human-input" :resource "vis-docs/human-input.md"}
  {:kind "doc" :name "live-views" :resource "vis-docs/live-views.md"}
- {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}]
+ {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}
+ {:kind "doc" :name "language-extensions" :resource "vis-docs/language-extensions.md"}]

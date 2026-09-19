@@ -95,7 +95,11 @@
     {:blurb
      "Connect an LLM service to Vis with custom sign-in, model discovery and credential management."
      :page "provider-extensions"
-     :title "Provider extensions"}]
+     :title "Provider extensions"}
+    {:blurb
+     "Add formatting, linting, tests, a REPL and syntax checks for another language from Python."
+     :page "language-extensions"
+     :title "Language extensions"}]
    :section "Extensions"}
   {:pages
    [{:blurb
