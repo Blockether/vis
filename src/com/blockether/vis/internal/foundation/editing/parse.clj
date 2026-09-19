@@ -12,12 +12,21 @@
    edit that introduces a syntax error the file did not already have, naming the
    line and the unpaired delimiter instead of a bare error count.
 
+   A registered language surface may answer the SYNTAX question itself: a
+   `:syntax-fn` declared under `:ext/language-tools` is consulted before
+   tree-sitter for the language it serves, and the file extensions such a surface
+   claims are detected here too. Tree-sitter answers for everything else, and
+   whenever a handler throws or breaks the `syntax_result` contract.
+
    All native handles (Parser/Tree/Node) are opened and closed inside each call;
    only plain Clojure data escapes. Requiring this namespace also requires the
    native resolver, which selects the right per-platform FFI library at runtime."
   (:require [clojure.string :as str]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack]
+            [com.blockether.vis.contract.surface :as contract-surface]
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.util :as util])
   (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack Parser Tree Node Point]
            [java.nio.charset StandardCharsets]
@@ -44,6 +53,51 @@
 
     (when (pos? dot) (str/lower-case (subs name (inc dot))))))
 
+(defn- registered-surfaces
+  "The language-tool entries active extensions declare, or nil when the registry
+   cannot be read — nothing has registered yet, or a registration is mid-flight.
+   Both mean the built-in answer stands."
+  []
+  (try (seq (mapcat :ext/language-tools (extension/registered-extensions)))
+       (catch Throwable _ nil)))
+
+(defn- surface-language
+  "The language a surface entry serves, lower-cased, or nil. Registrations declare
+   a STRING, exactly as the language-tool dispatcher reads them."
+  [entry]
+  (some-> (:language entry)
+          str
+          str/lower-case
+          not-empty))
+
+(defn- normalized-extension
+  "A declared file extension spelled the way [[path-extension]] answers it:
+   lower-cased, without a leading dot. nil when it is not a usable extension."
+  [ext]
+  (when-let [e (some-> ext
+                       str
+                       str/trim
+                       str/lower-case
+                       not-empty)]
+    (not-empty (if (str/starts-with? e ".") (subs e 1) e))))
+
+(defn- surface-extension->language
+  "File extension -> language for every extension a registered surface CLAIMS.
+   This is how a language the pack never heard of earns a name here; the surface
+   that claims an extension owns it."
+  []
+  (reduce (fn [acc entry]
+            (if-let [lang (surface-language entry)]
+              (reduce (fn [m ext]
+                        (if-let [e (normalized-extension ext)]
+                          (assoc m e lang)
+                          m))
+                      acc
+                      (:extensions entry))
+              acc))
+          {}
+          (registered-surfaces)))
+
 (defn detect-language
   "tree-sitter language name for `path` (by extension/shebang), or nil. NOTE: the
    pack recognizes HUNDREDS of grammars, including prose/markup — `.txt` maps to
@@ -53,10 +107,13 @@
 
    Falls back to `extra-extension->language` (currently `.edn`→`clojure`) ONLY
    when the pack returns nil, covering Clojure-family extensions the pack's table
-   omits so their files are still parse-checked."
+   omits so their files are still parse-checked, and then to the extensions a
+   registered language surface claims. The built-ins answer first: a surface ADDS
+   a file type here, it never re-routes one vis already detects."
   [^String path]
   (or (TreeSitterLanguagePack/detectLanguageFromPath path)
-      (get extra-extension->language (path-extension path))))
+      (when-let [ext (path-extension path)]
+        (or (get extra-extension->language ext) (get (surface-extension->language) ext)))))
 
 (def code-languages
   "Curated allowlist of tree-sitter languages vis treats as CODE — where a parse
@@ -75,13 +132,32 @@
     "powershell" "prisma" "proto" "purescript" "racket" "rego" "rescript" "ron" "scheme" "solidity"
     "starlark" "systemverilog" "tcl" "thrift" "typespec" "v" "verilog" "vhdl" "wat" "wgsl" "zsh"})
 
+(defn- syntax-handler
+  "The `:syntax-fn` a registered language surface declares for `lang`, or nil. It
+   is called with `{:language :source}` and answers a `syntax_result` document —
+   the verdict [[error-nodes]] prefers over tree-sitter for that one language. The
+   first matching registration answers."
+  [lang]
+  (when-let [want (some-> lang
+                          str
+                          str/lower-case
+                          not-empty)]
+    (some (fn [entry]
+            (let [f (:syntax-fn entry)]
+              (when (and (ifn? f) (= want (surface-language entry))) f)))
+          (registered-surfaces))))
+
 (defn guarded-language
   "The detected language for `path` when Vis treats its parse errors as real syntax
    failures, otherwise nil. This is the single policy boundary shared by `patch` and
-   sandboxed Python writers; broad language detection alone must never gate prose."
+   sandboxed Python writers; broad language detection alone must never gate prose.
+
+   A language a registered surface answers for with its own `:syntax-fn` is guarded
+   as well — the extension that owns the verdict says its language is code. With no
+   such surface this is exactly the `code-languages` allowlist."
   [path]
   (let [lang (detect-language (str path))]
-    (when (contains? code-languages lang) lang)))
+    (when (and lang (or (contains? code-languages lang) (some? (syntax-handler lang)))) lang)))
 
 (defn- byte-slice
   ^String [^bytes bs ^long start ^long end]
@@ -89,10 +165,15 @@
 
 (defn- parse-tree
   "Parse `source` as `lang` → a Tree (CALLER CLOSES), or nil. The tree is
-   independent of the parser once parsed, so the parser is closed immediately."
+   independent of the parser once parsed, so the parser is closed immediately. A
+   name no grammar answers to is nil rather than a throw: a language vis detects
+   from a surface declaration reaches here too."
   ^Tree [^String lang ^String source]
   (let [p (Parser/create)]
-    (try (.setLanguage p lang) (.orElse (.parse p source) nil) (finally (.close p)))))
+    (try (.setLanguage p lang)
+         (.orElse (.parse p source) nil)
+         (catch Throwable _ nil)
+         (finally (.close p)))))
 
 (def ^:private quote-kinds
   "Literal quote tokens grammars may leave directly under an ERROR when a string
@@ -174,22 +255,11 @@
   (let [ls (str/split-lines (str source))]
     (when (<= 1 line (count ls)) (nth ls (dec line)))))
 
-(defn error-nodes
-  "Every ERROR / MISSING node tree-sitter finds in `source` (parsed as `lang`),
-   as [{:line :col :byte-col :end-line :end-col :start-byte :end-byte :kind
-   :missing? :text} …] in document order (1-based line, 0-based Unicode
-   code-point col; `:byte-col` preserves tree-sitter's raw UTF-8 column). Empty
-   when the source parses clean or the language can't be parsed. Public so an
-   edit guard can turn a bare \"N syntax error(s)\" rejection into a LOCATED,
-   actionable message — a MISSING node even NAMES the delimiter the parser
-   expected (`:kind` = `]`, `)`, …).
-
-   An ERROR node reports the most actionable UNBALANCED DELIMITER directly inside
-   it, not necessarily the node's own start: an unclosed form can make tree-sitter
-   open one ERROR over the whole file whose start is line 1. Those rows carry
-   `:delimiter` and `:error-line` (where recovery began), and `:text` is the
-   offending LINE. Raw byte spans remain available so a diagnostic can recognize
-   and look through a broad recovery wrapper that contains a more specific ERROR."
+(defn- tree-sitter-nodes
+  "The BUILT-IN verdict [[error-nodes]] falls back to: every ERROR / MISSING node
+   tree-sitter finds in `source` (parsed as `lang`), in document order. Empty when
+   the source parses clean, when `lang` is nil, and when no grammar answers to that
+   name."
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
     (let [src-bytes (util/utf8 source)
@@ -238,6 +308,73 @@
         (finally (.close tree)))
       (persistent! acc))
     []))
+
+(defn- normalized-finding
+  "One handler finding as the row the gate reads — `:line`, `:col`, `:kind`,
+   `:missing?` and `:text` — keeping every other field the surface reported. Keys
+   arrive as Clojure keywords or as the snake_case strings a JSON-shaped handler
+   answers, so [[wire/->engine]] is the one inbound spelling rule."
+  [finding]
+  (when (map? finding)
+    (let [row
+          (wire/->engine finding)
+
+          kind
+          (some-> (:kind row)
+                  name
+                  str/lower-case
+                  not-empty)]
+
+      (assoc row
+        :line (long (:line row))
+        :col (long (or (:col row) 0))
+        :kind (or kind "parse")
+        :missing? (boolean (or (:missing? row) (:is-missing row) (= "missing" kind)))
+        :text (or (:text row) (:message row))))))
+
+(defn- handler-findings
+  "The rows a registered `:syntax-fn` answers for `source` under `lang`, or nil when
+   the built-in verdict stands: no surface serves the language, the handler threw,
+   or its result does not satisfy the `syntax_result` contract. An empty vector is a
+   VERDICT — the handler read the source and found it clean — so a caller must tell
+   `[]` from nil."
+  [lang ^String source]
+  (when-let [f (syntax-handler lang)]
+    (try (let [result (wire/->engine (contract-surface/check :syntax-fn
+                                                             (f {:language lang :source source})))
+               rows (into [] (keep normalized-finding) (:findings result))]
+
+           (cond (:is-clean result) []
+                 (seq rows) rows
+                 ;; A verdict of "not clean" must never read as clean downstream: with no
+                 ;; usable row the write is still refused, at the top of the file.
+                 :else [{:line 1 :col 0 :kind "parse" :missing? false :text nil}]))
+         (catch Throwable _ nil))))
+
+(defn error-nodes
+  "Every syntax fault in `source` read as `lang`, in document order, as
+   [{:line :col :byte-col :end-line :end-col :start-byte :end-byte :kind
+   :missing? :text} …] (1-based line, 0-based Unicode code-point col; `:byte-col`
+   preserves tree-sitter's raw UTF-8 column). Empty when the source parses clean or
+   the language can't be parsed. Public so an edit guard can turn a bare
+   \"N syntax error(s)\" rejection into a LOCATED, actionable message — a MISSING
+   node even NAMES the delimiter the parser expected (`:kind` = `]`, `)`, …).
+
+   An ERROR node reports the most actionable UNBALANCED DELIMITER directly inside
+   it, not necessarily the node's own start: an unclosed form can make tree-sitter
+   open one ERROR over the whole file whose start is line 1. Those rows carry
+   `:delimiter` and `:error-line` (where recovery began), and `:text` is the
+   offending LINE. Raw byte spans remain available so a diagnostic can recognize
+   and look through a broad recovery wrapper that contains a more specific ERROR.
+
+   A registered language surface answers FIRST for the language it serves: its
+   `:syntax-fn` owns the verdict, and its rows carry the same `:line :col :kind
+   :missing? :text` keys plus whatever else it reported. Tree-sitter answers when
+   no surface claims the language, when the handler throws, and when its result
+   breaks the `syntax_result` contract — a misbehaving extension never opens the
+   gate."
+  [lang ^String source]
+  (or (handler-findings lang source) (tree-sitter-nodes lang source)))
 
 (defn transition-verdict
   "Compare `original` and `candidate` under `lang`. Returns a plain-data verdict:

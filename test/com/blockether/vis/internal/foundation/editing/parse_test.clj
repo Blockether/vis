@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.foundation.editing.parse-test
   "Language detection and located parse errors — the two verdicts `patch`'s
-   syntax gate spends."
-  (:require [com.blockether.vis.internal.foundation.editing.parse :as parse]
+   syntax gate spends, from tree-sitter and from a registered language surface."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (deftest detect-language-test
@@ -109,3 +111,118 @@
   (testing "no language answers nothing, and unparseable input declares nothing"
     (is (= [] (parse/top-level-nodes nil "[tool.uv]\n")))
     (is (= ["ERROR"] (mapv :kind (parse/top-level-nodes "toml" "[[[ broken"))))))
+
+(defn- exclamation-verdict
+  "A fixture syntax verdict in the JSON spelling a Python surface answers: a line
+   ending in `!` is an unclosed delimiter, anything else is clean."
+  [{:keys [language source]}]
+  (let [faults (into []
+                     (comp (map-indexed (fn [i line]
+                                          [(inc (long i)) line]))
+                           (filter (fn [[_ line]]
+                                     (str/ends-with? line "!")))
+                           (map
+                             (fn [[n line]]
+                               {"line" n "col" 0 "kind" "unclosed" "delimiter" "!" "text" line})))
+                     (str/split-lines (str source)))]
+    {"language" language "is_clean" (empty? faults) "findings" faults}))
+
+(defn- fixture-surface
+  "One extension declaring a language surface for `.vislang` files — a language
+   tree-sitter has no grammar for — whose syntax verdict is `syntax-fn`."
+  [syntax-fn]
+  [{:ext/name "fixture-language"
+    :ext/language-tools [{:language "fictional" :extensions ["vislang"] :syntax-fn syntax-fn}]}])
+
+(defn- clojure-surface
+  "One extension claiming the SYNTAX verdict for clojure, which tree-sitter already
+   parses — the precedence D2 grants a declared handler."
+  [syntax-fn]
+  [{:ext/name "rival-language" :ext/language-tools [{:language "clojure" :syntax-fn syntax-fn}]}])
+
+(deftest surface-declared-language-test
+  (testing "a file type tree-sitter does not map is neither detected nor guarded"
+    (is (nil? (parse/detect-language "notes/thing.vislang")))
+    (is (nil? (parse/guarded-language "notes/thing.vislang"))))
+  (testing "a registered surface claims the extension and guards its language"
+    (with-redefs [extension/registered-extensions (constantly (fixture-surface
+                                                                exclamation-verdict))]
+      (is (= "fictional" (parse/detect-language "notes/thing.vislang")))
+      (is (= "fictional" (parse/detect-language "notes/THING.VISLANG")))
+      (is (= "fictional" (parse/guarded-language "notes/thing.vislang")))))
+  (testing "a surface with no syntax verdict names its language but does not guard it"
+    (with-redefs [extension/registered-extensions (constantly [{:ext/name "fixture-language"
+                                                                :ext/language-tools
+                                                                [{:language "fictional"
+                                                                  :extensions [".vislang"]
+                                                                  :format-fn identity}]}])]
+      (is (= "fictional" (parse/detect-language "notes/thing.vislang")))
+      (is (nil? (parse/guarded-language "notes/thing.vislang")))))
+  (testing "built-in detection is untouched while a surface is registered"
+    (with-redefs [extension/registered-extensions (constantly (fixture-surface
+                                                                exclamation-verdict))]
+      (is (= "clojure" (parse/detect-language "src/a/b.clj")))
+      (is (= "clojure" (parse/guarded-language "src/a/b.clj")))
+      (is (= "python" (parse/guarded-language "a/b/c.py"))))))
+
+(deftest surface-syntax-verdict-test
+  (testing "a registered verdict answers for a language tree-sitter cannot parse"
+    (with-redefs [extension/registered-extensions (constantly (fixture-surface
+                                                                exclamation-verdict))]
+      (is (= [] (parse/error-nodes "fictional" "fine\n")))
+      (let [err (first (parse/error-nodes "fictional" "fine\nbroken!\n"))]
+        (is (= 2 (long (:line err))))
+        (is (= 0 (long (:col err))))
+        (is (= "unclosed" (:kind err)))
+        (is (false? (:missing? err)))
+        (is (= "broken!" (:text err)))
+        ;; fields beyond the rows the gate reads survive normalization
+        (is (= "!" (:delimiter err))))))
+  (testing "the write gate refuses an edit that introduces a fault in that language"
+    (with-redefs [extension/registered-extensions (constantly (fixture-surface
+                                                                exclamation-verdict))]
+      (is (= :clean (:status (parse/transition-verdict "fictional" "fine\n" "still fine\n"))))
+      (is (= :introduced-error
+             (:status (parse/transition-verdict "fictional" "fine\n" "broken!\n"))))
+      (is (= :still-broken
+             (:status (parse/transition-verdict "fictional" "broken!\n" "worse!\n"))))))
+  (testing "Clojure keyword findings and a missing kind normalize the same way"
+    (with-redefs [extension/registered-extensions
+                  (constantly
+                    (fixture-surface
+                      (fn [{:keys [language]}]
+                        {:language language
+                         :is-clean false
+                         :findings
+                         [{:line 3 :col 4 :kind :missing :expected ")" :message "expected )"}]})))]
+      (let [err (first (parse/error-nodes "fictional" "anything"))]
+        (is (= 3 (long (:line err))))
+        (is (= 4 (long (:col err))))
+        (is (= "missing" (:kind err)))
+        (is (true? (:missing? err)))
+        (is (= "expected )" (:text err))))))
+  (testing "a not-clean verdict with no usable finding still refuses the write"
+    (with-redefs [extension/registered-extensions
+                  (constantly (fixture-surface
+                                (fn [{:keys [language]}]
+                                  {"language" language "is_clean" false "findings" []})))]
+      (let [err (first (parse/error-nodes "fictional" "anything"))]
+        (is (= 1 (long (:line err))))
+        (is (= "parse" (:kind err)))))))
+
+(deftest surface-syntax-fallback-test
+  (testing "a throwing handler falls back to the built-in verdict"
+    (with-redefs [extension/registered-extensions
+                  (constantly (clojure-surface (fn [_]
+                                                 (throw (ex-info "handler is broken" {})))))]
+      (is (seq (parse/error-nodes "clojure" "(defn f [x)")))
+      (is (empty? (parse/error-nodes "clojure" "(defn f [x] x)")))))
+  (testing "a result the contract refuses falls back to the built-in verdict"
+    (with-redefs [extension/registered-extensions (constantly (clojure-surface (fn [_]
+                                                                                 {"is_clean"
+                                                                                  false})))]
+      (is (seq (parse/error-nodes "clojure" "(defn f [x)")))
+      (is (empty? (parse/error-nodes "clojure" "(defn f [x] x)")))))
+  (testing "a language name no grammar answers to stays unguarded instead of throwing"
+    (is (= [] (parse/error-nodes "fictional" "broken!")))
+    (is (nil? (parse/guarded-language "notes/thing.vislang")))))
