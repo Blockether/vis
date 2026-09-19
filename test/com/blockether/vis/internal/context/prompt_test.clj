@@ -779,6 +779,9 @@
       ;; 10.5k → 10.7k for #271: `fold_count` ships in every context block and was defined
       ;; nowhere, so folded work read as context the conversation lacks; §6 now names it as
       ;; budget telemetry, never a reason to re-read a fold. The clause lands at 10 594.
+      ;; 10.6k → 10.7k: user report — §2 only told the model to REUSE helpers, so blocks
+      ;; retyped the same steps and `defs()` stayed empty. Factoring one out on the second
+      ;; occurrence is a rule again, and it lands at 10 680.
       (expect (< (count text) 10700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
@@ -844,7 +847,7 @@
                ;; status accessors, so following it verbatim raised a TypeError —
                ;; `type` SENDS keystrokes and its text argument is required.
                "answers a HANDLE" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-               "Reuse helpers when they simplify repeated multi-step work" "keep results in"
+               "Factor a repeated loop or block into a small named helper" "keep results in"
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the ONE channel back" "what you print is what returns"
@@ -1588,6 +1591,14 @@
                                  "read `defs(name)` and refine a stable name"
                                  "After a restart, `defs(name, details=True)`"
                                  "whether each is present"]]
+                     (expect (str/includes? text rule) rule))))
+             ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
+             ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
+             (it "factors a repeated block into a named helper on its second occurrence"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["Factor a repeated loop or block into a small named helper"
+                                 "on its second occurrence, then call it"
+                                 "Reuse helpers instead of retyping" "`defs()` lists them"]]
                      (expect (str/includes? text rule) rule))))
              ;; User report: no rule said whether redefining or deleting a helper changes the
              ;; saved definitions, so the model had to read the host to answer that.
