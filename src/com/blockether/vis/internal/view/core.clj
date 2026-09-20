@@ -957,8 +957,8 @@
           tone
           (assoc :tone tone)
 
-          (trimmed (pick* item :branch))
-          (assoc :branch (trimmed (pick* item :branch))))
+          (trimmed (pick* item :parent))
+          (assoc :parent (trimmed (pick* item :parent))))
 
         :stats
         (cond-> {:id id

@@ -125,7 +125,7 @@ export const FinishedJobs: Story = {
     await expect(first.getBoundingClientRect().height).toBe(last.getBoundingClientRect().height);
     // A ROW IS A BAND, NOT A TOUCH CELL: under a thumb the compact face answers at 44px through
     // its invisible slop instead of standing 48px tall, and under a pointer it keeps the rhythm
-    // of the head and branch rows beside it.
+    // of the head and parent rows beside it.
     if (matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await expect(first.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
     } else {

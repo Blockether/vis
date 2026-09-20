@@ -627,8 +627,8 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         description="staging",
     ) as view:
         view.status("Building", tone="running")
-        view.row("api", ["deploy / api", "queued"], branch="deploy")
-        view.row("api", ["deploy / api", "done"], tone="ok", branch="deploy")
+        view.row("api", ["deploy / api", "queued"], parent="deploy")
+        view.row("api", ["deploy / api", "done"], tone="ok", parent="deploy")
         view["jobs"].select("api")
         view.write("cloning", "compiling")
         state = view.state()
@@ -638,7 +638,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
             ["deploy / api", "done"]
         ]
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
-        assert nodes["jobs"]["rows"][0]["branch"] == "deploy"
+        assert nodes["jobs"]["rows"][0]["parent"] == "deploy"
         assert nodes["jobs"]["selected_ids"] == ["api"]
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"

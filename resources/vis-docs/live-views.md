@@ -290,7 +290,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, parent=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
@@ -427,9 +427,9 @@ option keys; `disclosure` takes a vector of children and optional options, and
 `log` is the Clojure name of Python's `output`.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
-`{"by": "duration", "dir": "desc"}`. Rows sharing a `branch="Release apps"`
+`{"by": "duration", "dir": "desc"}`. Rows sharing a `parent="Release apps"`
 appear under one collapsible parent, closed until the reader opens it. Every
-surface renders that group the same way: the parent shows the branch name and
+surface renders that group the same way: the parent shows its own name and
 how many rows it holds, so keep the name stable and let Vis do the counting.
 With `is_selectable=True`, users can select rows; read the selection with
 `view.state()`.

@@ -43,7 +43,7 @@
 
 (def ^:private presentation-text-keys
   #{:title :label :description :placeholder :source :text :detail :summary :error :note
-    :model-result :target :value :value-text :branch :lines :cells})
+    :model-result :target :value :value-text :parent :lines :cells})
 
 (defn redact-presentation
   "Redact human text in normalized View data, never structural IDs, selections,
@@ -716,8 +716,8 @@
         (conj (str "_… " behind " earlier lines — the view's record keeps them all_"))))
     [(empty-line :log)]))
 
-(def ^:private branch-marker
-  "The column a grouped table paints each row's branch in — what `!` is to tone.
+(def ^:private parent-marker
+  "The column a grouped table paints each row's parent in — what `!` is to tone.
    A MARKER, never a label: a declared column carries its own name, and this one
    is written and read back by the two table forms alone."
   "/")
@@ -736,25 +736,25 @@
         toned?
         (boolean (some :tone rows))
 
-        ;; A row's BRANCH is the group it was declared into, so the document carries
+        ;; A row's PARENT is the group it was declared into, so the document carries
         ;; it the way it carries a tone: one marker column, written when some row has
         ;; one and read back by [[markdown->node]]. Without it the picture the model
         ;; reads — and every document a view is reopened from — lost the grouping the
         ;; surfaces paint.
-        branched?
-        (boolean (some :branch rows))
+        parented?
+        (boolean (some :parent rows))
 
         header
         (cond->> (mapv :label columns)
-          branched?
-          (into [branch-marker])
+          parented?
+          (into [parent-marker])
 
           toned?
           (into ["!"]))
 
         rule
         (cond->> (mapv #(if (= :right (:align %)) "---:" "---") columns)
-          branched?
+          parented?
           (into ["---"])
 
           toned?
@@ -763,8 +763,8 @@
         row->cells
         (fn [row]
           (cond->> (mapv #(cell-text (cell-at columns row (:id %))) columns)
-            branched?
-            (into [(or (:branch row) "")])
+            parented?
+            (into [(or (:parent row) "")])
 
             toned?
             (into [(if (:tone row) (name (:tone row)) "")])))
@@ -1305,13 +1305,13 @@
         (fn [cells]
           (if toned? (vec (rest cells)) cells))
 
-        branched?
-        (and (= branch-marker (first (after-tone header))) (= "---" (first (after-tone rule))))
+        parented?
+        (and (= parent-marker (first (after-tone header))) (= "---" (first (after-tone rule))))
 
         declared
         (fn [cells]
           (let [rest-cells (after-tone cells)]
-            (if branched? (vec (rest rest-cells)) rest-cells)))
+            (if parented? (vec (rest rest-cells)) rest-cells)))
 
         columns
         (addressed "column"
@@ -1332,9 +1332,9 @@
                   (let [tone
                         (when (and toned? (not (str/blank? (first cells)))) (keyword (first cells)))
 
-                        branch
+                        parent
                         (let [cell (first (after-tone cells))]
-                          (when (and branched? (not (str/blank? cell))) cell))
+                          (when (and parented? (not (str/blank? cell))) cell))
 
                         painted-cells
                         (declared cells)]
@@ -1348,8 +1348,8 @@
                       (tone? tone)
                       (assoc :tone tone)
 
-                      branch
-                      (assoc :branch branch))))
+                      parent
+                      (assoc :parent parent))))
                 (drop 2 painted)))]
 
     (with-meta {:type :table

@@ -677,23 +677,23 @@ function TableRows({
   const { valueAt, detailAt } = tableShape(node);
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   /**
-   * A branch stays SHUT until the reader opens it. Opening the branches that held
+   * A parent stays SHUT until the reader opens it. Opening the parents that held
    * the live selection sounded helpful and was not: `watch` selects every running
    * job, so a matrix in flight stood open on the first paint and sprang back open
    * on the next poll, seconds after the reader had closed it.
    */
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
 
-  // A branch OWNS its legs wherever the producer listed them. GitHub returns a matrix
+  // A parent OWNS its legs wherever the producer listed them. GitHub returns a matrix
   // interleaved with the rest of the run, so walking the rows in order put the head
   // above the first leg it met and left the other four stranded as parentless rows
   // further down the table — under whichever head happened to come next.
   const legs = new Map<string, LiveRow[]>();
   for (const row of rows) {
-    if (!row.branch) continue;
-    const kept = legs.get(row.branch);
+    if (!row.parent) continue;
+    const kept = legs.get(row.parent);
     if (kept) kept.push(row);
-    else legs.set(row.branch, [row]);
+    else legs.set(row.parent, [row]);
   }
 
   const visible: Array<
@@ -701,9 +701,9 @@ function TableRows({
   > = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    // A declared branch is the producer's own grouping: one leg folds like five, so a
+    // A declared parent is the producer's own grouping: one leg folds like five, so a
     // table never mixes folded parents with flat rows that still repeat their parent.
-    const group = row.branch || undefined;
+    const group = row.parent || undefined;
     if (!group) {
       visible.push({ kind: 'row', row });
       continue;
@@ -745,7 +745,7 @@ function TableRows({
           {visible.map((item) => {
             if (item.kind === 'group') {
               const isOpen = openGroups.has(item.label);
-              // The branch NAMES itself and then says how much its fold holds. The count
+              // The parent NAMES itself and then says how much its fold holds. The count
               // is COUNTED from the rows right here: a producer names a group through the
               // live interface and every surface renders that name the same way, instead
               // of a label smuggled through the field that IDENTIFIES the group.
@@ -789,7 +789,7 @@ function TableRows({
                       thumb can land anywhere on it; on a desk that turned twenty variants into a
                       column of boxes taller than the run's own header. The compact band is 36px
                       under a thumb — its invisible slop still answers at 44px — and 32px under a
-                      pointer, the height the head and the branch rows beside it already keep. */}
+                      pointer, the height the head and the parent rows beside it already keep. */}
                   {isSelectable ? (
                     <ListRow
                       inset="live-view"
@@ -799,13 +799,13 @@ function TableRows({
                     >
                       <ToneMark tone={row.tone} />
                       <span className="min-w-0 flex-1 font-mono text-ui">
-                        <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
+                        <RowFace node={node} row={row} isIndented={Boolean(row.parent)} />
                       </span>
                     </ListRow>
                   ) : (
                     <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
                       <ToneMark tone={row.tone} />
-                      <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
+                      <RowFace node={node} row={row} isIndented={Boolean(row.parent)} />
                     </span>
                   )}
                 </td>

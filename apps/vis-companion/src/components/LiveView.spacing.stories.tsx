@@ -158,7 +158,7 @@ const releaseJobs: Story = {
       );
       // A ROW IS A BAND, NOT A TOUCH CELL (user report: on a desk the variants read as a column
       // of boxes). Under a thumb the face still answers at 44px through its invisible slop; under
-      // a pointer it stands 32px, the height the head and the branch rows beside it keep.
+      // a pointer it stands 32px, the height the head and the parent rows beside it keep.
       const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
       for (const row of rows) {
         const height = row.getBoundingClientRect().height;

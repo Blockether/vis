@@ -1365,7 +1365,7 @@
         "tone": {
           "$ref": "#/$defs/tone"
         },
-        "branch": {
+        "parent": {
           "$ref": "common.json#/$defs/non_blank_string"
         }
       },

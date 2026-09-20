@@ -278,9 +278,9 @@ def _job_id(job, index=0):
 
 
 def _job_groups(jobs):
-    """A GitHub `parent / variant` name becomes one collapsible table branch.
+    """A GitHub `parent / variant` name becomes one collapsible table parent.
 
-    A parent with a single leg branches too. When it did not, one table carried
+    A parent with a single leg folds too. When it did not, one table carried
     two shapes: folded matrices beside flat rows like `lint / clj-kondo`, which
     were then the only rows still repeating a parent nobody could fold away.
     """
@@ -630,11 +630,7 @@ def run_shape(payload, selected_ids=None, now=None):
                     _elapsed(job, now),
                 ],
                 "tone": job_tone,
-                **(
-                    {"branch": group}
-                    if group
-                    else {}
-                ),
+                **({"parent": group} if group else {}),
             }
             for index, (job, job_tone, group) in enumerate(
                 zip(jobs, tones, groups, strict=True)
@@ -685,7 +681,7 @@ def declared_nodes(shape):
             ],
             rows=[
                 vis.table_row(
-                    row["id"], row["cells"], tone=row["tone"], branch=row.get("branch")
+                    row["id"], row["cells"], tone=row["tone"], parent=row.get("parent")
                 )
                 for row in shape["rows"]
             ],
@@ -728,7 +724,7 @@ def push_changes(view, before, after):
     for row in after["rows"]:
         if rows.get(row["id"]) != row:
             view["jobs"].upsert(
-                row["id"], row["cells"], tone=row["tone"], branch=row.get("branch")
+                row["id"], row["cells"], tone=row["tone"], parent=row.get("parent")
             )
     steps = {one["id"]: one for one in before.get("steps") or []}
     if before.get("selected_ids") != after["selected_ids"]:

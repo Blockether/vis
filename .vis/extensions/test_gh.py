@@ -143,15 +143,15 @@ def test_a_poll_reads_as_the_seven_answers():
     ]
     assert shape["rows"][1]["tone"] == "error"
     # Matrix variants share one semantic parent instead of repeating that parent as flat peers.
-    # The branch NAMES that parent and nothing else — every surface counts the legs it folds,
+    # The field NAMES that parent and nothing else — every surface counts the legs it folds,
     # so a leg arriving mid-run cannot rename the group out from under an open fold.
-    assert shape["rows"][0]["branch"] == "tests"
-    assert shape["rows"][1]["branch"] == "tests"
+    assert shape["rows"][0]["parent"] == "tests"
+    assert shape["rows"][1]["parent"] == "tests"
     # Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with one leg
     # stayed flat, so `lint / clj-kondo` sat unfolded among the folded matrices and was
-    # the only row still saying its parent. Every parent branches, one leg or five.
+    # the only row still saying its parent. Every parent folds, one leg or five.
     lint = next(row for row in shape["rows"] if row["id"] == "95742028809")
-    assert (lint["branch"], lint["cells"][0]) == ("lint", "clj-kondo")
+    assert (lint["parent"], lint["cells"][0]) == ("lint", "clj-kondo")
     # The row under a group says only the variant: the group above it already said the rest.
     assert shape["rows"][0]["cells"][0] == "macos-latest"
     # Every concurrently running job is selected; the elapsed column waits for its end.

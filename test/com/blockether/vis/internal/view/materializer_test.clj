@@ -21,7 +21,7 @@
                     :order :keyed
                     :columns [{:id id :label "password=fixture-column"}]
                     :rows [{:id id
-                            :branch "token=fixture-branch"
+                            :parent "token=fixture-parent"
                             :cells ["private_key=fixture-cell" "unchanged"]}]}
                    {:id "stats"
                     :type :stat
@@ -38,7 +38,7 @@
       (expect (= [id] (get-in public [:nodes 0 :selected-ids])))
       (expect (= :keyed (get-in public [:nodes 0 :order])))
       (expect (= "unchanged" (get-in public [:nodes 0 :rows 0 :cells 1])))
-      (doseq [secret ["fixture-column" "fixture-branch" "fixture-cell" "fixture-stat"]]
+      (doseq [secret ["fixture-column" "fixture-parent" "fixture-cell" "fixture-stat"]]
         (expect (not (str/includes? (pr-str public) secret))))
       (expect (= "secret=fixture-stat" (get-in raw [:nodes 1 :stats 0 :value-text])))
       (expect (= public (live/redact-presentation public))))))
@@ -518,16 +518,16 @@
         (expect (not (str/includes? md "reading")))
         (expect (= md (live/->markdown (:view (live/parse-markdown md))))
                 "so the document read back renders identically, flat")))
-  ;; Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: a row's BRANCH — the group
+  ;; Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: a row's PARENT — the group
   ;; the producer declared it into, and the one thing the surfaces fold by — never reached
   ;; the document, so a view reopened from markdown lost the grouping the panes paint.
-  (it "carries a row's branch into the document and back out of it"
+  (it "carries a row's parent into the document and back out of it"
       (let [v
             (patched (view (table-node :insertion))
                      {:op :append
                       :node-id "t"
-                      :rows [(assoc (row "a" "3.13" "1") :branch "python-package")
-                             (assoc (row "b" "3.14" "2") :branch "python-package")
+                      :rows [(assoc (row "a" "3.13" "1") :parent "python-package")
+                             (assoc (row "b" "3.14" "2") :parent "python-package")
                              (row "c" "Lint" "3")]})
 
             md
@@ -540,7 +540,7 @@
             (first (filter #(= :table (:type %)) (:nodes back)))]
 
         (expect (str/includes? md "| / |"))
-        (expect (= ["python-package" "python-package" nil] (mapv :branch (:rows t))))
+        (expect (= ["python-package" "python-package" nil] (mapv :parent (:rows t))))
         (expect (= md (live/->markdown back)) "so a grouped table read back renders identically")))
   (it
     "applies the order the table declared and then says `insertion`, so mounting the picture again cannot sort it twice"

@@ -1534,18 +1534,18 @@
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :order] {:by "nope"}))))
       (expect (nil? (hs/live-view-error
                       (assoc-in (live-view) [:nodes 5 :order] {:by "host" :dir :desc})))))
-  (it "accepts a non-blank branch on rows and refuses an empty one"
+  (it "accepts a non-blank parent on rows and refuses an empty one"
       (expect (nil? (hs/live-view-error
-                      (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "Release apps"))))
-      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "")))))
-  (it "keeps a table row's declared branch through normalization"
+                      (assoc-in (live-view) [:nodes 5 :rows 0 :parent] "Release apps"))))
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :rows 0 :parent] "")))))
+  (it "keeps a table row's declared parent through normalization"
       (expect (= "tests · 3 variants"
                  (get-in (hi/normalize-live-node
                            {:id "jobs"
                             :type "table"
                             :columns [{:id "job" :label "Job"}]
-                            :rows [{:id "linux" :cells ["linux"] :branch "tests · 3 variants"}]})
-                         [:rows 0 :branch]))))
+                            :rows [{:id "linux" :cells ["linux"] :parent "tests · 3 variants"}]})
+                         [:rows 0 :parent]))))
   (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
       (expect (some? (hs/live-view-error
                        (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}]))))))

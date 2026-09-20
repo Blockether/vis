@@ -265,8 +265,8 @@ describe('selecting a table row', () => {
     const view = selectableView();
     const hosts = hostsTable(view);
     hosts.rows = [
-      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', branch: 'Release apps' },
-      { id: 'android', cells: ['Android', 'running'], tone: 'running', branch: 'Release apps' },
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent: 'Release apps' },
+      { id: 'android', cells: ['Android', 'running'], tone: 'running', parent: 'Release apps' },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
     ];
     hosts.selected_ids = selectedIds;
@@ -280,7 +280,7 @@ describe('selecting a table row', () => {
 
     const parent = screen.getByRole('button', { name: 'Release apps' });
     expect(parent.getAttribute('aria-expanded')).toBe('false');
-    // The head counts its own legs; the producer names the branch and nothing else.
+    // The head counts its own legs; the producer names the parent and nothing else.
     expect(screen.getByText('2 rows')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Select iOS' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
@@ -298,7 +298,7 @@ describe('selecting a table row', () => {
     const hosts = hostsTable(view);
     hosts.rows = [
       ...hosts.rows.slice(0, 2),
-      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', branch: 'Lint' },
+      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', parent: 'Lint' },
     ];
     paint({ view, onSelect: vi.fn() });
 
@@ -311,8 +311,8 @@ describe('selecting a table row', () => {
     expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
   });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: every poll re-sent the
-  // running jobs as the selection, which sprang open the branch the reader had closed.
-  it('keeps a branch closed until the reader opens it, poll after poll', () => {
+  // running jobs as the selection, which sprang open the parent the reader had closed.
+  it('keeps a parent closed until the reader opens it, poll after poll', () => {
     const onSelect = vi.fn();
     const { rerender } = render(
       <LiveViewPanel view={matrixView(['android'])} onSelect={onSelect} />,
@@ -330,15 +330,15 @@ describe('selecting a table row', () => {
     expect(screen.queryByRole('button', { name: 'Select iOS' })).toBeNull();
   });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: GitHub lists a matrix
-  // interleaved with the rest of the run, so a branch head showed the first leg it met
+  // interleaved with the rest of the run, so a parent head showed the first leg it met
   // and the remaining legs stood in the table as rows belonging to no parent.
-  it('gathers a branch legs under its own head, however the run interleaves them', () => {
+  it('gathers a parent legs under its own head, however the run interleaves them', () => {
     const view = matrixView([]);
     const hosts = hostsTable(view);
     hosts.rows = [
-      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', branch: 'Release apps' },
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent: 'Release apps' },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
-      { id: 'android', cells: ['Android', 'running'], tone: 'running', branch: 'Release apps' },
+      { id: 'android', cells: ['Android', 'running'], tone: 'running', parent: 'Release apps' },
     ];
     paint({ view, onSelect: vi.fn() });
 

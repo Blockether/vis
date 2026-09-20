@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `--subdirectory` stays for sources outside the catalog.
 - Open a file from a step: press a path a session read or patched and it opens in your editor on
   the machine that session runs on, limited to the files in that session's workspace.
-- Fold a live table by its branches: the terminal and the app both show one head per branch,
+- Fold a live table by its parents: the terminal and the app both show one head per parent,
   closed until you open it and counting its own rows.
 
 ### Fixed
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fails with a name-resolution error.
 - Keep the transcript steady in the app: every painted turn survives the handover to live
   streaming, your reading position holds when a turn settles, a cancelled turn keeps the work
-  already on screen, and live table legs stay grouped under their branch head.
+  already on screen, and live table legs stay grouped under their parent head.
 - Count the live sessions a project header shows: each Vis process mints its own journal producer
   identity instead of the one baked into the binary at build time, so sibling processes no longer
   read each other's journal lines as their own.

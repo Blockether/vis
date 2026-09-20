@@ -345,7 +345,7 @@
 
 (defn table-row
   "One row of a [[table]], keyed by `id`: `cells` in column order, optionally
-   `:tone`d or placed below a collapsible `:branch` label shared by sibling rows.
+   `:tone`d or placed below a collapsible `:parent` label shared by sibling rows.
    Built rather than typed because it is the one POSITIONAL thing here — a cell
    means whatever column stands over it.
 
