@@ -1139,9 +1139,7 @@ def _live_line(name, op, node):
     if name == "append":
         key = _LIVE_ITEMS[kind]
         counted = [
-            f"+{len(op[held] or [])} {held}"
-            for held in (key, "groups")
-            if op.get(held)
+            f"+{len(op[held] or [])} {held}" for held in (key, "groups") if op.get(held)
         ]
         return "{}: {}".format(label, ", ".join(counted) or f"+0 {key}")
     if kind in ("paragraph", "heading", "code", "spinner"):
