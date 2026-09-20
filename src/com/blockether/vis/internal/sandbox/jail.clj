@@ -349,11 +349,15 @@
     (let [jail-env {}]
       (if-let [port (:proxy-port policy)]
         (let [token (:proxy-token policy)
-              ;; The empty password is load-bearing: `user@host` userinfo without a
-              ;; `:` makes uv (reqwest) drop the proxy and resolve the index host
-              ;; itself, which a jail has no DNS for — `uv pip install` then dies
-              ;; with "Temporary failure in name resolution". `user:@host` proxies.
-              credentials (when token (str token ":@"))
+              ;; Userinfo carries the session token, and BOTH halves matter to the
+              ;; clients that read it. With no `:` at all, uv (reqwest) silently drops
+              ;; the proxy and resolves the index host itself, which a jail has no DNS
+              ;; for, while wget and requests send no credentials and get 407. With an
+              ;; EMPTY password `urllib.request` still sends none: it authenticates only
+              ;; when user AND password are set. The proxy reads the username alone (see
+              ;; `egress-proxy/proxy-auth-token`), so the password is a constant filler,
+              ;; never a secret.
+              credentials (when token (str token ":vis@"))
               url (str "http://" credentials "127.0.0.1:" port)
               ;; Generic children use SOCKS5 on the multiplexed loopback port for
               ;; non-HTTP schemes. Python package and HTTP stacks inconsistently
@@ -372,7 +376,11 @@
                           "HTTPS_PROXY" url
                           "ALL_PROXY" socks-url
                           "no_proxy" ""
-                          "NO_PROXY" ""})
+                          "NO_PROXY" ""
+                          ;; Node's `fetch` is undici, which ignores the proxy variables
+                          ;; unless this is set (Node >= 22.21/24.5; older runtimes ignore
+                          ;; an unknown variable, unlike an unknown NODE_OPTIONS flag).
+                          "NODE_USE_ENV_PROXY" "1"})
             ca
             (merge {"CURL_CA_BUNDLE" ca
                     "SSL_CERT_FILE" ca

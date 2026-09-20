@@ -566,8 +566,9 @@
 
 (defn- proxy-auth-token
   "The session token a jailed child sends as `Proxy-Authorization: Basic
-   base64(<token>:)` (the token rides the proxy URL userinfo). nil when absent or
-   malformed — the caller then fails closed on an unattributable request."
+   base64(<token>:<filler>)` (the token rides the proxy URL userinfo as the USER;
+   the password is filler a few clients insist on). nil when absent or malformed —
+   the caller then fails closed on an unattributable request."
   [headers]
   (some (fn [^String h]
           (when (= "proxy-authorization" (header-name h))

@@ -90,7 +90,8 @@
       (is (= ["/run"] (:allow-read-write policy)))
       (is (= ["/java" "/classpath"] (:allow-read policy)))
       (is (= ["/run/control.sock"] (:unix-connect policy)))
-      (is (= {"all_proxy" "http://sess:@127.0.0.1:4322" "ALL_PROXY" "http://sess:@127.0.0.1:4322"}
+      (is (= {"all_proxy" "http://sess:vis@127.0.0.1:4322"
+              "ALL_PROXY" "http://sess:vis@127.0.0.1:4322"}
              (select-keys (pj/proxy-env policy) ["all_proxy" "ALL_PROXY"])))
       (is (= {:proxy 4322} (:network (pj/runtime-policy policy))))
       (is (= "sess" (:proxy-token policy)))
@@ -206,17 +207,19 @@
         (is (= url (get e k)) k))
       (doseq [k ["all_proxy" "ALL_PROXY"]]
         (is (= socks (get e k)) k))
+      ;; Without this, Node's built-in fetch (undici) ignores the proxy variables.
+      (is (= "1" (get e "NODE_USE_ENV_PROXY")))
       (is (not (contains? e "CURL_CA_BUNDLE")))
       (is (not (contains? e "SSL_CERT_FILE")))))
-  (testing ":proxy-token rides the proxy URL userinfo with an EMPTY password"
+  (testing ":proxy-token rides the proxy URL userinfo as user, with a filler password"
     (let [e
           (pj/proxy-env {:proxy-port 4321 :proxy-token "tok-123"})
 
           url
-          "http://tok-123:@127.0.0.1:4321"
+          "http://tok-123:vis@127.0.0.1:4321"
 
           socks
-          "socks5h://tok-123:@127.0.0.1:4321"]
+          "socks5h://tok-123:vis@127.0.0.1:4321"]
 
       (doseq [k ["http_proxy" "https_proxy" "HTTP_PROXY" "HTTPS_PROXY"]]
         (is (= url (get e k)) k))

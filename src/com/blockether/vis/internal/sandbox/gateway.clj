@@ -10,8 +10,9 @@
    that session's live policy fn.
 
    How a connection is attributed to a session: the jailed child's proxy env carries
-   its unguessable token in the proxy URL userinfo (`http://<token>:@127.0.0.1:<port>`);
-   curl/git/requests/… send it back as `Proxy-Authorization: Basic base64(<token>:)`;
+   its unguessable token in the proxy URL userinfo
+   (`http://<token>:vis@127.0.0.1:<port>`); curl/git/requests/… send it back as
+   `Proxy-Authorization: Basic base64(<token>:vis)` and the password is ignored;
    the proxy hands the token to `resolve-policy`, which looks up the registry.
 
    FAIL-CLOSED: a request whose token is missing or not registered to a LIVE session

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `vis.jailed_shell_session` is gone. Call `vis.jailed_shell(...)`, which reads the merged
   configuration at every spawn, so a confined child always follows the jail settings in force.
 
+### Fixed
+- Reach the network from a jailed tool again: the proxy address Vis hands confined children now
+  carries a username and a password, which wget, pip, requests and Python's `urllib` need before
+  they send credentials at all, and `fetch` in Node now uses the proxy too.
+
 ## [v0.2.13] - 2026-09-20
 
 ### Added
