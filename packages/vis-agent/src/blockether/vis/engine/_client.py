@@ -1240,6 +1240,15 @@ class ExecutionLayer(ABC):
             raise ProtocolError("Activity export is incomplete; reload and retry")
         return response
 
+    def get_session_alert(self, sid: str, *, timeout: float | None = None) -> JSONValue:
+        """GET /v1/sessions/:sid/alert — the banner text for the latest turn."""
+        return self._request(
+            "GET",
+            "/v1/sessions/:sid/alert",
+            path={"sid": sid},
+            timeout=timeout,
+        ).json()
+
     def get_session_artifacts(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:
