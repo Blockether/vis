@@ -3401,6 +3401,9 @@
         (atom [])
 
         assigned
+        (atom [])
+
+        destroyed
         (atom [])]
 
     (with-redefs-fn {#'state/get-project-by-root (fn [_owner root]
@@ -3415,9 +3418,17 @@
                      (fn [p opts]
                        (swap! created conj [p opts])
                        (if (= "Gateway" (:name opts)) (throw (ex-info "duplicate name" {})) group))
-                     #'state/delete-session-group!
-                     (fn [g]
-                       {:group_id (str g) :scattered_session_ids [(str sid)] :session_count 1})
+                     #'state/delete-session-group! (fn [g]
+                                                     {:group_id (str g)
+                                                      :scattered_session_ids [(str sid)]
+                                                      :deleted_session_ids []
+                                                      :session_count 1})
+                     #'state/delete-session-group-with-sessions! (fn [g]
+                                                                   (swap! destroyed conj g)
+                                                                   {:group_id (str g)
+                                                                    :scattered_session_ids []
+                                                                    :deleted_session_ids [(str sid)]
+                                                                    :session_count 1})
                      #'state/soul (fn [s]
                                     {"id" (str s)})
                      #'state/assign-session-group! (fn [s g]
@@ -3455,10 +3466,23 @@
               (is (= [[pid {:name "Release apps" :color "amber"}]] @created))))
           (testing "a second group with the same name is a 409 conflict, not a 500"
             (is (= 409 (:status (create-group (json-body {:name "Gateway" :root "/repo"}))))))
-          (testing "deleting a group names the sessions it scattered - they are never deleted"
+          (testing "deleting a group DETACHES its sessions by default - they are never deleted"
             (let [body (wire/parse-json (:body (delete-group {:path-params {:gid (str gid)}})))]
               (is (= [(str sid)] (get body "scattered_session_ids")))
-              (is (= 1 (get body "session_count")))))
+              (is (= [] (get body "deleted_session_ids")))
+              (is (= 1 (get body "session_count")))
+              (is (= [] @destroyed))))
+          (testing "`sessions=delete` is the other answer the dialog offers: the members go too"
+            (let [body (wire/parse-json (:body (delete-group {:path-params {:gid (str gid)}
+                                                              :query-params {"sessions"
+                                                                             "delete"}})))]
+              (is (= [(str sid)] (get body "deleted_session_ids")))
+              (is (= [] (get body "scattered_session_ids")))
+              (is (= [gid] @destroyed))))
+          (testing "any other answer is a 400, so a typo can never delete a session"
+            (is (= 400
+                   (:status (delete-group {:path-params {:gid (str gid)}
+                                           :query-params {"sessions" "purge"}})))))
           (testing "an unknown group is a 404"
             (is (= 404
                    (:status (delete-group {:path-params {:gid (str

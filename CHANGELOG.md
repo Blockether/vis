@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `allow_read_write` and `unix_connect`, so a language pack can hand its runtime the one
   rendezvous directory or socket it talks over instead of widening the whole jail.
 - Group the sessions inside a project: name a group, give it a colour, and file sessions
-  under it from the project menu in the app or the project sidebar in the terminal. A
-  group also narrows Council, so its sessions talk to each other instead of to the whole
-  project.
+  under it from the project menu in the app or the project sidebar in the terminal. In the
+  app a row also carries **Move to...**, and you can drag a row onto a group's band.
+  Deleting a group asks what becomes of its sessions: keep them, ungrouped, or delete them
+  with the group. A group also narrows Council, so its sessions talk to each other instead
+  of to the whole project.
 - Name the groups a live table folds by: declare them with `vis.table_group(...)` when you build
   the table, or with `view["jobs"].group(...)` while the work runs, to give a group a label, a
   tone and its place in the order, and to say whether it starts open. A group you never declare

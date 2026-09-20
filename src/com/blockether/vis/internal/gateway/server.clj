@@ -3041,20 +3041,27 @@
                                   "a group with that name already exists in this project")))))
 
 (defn- delete-session-group-handler
-  "DELETE /v1/session-groups/:gid — drop a group. Its sessions are NEVER deleted:
-   they stay in the project and go back to ungrouped. Answers `{group_id,
-   scattered_session_ids, session_count}` so a client can prune local state
-   without racing a re-read."
+  "DELETE /v1/session-groups/:gid[?sessions=detach|delete] — drop a group and say
+   what becomes of its members. `sessions=detach` (the default) leaves every
+   session in the project, ungrouped; `sessions=delete` deletes them together with
+   the group. Answers `{group_id, scattered_session_ids, deleted_session_ids,
+   session_count}` so a client can prune local state without racing a re-read."
   [request]
   (let [gid-str
         (get-in request [:path-params :gid])
 
         gid
-        (path-gid request)]
+        (path-gid request)
 
-    (if (and gid (state/get-session-group gid))
-      (json-response (state/delete-session-group! gid))
-      (group-404 gid-str))))
+        mode
+        (or (not-empty (get-in request [:query-params "sessions"])) "detach")]
+
+    (cond (or (not gid) (nil? (state/get-session-group gid))) (group-404 gid-str)
+          (not (contains? #{"detach" "delete"} mode))
+          (error-response 400 :invalid-request "sessions must be detach or delete")
+          :else (json-response (if (= "delete" mode)
+                                 (state/delete-session-group-with-sessions! gid)
+                                 (state/delete-session-group! gid))))))
 
 (defn- set-session-group-handler
   "PUT /v1/sessions/:sid/group {group_id} — file a session under a group; a null

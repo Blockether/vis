@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
@@ -49,7 +49,7 @@ function machine(overrides: Machine = {}) {
       session_count: 0,
     })),
     updateSessionGroup: vi.fn(async () => WALLET_GROUP),
-    deleteSessionGroup: vi.fn(async () => []),
+    deleteSessionGroup: vi.fn(async () => ({ detached: [ROWS[0].id, ROWS[1].id], deleted: [] })),
     assignSessionGroup: vi.fn(async (sid: string, gid: string | null) => ({
       ...(ROWS.find((row) => row.id === sid) ?? ROWS[0]),
       group_id: gid,
@@ -183,6 +183,68 @@ describe('ProjectGroup groups', () => {
     await waitFor(() =>
       expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET),
     );
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
+    );
+  });
+  it('asks what becomes of the sessions before it deletes a group', async () => {
+    const { client, user } = mount();
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Delete group'));
+    // BOTH answers are spelled out; nothing has reached the machine yet.
+    expect(screen.getByText('Keep its sessions')).toBeInTheDocument();
+    expect(screen.getByText('Delete its sessions too')).toBeInTheDocument();
+    expect(client.deleteSessionGroup).not.toHaveBeenCalled();
+    await user.click(screen.getByText('Keep its sessions'));
+    await waitFor(() =>
+      expect(client.deleteSessionGroup).toHaveBeenCalledWith(WALLET, 'detach'),
+    );
+  });
+
+  it('deletes the sessions with the group when that is the answer', async () => {
+    const { client, user } = mount(
+      machine({
+        deleteSessionGroup: vi.fn(async () => ({
+          detached: [],
+          deleted: [ROWS[0].id, ROWS[1].id],
+        })),
+      }),
+    );
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Delete group'));
+    await user.click(screen.getByText('Delete its sessions too'));
+    await waitFor(() =>
+      expect(client.deleteSessionGroup).toHaveBeenCalledWith(WALLET, 'with-sessions'),
+    );
+  });
+
+  it('files a session from the row\'s own Move to... verb', async () => {
+    const { client, user } = mount();
+    const wallet = await band('Wallet work');
+    const list = wallet.parentElement as HTMLElement;
+    const slab = list.querySelector(`[data-session-id="${LOOSE.id}"]`) as HTMLElement;
+    // The row's own action drawer carries the verb; the wrapper around it is what a
+    // reader drags.
+    const row = slab.closest('[draggable="true"]') as HTMLElement;
+    await user.click(within(row).getByText('Move to...'));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Wallet work'));
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
+    );
+  });
+
+  it('files a session dropped onto a group band', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const header = within(wallet).getByRole('button', { name: 'Collapse Wallet work' })
+      .parentElement as HTMLElement;
+    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    fireEvent.dragOver(header, { dataTransfer });
+    fireEvent.drop(header, { dataTransfer });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
     await waitFor(() =>
       expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
     );

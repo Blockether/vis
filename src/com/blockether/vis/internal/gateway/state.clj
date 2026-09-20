@@ -6136,13 +6136,18 @@
   (session-group-wire (lp/update-session-group! gid opts)))
 
 (defn delete-session-group!
-  "Delete a group. Its sessions are NEVER deleted: they stay in the project and
-   go back to ungrouped. Returns `{:group_id … :scattered_session_ids […]
-   :session_count n}` so a client can prune local state without re-reading."
+  "Delete a group and DETACH its sessions: they stay in the project and go back
+   to ungrouped. Returns `{:group_id … :scattered_session_ids […]
+   :deleted_session_ids [] :session_count n}` so a client can prune local state
+   without re-reading. `delete-session-group-with-sessions!` is the OTHER answer
+   the delete dialog offers."
   [gid]
   (let [sids (lp/session-group-session-ids gid)]
     (lp/delete-session-group! gid)
-    {:group_id (str gid) :scattered_session_ids (mapv str sids) :session_count (count sids)}))
+    {:group_id (str gid)
+     :scattered_session_ids (mapv str sids)
+     :deleted_session_ids []
+     :session_count (count sids)}))
 
 (defn assign-session-group!
   "File a session under `gid` (nil leaves it ungrouped inside its project).
@@ -6231,6 +6236,22 @@
   (drop-session! sid)
   (bus/forget! sid)
   (teardown-session-async! sid))
+
+(defn delete-session-group-with-sessions!
+  "Delete a group AND the sessions filed under it — the second answer the delete
+   dialog offers. Every member goes through `close-session!`, so draft clones,
+   shell logs and attached clients learn about it exactly as they do for a single
+   session DELETE. Returns `{:group_id … :scattered_session_ids []
+   :deleted_session_ids […] :session_count n}`."
+  [gid]
+  (let [sids (lp/session-group-session-ids gid)]
+    (doseq [sid sids]
+      (close-session! sid))
+    (lp/delete-session-group! gid)
+    {:group_id (str gid)
+     :scattered_session_ids []
+     :deleted_session_ids (mapv str sids)
+     :session_count (count sids)}))
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
 

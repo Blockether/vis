@@ -1,10 +1,11 @@
 /** One project's band, its session rows, and how that project is paged. */
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   SessionRow,
   type SessionListActions,
+  type SessionRowCommands,
   type SessionRowDeletion,
 } from '../../components/SessionList';
 import {
@@ -57,7 +58,9 @@ type MenuStep =
   | { kind: 'root' }
   | { kind: 'new' }
   | { kind: 'group'; id: string }
-  | { kind: 'rename'; id: string };
+  | { kind: 'rename'; id: string }
+  | { kind: 'delete'; id: string }
+  | { kind: 'move'; sid: string };
 
 /** One group as a band paints it: the gateway's row, or what a row itself said. */
 type GroupBandView = { id: string; name: string; color: string | null; count: number };
@@ -143,6 +146,7 @@ function GroupBand({
   isOpen,
   onToggle,
   onActions,
+  onDropSession,
 }: {
   name: string;
   color: string | null;
@@ -153,9 +157,30 @@ function GroupBand({
   isOpen: boolean;
   onToggle: () => void;
   onActions: (anchor: HTMLElement) => void;
+  /** Called with the session a reader DROPPED on this band. Absent: the band takes no drops. */
+  onDropSession?: (sid: string) => void;
 }) {
+  // A ROW DRAGGED ONTO THE BAND IS FILED INTO IT, and the band lights while the pointer
+  // is over it: the reader sees WHERE the session lands before letting go.
+  const [isOver, setIsOver] = useState(false);
   return (
-    <div className="flex items-stretch border-t border-edge">
+    <div
+      className={`flex items-stretch border-t border-edge ${isOver ? 'bg-white/10' : ''}`}
+      onDragOver={(event) => {
+        if (!onDropSession) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setIsOver(true);
+      }}
+      onDragLeave={() => setIsOver(false)}
+      onDrop={(event) => {
+        if (!onDropSession) return;
+        event.preventDefault();
+        setIsOver(false);
+        const sid = event.dataTransfer.getData('text/plain');
+        if (sid) onDropSession(sid);
+      }}
+    >
       <button
         type="button"
         aria-expanded={isOpen}
@@ -643,12 +668,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
-  const openMenu = (anchor: HTMLElement, step: MenuStep) => {
+  const openMenu = useCallback((anchor: HTMLElement, step: MenuStep) => {
     const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
     if (!at) return;
     setFailure(null);
     setMenu({ at, step });
-  };
+  }, []);
   const goTo = (step: MenuStep) => {
     setFailure(null);
     setMenu((held) => (held ? { ...held, step } : held));
@@ -675,13 +700,28 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
   };
   // FILING A SESSION IS THE GATEWAY'S ANSWER, held here until the list catches up.
-  const fileSession = (session: Session, gid: string | null, back: MenuStep) =>
+  const fileSession = (session: Session, gid: string | null, back: MenuStep | 'close') =>
     void attempt(async () => {
       const moved = await getClient(conn).assignSessionGroup(session.id, gid);
       setRefiled((held) => new Map(held).set(moved.id, moved));
     }, back);
   // One session's row, wherever it stands: inside a group's band, or under the
   // project itself with everything nobody filed.
+  // A ROW DROPPED ON A BAND RUNS THE SAME FILING VERB the sheet's `Move to...` does.
+  const dropSession = (sid: string, gid: string | null) => {
+    const found = rows.find((one) => one.id === sid);
+    if (!found || (found.group_id ?? null) === gid) return;
+    fileSession(found, gid, 'close');
+  };
+  // Every row in these bands can be filed, so the list's own verbs carry one more: the
+  // sheet opens under the strip's button, on the session that strip belongs to.
+  const rowCommands = useMemo<SessionRowCommands>(
+    () => ({
+      ...rowActions.commands,
+      moveToGroup: (session, _conn, anchor) => openMenu(anchor, { kind: 'move', sid: session.id }),
+    }),
+    [openMenu, rowActions.commands],
+  );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;
     const deletion: SessionRowDeletion = pending
@@ -693,6 +733,8 @@ export const ProjectGroup = memo(function ProjectGroup({
         }
       : null;
     return (
+      // DRAG IS THE LIST'S OWN MOVE: the row carries its session id and a band takes the
+      // drop, so filing by hand needs no menu at all.
       <SessionRow
         key={session.id}
         session={session}
@@ -700,8 +742,9 @@ export const ProjectGroup = memo(function ProjectGroup({
         conn={conn}
         match={matches?.get(session.id) ?? null}
         needle={needle}
-        commands={rowActions.commands}
+        commands={rowCommands}
         deletion={deletion}
+        isDraggable
       />
     );
   };
@@ -815,6 +858,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     isOpen={isBandOpen}
                     onToggle={() => foldGroup(band.id, !isBandOpen)}
                     onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                    onDropSession={(sid) => dropSession(sid, band.id)}
                   />
                   {isBandOpen && held.map(row)}
                 </div>
@@ -880,6 +924,42 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
+            if (step.kind === 'move') {
+              const session = rows.find((one) => one.id === step.sid);
+              // The row left the page while its sheet was open: say so, rather than
+              // offering a verb with nothing behind it.
+              if (!session) return <MenuNote>That session is gone.</MenuNote>;
+              return (
+                <>
+                  <MenuBack
+                    label={`Back to groups in ${project}`}
+                    onBack={() => goTo({ kind: 'root' })}
+                  >
+                    Move {rowTitle(session)}
+                  </MenuBack>
+                  {bands.length === 0 ? (
+                    <MenuNote>Nothing in this project is grouped yet.</MenuNote>
+                  ) : (
+                    bands.map((band) => (
+                      <MenuItem
+                        key={band.id}
+                        title={band.name}
+                        icon={<Swatch color={band.color} />}
+                        badge={session.group_id === band.id ? 'filed' : undefined}
+                        onSelect={() => fileSession(session, band.id, 'close')}
+                      />
+                    ))
+                  )}
+                  {session.group_id ? (
+                    <MenuItem
+                      title="Take out of its group"
+                      onSelect={() => fileSession(session, null, 'close')}
+                    />
+                  ) : null}
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            }
             const band = bands.find((one) => one.id === step.id);
             // The group was deleted under the sheet, or by another client of the
             // machine: the step says so instead of offering verbs with nothing behind them.
@@ -907,6 +987,43 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
+            // DELETING ASKS. A group is a folder to some people and a batch of work to
+            // others, so both answers are spelled out and the destructive one is second.
+            if (step.kind === 'delete') {
+              const drop = (sessions: 'detach' | 'with-sessions') =>
+                void attempt(async () => {
+                  const { detached, deleted } = await getClient(conn).deleteSessionGroup(
+                    band.id,
+                    sessions,
+                  );
+                  setRefiled((kept) => {
+                    const next = new Map(kept);
+                    for (const sid of [...detached, ...deleted]) next.delete(sid);
+                    return next;
+                  });
+                }, { kind: 'root' });
+              return (
+                <>
+                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
+                    Delete {band.name}
+                  </MenuBack>
+                  <MenuItem
+                    title="Keep its sessions"
+                    hint="They stay in this project and go back to ungrouped."
+                    onSelect={() => drop('detach')}
+                  />
+                  <MenuItem
+                    title="Delete its sessions too"
+                    tone="danger"
+                    hint={`Deletes ${band.count} ${
+                      band.count === 1 ? 'session' : 'sessions'
+                    } with the group. This cannot be undone.`}
+                    onSelect={() => drop('with-sessions')}
+                  />
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            }
             const isFiled = (session: Session) => session.group_id === band.id;
             return (
               <>
@@ -926,17 +1043,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                 <MenuItem
                   title="Delete group"
                   tone="danger"
-                  hint="Its sessions stay in this project and go back to ungrouped."
-                  onSelect={() =>
-                    void attempt(async () => {
-                      const scattered = await getClient(conn).deleteSessionGroup(band.id);
-                      setRefiled((kept) => {
-                        const next = new Map(kept);
-                        for (const sid of scattered) next.delete(sid);
-                        return next;
-                      });
-                    }, { kind: 'root' })
-                  }
+                  hint="Asks what becomes of the sessions filed under it."
+                  onSelect={() => goTo({ kind: 'delete', id: band.id })}
                 />
                 <MenuHeading tone="quiet">Colour</MenuHeading>
                 {GROUP_COLORS.map((color) => (

@@ -356,12 +356,15 @@ colour and session count under the project, opened and closed like any other fol
 
 In the desktop or phone app, open the **⋮** menu in a project's header and choose **New
 group**. The same menu renames a group, changes its colour, deletes it and files the
-sessions listed on that page into a group. In the terminal, press **Ctrl+X w** for the
-project sidebar and **g** on a project or group row for the same menu; **Ctrl+X d** moves
-the session you are in.
+sessions listed on that page into a group. A session row also carries **Move to...** in
+its own actions, and you can drag a row onto a group's band to file it there. In the
+terminal, press **Ctrl+X w** for the project sidebar and **g** on a project or group row
+for the same menu; **Ctrl+X d** moves the session you are in.
 
-Deleting a group keeps its sessions. They return to the project, ungrouped. A group also
-narrows who a session talks to in [Council](council.md#groups-and-settings).
+Deleting a group asks what becomes of the sessions filed under it: keep them, and they
+return to the project ungrouped, or delete them with the group. Deleting the sessions
+cannot be undone. A group also narrows who a session talks to in
+[Council](council.md#groups-and-settings).
 
 ## Updating vis
 

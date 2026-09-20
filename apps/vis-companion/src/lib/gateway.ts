@@ -3529,21 +3529,33 @@ export class GatewayClient {
   }
 
   /**
-   * Drop a group. Its sessions are NEVER deleted — they stay in the project and go
-   * back to ungrouped — and the gateway answers with their ids, so the rows this
-   * device holds lose the band they were filed under without racing a re-read.
+   * Drop a group and say what becomes of its members. `'detach'` (the default) leaves
+   * every session in the project, ungrouped; `'with-sessions'` deletes them together
+   * with the group — the second answer the delete dialog offers. The gateway names both
+   * lists, so the rows this device holds lose the group they were filed under, or
+   * disappear, without racing a re-read.
    */
-  async deleteSessionGroup(gid: string): Promise<string[]> {
-    const res = await this.request<{ scattered_session_ids?: string[] }>(
+  async deleteSessionGroup(
+    gid: string,
+    sessions: 'detach' | 'with-sessions' = 'detach',
+  ): Promise<{ detached: string[]; deleted: string[] }> {
+    const res = await this.request<{
+      scattered_session_ids?: string[];
+      deleted_session_ids?: string[];
+    }>(
       'DELETE',
-      `/v1/session-groups/${encodeURIComponent(gid)}`,
+      `/v1/session-groups/${encodeURIComponent(gid)}${
+        sessions === 'with-sessions' ? '?sessions=delete' : ''
+      }`,
     );
-    const ids = res?.scattered_session_ids ?? [];
-    for (const sid of ids) {
+    const detached = res?.scattered_session_ids ?? [];
+    const deleted = res?.deleted_session_ids ?? [];
+    for (const sid of detached) {
       const row = this.cachedSession(sid);
       if (row) this.absorbSessionRow(sid, { ...row, group_id: null, group_name: null, group_color: null });
     }
-    return ids;
+    for (const sid of deleted) this.forgetDeletedSession(sid);
+    return { detached, deleted };
   }
 
   /**

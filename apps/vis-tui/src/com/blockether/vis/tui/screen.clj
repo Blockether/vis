@@ -5751,13 +5751,20 @@
         (refresh-projects!))
 
       :delete
-      (when (with-dialog-lock #(dlg/confirm-dialog!
-                                 screen
-                                 "Delete group"
-                                 "Delete this group? Its sessions stay in the project, ungrouped."))
-        (try (vis/gateway-delete-session-group! gid) (catch Throwable _ nil))
+      ;; BLO-167: the delete asks what becomes of the members, because a group is
+      ;; a folder to some people and a batch to others. `:detach` is first, so the
+      ;; harmless answer is the one under the cursor.
+      (when-let [answer (:id (with-dialog-lock
+                               #(dlg/select-dialog!
+                                  screen
+                                  (str "Delete group · " (get group "name"))
+                                  [{:id :detach :label "Keep its sessions, ungrouped"}
+                                   {:id :with-sessions :label "✗ Delete its sessions too"}])))]
+        (try (vis/gateway-delete-session-group! gid answer) (catch Throwable _ nil))
         (refresh-projects!)
-        (vis/notify! "Deleted group" :level :success :ttl-ms copy-success-ttl-ms))
+        (vis/notify! (if (= :with-sessions answer) "Deleted group and its sessions" "Deleted group")
+                     :level :success
+                     :ttl-ms copy-success-ttl-ms))
 
       :refresh
       (refresh-projects!)

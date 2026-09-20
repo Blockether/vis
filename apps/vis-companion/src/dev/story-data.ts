@@ -2098,6 +2098,8 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
   // of that story, and so does a session it files.
   const made: SessionGroup[] = [];
   const dropped = new Set<string>();
+  // Sessions a story deleted ALONG WITH their group: gone from every listing after that.
+  const gone = new Set<string>();
   const filed = new Map<string, string | null>();
   const bandOf = (row: Session) => (filed.has(row.id) ? filed.get(row.id)! : (row.group_id ?? null));
   const bandsOf = (project: StoryProject | undefined): SessionGroup[] => {
@@ -2122,7 +2124,9 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       .filter((group) => !dropped.has(group.id))
       .map((group) => ({
         ...group,
-        session_count: project.rows.filter((row) => bandOf(row) === group.id).length,
+        session_count: project.rows.filter(
+          (row) => !gone.has(row.id) && bandOf(row) === group.id,
+        ).length,
       }));
   };
   const projectAt = (root: string | null | undefined) =>
@@ -2140,7 +2144,9 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     if (url.pathname === '/v1/projects/overview') return answer(overview);
     if (url.pathname === '/v1/sessions' && (init?.method ?? 'GET') === 'GET') {
       const root = url.searchParams.get('root');
-      const listed = root ? (projects.find((project) => project.root === root)?.rows ?? []) : all;
+      const listed = (
+        root ? (projects.find((project) => project.root === root)?.rows ?? []) : all
+      ).filter((row) => !gone.has(row.id));
       const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
       const after = url.searchParams.get('after');
       const from = after ? listed.findIndex((row) => fleetCursor(row) === after) + 1 : 0;
@@ -2179,12 +2185,21 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       const band = bandsOf(project).find((one) => one.id === gid);
       if (init?.method === 'DELETE') {
         dropped.add(gid);
-        const scattered = (project?.rows ?? []).filter((row) => bandOf(row) === gid);
-        for (const row of scattered) filed.set(row.id, null);
+        const members = (project?.rows ?? []).filter(
+          (row) => !gone.has(row.id) && bandOf(row) === gid,
+        );
+        // `?sessions=delete` is the second answer the delete dialog offers: the group's
+        // sessions go with it. Without it the sessions stay, ungrouped.
+        const withSessions = url.searchParams.get('sessions') === 'delete';
+        for (const row of members) {
+          if (withSessions) gone.add(row.id);
+          else filed.set(row.id, null);
+        }
         return answer({
           group_id: gid,
-          scattered_session_ids: scattered.map((row) => row.id),
-          session_count: scattered.length,
+          scattered_session_ids: withSessions ? [] : members.map((row) => row.id),
+          deleted_session_ids: withSessions ? members.map((row) => row.id) : [],
+          session_count: members.length,
         });
       }
       const body = sent(init);

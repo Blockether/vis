@@ -14,7 +14,7 @@ import {
   SectionHeader,
 } from './SessionNavigator';
 import { SwipeActions } from './SwipeActions';
-import { PencilIcon, StarIcon, TrashIcon } from './icons';
+import { FolderPlusIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import type { GatewayConn, Session, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
@@ -51,6 +51,11 @@ export type SessionRowAction = {
 };
 
 export type SessionRowCommands = {
+  /**
+   * File the session into a group, or take it out of one. OPTIONAL: only a grouped
+   * project list offers it, and the anchor is the element the menu hangs under.
+   */
+  moveToGroup?: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
@@ -112,6 +117,7 @@ export const SessionRow = memo(function SessionRow({
   needle,
   commands,
   deletion,
+  isDraggable,
 }: {
   session: Session;
   /** This device's unsent composer content for the session; EMPTY when there is none. */
@@ -121,6 +127,11 @@ export const SessionRow = memo(function SessionRow({
   needle: string;
   commands: SessionRowCommands;
   deletion: SessionRowDeletion;
+  /**
+   * Let a reader DRAG this row onto something that takes it — a group's band. The row
+   * carries its own session id; lists that have nowhere to drop it leave this off.
+   */
+  isDraggable?: boolean;
 }) {
   const timestamp = session.modified_at ?? session.created_at;
   // DIRTY: this device is holding composer content nobody has sent — words, a
@@ -245,6 +256,15 @@ export const SessionRow = memo(function SessionRow({
     <div
       ref={rowRef}
       data-session-row={session.id}
+      draggable={isDraggable}
+      onDragStart={
+        isDraggable
+          ? (event) => {
+              event.dataTransfer.setData('text/plain', session.id);
+              event.dataTransfer.effectAllowed = 'move';
+            }
+          : undefined
+      }
       className={`[&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
@@ -279,6 +299,18 @@ export const SessionRow = memo(function SessionRow({
                     icon: <PencilIcon className="size-4" />,
                     onSelect: beginRename,
                   },
+                  ...(commands.moveToGroup
+                    ? [
+                        {
+                          key: 'group',
+                          label: 'Move to...',
+                          name: 'Move',
+                          icon: <FolderPlusIcon className="size-4" />,
+                          onSelect: (anchor: HTMLElement) =>
+                            commands.moveToGroup?.(session, conn, anchor),
+                        },
+                      ]
+                    : []),
                   {
                     key: 'delete',
                     label: 'Delete',

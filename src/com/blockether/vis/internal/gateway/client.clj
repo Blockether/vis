@@ -1424,10 +1424,15 @@
   (send-json! "PATCH" (str "/v1/session-groups/" (enc gid)) opts))
 
 (defn delete-session-group!
-  "DELETE /v1/session-groups/:gid — drop a group. Its sessions stay in the
-   project, ungrouped; the answer names them."
-  [gid]
-  (send-json! "DELETE" (str "/v1/session-groups/" (enc gid))))
+  "DELETE /v1/session-groups/:gid — drop a group. `mode` says what becomes of its
+   members: `:detach` (the default) leaves them in the project, ungrouped;
+   `:with-sessions` deletes them together with the group. The answer names both
+   lists."
+  ([gid] (delete-session-group! gid :detach))
+  ([gid mode]
+   (send-json!
+     "DELETE"
+     (str "/v1/session-groups/" (enc gid) (when (= :with-sessions mode) "?sessions=delete")))))
 
 (defn assign-session-group!
   "PUT /v1/sessions/:sid/group — file a session under a group (nil leaves it

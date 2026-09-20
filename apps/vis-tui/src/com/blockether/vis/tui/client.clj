@@ -827,10 +827,14 @@
                 (assoc :position position))))
 
 (defn delete-session-group!
-  "DELETE /v1/session-groups/:gid - drop a group. Its sessions are never deleted:
-   they go back to the project's ungrouped rows."
-  [gid]
-  (send-json! "DELETE" (str "/v1/session-groups/" (enc gid))))
+  "DELETE /v1/session-groups/:gid - drop a group. `mode` says what becomes of its
+   members: `:detach` (the default) sends them back to the project's ungrouped
+   rows; `:with-sessions` deletes them together with the group."
+  ([gid] (delete-session-group! gid :detach))
+  ([gid mode]
+   (send-json!
+     "DELETE"
+     (str "/v1/session-groups/" (enc gid) (when (= :with-sessions mode) "?sessions=delete")))))
 
 (defn assign-session-group!
   "PUT /v1/sessions/:sid/group - file a session under a group; a nil `gid` leaves
