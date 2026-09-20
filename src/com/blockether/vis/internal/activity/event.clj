@@ -746,9 +746,7 @@
   "Render complete redacted result content; only the always-visible labels are summaries."
   [details]
   (let [value
-        (redact-result (if (= :format_code (:operation details))
-                         (presenter/format-result (:result details))
-                         (:result details)))
+        (redact-result (:result details))
 
         full
         (when-let [render (get-in details [:activity :render])]

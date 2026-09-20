@@ -1986,18 +1986,29 @@
                [p (dissoc e :context :ext)]))
         @loaded))
 
-(def ^:no-doc bundled-extension-sources
-  "The extension files Vis SHIPS, as classpath resources under `vis-extensions/`.
+(defonce
+  ^{:no-doc true
+    :doc
+    "The extension files Vis MATERIALIZES, as classpath resources under
+   `vis-extensions/`.
 
-   Explicit, like the registration manifest: a native image lists no resource
-   DIRECTORY, so the bundled set is written down here or it does not exist. The
-   entry files are the three language surfaces; `vis_language_surface/` is the
-   package they import, and it is NEVER scanned as an entry of its own."
-  ["language_surface.py" "language_surface_clojure.py" "language_surface_python.py"
-   "vis_language_surface/__init__.py" "vis_language_surface/balance.py"
-   "vis_language_surface/clojure.py" "vis_language_surface/data.py"
-   "vis_language_surface/parinfer.py" "vis_language_surface/python.py"
-   "vis_language_surface/repl.py"])
+   Vis ships none of its own: a language pack registers the entry files and the
+   packages they import with `register-bundled-extension-sources!` when it
+   initializes. Registration is explicit, like the registration manifest, because
+   a native image lists no resource DIRECTORY — a file is written down here or it
+   does not exist. A package module is NEVER scanned as an entry of its own."}
+  bundled-extension-sources
+  (atom []))
+
+(defn ^:no-doc register-bundled-extension-sources!
+  "Add `paths`, classpath resources relative to `vis-extensions/`, to the set
+   materialized into the bundled extensions directory. Registering the same path
+   twice keeps the first position, so the order a pack declares is stable."
+  [paths]
+  (swap! bundled-extension-sources (fn [current]
+                                     (into current
+                                           (comp (remove (set current)) (distinct))
+                                           paths))))
 
 (defn ^:no-doc materialize-bundled-extensions!
   "Write the bundled extension sources into `dir` and answer `dir`, or nil when
@@ -2012,7 +2023,7 @@
              (into {}
                    (map (fn [rel]
                           [rel (classpath-src (str "vis-extensions/" rel))]))
-                   bundled-extension-sources)
+                   @bundled-extension-sources)
 
              wanted
              (into #{}

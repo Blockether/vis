@@ -19,9 +19,6 @@
         ;; --- third party -----------------------------------------------------------
         babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
-        ;; Static analysis for the Clojure `lint_code` surface, run through its
-        ;; programmatic API (clj-kondo.core/run!).
-        clj-kondo/clj-kondo {:mvn/version "2026.07.24"}
         com.blockether/anomaly {:mvn/version "1.0.1"}
         com.blockether/fff {:mvn/version "0.12.9"}
         ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing, text,
@@ -36,6 +33,21 @@
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/ruff {:mvn/version "0.3.5"}
         com.blockether/svar {:mvn/version "0.7.172"}
+        ;; The LANGUAGE PACKS. The engine ships no language tooling of its own: it
+        ;; initializes `vis-lang-interface` from the manifest, and every pack beside
+        ;; it registers through that library's registrar — which is why no formatter,
+        ;; analyzer or REPL coordinate appears anywhere else in this file. A pack
+        ;; depends on the engine under its own :test alias ONLY, so the pins below
+        ;; stay acyclic.
+        com.blockether/vis-lang-clojure {:git/sha "ce108eac30b161e29265d97dff83cfa249e3b461"
+                                         :git/url
+                                         "https://github.com/Blockether/vis-lang-clojure.git"}
+        com.blockether/vis-lang-interface {:git/sha "d30dbd71428d0dad72b1894c1a545c190f80a0ef"
+                                           :git/url
+                                           "https://github.com/Blockether/vis-lang-interface.git"}
+        com.blockether/vis-lang-python {:git/sha "e517e54a3acfb9c7d32ec76a0ae099f6f8027f46"
+                                        :git/url
+                                        "https://github.com/Blockether/vis-lang-python.git"}
         ;; The embedded CPython the sandbox runs, replacing GraalPy. The JVM bridge is
         ;; pinned to an immutable runtime commit; its per-platform interpreter ships as
         ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
@@ -80,9 +92,6 @@
         ;; HikariCP wraps the underlying `SQLiteDataSource` in long-lived connections with
         ;; one dispose hook that actually releases handles.
         com.zaxxer/HikariCP {:mvn/version "7.1.0"}
-        ;; The conservative fallback Clojure formatter; zprint is canonical when a
-        ;; `.zprint.edn` is present.
-        dev.weavejester/cljfmt {:mvn/version "0.16.5"}
         ;; Jetty 12 CORE adapter, NOT ring/ring-jetty-adapter: ring's routes every request
         ;; through the ee9 servlet compatibility layer (12 extra jars, a servlet API on the
         ;; SSE hot path, a build-time-init flag for ee9's HttpOutput). This one is a bare
@@ -92,7 +101,6 @@
         io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
         metosin/reitit-ring {:mvn/version "0.10.1"}
-        nrepl/nrepl {:mvn/version "1.7.0"}
         org.babashka/http-client {:mvn/version "0.4.24"}
         ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —
         ;; HTTPS verb/path enforcement for jailed shell children. No system provider is
@@ -128,13 +136,7 @@
         ring/ring-core {:mvn/version "1.15.5"}
         ;; CVE pin: Flyway 12.11.0 pulls tools.jackson jackson-databind 3.1.4
         ;; (CVE-2026-59889). Declared here so the top-level version wins.
-        tools.jackson.core/jackson-databind {:mvn/version "3.2.1"}
-        ;; zprint IS the repo's canonical formatter: `format_code` + the repo's
-        ;; `.zprint.edn` (`:option-fn`/`:guided` fn-map) are the only thing that
-        ;; formats this tree, and that config is tuned for 1.2.9. 1.3.0 changed
-        ;; guided newline handling and reflows let/binding forms differently, which
-        ;; would rewrite every namespace. antq bumped this once — hold it by hand.
-        zprint/zprint {:mvn/version "1.2.9"}}
+        tools.jackson.core/jackson-databind {:mvn/version "3.2.1"}}
  :aliases
  {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}

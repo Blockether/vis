@@ -32,8 +32,8 @@
 
           end-only
           '#{cat patch _shell-logs _shell-type council.read council.get council.threads
-             council.members repl_status draft-status main-agent-instructions update_goal
-             council.publish council.subagents council.cancel council.route}]
+             council.members draft-status main-agent-instructions update_goal council.publish
+             council.subagents council.cancel council.route}]
 
       (expect (= end-only
                  (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
@@ -163,13 +163,12 @@
       (let [symbols (set (map :ext.symbol/symbol
                               (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))]
         (expect (every? symbols
-                        ['format_code 'lint_code 'run_tests 'repl_eval 'repl_start 'repl_status
-                         'repl_stop 'read-session 'get-session 'list-sessions 'shell '_shell-logs
-                         '_shell-wait '_shell-type '_shell-stop]))))
+                        ['read-session 'get-session 'list-sessions 'shell '_shell-logs '_shell-wait
+                         '_shell-type '_shell-stop]))))
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
-  (it "keeps only dynamic language routing in the foundation prompt"
+  (it "keeps stable contracts out of the dynamic foundation prompt"
       (with-redefs [agents/instructions
                     (fn []
                       {:found? false})
@@ -189,8 +188,9 @@
           (expect (not (str/includes? prompt "RUNTIME")))
           (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
           (expect (not (str/includes? prompt "SCAN-WARNINGS")))
-          ;; Editing routes live in native descriptions; leadership is shared across languages.
-          (expect (or (str/blank? prompt) (str/includes? prompt "LANGUAGE TOOLS")))
+          ;; Language routing lives in the language-interface pack now: the
+          ;; foundation prompt must not advertise language tools at all.
+          (expect (not (str/includes? prompt "LANGUAGE TOOLS")))
           (expect (not (str/includes? prompt "EDITING ROUTES")))
           (expect (not (str/includes? prompt "Canonical path only")))
           (expect (not (str/includes? prompt "v/strategy")))
@@ -230,7 +230,6 @@
       (let [doc (:ext/description foundation/vis-extension)]
         (expect (str/includes? doc "toggle-gated shell and session introspection"))
         (expect (str/includes? doc "rewind"))
-        (expect (str/includes? doc "language facade"))
         (expect (str/includes? doc "file editing"))
         (expect (str/includes? doc "session workspace/VCS"))
         (expect (not (str/includes? doc "ext repro")))
@@ -258,51 +257,3 @@
       (let [checks ((:ext/doctor-fn foundation/vis-extension) {})]
         (expect (sequential? checks))
         (expect (every? :level checks)))))
-
-(defn- env-with-langs
-  [langtools]
-  ;; env whose ACTIVE extensions register these :ext/language-tools (drives both
-  ;; the capability matrix in the prompt and :session/language-tools in ctx).
-  {:active-extensions (atom [{:ext/language-tools langtools}])})
-
-(def ^:private py-pack [{:language "python" :repl-eval-fn identity :start-repl-fn identity}])
-
-(def ^:private clj-pack
-  [{:language "clojure"
-    :format-fn identity
-    :test-fn identity
-    :repl-eval-fn identity
-    :start-repl-fn identity}])
-
-(defdescribe
-  repl-capability-in-core-prompt-test
-  "GATE: the REPL/language capabilities are REALLY in the (turn-scoped) system
-   prompt, ARE in ctx, and CHANGE when a pack activates next turn."
-  (it "the foundation system prompt advertises an active pack's repl_eval"
-      (let [p ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))]
-        (expect (str/includes? p "LANGUAGE TOOLS"))
-        (expect (str/includes? p "python : repl_eval"))
-        ;; Stable workflow lives in CORE; this dynamic block is capabilities only.
-        (expect (not (str/includes? p "session[\"resources\"]")))))
-  (it "ACTIVATION-SENSITIVE: a pack's verbs appear only when its pack is active"
-      (let [with-py
-            ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))
-
-            without
-            ((:ext/prompt-fn foundation/vis-extension) (env-with-langs []))]
-
-        (expect (str/includes? with-py "python : repl_eval"))
-        (expect (not (str/includes? without "python : repl_eval")))))
-  (it "ctx surfaces \"session_language_tools\", recomputed each turn from activation"
-      (let [ctx ((:ext/ctx-fn foundation/vis-extension) (env-with-langs clj-pack))]
-        (expect (= ["format_code" "run_tests" "repl_eval" "repl_start"]
-                   (get-in ctx ["session_language_tools" "clojure"])))))
-  (it "ctx GAINS a language the turn its pack activates, drops it when it deactivates"
-      (let [active
-            ((:ext/ctx-fn foundation/vis-extension) (env-with-langs py-pack))
-
-            inactive
-            ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
-
-        (expect (= ["repl_eval" "repl_start"] (get-in active ["session_language_tools" "python"])))
-        (expect (nil? (get inactive "session_language_tools"))))))

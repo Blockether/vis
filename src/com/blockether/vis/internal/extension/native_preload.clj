@@ -17,20 +17,17 @@
    loads this file, so manifest registration stays lazy.
 
    The engine namespace list is derived from the manifest's entrypoints and the
-   compiled namespace tree. Formatter and analyzer dependencies are required here:
-   JVM registration defers them, but the native image must retain their code."
-  (:require [clojure.java.io :as io]
+   compiled namespace tree. An extension jar adds the namespaces only IT resolves
+   dynamically — a formatter or analyzer whose registration defers loading — by
+   shipping `META-INF/vis/native-preload.edn`: a vector of namespace symbols."
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
-            [clj-kondo.core]
-            [cljfmt.config]
-            [cljfmt.core]
-            [com.blockether.vis.internal.extension.manifest :as manifest]
-            [zprint.config]
-            [zprint.core]))
+            [com.blockether.vis.internal.extension.manifest :as manifest]))
 
 (def ^:private compiled-package
   "The package tree this distribution compiles: core and every internal namespace.
-   Dependencies used only through dynamic resolution are required above."
+   Namespaces resolved only dynamically are declared per jar (`declared-namespaces`)."
   ["com" "blockether" "vis"])
 
 (defn- path->namespace
@@ -74,12 +71,33 @@
        distinct
        sort))
 
+(def ^:private declared-resource
+  "Where an extension jar lists the namespaces the image must retain for it."
+  "META-INF/vis/native-preload.edn")
+
+(defn declared-namespaces
+  "Every namespace the jars on the classpath declare in `declared-resource`.
+   Registration stays lazy on the JVM, so these namespaces are loaded by nothing
+   while the image is built and would otherwise have no class in the binary."
+  []
+  (->> (enumeration-seq (.getResources (this-loader) declared-resource))
+       (mapcat (fn [^java.net.URL url]
+                 (let [declared (edn/read-string (slurp url))]
+                   (when-not (vector? declared)
+                     (throw (ex-info (str declared-resource " must hold a vector of namespaces")
+                                     {:url (str url)})))
+                   declared)))
+       (filter symbol?)
+       distinct
+       sort))
+
 (defn preload!
   "Load every namespace the image must keep. Any failure aborts the build: stepping
    over one produces an apparently successful image that cannot initialize the
    affected extension and usually poisons every namespace that requires it."
   []
   (let [targets (distinct (concat (map (comp symbol namespace) (manifest/initializers))
+                                  (declared-namespaces)
                                   (compiled-namespaces)))]
     (doseq [target targets]
       (try (require target)

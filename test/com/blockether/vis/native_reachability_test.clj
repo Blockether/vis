@@ -188,6 +188,16 @@
        (keep source-ns)
        set))
 
+(defn- dependency-source-ns
+  "The source file a declared dependency ships for `ns-sym`, when the classpath the
+   native builder is handed carries it. A language pack lives in its own repository,
+   so its registrar reaches the image through that classpath, not this source tree."
+  [ns-sym]
+  (let [base (-> (name ns-sym)
+                 (str/replace "-" "_")
+                 (str/replace "." "/"))]
+    (some #(io/resource (str base %)) [".clj" ".cljc"])))
+
 (defn- nses-loaded-by-name
   "Extension namespaces Vis resolves by name at runtime."
   []
@@ -227,8 +237,10 @@
                        (first-party-source-nses)]
 
                    (expect (seq initializers))
-                   (expect (empty? (remove sources initializers))
-                           "every initializer namespace must be in first-party source")))
+                   (expect (empty? (remove #(or (sources %) (dependency-source-ns %)) initializers))
+                           (str
+                             "every initializer namespace must reach the native image: "
+                             "first-party source, or a dependency root on the build classpath"))))
              (it "keeps every namespace resolved by name inside the first-party source closure"
                  (let [missing (sort (remove (first-party-source-nses) (nses-loaded-by-name)))]
                    (expect (empty? missing)
@@ -292,23 +304,16 @@
                            (mapv str))]
         (expect (empty? requiring)
                 (str "nothing may require the preload namespace: " (pr-str requiring)))))
-  (it "preloads formatter dependencies that JVM startup defers"
-      (let [source
-            (slurp (io/file "src/com/blockether/vis/internal/extension/native_preload.clj"))
-
-            ns-form
-            (edn/read-string source)
-
-            required
-            (->> ns-form
-                 (filter seq?)
-                 (filter #(= :require (first %)))
-                 (mapcat rest)
-                 (map first)
-                 set)]
-
+  (it "keeps the formatter backends a pack declares reachable"
+      ;; The language packs are separate jars: each ships
+      ;; `META-INF/vis/native-preload.edn` naming the namespaces its own tools
+      ;; resolve lazily, and `declared-namespaces` preloads that union.
+      (let [declared (->> (enumeration-seq (.getResources ^ClassLoader (clojure.lang.RT/baseLoader)
+                                                          "META-INF/vis/native-preload.edn"))
+                          (mapcat #(edn/read-string (slurp %)))
+                          set)]
         (doseq [backend '[clj-kondo.core cljfmt.config cljfmt.core zprint.config zprint.core]]
-          (expect (contains? required backend)
+          (expect (contains? declared backend)
                   (str backend " must remain reachable in the native image")))))
   (it "derives what it loads instead of carrying a list"
       ;; A written-down list is the failure mode this replaced: it goes stale on the

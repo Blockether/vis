@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-09-19.
+> Generated 2026-09-20.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -141,6 +141,9 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.172` | Apache-2.0 | 619 KB | Blockether (in-house) |
+| `com.blockether/vis-lang-clojure` | `git:ce108eac30b161e29265d97dff83cfa249e3b461` | Apache-2.0 | source checkout | Blockether (in-house) |
+| `com.blockether/vis-lang-interface` | `git:d30dbd71428d0dad72b1894c1a545c190f80a0ef` | Apache-2.0 | source checkout | Blockether (in-house) |
+| `com.blockether/vis-lang-python` | `git:e517e54a3acfb9c7d32ec76a0ae099f6f8027f46` | Apache-2.0 | source checkout | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:aad4ee579eb927f8924085c5afea74685ac9b90d` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
@@ -157,7 +160,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
 | `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
-| `dev.weavejester/cljfmt` | `0.16.5` | EPL-1.0 | 20 KB | 3rd-party |
 | `info.sunng/ring-jetty9-adapter` | `0.40.3` | EPL-1.0 | 163 KB | 3rd-party |
 | `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
@@ -165,7 +167,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.noahtheduke/lazytest` | `2.1.0` | EPL-1.0 | 47 KB | 3rd-party |
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
-| `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
 | `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
@@ -183,7 +184,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
 | `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
-| `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
 
 ### `vis-tui` module
 
@@ -206,9 +206,9 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 18 |
-| Apache-2.0 | 13 |
-| MIT | 13 |
+| Apache-2.0 | 16 |
+| EPL-1.0 | 16 |
+| MIT | 12 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |

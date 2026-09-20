@@ -12,7 +12,6 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
-            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.foundation.rewind :as rewind]
             [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
             [com.blockether.vis.internal.foundation.shell :as shell]
@@ -21,10 +20,9 @@
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn- combined-prompt
-  "Render the dynamic language matrix and toggle-gated core guidance."
+  "Render the toggle-gated core guidance."
   [env]
-  (->> [(language-surface/prompt env) (drafts/prompt env) (introspection/prompt env)
-        (agents/prompt env) (council/prompt env)]
+  (->> [(drafts/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -83,11 +81,6 @@
   (let [ws-block
         (session-workspace-block env)
 
-        ;; Recomputed EVERY turn from active-extensions, so the model sees a
-        ;; language pack's verbs (repl_eval/test/format) the turn it activates.
-        lang-tools
-        (language-surface/capability-data env)
-
         council-context
         (council-host/context env)]
 
@@ -96,16 +89,13 @@
       (assoc "session_council" council-context)
 
       ws-block
-      (assoc "session_workspace" ws-block)
-
-      lang-tools
-      (assoc "session_language_tools" lang-tools))))
+      (assoc "session_workspace" ws-block))))
 
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: language facade; file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; rewind; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
+     "Foundation kernel: file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; rewind; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -116,8 +106,7 @@
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
      :ext/engine {:ext.engine/builtin? true
-                  :ext.engine/symbols (vec (concat language-surface/symbols
-                                                   (editing/available-editing-symbols)
+                  :ext.engine/symbols (vec (concat (editing/available-editing-symbols)
                                                    environment/environment-symbols
                                                    introspection/all-symbols
                                                    council-host/symbols

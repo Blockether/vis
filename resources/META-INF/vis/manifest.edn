@@ -1,4 +1,5 @@
-{:initialization [{:apropos "META-INF/vis/apropos/docs.edn"
+{:initialization [com.blockether.vis.lang.interface.core/register!
+                  {:apropos "META-INF/vis/apropos/docs.edn"
                    :register com.blockether.vis.internal.foundation.core/register!}
                   {:apropos "META-INF/vis/apropos/shim-attach.edn"
                    :register com.blockether.vis.internal.foundation.shim-attach/register!}
@@ -6,8 +7,6 @@
                    :register com.blockether.vis.internal.foundation.shim-ls/register!}
                   com.blockether.vis.internal.foundation.mcp.core/register!
                   com.blockether.vis.internal.foundation.harness.core/register!
-                  com.blockether.vis.internal.language.clojure.core/register!
-                  com.blockether.vis.internal.language.python.core/register!
                   com.blockether.vis.internal.provider.vendor.alibaba/register!
                   com.blockether.vis.internal.provider.vendor.anthropic/register!
                   com.blockether.vis.internal.provider.vendor.github-copilot/register!

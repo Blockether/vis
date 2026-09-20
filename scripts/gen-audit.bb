@@ -50,6 +50,9 @@
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64" "Apache-2.0"
    ;; These git dependencies have no Maven POM to carry their repository license.
    "com.blockether/vis-python-runtime" "MIT"
+   "com.blockether/vis-lang-interface" "Apache-2.0"
+   "com.blockether/vis-lang-clojure" "Apache-2.0"
+   "com.blockether/vis-lang-python" "Apache-2.0"
    "io.github.clj-holmes/clj-watson" "EPL-2.0"})
 
 ;; ---------------------------------------------------------------- deps parsing

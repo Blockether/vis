@@ -141,7 +141,7 @@
         (expect (= (str "File: `src/example.clj` · " url) (get-in public ["content" 2 "text"])))
         (expect (= path (get-in view ["sections" 0 "headline"])))))
     (it "compacts every built-in and custom renderer at the common event boundary"
-        (doseq [operation [:ls :cat :grep :patch :format_code :lint_code :run_tests :custom.method]]
+        (doseq [operation [:ls :cat :grep :patch :shell :custom.method]]
           (let [result {"path" path}
                 terminal (event/terminal-event ctx
                                                invocation
@@ -201,12 +201,9 @@
         (expect (= "markdown"
                    (get-in (terminal :doc "# Guide\n\n**Read this**")
                            [:presentation "content" 0 "type"])))
-        (let [result (terminal :run_tests
-                               {:is_pass false
-                                :total 3
-                                :fail 1
-                                :output "Expected 2\nActual 1"
-                                :api_key "fixture-secret"})
+        (let [result (terminal
+                       :apropos
+                       {:matches 3 :output "Expected 2\nActual 1" :api_key "fixture-secret"})
               text (wire/json-str (:presentation result))]
 
           (expect (string/includes? text "Expected 2"))

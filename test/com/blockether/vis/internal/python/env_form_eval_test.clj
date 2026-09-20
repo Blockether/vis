@@ -2,12 +2,8 @@
   "Vis-owned error mapping and host-surface checks for Python block execution.
    Parsing, per-form evaluation, async execution, persistence, protected names and
    boundary marshalling are tested exhaustively by vis-python-runtime."
-  (:require [clojure.set :as set]
-            [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension.core :as extension]
+  (:require [clojure.string :as str]
             [com.blockether.vis.internal.python.env :as ep]
-            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -70,25 +66,6 @@
         (expect (true? (get-in error [:data :non-ascii-in-code?])))
         (expect (= 3 (get-in error [:data :line])))
         (expect (str/includes? (:message error) "non-ASCII")))))
-
-(defdescribe facade-verb-name-guard-test
-             ;; Drift guard: the language facade verbs must NEVER regress to the bare
-             ;; collision-prone names. `test`/`format` collide with the commonest variable
-             ;; names AND Python builtins, so naming a facade verb that would make the
-             ;; strong rebind-guard fire on natural variables is forbidden.
-             (it "no facade verb uses a collision-prone bare name"
-                 (let [facade
-                       (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
-
-                       banned
-                       #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
-
-                   (expect (empty? (set/intersection facade banned)))))
-             (it "pins the facade verb name set"
-                 (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))]
-                   (expect (= #{"format_code" "lint_code" "run_tests" "repl_eval" "repl_start"
-                                "repl_status" "repl_stop" "repl_connect"}
-                              facade)))))
 
 (defdescribe
   probe-path-binding-test
@@ -362,53 +339,3 @@
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
         (expect (nil? (:error r))))))
-
-(defdescribe
-  python-repl-language-and-directory-test
-  ;; #202 follow-up: dependency diagnosis must exercise the Python-facing dispatch,
-  ;; not only Clojure calls that bypass folded kwargs and symbol invocation.
-  (it
-    "preserves explicit Python, project cwd and environment across the host boundary"
-    (let [handler
-          (fn [language]
-            {:language language
-             :start-repl-fn (fn [_ op opts]
-                              (extension/success
-                                {:result {"language" language
-                                          "operation" op
-                                          "cwd" (get opts "cwd")
-                                          "setting" (get-in opts ["env" "MONITOR_MODE"])}}))})
-
-          env
-          {:session-id (str (random-uuid))
-           :extensions (atom [{:ext/name "repl-probe"
-                               :ext/language-tools [(handler "clojure") (handler "python")]}])}
-
-          bindings
-          (into {}
-                (map (fn [entry]
-                       [(:ext.symbol/symbol entry)
-                        (fn [& args]
-                          (extension/invoke-symbol-wrapper {:ext/name "repl-probe"}
-                                                           entry
-                                                           (vec args)
-                                                           env))]))
-                [language-surface/repl-start-symbol language-surface/repl-status-symbol])]
-
-      (with-redefs [vis/prepare-session-jail! (fn [_]
-                                                nil)]
-        (tpc/with-own
-          [ctx bindings]
-          (doseq [[tool operation] [["repl_start" "start"] ["repl_status" "status"]]
-                  args
-                  ["{'language': 'python', 'cwd': 'packages/sdk', 'env': {'MONITOR_MODE': 'test'}}"
-                   "'python', {'cwd': 'packages/sdk', 'env': {'MONITOR_MODE': 'test'}}"
-                   "language='python', cwd='packages/sdk', env={'MONITOR_MODE': 'test'}"]]
-
-            (let [r (ep/run-python-block
-                      ctx
-                      (str "r = await " tool
-                           "(" args
-                           ")\n" "print(r['language'], r['operation'], r['cwd'], r['setting'])"))]
-              (expect (nil? (:error r)) (pr-str (:error r)))
-              (expect (= (str "python " operation " packages/sdk test") (out r))))))))))

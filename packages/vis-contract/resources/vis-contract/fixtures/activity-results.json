@@ -2,7 +2,7 @@
   "state": "succeeded",
   "counts": {
     "running": 0,
-    "succeeded": 7,
+    "succeeded": 6,
     "failed": 0,
     "cancelled": 0
   },
@@ -191,43 +191,11 @@
       "resources": []
     },
     {
-      "result_summary": "{:is_pass true, :target \"test/activity_test.clj\", :total 12, :pass 12, :fail 0, :framework \"lazytest\", :output \"12 tests passed.\"}",
-      "id": "result-5",
-      "summary": "Activity tests",
-      "signal": "observation",
-      "sequence": 6,
-      "operation": "run_tests",
-      "presentation": {
-        "headline": "Ran tests",
-        "summary": "test/activity_test.clj · 12 tests · 0 failed",
-        "content": [
-          {
-            "type": "text",
-            "text": "Framework: lazytest · Target: test/activity_test.clj"
-          }
-        ]
-      },
-      "presenter": "generic",
-      "duration_ms": 0,
-      "state": "succeeded",
-      "evidence": [
-        {
-          "kind": "arguments",
-          "text": "[\"Activity tests\"]"
-        },
-        {
-          "kind": "result",
-          "text": "{:is_pass true, :target \"test/activity_test.clj\", :total 12, :pass 12, :fail 0, :framework \"lazytest\", :output \"12 tests passed.\"}"
-        }
-      ],
-      "resources": []
-    },
-    {
       "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
-      "id": "result-6",
+      "id": "result-5",
       "summary": "Activity review",
       "signal": "observation",
-      "sequence": 7,
+      "sequence": 6,
       "operation": "council.get",
       "presentation": {
         "headline": "Read Council message",

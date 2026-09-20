@@ -233,7 +233,7 @@
             (event-pair ctx :grep :succeeded {:matches 3})
 
             [b-start* b-end*]
-            (event-pair ctx :run_tests :succeeded {:pass 2})
+            (event-pair ctx :shell :succeeded {:exit 0})
 
             b-start
             (assoc b-start* :event-sequence 2)
@@ -247,7 +247,7 @@
             state
             (activity/replay [a-start b-start b-end a-end])]
 
-        (expect (= [:grep :run_tests] (mapv :operation (:rows state))))
+        (expect (= [:grep :shell] (mapv :operation (:rows state))))
         (expect (= [:succeeded :succeeded] (mapv :state (:rows state))))
         (expect (= :succeeded (:state state)))
         (expect (= 2 (get-in state [:counts :succeeded])))))

@@ -635,7 +635,9 @@
              [loaded-python-extensions python-extensions/loaded-python-extensions]
              [add-python-extension-change-listener! python-extensions/add-change-listener!]
              [remove-python-extension-change-listener! python-extensions/remove-change-listener!]
-             [test-python-extensions! python-test-runner/test-python-extensions!])
+             [test-python-extensions! python-test-runner/test-python-extensions!]
+             [register-bundled-extension-sources!
+              python-extensions/register-bundled-extension-sources!])
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
@@ -842,11 +844,6 @@
   "Kill a process and every process it started."
   [process]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/kill-tree!) process))
-
-(defn shell-sh
-  "Run one command synchronously: `(shell-sh \"npm\" \"install\" :dir root)`."
-  [& args]
-  (apply (requiring-resolve 'com.blockether.vis.internal.foundation.shell/sh) args))
 
 (defn python-shared-key
   "The pooled Python worker key every shared sandbox call uses."

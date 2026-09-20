@@ -11,7 +11,7 @@
 
 (defn result-fixture
   "Production-generated result views shared by Companion stories and TUI grid tests."
-  [& [repl-cases]]
+  [& [override-cases]]
   (let
     [path
      "src/com/blockether/vis/internal/activity/presenter.clj"
@@ -37,14 +37,6 @@
         :thread_id 42
         :ping ["reviewer"]
         :content "Read and Patch now show their **results** after one disclosure."} nil]
-      [:run_tests "Activity tests"
-       {:is_pass true
-        :target "test/activity_test.clj"
-        :total 12
-        :pass 12
-        :fail 0
-        :framework "lazytest"
-        :output "12 tests passed."} nil]
       [:council.get "Activity review"
        {:title "Activity review"
         :entry_id 42
@@ -77,7 +69,7 @@
                                           :result result
                                           :result-envelope envelope
                                           :started-at-ms (System/currentTimeMillis)))]))
-             (or repl-cases cases))]
+             (or override-cases cases))]
 
     (-> (activity/replay events)
         (assoc :state :succeeded)
@@ -105,239 +97,9 @@
                    (expect (= expected actual)))))
 
 (defdescribe
-  language-result-summaries-test
-  (it "states format outcomes for files, snippets, batches and empty results"
-      (doseq [[result expected]
-              [[{"changed" false "path" "src/example.clj" "formatter" "zprint"}
-                "No formatting changes · src/example.clj"]
-               [{:changed true :path "src/example.py" :formatter "ruff"}
-                "Formatting changed · src/example.py"]
-               [{"changed" true "chars" 2} "Formatting changed"]
-               [{"changed" false "unbalanced" "Unmatched delimiter"} "Formatting incomplete"]
-               [{"files" [{"path" "src/a.clj" "changed" true} {"path" "src/b.clj" "changed" false}]
-                 "changed" 1} "1 of 2 files changed"]
-               [{"files" [] "changed" 0} "No files to format"] [{} "No formatting result"]]]
-        (expect (= expected
-                   (get (presenter/result-presentation {:operation :format_code} result)
-                        "summary")))))
-  (it
-    "states lint severity counts without mistaking absent results for clean checks"
-    (doseq [[result expected]
-            [[{"error" 0 "warning" 0 "info" 0 "files" 1} "No lint findings · 1 file checked"]
-             [{:error 2 :warning 1 :info 3 :files 2}
-              "2 errors · 1 warning · 3 info · 2 files checked"]
-             [{"error" 0 "warning" 1 "info" 0 "files" 1}
-              "0 errors · 1 warning · 0 info · 1 file checked"]
-             [{"error" 0 "warning" 0 "info" 0 "files" 0} "No files to lint"] [{} "No lint result"]]]
-      (expect (= expected
-                 (get (presenter/result-presentation {:operation :lint_code} result) "summary")))))
-  (it "keeps a clean lint result to its one-line summary"
-      ;; Regression #238: a clean run must not repeat its metrics and targets inline.
-      ;; Issue #270: it has no details worth opening either — provider, config and
-      ;; target metadata only restate the summary.
-      (let [targets
-            (mapv #(str "src/module_" % ".py") (range 15))
-
-            result
-            {"language" "python"
-             "error" 0
-             "warning" 0
-             "info" 0
-             "files" 15
-             "findings" []
-             "providers" ["ruff"]
-             "config" "pyproject.toml"
-             "targets" targets}
-
-            projection
-            (result-fixture [[:lint_code "src" result nil]])
-
-            view
-            (get-in projection ["rows" 0 "presentation"])]
-
-        (expect (contract/valid-projection? projection))
-        (expect (= "Linted" (get view "headline")))
-        (expect (= "No lint findings · 15 files checked" (get view "summary")))
-        (expect (= [] (get view "content")))
-        (expect (empty? (get view "sections")))
-        (expect (nil? (re-find #"pyproject.toml|ruff" (pr-str view))))))
-  (it "keeps clean snippet and no-file results compact"
-      (doseq [result [{:error 0
-                       :warning 0
-                       :info 0
-                       :files 1
-                       :findings []
-                       :language "clojure"
-                       :providers ["clj-kondo" "general"]
-                       :snippet "(+ 1 2)"}
-                      {"error" 0 "warning" 0 "info" 0 "files" 0 "findings" []}]]
-        (let [view (presenter/result-presentation {:operation :lint_code} result)]
-          (expect (contract/valid-presentation? view))
-          (expect (= [] (get view "content")))
-          (expect (empty? (get view "sections"))))))
-  (it "keeps findings, failed results and incomplete results inline"
-      (doseq [result
-              [{"error" 1 "warning" 0 "info" 0} {"error" 0 "warning" 1 "info" 0}
-               {"error" 0 "warning" 0 "info" 1} {"error" "Cannot read target"}
-               {"warning" 0 "info" 0 "config" "pyproject.toml"}
-               {"error" 0 "warning" 0 "info" 0 "findings" [{"message" "Uncounted diagnostic"}]}]]
-        (let [view (presenter/result-presentation {:operation :lint_code} result)]
-          (expect (contract/valid-presentation? view))
-          (expect (seq (get view "content")))
-          (expect (empty? (get view "sections"))))))
-  (it "keeps useful outcomes and full details when later output grows the history"
-      ;; Regression #212: subsequent output must not discard earlier presentation content.
-      (let [checks
-            [[:format_code "src/example.clj"
-              {"changed" false "path" "src/example.clj" "formatter" "zprint"} nil]
-             [:lint_code "src/example.clj" {"error" 0 "warning" 0 "info" 0 "files" 1 "findings" []}
-              nil]]
-
-            bulky
-            (repeat 6 [:doc "Guide" (apply str (repeat 16000 "x")) nil])
-
-            projection
-            (result-fixture (concat checks bulky))
-
-            rows
-            (take 2 (get projection "rows"))]
-
-        (expect (contract/valid-projection? projection))
-        (expect (= ["No formatting changes · src/example.clj" "No lint findings · 1 file checked"]
-                   (mapv #(get-in % ["presentation" "summary"]) rows)))
-        (expect (empty? (get-in (first rows) ["presentation" "content"])))
-        (expect (empty? (get-in (second rows) ["presentation" "sections"])))
-        (expect (not-any? #(get % "is_truncated") rows))))
-  ;; #218: all findings remain visible, not just complete aggregate counts.
-  (it "retains complete per-file and per-finding evidence alongside counts"
-      (let [projection
-            (result-fixture
-              [[:format_code "src"
-                (array-map
-                  "files"
-                  (vec (repeat 100 {"path" "src/example.clj" "changed" false "formatter" "zprint"}))
-                  "changed" 0) nil]
-               [:lint_code "src"
-                (array-map "findings" (vec (repeat 100
-                                                   {"file" "src/example.clj"
-                                                    "row" 12
-                                                    "col" 3
-                                                    "level" "warning"
-                                                    "message" "Unused binding"}))
-                           "error" 0
-                           "warning" 100
-                           "info" 0
-                           "files" 20) nil]])
-
-            rows
-            (get projection "rows")]
-
-        (expect (contract/valid-projection? projection))
-        (expect (= ["0 of 100 files changed" "0 errors · 100 warnings · 0 info · 20 files checked"]
-                   (mapv #(get-in % ["presentation" "summary"]) rows)))
-        (expect (not (get (first rows) "is_truncated")))
-        (expect (not (get (second rows) "is_truncated")))
-        (expect (= 100
-                   (count (re-seq #"Unused binding"
-                                  (pr-str (get-in rows [1 "presentation" "content"]))))))))
-  (it "uses complete results for counts but only public values for displayed text"
-      (doseq [[operation complete public expected]
-              [[:format_code {"changed" false "path" "original-target"}
-                {"changed" false "path" "[REDACTED]"} "No formatting changes · [REDACTED]"]
-               [:lint_code
-                {"error" 0
-                 "warning" 1
-                 "info" 0
-                 "files" 2
-                 "findings" [{"message" "original-diagnostic"}]}
-                {"findings" [{"message" "[REDACTED]"}]}
-                "0 errors · 1 warning · 0 info · 2 files checked"]
-               [:lint_code
-                {"error" 0
-                 "warning" 0
-                 "info" 0
-                 "files" 15
-                 "findings" []
-                 "targets" ["original-target"]} {"targets" ["[REDACTED]"]}
-                "No lint findings · 15 files checked"]]]
-        (let [view (presenter/result-presentation {:operation operation :result complete} public)]
-          (expect (= expected (get view "summary")))
-          (expect (not (re-find #"original-target|original-diagnostic" (pr-str view)))))))
-  (it "retains providers, repair notes and finding locations in expanded content"
-      (let [rows (get (result-fixture
-                        [[:format_code "src/example.clj"
-                          {"changed" true
-                           "repaired" true
-                           "formatter" "zprint"
-                           "repairs" ["Completed delimiter on line 12"]} nil]
-                         [:lint_code "src/example.clj"
-                          {"error" 1
-                           "warning" 0
-                           "info" 0
-                           "files" 1
-                           "providers" ["clj-kondo" "general"]
-                           "findings" [{"file" "src/example.clj"
-                                        "row" 12
-                                        "col" 3
-                                        "level" "error"
-                                        "type" "unresolved-symbol"
-                                        "message" "Unresolved symbol: missing"}]} nil]])
-                      "rows")]
-        (expect (re-find #"Completed delimiter on line 12" (pr-str (first rows))))
-        (expect (re-find #"clj-kondo" (pr-str (second rows))))
-        (expect (re-find #"general" (pr-str (second rows))))
-        (expect (re-find #"Unresolved symbol: missing" (pr-str (second rows))))
-        (expect (re-find #"src/example.clj" (pr-str (second rows))))
-        (expect (not-any? #(get % "is_truncated") rows))))
-  (it
-    "keeps running, failed and cancelled lifecycle evidence on the declared bindings"
-    (doseq [[operation headline]
-            [[:format_code "Format code"] [:lint_code "Lint code"]]
-
-            outcome
-            [:failed :cancelled]]
-
-      (let [ctx
-            (event/context)
-
-            invocation
-            (event/invocation ctx nil)
-
-            declared
-            (presenter/for-tool operation)
-
-            details
-            {:operation operation
-             :presenter :generic
-             :activity declared
-             :started-at-ms (System/currentTimeMillis)}
-
-            start
-            (event/start-event ctx invocation details)
-
-            terminal
-            (event/terminal-event ctx
-                                  invocation
-                                  (assoc details
-                                    :outcome outcome
-                                    :error (ex-info "Cannot read target" {})))
-
-            projection
-            (activity/presentation (activity/replay [start terminal]))
-
-            row
-            (first (:rows projection))]
-
-        (expect (:show-start declared))
-        (expect (= headline (get-in start [:presentation "headline"])))
-        (expect (= (name outcome) (:state row)))
-        (expect (= "Cannot read target" (:error-summary row)))
-        (expect (contract/valid-projection? projection))))))
-
-(defdescribe
   compact-built-in-results-test
   (it
-    "keeps routine draft and REPL outcomes on the summary line"
+    "keeps routine draft and session outcomes on the summary line"
     (doseq [[operation result summary]
             [[:draft_status {:in_draft false} "No active draft"]
              [:draft_status
@@ -376,21 +138,6 @@
              [:draft_discard
               {:status "recovered" :label "review" :root "~/vis" :preserved_root "~/draft"}
               "review · Returned to ~/vis · Preserved ~/draft"]
-             [:repl_status {:result "status" :status "down" :cwd "~/vis" :resources []}
-              "Not running · ~/vis"]
-             [:repl_status {"result" "status" "status" "up" "cwd" "~/vis"} "Running · ~/vis"]
-             [:repl_start {:result "already-running" :status "up" :cwd "~/vis"}
-              "Already running · ~/vis"]
-             [:repl_start {:result "starting" :cwd "~/vis"} "Starting · ~/vis"]
-             [:repl_connect
-              {:result "connected"
-               :status "up"
-               :cwd "~/vis"
-               :host "127.0.0.1"
-               :port 5000
-               :external true} "Connected · ~/vis · 127.0.0.1:5000 · External REPL"]
-             [:repl_stop {:result "detached" :status "down" :cwd "~/vis"} "Detached · ~/vis"]
-             [:repl_stop {:result "stopped" :status "down" :cwd "~/vis"} "Stopped · ~/vis"]
              [:update_goal {:status "complete" :objective "Verify Activity" :reason "Checks pass"}
               "Complete · Verify Activity"]]]
       (let [view (get-in (result-fixture [[operation "" result nil]]) ["rows" 0 "presentation"])]
@@ -404,9 +151,7 @@
               [[:draft_status "No draft status"] [:draft_create "No draft result"]
                [:draft_approve "No draft result"] [:draft_discard "No draft result"]
                [:draft_diff "No draft result"] [:draft_sync "No draft result"]
-               [:repl_status "No REPL status"] [:repl_start "No REPL status"]
-               [:repl_stop "No REPL status"] [:repl_connect "No REPL status"]
-               [:run_tests "No test result"] [:list_sessions "No sessions found"]]
+               [:list_sessions "No sessions found"]]
 
               result
               [nil {} []]]
@@ -417,22 +162,7 @@
   (it
     "retains actionable evidence without metadata tables"
     (doseq [[operation result summary evidence]
-            [[:repl_start
-              {:result "failed"
-               :status "failed"
-               :cwd "~/vis"
-               :exit 1
-               :message "Cannot launch REPL"
-               :log_tail "Launcher error"} "Failed · ~/vis"
-              ["Cannot launch REPL" "Launcher error" "Exit: 1"]]
-             [:repl_start {:result "no-launcher" :cwd "~/vis" :message "Install Clojure"}
-              "No launcher · ~/vis" ["Install Clojure"]]
-             [:repl_status
-              {:status "down"
-               :cwd "~/vis"
-               :resources [{:language "python" :status "up" :label "Analysis REPL"}]}
-              "Not running · ~/vis · 1 live REPL" ["Analysis REPL" "python"]]
-             [:draft_approve
+            [[:draft_approve
               {:status "approved" :published true :target_branch "main" :files ["src/example.clj"]}
               "Published to main · 1 file" ["src/example.clj"]]
              [:update_goal
@@ -445,89 +175,12 @@
         (expect (= summary (get view "summary")))
         (doseq [text evidence]
           (expect (str/includes? content text)))
-        (when (= operation :repl_start) (expect (= "REPL unavailable" (get view "headline"))))
         (expect (not (str/includes? content "\"table\""))))))
-  (it "does not put successful formatting metadata in the body"
-      (doseq [result [{:path "src/example.clj"
-                       :changed false
-                       :formatter "zprint"
-                       :repaired false
-                       :unbalanced false
-                       :error false} {:changed true :formatter "ruff"} {:files [] :changed 0}]]
-        (expect (empty? (get (presenter/result-presentation {:operation :format_code} result)
-                             "content")))))
-  (it "keeps test counts inline, retaining failures and output below"
-      (doseq [[result summary]
-              [[{:total 12 :pass 12 :fail 0 :output "12 tests passed."} "12 tests · 0 failed"]
-               [{:total 12 :pass 10 :fail 2 :errored 1 :output "Assertion failed"}
-                "12 tests · 2 failed · 1 errored"] [{:total 0 :fail 0} "No tests ran"]
-               [{:error "Cannot launch tests" :total 0 :fail 0} "Test run failed"]
-               [{:timed_out true :error "Timeout"} "Test run timed out"]]]
-        (let [view (presenter/result-presentation {:operation :run_tests} result)
-              content (pr-str (get view "content"))]
-
-          (expect (= summary (get view "summary")))
-          (expect (not (str/includes? content "\"table\"")))
-          (expect (not (re-find #"Total:|Pass:|Fail:|Errored:" content)))
-          (doseq [text (keep result [:output :error])]
-            (expect (str/includes? content text))))))
-  ;; Regression, issue #260: a focused run named only counts, and a clean run
-  ;; pasted the runner's whole banner behind the disclosure.
-  (it
-    "names the selected targets and leaves a clean run's runner output out"
-    (doseq [[result summary evidence]
-            [[{:is_pass true
-               :target "tests/test_model.py"
-               :total 7
-               :pass 7
-               :fail 0
-               :framework "pytest"
-               :mode "cli"
-               :timed_out false
-               :repl_unusable false
-               :recovered false
-               :output "===== test session starts =====\n7 passed in 0.25s"}
-              "tests/test_model.py · 7 tests · 0 failed" nil]
-             [{:is_pass true
-               :target "tests/unit/test_model.py, tests/unit/test_view.py, tests/unit/test_api.py"
-               :total 9
-               :pass 9
-               :fail 0
-               :output "9 passed in 0.31s"} "tests/unit/test_model.py +2 more · 9 tests · 0 failed"
-              nil]
-             [{:is_pass true :target "full suite" :total 12 :pass 12 :fail 0 :output "12 passed"}
-              "12 tests · 0 failed" nil]
-             [{:is_pass false
-               :target "tests/test_model.py"
-               :total 7
-               :pass 6
-               :fail 1
-               :failures [{:test "test_rounds_down" :type "fail" :message "assert 1 == 2"}]
-               :output "===== FAILURES ====="} "tests/test_model.py · 7 tests · 1 failed"
-              "assert 1 == 2"]]]
-      (let [view (presenter/result-presentation {:operation :run_tests} result)
-            content (pr-str (get view "content"))]
-
-        (expect (= summary (get view "summary")))
-        (expect (= (some? evidence) (str/includes? content (:output result))))
-        (expect (not (str/includes? content "false")))
-        (when evidence
-          (expect (str/includes? content evidence))
-          (expect (< (long (str/index-of content evidence))
-                     (long (str/index-of content (:output result)))))))))
-  (it "renders nested metadata as text rather than key/value grids"
-      (let [view (presenter/result-presentation {:operation :run_tests}
-                                                {:environment {:language "clojure"
-                                                               :runner "lazytest"}})]
-        (expect (= [{"type" "heading" "text" "Environment"}
-                    {"type" "text" "text" "Language: clojure · Runner: lazytest"}]
-                   (get view "content")))))
   (it
     "keeps binding registration, start policy, failure and cancellation intact"
     (doseq [[operation show-start?]
             [[:draft_status false] [:draft_create true] [:draft_diff true] [:draft_approve true]
-             [:draft_discard true] [:repl_status false] [:repl_start true] [:repl_connect true]
-             [:repl_stop true] [:update_goal false] [:run_tests true]]
+             [:draft_discard true] [:update_goal false]]
 
             outcome
             [:failed :cancelled]]
@@ -616,123 +269,6 @@
                        (pr-str (presenter/result-presentation {:operation :council.members}
                                                               [{:session_id "opaque"
                                                                 :title "Reviewer"}]))))))
-
-(defdescribe
-  repl-results-test
-  (it "renders both languages as program, optional streams and one result"
-      (doseq [language ["clojure" "python"]]
-        (let [value {"language" language
-                     "code" "source"
-                     "value" "42"
-                     "values" ["42"]
-                     "data" 42
-                     "type" "int"
-                     "ok" true
-                     "out" "hello\n"
-                     "err" "warning\n"
-                     "status" ["done"]}
-              blocks (get (presenter/result-presentation {:operation :repl_eval} value) "content")]
-
-          (expect (= ["Program" "Stdout" "Stderr" "Result"]
-                     (mapv #(get % "text") (filter #(= "heading" (get % "type")) blocks))))
-          (expect (= [language nil nil language]
-                     (mapv #(get % "language") (filter #(= "code" (get % "type")) blocks))))
-          (expect (= ["source" "hello\n" "warning\n" "42"]
-                     (mapv #(get % "text") (filter #(= "code" (get % "type")) blocks)))))))
-  (it "omits empty streams without losing false or zero results"
-      (doseq [value [false 0 "false" "0" "\"nil\"" "\"None\""]]
-        (let [view (presenter/result-presentation
-                     {:operation :repl_eval}
-                     {"language" "python" "code" "source" "value" value "out" "" "err" ""})]
-          (expect (= ["Program" "Result"]
-                     (mapv #(get % "text")
-                           (filter #(= "heading" (get % "type")) (get view "content"))))))))
-  (it "omits nil results and absent or blank streams independently"
-      (doseq [[language result]
-              [["clojure" {}] ["clojure" {"value" nil}] ["clojure" {"value" "nil"}]
-               ["clojure" {"values" ["nil"]}] ["python" {}] ["python" {"value" nil}]
-               ["python" {"value" "None"}]]
-
-              out
-              [{} {"out" nil} {"out" ""} {"out" " \n\t"} {"out" "hello\n"}]
-
-              err
-              [{} {"err" nil} {"err" ""} {"err" " \n\t"} {"err" "warning\n"}]]
-
-        (let [view
-              (presenter/result-presentation
-                {:operation :repl_eval}
-                (merge {"language" language "code" "source"} result out err))
-
-              expected
-              (cond-> [{"type" "heading" "text" "Program"}
-                       {"type" "code" "text" "source" "language" language}]
-                (= "hello\n" (get out "out"))
-                (into [{"type" "heading" "text" "Stdout"} {"type" "code" "text" "hello\n"}])
-
-                (= "warning\n" (get err "err"))
-                (into [{"type" "heading" "text" "Stderr"} {"type" "code" "text" "warning\n"}]))]
-
-          (expect (= expected (get view "content"))))))
-  (it "keeps partial streams with errors and timeouts, not a successful result"
-      (doseq [[failure title] [[{"ok" false "exc" "ValueError: invalid"} "Error"]
-                               [{"ex" "ArithmeticException" "status" ["eval-error"]} "Error"]
-                               [{"timed_out" true "ms" 100} "Timeout"]]]
-        (let [view (presenter/result-presentation
-                     {:operation :repl_eval}
-                     (merge {"language" "clojure" "code" "source" "out" "partial\n" "value" "old"}
-                            failure))
-              headings (mapv #(get % "text")
-                             (filter #(= "heading" (get % "type")) (get view "content")))]
-
-          (expect (= ["Program" "Stdout" title] headings)))))
-  (it "does not duplicate nREPL values or Python structured data"
-      (let [view (presenter/result-presentation
-                   {:operation :repl_eval}
-                   {"language" "clojure" "code" "1 2" "value" "2" "values" ["1" "2"]})]
-        (expect (= "1\n2" (get (last (get view "content")) "text"))))))
-
-(defn repl-result-fixture
-  "Retained REPL results shared by both production clients."
-  []
-  (result-fixture
-    (mapv
-      (fn [result]
-        [:repl_eval "REPL" result nil])
-      [{"language" "clojure"
-        "code"
-        "(do\n  (println \"Hello Ada\")\n  (binding [*out* *err*] (println \"Check input\"))\n  {:answer 42 :ready true})"
-        "out" "Hello Ada\n"
-        "err" "Check input\n"
-        "value" "{:answer 42, :ready true}"
-        "status" ["done"]}
-       {"language" "python"
-        "code"
-        "import sys\nprint('Hello Ada')\nprint('Check input', file=sys.stderr)\n{'answer': 42, 'ready': True}"
-        "out" "Hello Ada\n"
-        "err" "Check input\n"
-        "value" "{'answer': 42, 'ready': True}"
-        "ok" true}
-       {"language" "clojure"
-        "code" "(/ 1 0)"
-        "ex" "ArithmeticException"
-        "error_message" "Divide by zero"
-        "status" ["eval-error"]}
-       {"language" "python"
-        "code" "1 / 0"
-        "ok" false
-        "exc"
-        "Traceback (most recent call last):\n  File \"<repl>\", line 1, in <module>\nZeroDivisionError: division by zero"}
-       {"language" "clojure" "code" "(Thread/sleep 10000)" "timed_out" true "ms" 100}])))
-
-(defdescribe repl-fixture-test
-             (it "pins the portable REPL projection used by both clients"
-                 (let [actual (repl-result-fixture)]
-                   (expect (contract/valid-projection? actual))
-                   (expect (= actual
-                              (json/read-json (slurp
-                                                (io/resource
-                                                  "vis-contract/fixtures/activity-repl.json"))))))))
 
 (defdescribe
   council-activity-test
