@@ -66,6 +66,26 @@ const settledRow: TranscriptTurn = {
   iterations: liveTrace,
 };
 
+// What a user cancel actually persists, read back from a real gateway transcript:
+// an `interrupted` row with `content: []` and HOLLOW iteration records — the same
+// positions the reader was watching, with no prose, no thinking and no steps in
+// them. Everything on screen lives in this screen's cancelled-turn snapshot.
+const cancelledRow: TranscriptTurn = {
+  turn_id: RUNNING_ID,
+  position: 3,
+  request: 'THE NEWEST QUESTION',
+  status: 'interrupted',
+  created_at: Date.now() - 60_000,
+  completed_at: Date.now(),
+  content: [],
+  iterations: liveTrace.map((iteration) => ({
+    id: iteration.id,
+    position: iteration.position,
+    thinking: '',
+    assistant_prose: '',
+    forms: [],
+  })),
+};
 const session = {
   ...baseSession,
   id: 'turn-settle-scroll',
@@ -76,13 +96,14 @@ const session = {
 
 // The engine persists the finished row a moment AFTER the terminal frame.
 let persisted = false;
+let persistedRow: TranscriptTurn = settledRow;
 const client = new Proxy(baseClient, {
   get(target, key) {
     if (key === 'cachedSession') return () => session;
     if (key === 'session') return async () => session;
     if (key === 'cachedRunningTurn') return () => ({ turn, seq: 1 });
     if (key === 'cachedTranscript') return () => history;
-    if (key === 'transcript') return async () => (persisted ? [...history, settledRow] : history);
+    if (key === 'transcript') return async () => (persisted ? [...history, persistedRow] : history);
     // The snapshot on screen already reaches the tail of the session.
     if (key === 'transcriptWindow') return () => ({ offset: 0, total: history.length });
     if (key === 'transcriptIfMoved') return async () => null;
@@ -126,6 +147,7 @@ async function paint() {
 export const ReaderAtTheEnd: Story = {
   play: async ({ canvasElement }) => {
     persisted = false;
+    persistedRow = settledRow;
     const canvas = within(canvasElement);
     const viewport = await canvas.findByRole('region', { name: 'Transcript' });
     await viewport.ownerDocument.fonts.ready;
@@ -168,6 +190,7 @@ export const ReaderAtTheEnd: Story = {
 export const ReaderInTheNewestTurn: Story = {
   play: async ({ canvasElement }) => {
     persisted = false;
+    persistedRow = settledRow;
     const canvas = within(canvasElement);
     const viewport = await canvas.findByRole('region', { name: 'Transcript' });
     await viewport.ownerDocument.fonts.ready;
@@ -219,5 +242,60 @@ export const ReaderInTheNewestTurn: Story = {
     await paint();
     await expect(Math.abs(offset() - chosen)).toBeLessThan(2);
     await expect(canvas.getByRole('button', { name: /Latest/ })).toBeVisible();
+  },
+};
+
+// The follow-up: the same reader, the same newest turn, stopped instead of finished.
+// A user cancel persists the row WITHOUT the tail the reader is looking at — the
+// engine writes `:content []` and the iteration in flight never lands — so the
+// durable row is SHORTER than the bubble it replaces, and the streamed tail only
+// survives through the cancelled-turn snapshot this screen keeps.
+export const ReaderInTheCancelledTurn: Story = {
+  play: async ({ canvasElement }) => {
+    persisted = false;
+    persistedRow = cancelledRow;
+    const canvas = within(canvasElement);
+    const viewport = await canvas.findByRole('region', { name: 'Transcript' });
+    await viewport.ownerDocument.fonts.ready;
+    await waitFor(() => expect(isViewportRotating()).toBe(false), { timeout: 2000 });
+    await paint();
+
+    // The reader is reading the newest turn, a screenful above its live end.
+    viewport.scrollTop = viewport.scrollHeight;
+    await paint();
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, bubbles: true }));
+    viewport.scrollTop -= 400;
+    await paint();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await paint();
+
+    const marker = /live prose 5 paragraph 1/;
+    const line = () => canvas.getAllByText(marker).at(-1)!;
+    const offset = () => line().getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    const chosen = offset();
+
+    persisted = true;
+    for (const on of listeners)
+      on({
+        type: 'turn.cancelled',
+        turn_id: RUNNING_ID,
+        seq: 2,
+        status: 'cancelled',
+        content: [],
+      } as unknown as SseEvent);
+
+    // Stopping a turn keeps the reader on their line, on every frame of the swap.
+    let worst = 0;
+    const started = Date.now();
+    while (Date.now() - started < 1500) {
+      worst = Math.max(worst, Math.abs(offset() - chosen));
+      await paint();
+    }
+    await expect(worst).toBeLessThan(2);
+    await waitFor(() => expect(canvasElement.querySelector('[data-live="true"]')).toBeNull());
+    await paint();
+    await expect(Math.abs(offset() - chosen)).toBeLessThan(2);
+    // What was on screen when they pressed stop is still on screen afterwards.
+    await expect(canvas.getAllByText(/live prose 6 paragraph 1/).length).toBeGreaterThan(0);
   },
 };

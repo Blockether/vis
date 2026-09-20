@@ -469,19 +469,22 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
  * persisted turn replaces it.
  */
 
+/** The work one iteration record can SHOW: prose, thinking, steps or an error. */
+function iterationCarriesOutput(iteration: TranscriptIteration): boolean {
+  return Boolean(
+    iteration.assistant_prose?.trim() ||
+      iteration.thinking?.trim() ||
+      iteration.forms?.length ||
+      iteration.error,
+  );
+}
+
 function runningTurnCarriesOutput(turn: RunningTurn | null): boolean {
   return Boolean(
     turn &&
       (turn.answer.trim() ||
         turn.content?.length ||
-        turn.iterations.some((iteration) =>
-          Boolean(
-            iteration.assistant_prose?.trim() ||
-              iteration.thinking?.trim() ||
-              iteration.forms?.length ||
-              iteration.error,
-          ),
-        )),
+        turn.iterations.some(iterationCarriesOutput)),
   );
 }
 
@@ -490,10 +493,25 @@ function cancelledTurnWithStreamedOutput(
   row: TranscriptTurn,
   streamed: RunningTurn,
 ): TranscriptTurn {
-  const durablePositions = new Set((row.iterations ?? []).map((iteration) => iteration.position));
-  const streamedTail = streamed.iterations.filter(
-    (iteration) => !durablePositions.has(iteration.position),
+  // BLO-170, cancel: the durable row lands as `interrupted` with `content: []` AND
+  // HOLLOW iteration records — the very positions the reader was watching, holding
+  // no prose, no thinking and no steps. Position alone cannot say which copy to
+  // keep, so the hollow one won and the stopped turn emptied out under the reader:
+  // the work on screen vanished and the transcript lost its height with it. The
+  // copy that still CARRIES the work wins each position now.
+  const durable = row.iterations ?? [];
+  const durablePositions = new Set(durable.map((iteration) => iteration.position));
+  const streamedByPosition = new Map(
+    streamed.iterations.map((iteration) => [iteration.position, iteration] as const),
   );
+  const iterations = [
+    ...durable.map((iteration) =>
+      iterationCarriesOutput(iteration)
+        ? iteration
+        : (streamedByPosition.get(iteration.position) ?? iteration),
+    ),
+    ...streamed.iterations.filter((iteration) => !durablePositions.has(iteration.position)),
+  ];
   const streamedContent = streamed.content?.length
     ? streamed.content
     : streamed.answer
@@ -509,7 +527,7 @@ function cancelledTurnWithStreamedOutput(
   return {
     ...row,
     content: row.content?.length ? row.content : streamedContent,
-    iterations: [...(row.iterations ?? []), ...streamedTail],
+    iterations,
   };
 }
 

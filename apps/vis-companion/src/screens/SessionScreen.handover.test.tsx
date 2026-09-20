@@ -203,6 +203,51 @@ describe('a turn cancelled from this screen', () => {
     expect(screen.getByText('PARTIAL AGENT WORK')).toBeInTheDocument();
     expect(screen.getAllByText('inspect the failure')).toHaveLength(1);
   });
+  // Regression, BLO-170 follow-up reported from the web app: stopping a turn threw the
+  // reader back to the previous answer, with the work that was on screen gone. A cancel
+  // persists as an `interrupted` row whose iteration records are HOLLOW — the same
+  // positions, holding no prose, no thinking and no steps — and those empty shells
+  // replaced the streamed ones position for position.
+  it('keeps the work when the cancelled row lands as hollow shells', async () => {
+    const events = subscriptionHub();
+    const partial = {
+      id: 'gw-hollow-cancel',
+      request: 'inspect the failure',
+      answer: '',
+      iterations: [{ position: 0, thinking: 'PARTIAL AGENT WORK' }],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+    const cancelled = {
+      turn_id: 'gw-hollow-cancel',
+      request: 'inspect the failure',
+      status: 'interrupted',
+      created_at: Date.now(),
+      content: [],
+      iterations: [{ position: 0, thinking: '', assistant_prose: '', forms: [] }],
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve([cancelled]),
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+
+    expect(await screen.findByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    events.emit({
+      type: 'turn.cancelled',
+      turn_id: 'gw-hollow-cancel',
+      seq: 6,
+      status: 'cancelled',
+    } as unknown as SseEvent);
+
+    await waitFor(() => expect(document.querySelector('[data-live="true"]')).toBeNull());
+    expect(screen.getByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    expect(screen.getAllByText('inspect the failure')).toHaveLength(1);
+  });
 });
 // Regression, reported from an iPhone: "the stream finished, the answer is
 // ready, but it is not showing — I have to go back to the session list and
