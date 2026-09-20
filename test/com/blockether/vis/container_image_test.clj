@@ -123,7 +123,7 @@
         (expect (not (str/includes? stage "/home/vis/.config/gh")) stage)))
   (it "documents the recipe and the contract a derived image builds on"
       (let [text (dockerfile)]
-        (expect (str/includes? text "EXTENDING THIS IMAGE") text)
+        (expect (str/includes? text "Extending this image") text)
         (expect (str/includes? text "FROM vis-gateway:local") text)
         (expect (str/includes? text "USER root") text)))
   (it "leaves a derived image a seeded, vis-owned .config to add to"

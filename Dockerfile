@@ -3,33 +3,34 @@
 # =============================================================================
 # vis — everything in one container
 # =============================================================================
-# The gateway AND the toolchain the agent drives from inside it. Nothing is
-# expected to pre-exist on the host: no JDK, no clojure, no python, no chrome,
-# no ASR model. `docker run` is the whole install.
+# The gateway and the toolchain the agent drives from inside it. Nothing has to
+# pre-exist on the host: no JDK, no clojure, no python, no chrome, no ASR model.
+# `docker run` is the whole install.
 #
 # Stages:
-#   jdk      — GraalVM CE 25.1.3 (see .graalvm-version), shared by build+runtime.
-#   builder  — clojure CLI + `clojure -T:build native`, produces target/vis.
-#              The runtime image RUNS that binary, so every build compiles it.
-#   native-export — build-only: the release bundle as a bare filesystem, for
-#              `docker buildx --output type=local` cross-platform releases, and
-#              the exact layout the runtime stage installs.
-#   model    — the Parakeet ASR model, fetched once into its own cache layer.
-#   runtime  — that native runtime, the model, and the agent toolchain.
+#   jdk           GraalVM CE, at the version in .graalvm-version, shared by
+#                 build and runtime.
+#   builder       clojure CLI + `clojure -T:build native`, produces target/vis.
+#                 The runtime image runs that binary, so every build compiles it.
+#   native-export build-only: the release bundle as a bare filesystem, for
+#                 `docker buildx --output type=local` cross-platform releases,
+#                 and the exact layout the runtime stage installs.
+#   model         the Parakeet ASR model, fetched once into its own cache layer.
+#   runtime       that native runtime, the model, and the agent toolchain.
 #
-# Version pins are ARGs. These ARGs and this header are the only place a
-# version is written down in this repo; bump them here.
+# Version pins are ARGs; bump them here. The GraalVM pin is the exception and
+# lives in .graalvm-version.
 #
 #   docker build -t vis-gateway:local .
 #   docker build -t vis-gateway:lean --build-arg WITH_CHROME=false .
 #
-# EXTENDING THIS IMAGE
-# `runtime` is the LAST stage, so `docker build .` produces it, and it is the
-# BASE every deployment extends. It carries vis and the toolchain vis itself
-# drives — nothing site-specific. A tool only YOUR deployment needs (a GitHub
-# CLI, a cloud CLI, an internal CA, a company apt repo, a credential helper) is
-# a layer in YOUR OWN repository, never a line in this file — otherwise every
-# user of vis pays download time and attack surface for one operator's habits:
+# Extending this image
+# `runtime` is the last stage, so `docker build .` produces it, and it is the
+# base every deployment extends. It carries vis and the toolchain vis itself
+# drives, nothing site-specific. A tool only your deployment needs (a GitHub
+# CLI, a cloud CLI, an internal CA, a company apt repo, a credential helper)
+# belongs in your own repository, not in this file — otherwise every user of vis
+# pays download time and attack surface for it:
 #
 #   FROM vis-gateway:local
 #   USER root
@@ -38,27 +39,26 @@
 #   RUN mkdir -p /home/vis/.config/gh && chown -R vis:vis /home/vis/.config
 #   USER vis
 #
-# What a derived image may rely on: user `vis`, uid 10001, HOME=/home/vis,
+# A derived image may rely on: user `vis`, uid 10001, HOME=/home/vis,
 # WORKDIR /work, the wrapper on PATH at /usr/local/bin/vis-agent, and the
 # ENTRYPOINT/CMD at the bottom of this file (inherited unless overridden).
 # Seed a dotfile directory the way this file does — `mkdir -p` then
 # `chown vis:vis` — because docker seeds a named volume from the image's
 # directory and inherits its owner and mode.
 #
-# Build cost: native-image is the expensive part — roughly twenty minutes and a
-# ~12 GiB live set in `builder`, and it is paid on every build because the
-# gateway this image serves IS that binary. Build where the RAM is, or hand the
-# builder its own limits with
+# Build cost: native-image takes roughly twenty minutes and a ~12 GiB live set
+# in `builder`, on every build, because the gateway this image serves is that
+# binary. Build where the RAM is, or give the builder its own limits with
 # `--build-arg VIS_NATIVE_EXTRA_ARGS='-J-Xmx6g -J-Xms2g'`. The default is the
-# LEAN interpreter build (VIS_ORACLE_NATIVE_IMAGE=false); the JIT variant
+# lean interpreter build (VIS_ORACLE_NATIVE_IMAGE=false); the JIT variant
 # (:oracle-native-image true) pulls in libpythonvm, which forces -Xms14g on
-# the builder JVM — only enable it on a host with >=16 GB of FREE RAM.
+# the builder JVM — enable it only on a host with >=16 GB of free RAM.
 # =============================================================================
 
 # ── Version pins (global scope: re-declare `ARG x` inside a stage to use it) ──
-# The GraalVM pin is NOT here: it lives in `.graalvm-version`, the one file the
+# The GraalVM pin is not here: it lives in `.graalvm-version`, the one file the
 # CI action, build.clj and bin/require-graalvm also read. The jdk stage copies
-# and sources it, so this image can never drift from what CI builds with.
+# and sources it, so this image cannot drift from what CI builds with.
 ARG GRAAL_ARCH=x64
 ARG CLOJURE_VERSION=1.12.5.1654
 ARG MAVEN_VERSION=3.9.16
@@ -69,7 +69,7 @@ ARG PARAKEET_RELEASE=asr-models
 # The container ships the same public wrapper as every other distribution and
 # runs the same native runtime a release publishes (see the runtime stage), with
 # all channels and speech ASR. There is no leaner feature profile to select, so
-# nothing to configure. These two knobs tune the native build the image runs.
+# these two knobs only tune the native build the image runs.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
 ARG WITH_CHROME=true
@@ -79,14 +79,14 @@ ARG BUILD_IMAGE=ubuntu:22.04
 ARG BASE_IMAGE=debian:bookworm-slim
 
 # ── Stage: jdk ───────────────────────────────────────────────────────────────
-# GraalVM COMMUNITY Edition, at the exact version pinned in `.graalvm-version`.
+# GraalVM Community Edition, at the exact version pinned in `.graalvm-version`.
 # Community, not Oracle, on purpose:
 #   * CE is GPLv2 + Classpath Exception — the Classpath Exception frees the
 #     binary we ship, so redistribution stays FOSS (audit/README.md §4.1 states
 #     CE only). Oracle GraalVM is GFTC-licensed and was deliberately removed.
-#   * CE's version IS the Graal train (25.1.x), matching `.graalvm-version`
-#     as-is. Oracle's version is its JDK version (25.0.x), which is why this
-#     file used to rewrite deps.edn on the way past — that hack is gone with it.
+#   * CE's version is the Graal train version and matches `.graalvm-version`
+#     as-is. Oracle's version is its JDK version, which is why this file used to
+#     rewrite deps.edn on the way past — that hack is gone with it.
 # The versioned graalvm-ce-builds asset is used deliberately over any moving
 # URL: a moving URL cannot carry a checksum, and the checksum is in the pin.
 FROM ${BUILD_IMAGE} AS jdk
@@ -117,10 +117,10 @@ ARG CLOJURE_VERSION
 ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
 
-# HOME here is only about where the BUILD's caches land (~/.m2, ~/.gitconfig).
-# It is /home/vis so the builder JVM's `user.home` is already the runtime user's
-# home: native-image initializes Clojure namespaces at BUILD time, and anything
-# that captured a home path then would otherwise capture root's.
+# HOME here decides where the build's caches land (~/.m2, ~/.gitconfig). It is
+# /home/vis so the builder JVM's `user.home` is already the runtime user's home:
+# native-image initializes Clojure namespaces at build time, and anything that
+# captured a home path then would otherwise capture root's.
 ENV HOME=/home/vis \
     GRAALVM_HOME=/opt/graalvm \
     JAVA_HOME=/opt/graalvm \
@@ -147,25 +147,24 @@ WORKDIR /build
 COPY deps.edn build.clj VIS_VERSION ./
 COPY packages/ ./packages/
 
-
 RUN clojure -P -T:build || true
 
 COPY . .
 
-# `COPY . .` just put the repo's own deps.edn back — re-check it.
-RUN check-graal-pins
+# The checkout is in place: verify .graalvm-version, its lock and .sdkmanrc
+# agree before paying for a native build.
+RUN bin/require-graalvm --check-pins
 
 # `native` honours VIS_ORACLE_NATIVE_IMAGE / VIS_NATIVE_EXTRA_ARGS from the env.
 #
-# `-Duser.home=/home/vis` keeps the BUILDER JVM's home equal to the runtime
-# user's home. Vis' own code never needs it — `config-dir` is a FUNCTION on
-# purpose (see its docstring in internal/config.clj), read per call, so the
-# effective `~/.vis` comes from the wrapper's `-Duser.home=$HOME` at launch.
-# The flag exists for the build's OWN initialization: native-image runs static
-# initializers while building, and a value some initializer captured from the
-# builder (whose getpwuid() home is root's, HOME notwithstanding) can only ever
-# fold to /home/vis this way. The runtime stage then PROVES the home instead of
-# trusting it: it runs the binary and asserts it wrote ~vis/.vis, never /root.
+# `-Duser.home=/home/vis` is for the build's own initialization: native-image
+# runs static initializers while building, and the builder's getpwuid() home is
+# root's whatever HOME says, so a value captured then folds to /home/vis only
+# this way. Vis' own code never needs it — `config-dir` is a function on purpose
+# (see its docstring in internal/config.clj), read per call, so the effective
+# `~/.vis` comes from the wrapper's `-Duser.home=$HOME` at launch. The runtime
+# stage proves the result instead of trusting it: it runs the binary and asserts
+# it wrote ~vis/.vis, never /root.
 #
 # `vis/VERSION` — what `vis-agent --version` prints — is the repo-root
 # VIS_VERSION, verbatim: that file is the only version source, and the build
@@ -180,16 +179,16 @@ RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
          || { echo "native image does not report exactly VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; }
 
 # ── Stage: native-export ─────────────────────────────────────────────────────
-# Not part of the runtime image: a BUILD-ONLY stage whose whole filesystem is the
-# release bundle, so a machine with docker can produce another platform's asset
-# without a GitHub runner:
+# Not part of the runtime image: a build-only stage whose whole filesystem is
+# the release bundle, so a machine with docker can produce another platform's
+# asset without a GitHub runner:
 #
 #   docker buildx build --target native-export --platform linux/arm64 \
 #     --build-arg GRAAL_ARCH=aarch64 --output type=local,dest=out .
 #
-# `bin/release-native` drives exactly that (it is how an Apple-silicon Mac builds
-# the linux-arm64 asset natively, with no qemu emulation). Layout matches what
-# `bin/vis-agent update` unpacks.
+# `bin/release-native` drives exactly that, which is how an Apple-silicon Mac
+# builds the linux-arm64 asset natively, without qemu emulation. The layout
+# matches what `bin/vis-agent update` unpacks.
 FROM scratch AS native-export
 COPY --from=builder /build/target/vis /vis-agent-native
 COPY --from=builder /build/target/vis.build /vis-agent-native.build
@@ -198,15 +197,14 @@ COPY --from=builder /build/bin/vis-agent /vis-agent
 COPY --from=builder /build/bin/install-vis-agent /install-vis-agent
 
 # ── Stage: model ─────────────────────────────────────────────────────────────
-# The Parakeet ASR model. Published on the k2-fsa/sherpa-onnx `asr-models`
-# release — NOT Hugging Face — and it must stay the exact model
+# The Parakeet ASR model, published on the k2-fsa/sherpa-onnx `asr-models`
+# release rather than Hugging Face. It must stay the exact model
 # src/com/blockether/vis/internal/speech/asr.clj resolves.
 #
-# Baked into the image as its own layer. The model is ALWAYS distributed
-# separately from the binary (nothing embeds it any more), so fetching it once
-# here means every container shares one copy and reads it in place via
-# VIS_PARAKEET_MODEL_DIR, instead of each one re-downloading 465 MB into its
-# own volume on first use.
+# Baked into the image as its own layer. The model is always distributed
+# separately from the binary, so fetching it once here means every container
+# shares one copy and reads it in place via VIS_PARAKEET_MODEL_DIR, instead of
+# each one re-downloading 465 MB into its own volume on first use.
 #
 # The archive has a top-level directory; --strip-components=1 puts the four
 # files asr.clj looks for (encoder/decoder/joiner .int8.onnx + tokens.txt)
@@ -229,7 +227,6 @@ RUN set -eux; \
     done; \
     du -sh "/opt/vis/models/${PARAKEET_MODEL}"
 
-
 # ── Stage: runtime ───────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE} AS runtime
 ARG CLOJURE_VERSION
@@ -245,14 +242,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #  1. the native binary + embedded CPython dlopen these at startup
 #     (zlib1g, libstdc++6); onnxruntime/sherpa additionally need libgomp1.
 #  2. the agent's own toolbelt — git, ssh, curl, ripgrep, jq, unzip, less, procps.
-#     openssh-client is listed EXPLICITLY: it is only a *Recommends* of git and
+#     openssh-client is listed explicitly: it is only a *Recommends* of git and
 #     this install is --no-install-recommends, so without it the image has no
-#     ssh and no ssh-keygen at all, and every git@github.com remote dies with
-#     "ssh: not found" (measured on debian:bookworm-slim, not assumed).
-#  3. voice: ffmpeg. The gateway TRANSCRIBES uploaded audio (there is no
-#     capture device in a container, and it needs none), and without ffmpeg it
-#     cannot convert .oga/.opus to the WAV the ASR consumes. `vis-agent doctor`
-#     reports it as missing — so it ships.
+#     ssh and no ssh-keygen at all, and every git@github.com remote fails with
+#     "ssh: not found".
+#  3. voice: ffmpeg. The gateway transcribes uploaded audio (a container has no
+#     capture device and needs none), and without ffmpeg it cannot convert
+#     .oga/.opus to the WAV the ASR consumes; `vis-agent doctor` reports it as
+#     missing.
+#
+# No `gh`, no cloud CLI, no operator-specific package: this is the base image,
+# and site tooling is a layer in the deployment's own repository (see the
+# header). The list below is what vis drives — its own git/ssh/ffmpeg/rg use and
+# the language extensions that shell out to python, node, clojure and maven.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates zlib1g libstdc++6 libgomp1 \
         bash git openssh-client curl wget gnupg ripgrep jq unzip xz-utils less procps tini \
@@ -262,17 +264,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rlwrap build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# No `gh`, no cloud CLI, no operator-specific package: this is the base image,
-# and site tooling is a layer in the deployment's own repository (see the
-# header). The list above is what VIS drives — its own git/ssh/ffmpeg/rg use
-# and the language extensions that shell out to python, node, clojure and maven.
-# github.com's SSH host keys, pinned into the SYSTEM known_hosts at build time.
+# github.com's SSH host keys, pinned into the system known_hosts at build time.
 # A fresh container has an empty ~/.ssh, so the first `git fetch git@github.com:`
 # would have nothing to verify against: with no tty it cannot answer the TOFU
 # prompt and simply fails. Pinning here means ssh works on first boot without
-# StrictHostKeyChecking=no ever being tempting.
-# GitHub publishes the same keys at https://api.github.com/meta; re-check them
-# there when a rotation is announced.
+# StrictHostKeyChecking=no ever being tempting. GitHub publishes the same keys
+# at https://api.github.com/meta; re-check them there when a rotation is
+# announced.
 RUN set -eux; \
     mkdir -p /etc/ssh; \
     printf '%s\n' \
@@ -299,10 +297,9 @@ RUN set -eux; \
         echo "WITH_CHROME=false — chrome skipped"; \
     fi
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
+
 # JDK + clojure + maven: the Clojure extension shells out to `clojure`
-# (`clojure -M:test`), which is unusable without a JDK on PATH — the exact
-# breakage found on the host, where GraalVM was installed but `java` was on
-# nobody's PATH.
+# (`clojure -M:test`), which is unusable without a JDK on PATH.
 COPY --from=jdk /opt/graalvm /opt/graalvm
 ENV GRAALVM_HOME=/opt/graalvm \
     JAVA_HOME=/opt/graalvm \
@@ -327,30 +324,28 @@ RUN set -eux; \
     rm /tmp/maven.tar.gz; \
     mvn -v
 
-
-# ── voice model ──
+# ── Voice model ──
 COPY --from=model /opt/vis/models /opt/vis/models
 ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 
 # ── Unprivileged user ──
 # The gateway never runs as root, and neither does anything the agent spawns.
-# /work is the default workspace mount point. Created BEFORE the agent bundle
-# below, so the wrapper, the native runtime and its interpreter all
-# belong to the user that runs them.
-# Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
-# (the vis user has no business there), so a bare `useradd` is "not found".
-# .ssh and .config are created HERE, owned by vis: docker seeds a named
-# volume from the image's directory and inherits its owner and mode. Mount a
-# volume on a path the image does not have and it lands root-owned 0755 —
-# ssh-keygen then cannot write, and ssh refuses a group-readable ~/.ssh.
+# /work is the default workspace mount point. Created before the agent bundle
+# below, so the wrapper, the native runtime and its interpreter all belong to
+# the user that runs them.
+# `useradd` is called by absolute path because the PATH set above deliberately
+# omits /usr/sbin, where the vis user has no business.
+# .ssh and .config are created here, owned by vis: docker seeds a named volume
+# from the image's directory and inherits its owner and mode. Mount a volume on
+# a path the image does not have and it lands root-owned 0755 — ssh-keygen then
+# cannot write, and ssh refuses a group-readable ~/.ssh.
 RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
     && mkdir -p /home/vis/.vis /home/vis/.ssh /home/vis/.config/git /work \
     && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
 
-
 # ── Vis Agent: the native runtime this source builds ──
-# The gateway process IS `vis-agent-native` — the same binary a release
+# The gateway process is `vis-agent-native` — the same binary a release
 # publishes — installed in exactly the layout a release bundle unpacks into:
 #
 #   /opt/vis/agent/vis-agent             the public Bash wrapper
@@ -359,17 +354,16 @@ RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
 #
 # The wrapper finds the runtime and the interpreter beside itself, which is why
 # the whole bundle is copied as one directory and only the wrapper is linked
-# onto PATH.
+# onto PATH. The agent's home is the `vis` user's: HOME=/home/vis, so the
+# wrapper hands the runtime `-Duser.home=/home/vis` and every `~/.vis` path
+# lands there.
 #
-# This is what makes a deployment worth trusting: the container serves the
-# artifact every user installs, so a gap in `reachability-metadata.json` or a
-# constant that native-image folded in at BUILD time fails in this build,
-# loudly, instead of only in someone's release. The agent's home is the `vis`
-# user's: HOME=/home/vis, so the wrapper hands the runtime
-# `-Duser.home=/home/vis` and every `~/.vis` path lands there.
+# Because the container serves the artifact every user installs, a gap in
+# `reachability-metadata.json` or a constant that native-image folded in at
+# build time fails in this build rather than only in someone's release.
 #
 # The JDK, the Clojure CLI and Maven stay in this image, but they are the
-# AGENT's toolchain for the projects it works on — nothing here runs Vis itself
+# agent's toolchain for the projects it works on — nothing here runs Vis itself
 # on them, and the image carries no Vis source at all.
 COPY --from=native-export --chown=vis:vis / /opt/vis/agent/
 RUN ln -sf /opt/vis/agent/vis-agent /usr/local/bin/vis-agent
@@ -380,17 +374,16 @@ WORKDIR /work
 # every `compose up` recreate, taking user.name/user.email with it. Point git at
 # the persisted .config volume instead; `git config --global` then writes there
 # too, so the identity survives a rebuild.
-# The wrapper finds /opt/vis/agent/vis-agent-native beside itself and runs it:
-# an installed native runtime is the runtime, and there is nothing to select.
 ENV HOME=/home/vis \
     VIS_HOME=/home/vis/.vis \
     GIT_CONFIG_GLOBAL=/home/vis/.config/git/config
 
 # Prove, at build time, that the assembled image is what it claims to be: the
 # toolchain resolves, the runtime that will serve is the native one, its Python
-# stdlib loads THROUGH the staged interpreter (without it every Python
-# tool dies with "No module named 'ast'"), and the built-in speech runtime can
-# SEE the model.
+# stdlib loads through the staged interpreter (without it every Python tool dies
+# with "No module named 'ast'"), and the built-in speech runtime can see the
+# model. Proving the engine binary itself works belongs to `test-native/`, which
+# drives target/vis, not to one container packaging of it.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
     python3 --version; node --version; \
@@ -406,16 +399,12 @@ RUN set -eux; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
     test "$(stat -c '%U' /home/vis/.config)" = 'vis'
 
-# Proving the engine binary runs belongs to the artifact, not one container
-# packaging of it. `test-native/` drives `target/vis`; the standalone terminal
-# client is built and tested from `apps/vis-tui`.
-
 EXPOSE 7890
 
-# A non-loopback bind MAKES a bearer token mandatory in server.clj start!, so
-# --require-token is explicit but redundant. The token is AUTO-GENERATED into
+# A non-loopback bind makes a bearer token mandatory in server.clj start!, so
+# --require-token is explicit but redundant. The token is auto-generated into
 # --token-file on first boot (there is no token env var) — keep that file on
-# the state volume or every restart invalidates every client.
+# the state volume or every restart invalidates every client:
 #   docker exec vis-gateway cat /home/vis/.vis/gateway-token
 # tini reaps the processes the agent spawns; without a real init, PID 1 is the
 # gateway and every abandoned child becomes a zombie.
