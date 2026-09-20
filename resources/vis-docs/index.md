@@ -361,6 +361,10 @@ its own actions, and you can drag a row onto a group's band to file it there. In
 terminal, press **Ctrl+X w** for the project sidebar and **g** on a project or group row
 for the same menu; **Ctrl+X d** moves the session you are in.
 
+To start a conversation straight inside a group, use the **+** on the group's band in the app,
+or **＋ New session here** in the terminal's **g** menu on that group row. The new session is
+filed as it is created, so it opens at the top of that group instead of loose in the project.
+
 Deleting a group asks what becomes of the sessions filed under it: keep them, and they
 return to the project ungrouped, or delete them with the group. Deleting the sessions
 cannot be undone. A group also narrows who a session talks to in

@@ -1516,7 +1516,7 @@
       (try (cleanup) (catch Throwable _ nil)))))
 
 (defn- create-session*
-  [_provider-config {:keys [workspace-id root]}]
+  [_provider-config {:keys [workspace-id root group-id]}]
   (let [root
         (or root
             (when-not workspace-id (vis/workspace-normalize-root (System/getProperty "user.dir"))))
@@ -1527,7 +1527,13 @@
                                        (assoc :workspace-id workspace-id)
 
                                        root
-                                       (assoc :root root)))]
+                                       (assoc :root root)
+
+                                       ;; Started ON a group in the rail: the gateway files it
+                                       ;; there as it mints the soul, so the row is never loose
+                                       ;; for a beat (BLO-167).
+                                       group-id
+                                       (assoc :group-id group-id)))]
 
     {:id (java.util.UUID/fromString (get resp "id")) :history []}))
 

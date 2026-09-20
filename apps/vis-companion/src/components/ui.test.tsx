@@ -140,6 +140,15 @@ describe('NewSessionButton', () => {
     expect(button).toHaveAttribute('aria-busy', 'true');
     expect(button).toHaveAttribute('aria-live', 'polite');
   });
+
+  // BLO-167: a group's band carries its own plus. Both plusses would have worn the same
+  // name, so a reader could not tell the project's create from the group's.
+  it('is named for the GROUP when it stands on a band', () => {
+    render(<NewSessionButton machine="tower" group="Wallet work" onPress={() => {}} />);
+
+    const button = screen.getByRole('button', { name: 'New session in Wallet work' });
+    expect(button).toHaveAttribute('title', 'New session in Wallet work, on tower');
+  });
 });
 
 describe('IconButton', () => {

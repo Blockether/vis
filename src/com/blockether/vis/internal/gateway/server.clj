@@ -579,6 +579,10 @@
   [sid-str]
   (error-response 404 :session-not-found "unknown session" :session_id (str sid-str)))
 
+(defn- group-404
+  [gid-str]
+  (error-response 404 :group-not-found "unknown session group" :group_id (str gid-str)))
+
 (defn- body-json
   [request]
   (some-> (:body request)
@@ -2143,15 +2147,36 @@
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- create-session-handler
+  "POST /v1/sessions — mint one session.
+
+   An optional `group_id` STARTS it inside that session group, so a client that
+   offered the verb ON a group never has to file the row a beat after it appears
+   (BLO-167). An unknown group refuses the create instead of quietly making a
+   loose session somewhere else in the project."
   [request]
-  (let [body (body-json request)]
-    (json-response 201
-                   (state/create-session! {:channel (some-> (get body "channel")
-                                                            keyword)
-                                           :title (get body "title")
-                                           :external-id (get body "external_id")
-                                           :workspace-id (get body "workspace_id")
-                                           :root (get body "root")}))))
+  (let [body
+        (body-json request)
+
+        raw
+        (get body "group_id")
+
+        gid
+        (some-> (not-empty (str raw))
+                parse-uuid)]
+
+    (cond (and (not (str/blank? (str raw))) (nil? gid))
+          (error-response 400 :invalid-request "group_id must be a session group id")
+          (and gid (nil? (state/get-session-group gid))) (group-404 (str raw))
+          :else (json-response 201
+                               (state/create-session! (cond-> {:channel (some-> (get body "channel")
+                                                                                keyword)
+                                                               :title (get body "title")
+                                                               :external-id (get body "external_id")
+                                                               :workspace-id (get body
+                                                                                  "workspace_id")
+                                                               :root (get body "root")}
+                                                        gid
+                                                        (assoc :group-id gid)))))))
 
 (defn- weak-etag
   "WEAK conditional-GET validator over `parts`: SHA-256 of their canonical JSON.
@@ -2923,10 +2948,6 @@
   [request]
   (some-> (get-in request [:path-params :gid])
           parse-uuid))
-
-(defn- group-404
-  [gid-str]
-  (error-response 404 :group-not-found "unknown session group" :group_id (str gid-str)))
 
 (defn- list-session-groups-handler
   "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…] — the groups inside

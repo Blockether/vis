@@ -4047,6 +4047,35 @@
         (expect (= "spel" (:project-name got)))
         ;; adopted as the newest member of its new project
         (expect (= 0 (:project-position got)))))
+  ;; BLO-167: a group nests under ONE project. A session moved to another project
+  ;; kept its old band's id, so the project it left went on painting it.
+  (it "moving a filed session to another project leaves its band behind"
+      (let [s
+            (h/store)
+
+            home
+            (persistance/db-create-project! s {:name "vis"})
+
+            away
+            (persistance/db-create-project! s {:name "spel"})
+
+            group
+            (persistance/db-create-session-group! s (:id home) {:name "Gateway"})
+
+            sid
+            (h/store-session! s {:channel :tui :title "routes"})
+
+            _
+            (persistance/db-set-session-group! s sid (:id group))
+
+            _
+            (persistance/db-set-session-project! s sid (:id away))
+
+            got
+            (persistance/db-get-session s sid)]
+
+        (expect (= (:id away) (:project-id got)))
+        (expect (nil? (:group-id got)))))
   (it
     "deleting a group scatters its sessions back to ungrouped, and deleting the project takes the groups"
     (let [s

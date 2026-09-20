@@ -145,7 +145,10 @@ function GroupBand({
   shown,
   isOpen,
   onToggle,
+  machine,
   onActions,
+  onNewSession,
+  isCreating = false,
   onDropSession,
 }: {
   name: string;
@@ -156,7 +159,13 @@ function GroupBand({
   shown: number;
   isOpen: boolean;
   onToggle: () => void;
+  /** The machine this band lives on, for the accessible name of its own plus. */
+  machine: string;
   onActions: (anchor: HTMLElement) => void;
+  /** Start a session INSIDE this group. Absent: the band offers no plus. */
+  onNewSession?: () => void;
+  /** A create started from THIS band is still in flight. */
+  isCreating?: boolean;
   /** Called with the session a reader DROPPED on this band. Absent: the band takes no drops. */
   onDropSession?: (sid: string) => void;
 }) {
@@ -208,6 +217,15 @@ function GroupBand({
         >
           <DotsIcon className="size-3.5" />
         </IconButton>
+        {onNewSession && (
+          <NewSessionButton
+            machine={machine}
+            group={name}
+            density="band"
+            isBusy={isCreating}
+            onPress={() => onNewSession()}
+          />
+        )}
       </HeaderActions>
     </div>
   );
@@ -237,8 +255,17 @@ export type ProjectGroupReading = {
 /** One project-creation lifecycle, shared so headers report the request they started. */
 export type ProjectCreation = {
   state: { at: string | null; label: string } | null;
-  start: (conn: GatewayConn, root: string) => Promise<void>;
+  /** `groupId` starts the session inside that group, not loose in the project. */
+  start: (conn: GatewayConn, root: string, groupId?: string) => Promise<void>;
 };
+
+/**
+ * Which plus is busy: one machine's project, and the band inside it when the reader
+ * started the session on a group rather than on the project header.
+ */
+export function creationKey(base: string, root: string, groupId?: string): string {
+  return groupId ? `${base}\u0000${root}\u0000${groupId}` : `${base}\u0000${root}`;
+}
 
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
@@ -834,7 +861,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             <NewSessionButton
               machine={machineLabel(conn)}
               where={project}
-              isBusy={creating?.at === `${base}\u0000${root}`}
+              isBusy={creating?.at === creationKey(base, root)}
               onPress={() => void onNewSession(conn, root)}
             />
           </HeaderActions>
@@ -857,7 +884,12 @@ export const ProjectGroup = memo(function ProjectGroup({
                     shown={held.length}
                     isOpen={isBandOpen}
                     onToggle={() => foldGroup(band.id, !isBandOpen)}
+                    machine={machineLabel(conn)}
                     onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                    // A session started HERE is minted inside this group, so it opens
+                    // at the top of this band instead of loose in the project.
+                    onNewSession={() => void onNewSession(conn, root, band.id)}
+                    isCreating={creating?.at === creationKey(base, root, band.id)}
                     onDropSession={(sid) => dropSession(sid, band.id)}
                   />
                   {isBandOpen && held.map(row)}

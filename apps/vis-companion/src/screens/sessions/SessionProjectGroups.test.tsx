@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { Session, SessionGroup } from '../../lib/types';
-import { ProjectGroup } from './SessionProjectGroups';
+import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
 const ROOT = STORY_NEWER_PROJECT.root;
@@ -60,7 +60,8 @@ function machine(overrides: Machine = {}) {
   };
 }
 
-function mount(client: Machine = machine()) {
+function mount(client: Machine = machine(), creation?: ProjectCreation) {
+  const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
   render(
     <ProjectGroup
       group={{
@@ -100,11 +101,11 @@ function mount(client: Machine = machine()) {
         pendingByRoot: new Map(),
         acceptUpdates: vi.fn(),
       }}
-      creation={{ state: null, start: vi.fn(async () => {}) }}
+      creation={started}
       initiallyOpen
     />,
   );
-  return { client, user: userEvent.setup() };
+  return { client, creation: started, user: userEvent.setup() };
 }
 
 /** The band and the rows filed under it, as one block inside the project's list. */
@@ -135,6 +136,27 @@ describe('ProjectGroup groups', () => {
       row.getAttribute('data-session-id'),
     );
     expect(painted).toEqual([ROWS[0].id, ROWS[1].id, ROWS[2].id, ROWS[3].id]);
+  });
+
+  // BLO-167: a session started ON a band is minted inside that group, so it opens at
+  // the top of the band the reader asked on instead of loose in the project.
+  it('starts a session inside the group whose band offered the plus', async () => {
+    const start = vi.fn(async () => {});
+    const { user } = mount(machine(), { state: null, start });
+
+    await user.click(await screen.findByRole('button', { name: 'New session in Wallet work' }));
+
+    expect(start).toHaveBeenCalledWith(conn, ROOT, WALLET);
+  });
+
+  it('spins only the band that asked, never the project header above it', async () => {
+    mount(machine(), {
+      state: { at: `https://story.example.com\u0000${ROOT}\u0000${WALLET}`, label: 'Creating...' },
+      start: vi.fn(async () => {}),
+    });
+
+    expect(await screen.findByRole('button', { name: 'New session in Wallet work' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New session on tower' })).toBeEnabled();
   });
 
   it('folds one group without folding the project', async () => {

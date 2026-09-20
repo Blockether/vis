@@ -4930,16 +4930,21 @@
 ;; Session lifecycle + souls
 
 (defn- session->wire
-  [{:keys [id channel title external-id workspace-id goal]}]
+  [{:keys [id channel title external-id workspace-id goal group-id]}]
   (wire/canonical {:id (str id)
                    :channel (name channel)
                    :title title
                    :goal goal
                    :external_id external-id
-                   :workspace_id workspace-id}))
+                   :workspace_id workspace-id
+                   ;; The group the session was STARTED inside, echoed back so the
+                   ;; client that asked for it paints the new row in that band at
+                   ;; once, without a second read.
+                   :group_id (some-> group-id
+                                     str)}))
 
 (defn- create-session-cold!
-  [{:keys [channel title external-id workspace-id root]}]
+  [{:keys [channel title external-id workspace-id root group-id]}]
   (let [channel
         (or channel :api)
 
@@ -4959,7 +4964,12 @@
                       (assoc :workspace-id workspace-id)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
-    created))
+    ;; A session STARTED inside a group belongs to it from its first breath. The
+    ;; client that offered the verb had the group under the cursor; filing the row
+    ;; afterwards would show it loose for a beat and then move it.
+    (if group-id
+      (do (lp/assign-session-group! (:id created) group-id) (assoc created :group-id group-id))
+      created)))
 
 (defn create-session!
   "Create one session and answer its wire map.
@@ -4969,7 +4979,9 @@
    channel skipped a Python startup. It cost two idle sessions per channel from
    boot — every one of them a full environment with its own interpreter — to
    save that one wait, and it paid for them while the gateway was still coming
-   up. The wait belongs to whoever asks for a session."
+   up. The wait belongs to whoever asks for a session.
+
+   `:group-id` starts the session INSIDE that session group (BLO-167)."
   [{:keys [channel] :as opts}]
   (session->wire (create-session-cold! (assoc opts :channel (or channel :api)))))
 

@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rendezvous directory or socket it talks over instead of widening the whole jail.
 - Group the sessions inside a project: name a group, give it a colour, and file sessions
   under it from the project menu in the app or the project sidebar in the terminal. In the
-  app a row also carries **Move to...**, and you can drag a row onto a group's band.
+  app a row also carries **Move to...**, and you can drag a row onto a group's band. Start a
+  session inside a group from the **+** on its band, or **＋ New session here** in the terminal
+  menu, and it opens at the top of that group.
   Deleting a group asks what becomes of its sessions: keep them, ungrouped, or delete them
   with the group. A group also narrows Council, so its sessions talk to each other instead
   of to the whole project.

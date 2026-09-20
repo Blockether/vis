@@ -18,6 +18,7 @@ import {
 } from '../components/SessionList';
 import {
   ProjectGroup,
+  creationKey,
   type ProjectCreation,
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
@@ -1399,14 +1400,16 @@ export function SessionsScreen({
   }, []);
 
   const createSession = useCallback(
-    async (on: GatewayConn, root: string) => {
+    // `groupId`: the reader asked on a GROUP's band, so the session is minted inside
+    // that group and the new row appears at the top of the band they started it in.
+    async (on: GatewayConn, root: string, groupId?: string) => {
       setCreating({
-        at: `${clientFor(on).base}\u0000${root}`,
+        at: creationKey(clientFor(on).base, root, groupId),
         label: 'Creating...',
       });
       setCreateError(null);
       try {
-        const session = await clientFor(on).createSession({ root });
+        const session = await clientFor(on).createSession({ root, groupId });
         // Open before refreshing the fleet. The full list walk is background work,
         // while the session the reader just requested is their immediate destination.
         if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));

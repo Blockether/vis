@@ -3278,11 +3278,22 @@ export class GatewayClient {
     }));
   }
 
-  createSession(opts: { title?: string; channel?: string; root?: string }): Promise<Session> {
+  /**
+   * Start a session. `groupId` starts it INSIDE that session group, so a reader who
+   * asked for it on a group's band sees the new row there and not loose in the
+   * project (the gateway files it as it mints the soul).
+   */
+  createSession(opts: {
+    title?: string;
+    channel?: string;
+    root?: string;
+    groupId?: string;
+  }): Promise<Session> {
     return this.request<Session>('POST', '/v1/sessions', {
       title: opts.title,
       channel: opts.channel ?? 'web',
       root: opts.root,
+      group_id: opts.groupId,
     });
   }
 

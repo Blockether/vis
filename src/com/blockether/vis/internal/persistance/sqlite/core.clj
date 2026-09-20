@@ -2447,7 +2447,9 @@
    project the soul does NOT already belong to APPENDS it (its `project_position`
    becomes max+1 within that project) so project sessions stay MOVABLE;
    re-assigning a soul ALREADY in the project is idempotent and keeps its current
-   position. Returns the soul id."
+   position. A move to ANOTHER project also clears `group_id`: a group nests under
+   ONE project, so a band it left can never keep holding it.
+   Returns the soul id."
   [db-info session-id project-id]
   (when (and (ds db-info) session-id)
     (sqlite-write-tx!
@@ -2469,8 +2471,10 @@
               (cond
                 ;; already a member -> idempotent, keep its order
                 member? {:project_id (->ref project-id)}
-                ;; joining a project -> append after its last member
+                ;; joining a project -> append after its last member, leaving any
+                ;; group of the project it came from behind
                 pid {:project_id (->ref project-id)
+                     :group_id (->ref nil)
                      :project_position (inc (long (or (:maxpos (query-one!
                                                                  tx-info
                                                                  {:select [[[:max :project_position]
@@ -2478,8 +2482,8 @@
                                                                   :from :session_soul
                                                                   :where [:= :project_id pid]}))
                                                       -1)))}
-                ;; leaving all projects -> clear pointer + stale ordinal
-                :else {:project_id (->ref nil) :project_position 0})]
+                ;; leaving all projects -> clear pointer, stale ordinal and group
+                :else {:project_id (->ref nil) :project_position 0 :group_id (->ref nil)})]
 
           (execute! tx-info
                     {:update :session_soul :set set-map :where [:= :id (->id session-id)]}))))

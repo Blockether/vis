@@ -3404,6 +3404,9 @@
         (atom [])
 
         destroyed
+        (atom [])
+
+        minted
         (atom [])]
 
     (with-redefs-fn {#'state/get-project-by-root (fn [_owner root]
@@ -3433,7 +3436,12 @@
                                     {"id" (str s)})
                      #'state/assign-session-group! (fn [s g]
                                                      (swap! assigned conj [s g])
-                                                     {"id" (str s) "group_id" (when g (str g))})}
+                                                     {"id" (str s) "group_id" (when g (str g))})
+                     #'state/create-session! (fn [opts]
+                                               (swap! minted conj opts)
+                                               {"id" (str sid)
+                                                "group_id" (some-> (:group-id opts)
+                                                                   str)})}
       (fn []
         (let [list-groups
               (rv 'list-session-groups-handler)
@@ -3445,7 +3453,10 @@
               (rv 'delete-session-group-handler)
 
               assign-group
-              (rv 'set-session-group-handler)]
+              (rv 'set-session-group-handler)
+
+              create-session
+              (rv 'create-session-handler)]
 
           (testing
             "groups belong to ONE project: without a project or a root there is nothing to list"
@@ -3491,7 +3502,25 @@
             (let [response (assign-group (assoc (json-body {:group_id nil})
                                            :path-params {:sid (str sid)}))]
               (is (= 200 (:status response)))
-              (is (= [[sid nil]] @assigned)))))))))
+              (is (= [[sid nil]] @assigned))))
+          ;; BLO-167: a session STARTED on a group must be filed as the gateway mints
+          ;; it. Creating it loose and moving it afterwards showed the new row outside
+          ;; the band the human started it in.
+          (testing "a session started inside a group is minted already filed under it"
+            (let [response (create-session (json-body
+                                             {:channel "tui" :root "/repo" :group_id (str gid)}))]
+              (is (= 201 (:status response)))
+              (is (= (str gid) (get (wire/parse-json (:body response)) "group_id")))
+              (is (= [gid] (mapv :group-id @minted)))))
+          (testing "an unknown group refuses the create instead of minting a loose session"
+            (is (= 404
+                   (:status (create-session (json-body {:root "/repo"
+                                                        :group_id
+                                                        (str (java.util.UUID/randomUUID))})))))
+            (is (= 1 (count @minted))))
+          (testing "a group_id that is no id at all is a 400"
+            (is (= 400 (:status (create-session (json-body {:root "/repo" :group_id "the one"})))))
+            (is (= 1 (count @minted)))))))))
 
 ;; Regression: the live `iteration.completed` descriptors DROP model-only
 ;; artifacts and then RE-NUMBER what survives, while the byte endpoint indexed

@@ -5704,8 +5704,9 @@
 (defn- sidebar-row-menu!
   "The rail's ⋯ menu for the row under the cursor: group verbs on a group row,
    project verbs on a project row. Every verb that changes the gateway refreshes
-   the rail from the gateway's own answer."
-  [screen entry]
+   the rail from the gateway's own answer. `start-in-group!` is called with a
+   group id and its project root when the human starts a session from a group."
+  [screen entry start-in-group!]
   (let [group
         (:group entry)
 
@@ -5726,11 +5727,17 @@
              screen
              (if gid (str "Group · " (get group "name")) (str "Project · " (get project "name")))
              (if gid
-               [{:id :rename :label "Rename group…"} {:id :recolour :label "Change group colour…"}
-                {:id :new :label "＋ New group…"} {:id :delete :label "✗ Delete group"}]
+               [{:id :new-session :label "＋ New session here"} {:id :rename :label "Rename group…"}
+                {:id :recolour :label "Change group colour…"} {:id :new :label "＋ New group…"}
+                {:id :delete :label "✗ Delete group"}]
                [{:id :new :label "＋ New group…"} {:id :refresh :label "Refresh projects"}])))]
 
     (case (:id pick)
+      :new-session
+      ;; Starting FROM a group row files the session as the gateway mints it, so the
+      ;; new conversation opens INSIDE the band the cursor stood on (BLO-167).
+      (when (and gid start-in-group!) (start-in-group! gid (get project "workspace_root")))
+
       :new
       (when pid (create-group! screen pid))
 
@@ -6435,12 +6442,16 @@
                                       not-empty)
                          db @state/app-db
                          pid (:active-project-id db)
+                         ;; A session STARTED in a group joins it as the gateway mints
+                         ;; it, and the group carries the project with it.
+                         gid (:group-id opts)
                          project (some #(when (= pid (str (get % "id"))) %)
                                        (get-in db [:project-sidebar :items]))
                          result (chat/make-session-async config
                                                          {:root (or (:root opts)
                                                                     (get project "workspace_root")
-                                                                    (:workspace/root db))})
+                                                                    (:workspace/root db))
+                                                          :group-id gid})
                          build-id (or (:build-id opts) (str (java.util.UUID/randomUUID)))
                          fut (:building result)]
 
@@ -6450,7 +6461,7 @@
                        "tui-new-session-bind"
                        (fn []
                          (try (let [{:keys [id history]} @fut]
-                                (when pid (vis/gateway-assign-project! id pid))
+                                (when (and pid (not gid)) (vis/gateway-assign-project! id pid))
                                 (ensure-session-live! id)
                                 (state/dispatch [:bind-built-session build-id {:id id} history
                                                  (session-workspace id)])
@@ -6841,7 +6852,14 @@
                                                      add-project!
                                                      refresh-active-tab!
                                                      (fn [entry]
-                                                       (sidebar-row-menu! screen entry)))]
+                                                       (sidebar-row-menu!
+                                                         screen
+                                                         entry
+                                                         (fn [gid root]
+                                                           (start-new-session!
+                                                             (:config @state/app-db)
+                                                             nil
+                                                             {:root root :group-id gid})))))]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.

@@ -708,27 +708,39 @@ export function MachineTab({
  *
  * Repeated project actions use neutral ink without a border or a circular fill.
  * The compact 32px layout box keeps a 44px touch target through `IconButton`.
- * `where` stays in the tooltip and `machine` in the accessible name. Creation
+ * `where` stays in the tooltip and `machine` in the accessible name, unless the
+ * button belongs to a `group`: a band's plus is named for the band it starts in,
+ * so the project's own plus above it stays a different control. Creation
  * replaces the plus with a spinner without changing the header's width.
  */
 export function NewSessionButton({
   machine,
   where,
+  group,
   disabled,
+  density = 'compact',
   isBusy = false,
   onPress,
 }: {
   machine: string;
   where?: string | null;
+  /** The session group this plus starts INSIDE, when it stands on a group's band. */
+  group?: string;
   disabled?: boolean;
+  /** `band` takes a group band's tighter pointer step; the default suits a header. */
+  density?: 'compact' | 'band';
   isBusy?: boolean;
   onPress: (anchor: HTMLElement) => void;
 }) {
-  const label = `New session on ${machine}`;
-  const title = where ? `New session on ${machine}, in ${where}` : label;
+  const label = group ? `New session in ${group}` : `New session on ${machine}`;
+  const title = group
+    ? `${label}, on ${machine}`
+    : where
+      ? `New session on ${machine}, in ${where}`
+      : label;
   return (
     <IconButton
-      density="compact"
+      density={density}
       disabled={disabled || isBusy}
       aria-busy={isBusy || undefined}
       aria-live="polite"
