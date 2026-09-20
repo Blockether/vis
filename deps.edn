@@ -1,8 +1,8 @@
-;; Vis' build: the engine, its language packs, providers and store on ONE
+;; Vis' build: the engine, its providers and store on ONE
 ;; classpath; `packages/*` are the libraries it shares with the outside world,
-;; linked in as :local/root deps. Nothing formats this file — `format_code`
-;; skips .edn on purpose — so the order is hand-kept: this tree's own projects
-;; first, then third-party coordinates alphabetically, then aliases alphabetically.
+;; linked in as :local/root deps. Nothing formats this file, so the order is
+;; hand-kept: this tree's own projects first, then third-party coordinates
+;; alphabetically, then aliases alphabetically.
 {;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
  ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which the
  ;; engine slurps off the classpath as `blockether/vis/extension.py` and execs into every
@@ -33,21 +33,6 @@
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/ruff {:mvn/version "0.3.5"}
         com.blockether/svar {:mvn/version "0.7.172"}
-        ;; The LANGUAGE PACKS. The engine ships no language tooling of its own: it
-        ;; initializes `vis-lang-interface` from the manifest, and every pack beside
-        ;; it registers through that library's registrar — which is why no formatter,
-        ;; analyzer or REPL coordinate appears anywhere else in this file. A pack
-        ;; depends on the engine under its own :test alias ONLY, so the pins below
-        ;; stay acyclic.
-        com.blockether/vis-lang-clojure {:git/sha "ce108eac30b161e29265d97dff83cfa249e3b461"
-                                         :git/url
-                                         "https://github.com/Blockether/vis-lang-clojure.git"}
-        com.blockether/vis-lang-interface {:git/sha "d30dbd71428d0dad72b1894c1a545c190f80a0ef"
-                                           :git/url
-                                           "https://github.com/Blockether/vis-lang-interface.git"}
-        com.blockether/vis-lang-python {:git/sha "e517e54a3acfb9c7d32ec76a0ae099f6f8027f46"
-                                        :git/url
-                                        "https://github.com/Blockether/vis-lang-python.git"}
         ;; The embedded CPython the sandbox runs, replacing GraalPy. The JVM bridge is
         ;; pinned to an immutable runtime commit; its per-platform interpreter ships as
         ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
@@ -154,10 +139,9 @@
   ;; data, not a gateway service: `apps/vis-companion` ships the rendered CSS.
   :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write! :extra-paths ["dev"]}
   ;; The whole-tree static-analysis gate CI runs. clj-kondo straight from its own
-  ;; CLI, pinned to the SAME version the Clojure language pack loads in process for
-  ;; `lint_code`, so the gate and the tool can never disagree. :replace-deps keeps
-  ;; the project's own classpath out of it — clj-kondo reads sources and the
-  ;; `.clj-kondo` config from disk, never from the classpath. The default paths are
+  ;; CLI. :replace-deps keeps the project's own classpath out of it — clj-kondo
+  ;; reads sources and the `.clj-kondo` config from disk, never from the
+  ;; classpath. The default paths are
   ;; what CI lints; extra paths on the command line append to them.
   :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"]
          :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.07.24"}}}

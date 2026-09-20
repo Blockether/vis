@@ -43,7 +43,7 @@ The work is complete and the tests pass.
       (let [error (content/error "e1" "provider_unavailable" "Try again later." true)]
         (expect (= [error] (content/answer-content {:answer [error]})))))
   (it "canonicalizes nested tool values to string keys and string enums"
-      (let [block (content/tool {:tool "run_tests"
+      (let [block (content/tool {:tool "shell"
                                  :status :completed
                                  :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))))

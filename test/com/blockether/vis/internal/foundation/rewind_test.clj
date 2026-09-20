@@ -650,10 +650,10 @@
                       (expect (contains? paths (abs b)))
                       (expect (contains? paths (abs c)))))))
   (it "hooks every mutating op and the shell sweep"
-      (expect (= #{:patch :format_code} rw/mutation-ops))
+      (expect (= #{:patch} rw/mutation-ops))
       (expect (contains? rw/sweep-ops :shell))
       (let [hooked (set (map :op rw/op-hooks))]
-        (expect (= #{:patch :format_code :shell} hooked))
+        (expect (= #{:patch :shell} hooked))
         (expect (every? hooked rw/sweep-ops))
         (expect (every? #(= :around (:phase %)) rw/op-hooks)))))
 

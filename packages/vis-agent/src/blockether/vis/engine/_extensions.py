@@ -85,7 +85,6 @@ class ClientExtensions:
                     "env",
                     "providers",
                     "op_hooks",
-                    "language_tools",
                     "network_filters",
                     "slash_commands",
                 )

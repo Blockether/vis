@@ -1062,12 +1062,6 @@
              "-H:IncludeResources=vis-shims/.*"
              ;; Host modules are materialized for the runtime worker at first use.
              "-H:IncludeResources=vis-guest/.*"
-              ;; The Python surfaces the language PACKS ship (their
-              ;; resources/vis-extensions/**, on this classpath as git-dep roots): the
-              ;; engine materializes what a pack registers into ~/.vis/extensions-bundled
-              ;; and scans that directory first, so they must travel inside the image.
-              ;; The engine itself ships none.
-             "-H:IncludeResources=vis-extensions/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/blockether/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an

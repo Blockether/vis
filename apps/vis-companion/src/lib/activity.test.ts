@@ -69,7 +69,7 @@ const activityProjection = (
     {
       id: 'call-1',
       sequence: 1,
-      operation: 'run_tests',
+      operation: 'suite',
       presenter: 'tests',
       signal: 'verification',
       state,

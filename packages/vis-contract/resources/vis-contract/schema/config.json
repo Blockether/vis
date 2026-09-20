@@ -756,12 +756,6 @@
             "type": "string",
             "pattern": ".*\\S.*"
           }
-        },
-        "runner": {
-          "enum": [
-            "vispython",
-            "project"
-          ]
         }
       },
       "additionalProperties": false

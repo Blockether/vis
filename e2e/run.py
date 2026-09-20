@@ -8,17 +8,17 @@ scenarios and checks, per scenario:
   - FAST PATH   the anchored `patch` wrote the edit, rather than the model
                 wandering through the file with `cat` alone
 
-Scenarios are SELF-CONTAINED FOLDERS under `e2e/scenarios/` — the language-neutral
-editing set beside the per-language ones (`clj-*`, `py-*`) that exercise a surface:
+Scenarios are SELF-CONTAINED FOLDERS under `e2e/scenarios/` — editing tasks over
+real files in several formats, all driven through the same sandbox tools:
 
     e2e/scenarios/<id>/
       scenario.json   task, fixture expectations and optional benchmark guards
       files/          real files seeded into a fresh git repo before the run
 
 `want`/`wantnot` are {path: [substring, ...]} checks on the resulting files;
-`want_answer` is substrings the final answer must contain (REPL / non-file
-scenarios); `want_tools` are extension tools that MUST have fired (e.g.
-repl_eval); `want_forms` are source substrings that MUST occur in a top-level
+`want_answer` is substrings the final answer must contain (non-file scenarios);
+`want_tools` are extension tools that MUST have fired (e.g.
+`contract_probe.record`); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
 cache-metric arithmetic. Peak/cumulative stdout guards count characters, not tokens.
@@ -803,8 +803,7 @@ def start_source_gateway(*, cwd=REPO):
     return gateway
 
 
-# Every scenario lives here: the foundation (language-neutral editing) set and
-# the per-language ones (`clj-*`, `py-*`) that exercise a language surface.
+# Every scenario lives here: editing tasks over real files in several formats.
 SCENARIO_ROOTS = [os.path.join(HERE, "scenarios")]
 
 
@@ -1270,12 +1269,7 @@ def run_one(job):
                 detail.append(f"tool {t!r} not used")
 
         used_patch = "patch" in toolset
-        if used_patch:
-            path = "patch"
-        elif toolset & {"repl_eval", "repl_start"}:
-            path = "repl"
-        else:
-            path = "cat-only"
+        path = "patch" if used_patch else "cat-only"
         if path == "cat-only" or errs or not (done and correct):
             detail.append(
                 "tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset))

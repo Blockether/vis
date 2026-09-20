@@ -144,7 +144,7 @@
               },
               {
                 "type": "text",
-                "text": "Advice: Check the failing input before retrying. · Auth token: [REDACTED] · Classification: python-error · Iteration: 1 · Tool: repl_eval"
+                "text": "Advice: Check the failing input before retrying. · Auth token: [REDACTED] · Classification: python-error · Iteration: 1 · Tool: python_execution"
               },
               {
                 "type": "heading",

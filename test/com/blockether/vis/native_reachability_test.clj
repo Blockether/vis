@@ -190,8 +190,9 @@
 
 (defn- dependency-source-ns
   "The source file a declared dependency ships for `ns-sym`, when the classpath the
-   native builder is handed carries it. A language pack lives in its own repository,
-   so its registrar reaches the image through that classpath, not this source tree."
+   native builder is handed carries it. A dependency-shipped extension lives in its
+   own repository, so its registrar reaches the image through that classpath, not
+   this source tree."
   [ns-sym]
   (let [base (-> (name ns-sym)
                  (str/replace "-" "_")
@@ -304,17 +305,6 @@
                            (mapv str))]
         (expect (empty? requiring)
                 (str "nothing may require the preload namespace: " (pr-str requiring)))))
-  (it "keeps the formatter backends a pack declares reachable"
-      ;; The language packs are separate jars: each ships
-      ;; `META-INF/vis/native-preload.edn` naming the namespaces its own tools
-      ;; resolve lazily, and `declared-namespaces` preloads that union.
-      (let [declared (->> (enumeration-seq (.getResources ^ClassLoader (clojure.lang.RT/baseLoader)
-                                                          "META-INF/vis/native-preload.edn"))
-                          (mapcat #(edn/read-string (slurp %)))
-                          set)]
-        (doseq [backend '[clj-kondo.core cljfmt.config cljfmt.core zprint.config zprint.core]]
-          (expect (contains? declared backend)
-                  (str backend " must remain reachable in the native image")))))
   (it "derives what it loads instead of carrying a list"
       ;; A written-down list is the failure mode this replaced: it goes stale on the
       ;; next entrypoint and the binary loses a whole extension in silence.
@@ -346,8 +336,8 @@
 
 (defdescribe
   native-contract-json-resources-test
-  ;; A native format_code call completed its file edit, then failed to validate
-  ;; the tool result because surface.json was absent from the linked image.
+  ;; A native tool call completed its file edit, then failed to validate the tool
+  ;; result because its schema was absent from the linked image.
   (it "ships only canonical schemas in the contract package's own metadata"
       (let [resource
             (io/resource

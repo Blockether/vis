@@ -328,8 +328,8 @@
 
 (deftest project-sidebar-label-width-test
   (doseq [[cols index label fits?] [[40 0 "vis-python-runtime" true]
-                                    [40 1 "tree-sitter-language-pack" false]
-                                    [168 1 "tree-sitter-language-pack" true]]]
+                                    [40 1 "vis-extension-center-demo" false]
+                                    [168 1 "vis-extension-center-demo" true]]]
     (let [db (assoc-in (fixture-db) [:project-sidebar :items index "name"] label)
           capture (cap/capture! {:cols cols
                                  :rows 18

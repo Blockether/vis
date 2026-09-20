@@ -259,88 +259,88 @@
         {
           "id": "call-3",
           "sequence": 2,
-          "operation": "run_tests",
+          "operation": "cat",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "run_tests",
+          "summary": "cat",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-4",
           "sequence": 7,
-          "operation": "run_tests",
+          "operation": "cat",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "run_tests",
+          "summary": "cat",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-5",
           "sequence": 3,
-          "operation": "lint_code",
+          "operation": "grep",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "lint_code",
+          "summary": "grep",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-6",
           "sequence": 8,
-          "operation": "lint_code",
+          "operation": "grep",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "lint_code",
+          "summary": "grep",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-7",
           "sequence": 4,
-          "operation": "format_code",
+          "operation": "patch",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "format_code",
+          "summary": "patch",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-8",
           "sequence": 9,
-          "operation": "format_code",
+          "operation": "patch",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "format_code",
+          "summary": "patch",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-9",
           "sequence": 5,
-          "operation": "repl_eval",
+          "operation": "shell",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "repl_eval",
+          "summary": "shell",
           "resources": [],
           "evidence": []
         },
         {
           "id": "call-10",
           "sequence": 10,
-          "operation": "repl_eval",
+          "operation": "shell",
           "presenter": "generic",
           "signal": "generic",
           "state": "succeeded",
-          "summary": "repl_eval",
+          "summary": "shell",
           "resources": [],
           "evidence": []
         }
@@ -357,7 +357,7 @@
       },
       {
         "id": "call-3",
-        "label": "Test",
+        "label": "Read",
         "rows": [
           "call-3",
           "call-4"
@@ -365,7 +365,7 @@
       },
       {
         "id": "call-5",
-        "label": "Lint",
+        "label": "Search",
         "rows": [
           "call-5",
           "call-6"
@@ -373,7 +373,7 @@
       },
       {
         "id": "call-7",
-        "label": "Format",
+        "label": "Patch",
         "rows": [
           "call-7",
           "call-8"
@@ -381,7 +381,7 @@
       },
       {
         "id": "call-9",
-        "label": "Eval",
+        "label": "Shell",
         "rows": [
           "call-9",
           "call-10"
@@ -740,7 +740,7 @@
     ]
   },
   {
-    "name": "ten interleaved reads and searches with failed and running tests",
+    "name": "ten interleaved reads and searches with failed and running shell calls",
     "projection": {
       "state": "running",
       "counts": {
@@ -896,13 +896,13 @@
           "result_summary": "Retained search output"
         },
         {
-          "id": "test-4",
+          "id": "shell-4",
           "sequence": 11,
-          "operation": "run_tests",
-          "presenter": "tests",
+          "operation": "shell",
+          "presenter": "shell",
           "signal": "verification",
           "state": "failed",
-          "summary": "tests/test_extension_loading.py",
+          "summary": "pytest tests/test_extension_loading.py",
           "resources": [],
           "evidence": [],
           "error_summary": "Assertion failed"
@@ -1064,13 +1064,13 @@
           "result_summary": "Retained search output"
         },
         {
-          "id": "test-9",
+          "id": "shell-9",
           "sequence": 23,
-          "operation": "run_tests",
-          "presenter": "tests",
+          "operation": "shell",
+          "presenter": "shell",
           "signal": "verification",
           "state": "running",
-          "summary": "tests/test_extension_loading.py",
+          "summary": "pytest tests/test_extension_loading.py",
           "resources": [],
           "evidence": []
         }
@@ -1114,11 +1114,11 @@
         ]
       },
       {
-        "id": "test-4",
-        "label": "Test",
+        "id": "shell-4",
+        "label": "Shell",
         "rows": [
-          "test-4",
-          "test-9"
+          "shell-4",
+          "shell-9"
         ]
       },
       {

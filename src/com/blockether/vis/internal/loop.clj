@@ -11545,42 +11545,37 @@
   ;; failing unregister leaked a worker silently every five turns. Worker teardown
   ;; is therefore a `finally`, and a failure is LOGGED rather than dropped, because
   ;; a leak nothing reports is one nobody can find.
-  (try
-    (doseq [[step run!]
-            [[:egress-proxy
-              #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
-                                                              tok))]
-             [:repl-egress-proxy
-              #(when-let [tok (:repl-sandbox-token environment)]
-                 (gateway-sandbox/unregister-session! tok))]
-             [:process-jail #(process-jail/unregister-session-jail! (:session-id environment))]
-             [:llm-session
-              #(when-let [a (:llm-session-atom environment)] (locking a (close-llm-session! a)))]
-             ;; BEFORE the context goes: the session's helper-source memo outlives
-             ;; both the context and the engine, and nothing else ever drops it
-             ;; (see `env-python/forget-session-defs!`).
-             [:session-defs
-              #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
-      (try (run!)
-           (catch Throwable t
-             (tel/log! :warn
-                       ["gateway: env teardown step failed" (name step)
-                        (str (:session-id environment)) (ex-message t)]))))
-    (finally
-      ;; The sandbox goes LAST and always. For a gateway session this kills its
-      ;; worker process and releases both the sandbox and trusted extension
-      ;; namespaces without entering a possibly wedged interpreter.
-      ;; A sandbox that was never built has no interpreter to kill, and building
-      ;; one here would start a process for the sole purpose of ending it.
-      (try (env/dispose-sandbox! environment)
-           (catch Throwable t
-             (tel/log! :error
-                       ["gateway: sandbox dispose failed - session LEAKED"
-                        (str (:session-id environment)) (ex-message t)])))
-      (when (:db-info environment)
-        (try (persistance/db-dispose-connection! (:db-info environment))
-             (catch Throwable t
-               (tel/log! :warn ["gateway: env db close failed" (ex-message t)])))))))
+  (try (doseq [[step run!]
+               [[:egress-proxy
+                 #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
+                                                                 tok))]
+                [:llm-session
+                 #(when-let [a (:llm-session-atom environment)] (locking a (close-llm-session! a)))]
+                ;; BEFORE the context goes: the session's helper-source memo outlives
+                ;; both the context and the engine, and nothing else ever drops it
+                ;; (see `env-python/forget-session-defs!`).
+                [:session-defs
+                 #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
+         (try (run!)
+              (catch Throwable t
+                (tel/log! :warn
+                          ["gateway: env teardown step failed" (name step)
+                           (str (:session-id environment)) (ex-message t)]))))
+       (finally
+         ;; The sandbox goes LAST and always. For a gateway session this kills its
+         ;; worker process and releases both the sandbox and trusted extension
+         ;; namespaces without entering a possibly wedged interpreter.
+         ;; A sandbox that was never built has no interpreter to kill, and building
+         ;; one here would start a process for the sole purpose of ending it.
+         (try (env/dispose-sandbox! environment)
+              (catch Throwable t
+                (tel/log! :error
+                          ["gateway: sandbox dispose failed - session LEAKED"
+                           (str (:session-id environment)) (ex-message t)])))
+         (when (:db-info environment)
+           (try (persistance/db-dispose-connection! (:db-info environment))
+                (catch Throwable t
+                  (tel/log! :warn ["gateway: env db close failed" (ex-message t)])))))))
 
 (defonce ^:private last-good-security-snapshot
   ;; A failed project reload may retain only that project's last valid policy.
@@ -11882,17 +11877,12 @@
             ;; One shared gateway proxy serves every environment. Unguessable tokens
             ;; attribute requests to this environment's immutable policy snapshot.
             sandbox-token (str (java.util.UUID/randomUUID))
-            repl-sandbox-token (str (java.util.UUID/randomUUID))
             compiled-network-policy (some-> (egress/compile-policy net-cfg)
                                             (assoc :mitm? (boolean (seq (:rules net-cfg)))))
             _register-sandbox (when (and sandbox-roots-fn jail-enabled?)
                                 (gateway-sandbox/register-session! sandbox-token
                                                                    (constantly
                                                                      compiled-network-policy)))
-            _register-repl-sandbox (when (and sandbox-roots-fn jail-enabled?)
-                                     (gateway-sandbox/register-session! repl-sandbox-token
-                                                                        (constantly
-                                                                          compiled-network-policy)))
             ;; The user-controlled keys come only from config-validation/process-jail-config.
             ;; Per-spawn evaluation retains live workspace roots, lazy proxy startup and
             ;; the resolved `environment:` declarations; nothing else re-reads config.
@@ -11904,9 +11894,7 @@
                       ca-file (when proxy? (gateway-sandbox/ensure-ca!))
                       java-trust (when proxy? (gateway-sandbox/ensure-java-trust!))
                       worker-proxy-port (when proxy?
-                                          (gateway-sandbox/ensure-session-proxy! sandbox-token))
-                      repl-proxy-port (when proxy?
-                                        (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
+                                          (gateway-sandbox/ensure-session-proxy! sandbox-token))]
 
                   (process-jail/draft-policy
                     (merge jail-config
@@ -11918,8 +11906,6 @@
                             :proxy-port proxy-port
                             :worker-proxy-port worker-proxy-port
                             :proxy-token (when proxy? sandbox-token)
-                            :repl-proxy-port repl-proxy-port
-                            :repl-ca-file ca-file
                             :java-trust-store (:java-trust-store java-trust)
                             :java-trust-store-password (:java-trust-store-password java-trust)
                             :ca-file ca-file})
@@ -11942,11 +11928,6 @@
                           :exclude-domains (:exclude-domains net-cfg)
                           :allow-private (:allow-private net-cfg)
                           :rules (:rules net-cfg)}
-            ;; Register one live policy function for the standard language-process launch
-            ;; contract. Managed REPLs and project test runners share the same OS-jail +
-            ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
-            _register-repl-jail (when session-id
-                                  (process-jail/register-session-jail! session-id jail-policy-fn))
             ;; The sandbox is a DELAY, not a value: an interpreter is what makes a
             ;; session expensive to create, and a session that never runs Python
             ;; never needs one. Whoever first enters Python pays for it, through
@@ -12016,8 +11997,7 @@
                          ;; This session's unguessable token for the SHARED gateway egress proxy /
                          ;; MITM CA (internal.sandbox.gateway). Registered at env build; dropped from
                          ;; the proxy's session registry in dispose-environment!.
-                         :sandbox-token sandbox-token
-                         :repl-sandbox-token repl-sandbox-token}
+                         :sandbox-token sandbox-token}
                   ;; Workspace info attached at env-build time so the extension
                   ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
                   ;; root the very first time it fires.

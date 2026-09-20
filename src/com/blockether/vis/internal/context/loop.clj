@@ -6,9 +6,9 @@
    Council publication identity and references live there only during execution;
    activation resources and retry input belong to the session runtime registry.
    This namespace stamps the cursor, enriches context with env/access/routing,
-   and renders the standing context block. Live resources (background shells,
-   managed REPLs) are deliberately NOT part of ctx: a handle or `repl_status`
-   answers for them, so nothing about them is reprinted on every request."
+   and renders the standing context block. Live resources (background shells)
+   are deliberately NOT part of ctx: a handle answers for them, so nothing about
+   them is reprinted on every request."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.env-digest :as env-digest]

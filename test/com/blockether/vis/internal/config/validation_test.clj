@@ -110,7 +110,7 @@
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python" {"source_paths" ["src" "lib/vendor"] "runner" "project"}
+   "python" {"source_paths" ["src" "lib/vendor"]}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"

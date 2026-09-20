@@ -199,11 +199,7 @@
             "patch": "Patch",
             "shell": "Shell",
             "grep": "Search",
-            "ls": "List",
-            "run_tests": "Test",
-            "lint_code": "Lint",
-            "format_code": "Format",
-            "repl_eval": "Eval"
+            "ls": "List"
           }
         },
         "presenter": {

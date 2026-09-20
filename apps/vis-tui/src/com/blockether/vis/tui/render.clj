@@ -5370,7 +5370,7 @@
   "THE VERB A STEP WEARS, one for each state a reader can tell apart.
 
    The same table the web reads in `ACTIVITY_VERBS`, because a chronology that says
-   `RUN_TESTS` in one window and `Tests failed` in the other is two products. The
+   `PATCH` in one window and `Patch refused` in the other is two products. The
    operation id is the machine's name for the call; the reader is owed the act.
 
    A settled verb over a step that FAILED is a lie printed in bold, so an operation
@@ -5381,10 +5381,6 @@
    "cat" ["Reading" "Read" "Read failed"]
    "patch" ["Patching" "Patched" "Patch refused"]
    "shell" ["Running" "Ran" "Command failed"]
-   "run_tests" ["Running tests" "Ran tests" "Tests failed"]
-   "lint_code" ["Linting" "Linted" "Lint failed"]
-   "format_code" ["Formatting" "Formatted" "Format failed"]
-   "repl_eval" ["Evaluating" "Evaluated" "Eval failed"]
    ;; What a code block did to the tree with its own hands. The change is already past
    ;; when it is reported, and its head says how much of the tree moved at once.
    "change" ["Changing" "Changed" "Change failed"]
@@ -7388,11 +7384,10 @@
                 show-execution-details?
                 (or show-python-code? (not= "python" code-language))
 
-                 ;; Source that already carries ANSI (a colored pre-rendering)
-                 ;; folds SGR-aware below; everything else folds plain.
-                 colored-lines
-                 (when (str/includes? code-text "\u001b[")
-                   (str/split-lines code-text))
+                ;; Source that already carries ANSI (a colored pre-rendering)
+                ;; folds SGR-aware below; everything else folds plain.
+                colored-lines
+                (when (str/includes? code-text "\u001b[") (str/split-lines code-text))
 
                 inline-error-code-lines
                 (when (and error (not (:group-errors form)))

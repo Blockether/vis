@@ -117,7 +117,6 @@ def test_check_host_names_the_ops_a_host_does_not_answer():
         "live",
         "shell",
         "version",
-        "test_runner",
         "python-host",
         "../view",
         "https://example.com/schema",

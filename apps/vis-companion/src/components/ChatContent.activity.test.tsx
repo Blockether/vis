@@ -32,7 +32,7 @@ function snapshot(state: 'running' | Outcome, revision?: number): ActivityProjec
       {
         id: 'suite-call',
         sequence: 1,
-        operation: 'run_tests',
+        operation: 'suite',
         presenter: 'tests',
         signal: 'verification',
         state,
@@ -65,7 +65,7 @@ function start(): RunningTurn {
     iteration: 1,
     form_index: 0,
     scope: 'python',
-    code: 'run_tests()',
+    code: "shell('npm test')",
   });
 }
 

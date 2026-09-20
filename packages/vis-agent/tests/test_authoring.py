@@ -210,34 +210,3 @@ def test_documented_provider_loads_without_network_or_login(monkeypatch):
     monkeypatch.setenv("EXAMPLE_API_KEY", "public-test-fixture")
     assert namespace["credential"]().token == "public-test-fixture"
     assert namespace["status"]().is_authenticated
-
-
-def test_documented_language_surface_formats_and_checks_json(monkeypatch, tmp_path):
-    document = (DOCS / "language-extensions.md").read_text()
-    source = re.search(r"```python\n(.*?)\n```", document, re.S)[1]
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(vis, "_host", SimpleNamespace(declare_env=lambda _: "{}"))
-    monkeypatch.setattr(vis, "_registration", {"spec": None})
-    namespace = {}
-    exec(compile(source, "example_language.py", "exec"), namespace)
-    spec = vis._registration["spec"]
-    surface = spec["language_tools"][0]
-    assert spec["name"] == "json-language"
-    assert surface["marker"] == "language_surface"
-    assert surface["language"] == "json"
-    assert surface["extensions"] == ["json"]
-    assert surface["is_exact_syntax"] is True
-    path = tmp_path / "sample.json"
-    path.write_text('{"b":1,   "a":[2,3]}')
-    formatted = namespace["format_json"]({"language": "json", "paths": [str(path)]})
-    assert formatted["op"] == "json-format"
-    assert formatted["changed"] == 1
-    assert path.read_text().startswith('{\n  "b": 1,')
-    assert namespace["format_json"]({"code": '{"a": 1}'})["changed"] is True
-    clean = namespace["check_json"]({"language": "json", "source": '{"a": 1}'})
-    assert clean == {"language": "json", "is_clean": True, "findings": []}
-    broken = namespace["check_json"]({"language": "json", "source": '{"a": 1'})
-    assert not broken["is_clean"]
-    assert broken["findings"][0]["line"] == 1
-    assert broken["findings"][0]["kind"] == "parse"

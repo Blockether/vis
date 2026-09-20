@@ -96,27 +96,27 @@
                    (doseq [literal ["Next result" "Still separate" "<tag>" "**ready**"]]
                      (expect (str/includes? text literal))))))
 
-(defdescribe repl-activity-result-test
-             (it
-               "renders the shared REPL fixture without transport tables at narrow and wide widths"
-               (let [rows (-> (io/resource "vis-contract/fixtures/activity-repl.json")
-                              slurp
-                              json/read-str
-                              activity-contract/from-wire
-                              :rows)]
-                 (doseq [width [36 72]]
-                   (let [entries (#'render/activity-detail-entries
-                                  {:node-id "repl"
-                                   :activity-rows rows
-                                   :activity-expanded? (fn [_ _]
-                                                         true)}
-                                  width
-                                  "fixture")
-                         text (str/join "\n" (map :line entries))]
+(defdescribe
+  execution-activity-result-test
+  (it "renders the shared execution fixture without transport tables at narrow and wide widths"
+      (let [rows (-> (io/resource "vis-contract/fixtures/activity-execution.json")
+                     slurp
+                     json/read-str
+                     activity-contract/from-wire
+                     :rows)]
+        (doseq [width [36 72]]
+          (let [entries (#'render/activity-detail-entries
+                         {:node-id "execution"
+                          :activity-rows rows
+                          :activity-expanded? (fn [_ _]
+                                                true)}
+                         width
+                         "fixture")
+                text (str/join "\n" (map :line entries))]
 
-                     (doseq [heading ["Program" "Stdout" "Stderr" "Result" "Error" "Timeout"]]
-                       (expect (str/includes? text heading)))
-                     (expect (not (str/includes? text "Detail"))))))))
+            (doseq [heading ["Program" "Stdout" "Stderr" "Result" "Error" "Timeout"]]
+              (expect (str/includes? text heading)))
+            (expect (not (str/includes? text "Detail"))))))))
 
 (defdescribe
   activity-history-window-test
@@ -1118,24 +1118,23 @@
     "keeps a JSON-restored host error compact"
     (let
       [msg
-       "clojure.lang.ExceptionInfo: clj_test found no *_test.clj namespaces under [\"test/com/blockether/vis/internal/gateway\"] {:type :clj/bad-args, :got {\"language\" \"clojure\"}}"
+       "clojure.lang.ExceptionInfo: shell found no command `npm` on PATH {:type :vis/bad-args, :got {\"command\" \"npm test\"}}"
 
        txt
        (str/join "\n"
-                 (render-forms
-                   [{:success? false
-                     :code
-                     "run_tests(\"clojure\", paths=[\"test/com/blockether/vis/internal/gateway\"])"
-                     :error {"message" msg
-                             "cause_data" {"type" "clj/bad-args"}
-                             "trace" (str "java.util.concurrent.ExecutionException: " msg)
-                             "block" {"source" "run_tests" "phase" "preflight"}}}]))]
+                 (render-forms [{:success? false
+                                 :code "shell(\"npm test\")"
+                                 :error {"message" msg
+                                         "cause_data" {"type" "clj/bad-args"}
+                                         "trace" (str "java.util.concurrent.ExecutionException: "
+                                                      msg)
+                                         "block" {"source" "shell" "phase" "preflight"}}}]))]
 
-      (expect (str/includes? txt "clj_test found no *_test.clj namespaces"))
+      (expect (str/includes? txt "shell found no command `npm` on PATH"))
       (expect (not (str/includes? txt "error: {\"message\"")))
       (expect (not (str/includes? txt "clojure.lang.ExceptionInfo")))
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
-      (expect (not (str/includes? txt "{:type :clj/bad-args")))))
+      (expect (not (str/includes? txt "{:type :vis/bad-args")))))
   (it
     "keeps failed source and diagnostic details independently collapsed"
     (let [code
@@ -5482,7 +5481,7 @@
     (it "a run of consecutive mixed-tool iterations merges into ONE render with every form"
         (expect (= ["CALL#0×3"]
                    (calls [(tool 0 "cat" "`a` · L1-6") (tool 1 "patch" "update `a`")
-                           (tool 2 "run_tests" "26/26 passed")]))))
+                           (tool 2 "suite" "26/26 passed")]))))
     (it "a lone tool iteration renders as one call"
         (expect (= ["CALL#0×1"] (calls [(tool 0 "cat" "`a` · L1")]))))
     (it "a narrated head OPENS the run — the whole burst still folds into one render"
@@ -6573,7 +6572,7 @@ h = 8"
                                 :counts {:running 0 :succeeded 6 :failed 0 :cancelled 0}
                                 :rows (mapv (fn [n]
                                               {:id (str "op-" n)
-                                               :operation (if (zero? (long n)) "run_tests" "grep")
+                                               :operation (if (zero? (long n)) "suite" "grep")
                                                :summary (str "operation " (inc (long n)))
                                                :state "succeeded"})
                                             (range 6))
@@ -6647,7 +6646,7 @@ h = 8"
                    [{:id "a" :operation "patch" :signal "mutation" :summary "" :state "succeeded"}
                     {:id "b" :operation "grep" :signal "observation" :summary "" :state "succeeded"}
                     {:id "c"
-                     :operation "run_tests"
+                     :operation "suite"
                      :signal "verification"
                      :summary ""
                      :state "succeeded"}]
@@ -6753,8 +6752,8 @@ h = 8"
                    :duration-ms 230}
                   {:id "tests"
                    :sequence 3
-                   :operation "run_tests"
-                   :summary "run_tests"
+                   :operation "suite"
+                   :summary "suite"
                    :state "succeeded"
                    :duration-ms 1400}]}
 
@@ -6854,7 +6853,7 @@ h = 8"
                                        lines)))
 
           [tests-row tests-line]
-          (row-with "Ran tests")]
+          (row-with "suite")]
 
       ;; Code hides Result; Activity keeps its own disclosure.
       (expect (str/includes? collapsed-text "ACTIVITY")
@@ -6880,7 +6879,7 @@ h = 8"
       (expect (str/includes? first-line "Ran npm test"))
       (expect (= 1 (count (filter #(str/includes? % "Ran npm test") lines))))
       (expect (str/includes? second-line "…") "the terminal-width command is ellipsized")
-      (expect (not (str/includes? tests-line "run_tests"))
+      (expect (= 1 (count (re-seq #"suite" tests-line)))
               "a default detail equal to its operation is omitted")
       (expect (str/ends-with? tests-line "1.4s") "durations align at the right edge"))))
 
@@ -7607,7 +7606,7 @@ h = 8"
         (mapv (fn [n]
                 {:id (str "live-" n)
                  :sequence n
-                 :operation (["grep" "cat" "ls" "patch" "run_tests" "lint_code" "shell"] n)
+                 :operation (["grep" "cat" "ls" "patch" "suite" "lint" "shell"] n)
                  :summary (str "search-" n)
                  :presenter "generic"
                  :signal "observation"
@@ -9689,7 +9688,7 @@ print(paths)"
 
             running
             (-> (first (get base "rows"))
-                (assoc "operation" "run_tests"
+                (assoc "operation" "suite"
                        "presenter" "tests"
                        "signal" "verification"
                        "state" "running"
@@ -9745,20 +9744,20 @@ print(paths)"
 
         (expect (some? (activity-contract/from-wire (snapshot running))))
         (expect (some? (activity-contract/from-wire (snapshot terminal))))
-        (send! {"type" "block.started" "code" "run_tests()"})
+        (send! {"type" "block.started" "code" "shell('npm test')"})
         (send! {"type" "block.activity" "activity" (snapshot running)})
         (let [text (str/join "\n" (map :line (entries (first ((:get-timeline tracker))))))]
           (expect (str/includes? text "Running tests"))
           (expect (str/includes? text "In progress")))
         (send! {"type" "block.activity" "activity" (snapshot terminal)})
         (let [live (first ((:get-timeline tracker)))]
-          (send! {"type" "block.output" "code" "run_tests()" "stdout" "done"})
+          (send! {"type" "block.output" "code" "shell('npm test')" "stdout" "done"})
           (doseq [entry [live (first ((:get-timeline tracker)))
                          (#'chat/it->iteration-entry
                           {}
                           {"id" "restored"
                            "position" 1
-                           "forms" [{"code" "run_tests()"
+                           "forms" [{"code" "shell('npm test')"
                                      "stdout" "done"
                                      "activity" (snapshot terminal)}]})]]
             (let [rendered (entries entry)
@@ -9783,7 +9782,7 @@ print(paths)"
                      slurp
                      json/read-str)
             row (-> (first (get base "rows"))
-                    (assoc "operation" "run_tests"
+                    (assoc "operation" "suite"
                            "presenter" "tests"
                            "signal" "verification"
                            "summary" "Verification"
@@ -9806,7 +9805,7 @@ print(paths)"
                    {}
                    {"id" "retained-progress"
                     "position" 1
-                    "forms" [{"code" "run_tests()" "stdout" "done" "activity" snapshot}]})
+                    "forms" [{"code" "shell('npm test')" "stdout" "done" "activity" snapshot}]})
                   width
                   1
                   {:session-id "end-render"

@@ -1216,7 +1216,7 @@ describe('Activity follows the combined Python source', () => {
     {
       id: 'call-2',
       sequence: 2,
-      operation: 'run_tests',
+      operation: 'suite',
       presenter: 'tests',
       signal: 'verification',
       state: 'running',

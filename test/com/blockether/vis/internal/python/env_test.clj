@@ -843,7 +843,7 @@
                       "    if len(L) < 3 or (item.name + '(') not in L[2]: bad.append(item.name)\n"
                       "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(item.name)\n"
                       "print('NOCALL='+json.dumps(bad))\n" "print('KEYED='+str(len(keyed) > 8))\n"
-                      "print('REQUIRED='+str('code (REQUIRED)' in doc('repl_eval')))\n"
+                      "print('REQUIRED='+str(any('(REQUIRED)' in doc(n) for n in wired)))\n"
                       "print('ONCE='+str(doc('patch').count('patch(path, edits)')))"))]
           (expect (re-find #"NOCALL=\[\]" out) out)
           (expect (str/includes? out "KEYED=True"))
@@ -862,9 +862,9 @@
           (expect (re-find #"patch=True" out))))
     (it "filters symbol names with regular expressions, never document bodies"
         (let [out (run (str "print('body='+str(len(apropos('REGULAR-EXPRESSION FILTER'))))\n"
-                            "print('exact='+apropos(r'^format_code$')[0].name)"))]
+                            "print('exact='+apropos(r'^grep$')[0].name)"))]
           (expect (str/includes? out "body=0"))
-          (expect (str/includes? out "exact=format_code"))))
+          (expect (str/includes? out "exact=grep"))))
     (it "rejects an invalid regular expression"
         (let [result (ep/run-python-block ctx "apropos('[')")]
           (expect (some? (:error result)))))
@@ -1227,50 +1227,50 @@ Follow every fixture step without truncation."}]))
                (finally (doc-corpus/register-source! ::late (constantly []))))
           (expect (str/includes? (read-it) "is not a handle"))))))
 
-(defdescribe
-  tool-introspection-test
-  ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
-  ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
-  ;; contract the host declares for it.
-  (it "carries the host doc and the declared parameters onto the bound callable"
-      (let [ctx
-            (tpc/shared-with! {'meta-probe (fn [& args]
-                                             (str "called:" (count args)))})
+(defdescribe tool-introspection-test
+             ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
+             ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
+             ;; contract the host declares for it.
+             (it "carries the host doc and the declared parameters onto the bound callable"
+                 (let [ctx
+                       (tpc/shared-with! {'meta-probe (fn [& args]
+                                                        (str "called:" (count args)))})
 
-            _
-            (ep/set-python-binding-doc!
-              ctx
-              'meta-probe
-              "meta_probe(language=None, **kwargs) -> str. The declared contract.")
+                       _
+                       (ep/set-python-binding-doc!
+                         ctx
+                         'meta-probe
+                         "meta_probe(mode=None, **kwargs) -> str. The declared contract.")
 
-            _
-            (ep/set-python-binding-signature! ctx 'meta-probe "(language=None, **kwargs)")
+                       _
+                       (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
 
-            result
-            (ep/run-python-block
-              ctx
-              (str "import inspect\n" "print(str(inspect.signature(meta_probe)))\n"
-                   "print(meta_probe.__doc__.split('.')[0])\n" "print(meta_probe.__name__)\n"))]
+                       result
+                       (ep/run-python-block ctx
+                                            (str "import inspect\n"
+                                                 "print(str(inspect.signature(meta_probe)))\n"
+                                                 "print(meta_probe.__doc__.split('.')[0])\n"
+                                                 "print(meta_probe.__name__)\n"))]
 
-        (expect (= (str "(language=None, **kwargs)\n"
-                        "meta_probe(language=None, **kwargs) -> str\n"
-                        "meta_probe\n")
-                   (:stdout result)))))
-  (it "keeps accepting the call shapes the reported signature does not name"
-      (let [ctx
-            (tpc/shared-with! {'meta-probe (fn [& args]
-                                             (str "called:" (count args)))})
+                   (expect (= (str "(mode=None, **kwargs)\n"
+                                   "meta_probe(mode=None, **kwargs) -> str\n"
+                                   "meta_probe\n")
+                              (:stdout result)))))
+             (it "keeps accepting the call shapes the reported signature does not name"
+                 (let [ctx
+                       (tpc/shared-with! {'meta-probe (fn [& args]
+                                                        (str "called:" (count args)))})
 
-            _
-            (ep/set-python-binding-signature! ctx 'meta-probe "(language=None, **kwargs)")
+                       _
+                       (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
 
-            result
-            (ep/run-python-block ctx
-                                 (str "kw = meta_probe(language=\"python\", extra=1)\n"
-                                      "mapped = meta_probe({\"language\": \"python\"})\n"
-                                      "print(kw, mapped)\n"))]
+                       result
+                       (ep/run-python-block ctx
+                                            (str "kw = meta_probe(mode=\"fast\", extra=1)\n"
+                                                 "mapped = meta_probe({\"mode\": \"fast\"})\n"
+                                                 "print(kw, mapped)\n"))]
 
-        (expect (= "called:1 called:1\n" (:stdout result))))))
+                   (expect (= "called:1 called:1\n" (:stdout result))))))
 
 (defdescribe
   defs-verb-test

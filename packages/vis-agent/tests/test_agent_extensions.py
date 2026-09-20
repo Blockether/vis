@@ -179,13 +179,6 @@ def test_replayed_call_id_cannot_change_arguments_or_execute_twice():
         {"activation": lambda: True},
         {"env": ["PRIVATE_TOKEN"]},
         {"prompt": lambda: "dynamic"},
-        {
-            "language_tools": [
-                vis.LanguageSurface(
-                    language="toml", format=lambda options: {"op": "format_code"}
-                )
-            ]
-        },
     ],
 )
 def test_host_only_fields_fail_before_connection(options):

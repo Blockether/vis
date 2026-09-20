@@ -21,9 +21,7 @@ _SCHEMA_NAMES = (
     "improve",
     "plans",
     "provider",
-    "surface",
     "symbol",
-    "test-runner",
     "toggle",
     "view",
 )

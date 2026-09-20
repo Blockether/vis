@@ -501,7 +501,6 @@ A value `<= 0` disables an eviction threshold.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
-- [Language extensions](language-extensions.md) — serve another language's formatting, linting, tests and syntax checks.
 
 ### Concepts
 

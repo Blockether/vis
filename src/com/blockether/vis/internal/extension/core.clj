@@ -24,7 +24,6 @@
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.contract.document :as contract-document]
-            [com.blockether.vis.contract.surface :as contract-surface]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -622,7 +621,6 @@
                [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn])
        (optional-field? x :ext/hooks #(vector-of? hook? %))
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
-       (optional-field? x :ext/language-tools #(vector-of? map? %))
        (optional-field? x :ext/network-filters #(every? ifn? %))
        (optional-field? x :ext/env #(vector-of? env-entry? %))
        (optional-field? x :ext/settings #(vector-of? setting-entry? %))
@@ -1165,21 +1163,6 @@
                              :allowed op-tags}))))
   ext)
 
-(defn- validate-language-surfaces!
-  "Refuse a language-tool entry that does not describe a valid language surface,
-   with the schema's own explanation, instead of failing later inside a tool call."
-  [ext]
-  (doseq [entry (:ext/language-tools ext)]
-    (when-let [explanation (contract-surface/explain-surface entry)]
-      (throw (ex-info (str "Invalid language surface '" (:language entry)
-                           "' in extension '" (:ext/name ext)
-                           "': " explanation)
-                      {:type :extension/invalid-language-surface
-                       :name (:ext/name ext)
-                       :language (:language entry)
-                       :explain explanation}))))
-  ext)
-
 (defn validate!
   "Normalize and validate an extension declaration.
    String prompt contributions become functions before ordinary predicate validation."
@@ -1195,7 +1178,6 @@
     (when-not (extension? ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext) "'")
                       {:type :extension/invalid-declaration :name (:ext/name ext) :extension ext})))
-    (validate-language-surfaces! ext)
     (validate-symbol-op-tags! ext)))
 
 ;; Hook execution - runtime wrappers with output validation + logging
@@ -1697,7 +1679,7 @@
 
 (defn- ext-op-hook-owner
   "Owner keyword an extension's declarative `:ext/op-hooks` register under,
-   derived from its name (e.g. \"language-clojure\" -> :ext/language-clojure)."
+   derived from its name (e.g. \"greeting\" -> :ext/greeting)."
   [ext]
   (keyword "ext" (str (:ext/name ext))))
 
@@ -3071,7 +3053,7 @@
           (when parameters (str "(" parameters ")"))))))
 
 (defn symbol-keys-line
-  "`Keys: language · code (REQUIRED) · id` — the options-dict vocabulary from
+  "`Keys: query (REQUIRED) · paths · context` — the options-dict vocabulary from
    `:ext.symbol/params`, in DECLARED order (authors lead with what a caller cannot
    omit). It repeats the canonical signature's option names with their short notes,
    including required keys supplied inside a dictionary overload. nil when the

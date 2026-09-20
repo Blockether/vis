@@ -6,7 +6,7 @@ import {
   ACTIVITY_INTERLEAVED,
   ACTIVITY_REPEATED_ARGUMENTS,
   ACTIVITY_RESULTS,
-  ACTIVITY_REPL,
+  ACTIVITY_EXECUTION,
   ACTIVITY_TABLES,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LONG_LABELS,
@@ -130,12 +130,12 @@ export const LongLabelsNarrow: Story = {
   ],
 };
 
-export const ReplResults: Story = {
-  args: { activity: ACTIVITY_REPL },
+export const ExecutionResults: Story = {
+  args: { activity: ACTIVITY_EXECUTION },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(canvas.getByRole('button', { name: /Eval ×5/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /Executed ×5/ }));
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]'));
     await expect(rows).toHaveLength(5);
     for (const [index, row] of rows.entries()) {
@@ -182,7 +182,6 @@ export const ResultFirst: Story = {
       'greeting_test.clj',
       'captured lines',
       'one disclosure',
-      'lazytest',
       'one disclosure',
     ];
     await expect(rows).toHaveLength(expected.length);
@@ -195,19 +194,12 @@ export const ResultFirst: Story = {
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
-    const tests = within(rows[5]);
-    await expect(tests.queryByRole('table')).not.toBeInTheDocument();
-    // Issue #260: the finished summary names the selected target, and a clean run
-    // keeps the runner's own transcript out of the disclosure.
-    await expect(rows[5].textContent).toContain('test/activity_test.clj · 12 tests · 0 failed');
-    await expect(rows[5].textContent).not.toContain('12 tests passed.');
-    for (const row of [rows[4], rows[6]]) {
+    for (const row of [rows[4], rows[5]]) {
       const message = row.querySelector('p')!;
       await expect(getComputedStyle(message).textAlign).toBe('left');
       await expect(within(row).queryByRole('table')).not.toBeInTheDocument();
       await expect(row.textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);
     }
-    await expect(rows[5].textContent).not.toContain('Is pass');
     await expect(canvas.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
     await expect(canvas.queryByRole('columnheader', { name: 'Value' })).not.toBeInTheDocument();
   },
@@ -384,19 +376,19 @@ export const InterleavedOperations: Story = {
     const groups = canvas.getByRole('list', { name: 'Operation groups' });
     await expect(groups.children).toHaveLength(4);
     await expect(canvas.getByRole('button', { name: /Search ×10/ })).toBeVisible();
-    await expect(canvas.getByRole('button', { name: /Test ×2/ })).toHaveTextContent(
+    await expect(canvas.getByRole('button', { name: /Shell ×2/ })).toHaveTextContent(
       '1 running · 1 failed',
     );
     await expect(canvasElement).not.toHaveTextContent('Assertion failed');
-    await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /Shell ×2/ }));
     await expect(canvasElement).not.toHaveTextContent('Assertion failed');
     await userEvent.click(
       canvasElement.querySelector<HTMLElement>(
-        '[data-activity-row="0:test-4"] [data-disclosure-toggle]',
+        '[data-activity-row="0:shell-4"] [data-disclosure-toggle]',
       )!,
     );
     await expect(canvasElement).toHaveTextContent('Assertion failed');
-    await userEvent.click(canvas.getByRole('button', { name: /Test ×2/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /Shell ×2/ }));
     const reads = canvas.getByRole('button', { name: /Read ×10/ });
     reads.focus();
     await userEvent.keyboard('{Enter}');

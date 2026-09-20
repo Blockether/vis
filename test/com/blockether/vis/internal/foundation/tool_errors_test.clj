@@ -14,8 +14,6 @@
             [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
              ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
              ["patch({}, [])" "patch: use patch(path, edits); see doc(\"patch\") for edit keys."]
-             ["repl_start('clojure', 'x')"
-              "REPL: options must be a map; use {'cwd': ...}, {'id': ...} or {'port': ...}."]
              ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
               "grep: unknown keys: wat. See doc(\"grep\")."]
              ["await shell('')" "shell: command required; use shell(command)."]
@@ -53,12 +51,4 @@
                                   message))]
 
           (is (= :python/host (get-in out [:error :data :phase])))
-          (is (and reported-path (str/ends-with? reported-path missing-path)) message))))
-    (doseq [tool ["format_code" "lint_code" "run_tests" "repl_eval"]]
-      (testing (str tool " unknown language")
-        (let [out (ep/run-python-block ctx (str tool "('unknown', {})") "t1/i1")
-              message (get-in out [:error :message])]
-
-          (is (= :python/host (get-in out [:error :data :phase])))
-          (is (str/starts-with? message (str tool ": no handler for 'unknown'; available: ")))
-          (is (not (str/includes? message "-fn"))))))))
+          (is (and reported-path (str/ends-with? reported-path missing-path)) message))))))

@@ -6071,7 +6071,7 @@
         (let [running-row
               {:id "r1"
                :sequence 1
-               :operation "run_tests"
+               :operation "suite"
                :state "running"
                :presentation {:headline "Running tests" :summary "In progress"}}
 

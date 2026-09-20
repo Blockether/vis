@@ -684,8 +684,8 @@
                                     'CORE_SYSTEM_PROMPT))]
       ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
       ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
-      ;; bare "finish clean" is how sessions started leaking REPLs. The budget moved 4.5k →
-      ;; 4.7k exactly once, when REPL-first reproduction and the "unverified until a test
+      ;; bare "finish clean" is how sessions started leaking background shells. The budget
+      ;; moved 4.5k → 4.7k exactly once, when reproduce-first debugging and the "unverified
       ;; covers it" rule landed: those rules pay for themselves, and paying for them by
       ;; shaving other rules' wording is the squeeze this lock exists to stop.
       ;; 4.7k → 4.75k exactly once more, when the merged `shell`/`fs` mega-tools split into
@@ -806,10 +806,6 @@
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
       (expect (str/includes? text "one-line docstring supplies its `defs()` gist"))
-      ;; The verification rule must name a call the language surface accepts: a lone
-      ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the
-      ;; workspace's primary pack instead of the python one.
-      (expect (str/includes? text "run_tests({\"language\": \"python\"})"))
       ;; Session introspection is toggle-gated in foundation-core's dynamic fragment,
       ;; never copied into the static engine prompt.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
@@ -854,11 +850,9 @@
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the ONE channel back" "what you print is what returns"
-               "Inspect unknown shapes" "`repl_status` shows whether one is running"
-               "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
-               "Keep reproduction as a suite test" "rerun after the fix"
-               "Cover changed behavior with tests" "Write only files the task asked"
-               "Commit and push" "Treat context as a budget"
+               "Inspect unknown shapes" "keep the reproduction as a suite test"
+               "rerun it after the fix" "Cover changed behavior with tests"
+               "Write only files the task asked" "Commit and push" "Treat context as a budget"
                ;; Regression, user report: cross-validating §6 against the runtime. The
                ;; utilization line named no field, and the two fields a model reads first
                ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
@@ -931,7 +925,7 @@
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
       (doseq [required
-              ["Finish clean: stop managed REPLs you started"
+              ["Finish clean: stop a background shell before final answer only"
                "temporary implementation or test machinery"
                "healthy service the user asked you to run is persistent user infrastructure"
                "leave it running" "across turns and final answers" "Confirm destructive actions."]]

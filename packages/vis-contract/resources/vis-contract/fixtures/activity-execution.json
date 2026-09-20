@@ -8,15 +8,15 @@
   },
   "rows": [
     {
-      "result_summary": "{\"language\" \"clojure\", \"code\" \"(do\\n  (println \\\"Hello Ada\\\")\\n  (binding [*out* *err*] (println \\\"Check input\\\"))\\n  {:answer 42 :ready true})\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{:answer 42, :ready true}\", \"status\" [\"done\"]}",
+      "result_summary": "{\"code\": \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\nprint({'answer': 42, 'ready': True})\", \"out\": \"Hello Ada\\n\", \"err\": \"Check input\\n\", \"value\": \"{'answer': 42, 'ready': True}\", \"ok\": true}",
       "id": "result-0",
-      "summary": "REPL",
+      "summary": "Sandbox",
       "signal": "observation",
       "sequence": 1,
-      "operation": "repl_eval",
+      "operation": "python_execution",
       "presentation": {
-        "headline": "Evaluated",
-        "summary": "Clojure REPL",
+        "headline": "Executed",
+        "summary": "Sandbox Python",
         "content": [
           {
             "type": "heading",
@@ -24,69 +24,7 @@
           },
           {
             "type": "code",
-            "text": "(do\n  (println \"Hello Ada\")\n  (binding [*out* *err*] (println \"Check input\"))\n  {:answer 42 :ready true})",
-            "language": "clojure"
-          },
-          {
-            "type": "heading",
-            "text": "Stdout"
-          },
-          {
-            "type": "code",
-            "text": "Hello Ada\n"
-          },
-          {
-            "type": "heading",
-            "text": "Stderr"
-          },
-          {
-            "type": "code",
-            "text": "Check input\n"
-          },
-          {
-            "type": "heading",
-            "text": "Result"
-          },
-          {
-            "type": "code",
-            "text": "{:answer 42, :ready true}",
-            "language": "clojure"
-          }
-        ]
-      },
-      "presenter": "generic",
-      "duration_ms": 0,
-      "state": "succeeded",
-      "evidence": [
-        {
-          "kind": "arguments",
-          "text": "[\"REPL\"]"
-        },
-        {
-          "kind": "result",
-          "text": "{\"language\" \"clojure\", \"code\" \"(do\\n  (println \\\"Hello Ada\\\")\\n  (binding [*out* *err*] (println \\\"Check input\\\"))\\n  {:answer 42 :ready true})\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{:answer 42, :ready true}\", \"status\" [\"done\"]}"
-        }
-      ],
-      "resources": []
-    },
-    {
-      "result_summary": "{\"language\" \"python\", \"code\" \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\n{'answer': 42, 'ready': True}\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{'answer': 42, 'ready': True}\", \"ok\" true}",
-      "id": "result-1",
-      "summary": "REPL",
-      "signal": "observation",
-      "sequence": 2,
-      "operation": "repl_eval",
-      "presentation": {
-        "headline": "Evaluated",
-        "summary": "Python REPL",
-        "content": [
-          {
-            "type": "heading",
-            "text": "Program"
-          },
-          {
-            "type": "code",
-            "text": "import sys\nprint('Hello Ada')\nprint('Check input', file=sys.stderr)\n{'answer': 42, 'ready': True}",
+            "text": "import sys\nprint('Hello Ada')\nprint('Check input', file=sys.stderr)\nprint({'answer': 42, 'ready': True})",
             "language": "python"
           },
           {
@@ -122,25 +60,25 @@
       "evidence": [
         {
           "kind": "arguments",
-          "text": "[\"REPL\"]"
+          "text": "[{code: …}]"
         },
         {
           "kind": "result",
-          "text": "{\"language\" \"python\", \"code\" \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\n{'answer': 42, 'ready': True}\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{'answer': 42, 'ready': True}\", \"ok\" true}"
+          "text": "{\"code\": \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\nprint({'answer': 42, 'ready': True})\", \"out\": \"Hello Ada\\n\", \"err\": \"Check input\\n\", \"value\": \"{'answer': 42, 'ready': True}\", \"ok\": true}"
         }
       ],
       "resources": []
     },
     {
-      "result_summary": "{\"language\" \"clojure\", \"code\" \"(/ 1 0)\", \"ex\" \"ArithmeticException\", \"error_message\" \"Divide by zero\", \"status\" [\"eval-error\"]}",
-      "id": "result-2",
-      "summary": "REPL",
+      "result_summary": "{\"code\": \"import json\\nprint(json.dumps({'rows': 3}))\\nprint('partial input', file=sys.stderr)\\nprint('done')\", \"out\": \"{\\\"rows\\\": 3}\\ndone\\n\", \"err\": \"partial input\\n\", \"value\": \"None\", \"ok\": true}",
+      "id": "result-1",
+      "summary": "Sandbox",
       "signal": "observation",
-      "sequence": 3,
-      "operation": "repl_eval",
+      "sequence": 2,
+      "operation": "python_execution",
       "presentation": {
-        "headline": "Evaluation failed",
-        "summary": "Clojure REPL",
+        "headline": "Executed",
+        "summary": "Sandbox Python",
         "content": [
           {
             "type": "heading",
@@ -148,16 +86,33 @@
           },
           {
             "type": "code",
-            "text": "(/ 1 0)",
-            "language": "clojure"
+            "text": "import json\nprint(json.dumps({'rows': 3}))\nprint('partial input', file=sys.stderr)\nprint('done')",
+            "language": "python"
           },
           {
             "type": "heading",
-            "text": "Error"
+            "text": "Stdout"
           },
           {
             "type": "code",
-            "text": "Divide by zero"
+            "text": "{\"rows\": 3}\ndone\n"
+          },
+          {
+            "type": "heading",
+            "text": "Stderr"
+          },
+          {
+            "type": "code",
+            "text": "partial input\n"
+          },
+          {
+            "type": "heading",
+            "text": "Result"
+          },
+          {
+            "type": "code",
+            "text": "None",
+            "language": "python"
           }
         ]
       },
@@ -167,25 +122,25 @@
       "evidence": [
         {
           "kind": "arguments",
-          "text": "[\"REPL\"]"
+          "text": "[{code: …}]"
         },
         {
           "kind": "result",
-          "text": "{\"language\" \"clojure\", \"code\" \"(/ 1 0)\", \"ex\" \"ArithmeticException\", \"error_message\" \"Divide by zero\", \"status\" [\"eval-error\"]}"
+          "text": "{\"code\": \"import json\\nprint(json.dumps({'rows': 3}))\\nprint('partial input', file=sys.stderr)\\nprint('done')\", \"out\": \"{\\\"rows\\\": 3}\\ndone\\n\", \"err\": \"partial input\\n\", \"value\": \"None\", \"ok\": true}"
         }
       ],
       "resources": []
     },
     {
-      "result_summary": "{\"language\" \"python\", \"code\" \"1 / 0\", \"ok\" false, \"exc\" \"Traceback (most recent call last):\\n  File \\\"<repl>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}",
-      "id": "result-3",
-      "summary": "REPL",
+      "result_summary": "{\"code\": \"1 / 0\", \"ok\": false, \"exc\": \"Traceback (most recent call last):\\n  File \\\"<sandbox>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}",
+      "id": "result-2",
+      "summary": "Sandbox",
       "signal": "observation",
-      "sequence": 4,
-      "operation": "repl_eval",
+      "sequence": 3,
+      "operation": "python_execution",
       "presentation": {
-        "headline": "Evaluation failed",
-        "summary": "Python REPL",
+        "headline": "Execution failed",
+        "summary": "Sandbox Python",
         "content": [
           {
             "type": "heading",
@@ -202,7 +157,7 @@
           },
           {
             "type": "code",
-            "text": "Traceback (most recent call last):\n  File \"<repl>\", line 1, in <module>\nZeroDivisionError: division by zero"
+            "text": "Traceback (most recent call last):\n  File \"<sandbox>\", line 1, in <module>\nZeroDivisionError: division by zero"
           }
         ]
       },
@@ -212,25 +167,25 @@
       "evidence": [
         {
           "kind": "arguments",
-          "text": "[\"REPL\"]"
+          "text": "[{code: …}]"
         },
         {
           "kind": "result",
-          "text": "{\"language\" \"python\", \"code\" \"1 / 0\", \"ok\" false, \"exc\" \"Traceback (most recent call last):\\n  File \\\"<repl>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}"
+          "text": "{\"code\": \"1 / 0\", \"ok\": false, \"exc\": \"Traceback (most recent call last):\\n  File \\\"<sandbox>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}"
         }
       ],
       "resources": []
     },
     {
-      "result_summary": "{\"language\" \"clojure\", \"code\" \"(Thread/sleep 10000)\", \"timed_out\" true, \"ms\" 100}",
-      "id": "result-4",
-      "summary": "REPL",
+      "result_summary": "{\"code\": \"open('/nowhere/config.toml')\", \"ok\": false, \"exc\": \"Traceback (most recent call last):\\n  File \\\"<sandbox>\\\", line 1, in <module>\\nFileNotFoundError: [Errno 2] No such file or directory: '/nowhere/config.toml'\"}",
+      "id": "result-3",
+      "summary": "Sandbox",
       "signal": "observation",
-      "sequence": 5,
-      "operation": "repl_eval",
+      "sequence": 4,
+      "operation": "python_execution",
       "presentation": {
-        "headline": "Evaluation timed out",
-        "summary": "Clojure REPL",
+        "headline": "Execution failed",
+        "summary": "Sandbox Python",
         "content": [
           {
             "type": "heading",
@@ -238,16 +193,16 @@
           },
           {
             "type": "code",
-            "text": "(Thread/sleep 10000)",
-            "language": "clojure"
+            "text": "open('/nowhere/config.toml')",
+            "language": "python"
           },
           {
             "type": "heading",
-            "text": "Timeout"
+            "text": "Error"
           },
           {
             "type": "code",
-            "text": "Evaluation timed out after 100ms."
+            "text": "Traceback (most recent call last):\n  File \"<sandbox>\", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: '/nowhere/config.toml'"
           }
         ]
       },
@@ -257,11 +212,56 @@
       "evidence": [
         {
           "kind": "arguments",
-          "text": "[\"REPL\"]"
+          "text": "[{code: …}]"
         },
         {
           "kind": "result",
-          "text": "{\"language\" \"clojure\", \"code\" \"(Thread/sleep 10000)\", \"timed_out\" true, \"ms\" 100}"
+          "text": "{\"code\": \"open('/nowhere/config.toml')\", \"ok\": false, \"exc\": \"Traceback (most recent call last):\\n  File \\\"<sandbox>\\\", line 1, in <module>\\nFileNotFoundError: [Errno 2] No such file or directory: '/nowhere/config.toml'\"}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{\"code\": \"import time\\ntime.sleep(10)\", \"timed_out\": true, \"ms\": 100}",
+      "id": "result-4",
+      "summary": "Sandbox",
+      "signal": "observation",
+      "sequence": 5,
+      "operation": "python_execution",
+      "presentation": {
+        "headline": "Execution timed out",
+        "summary": "Sandbox Python",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "import time\ntime.sleep(10)",
+            "language": "python"
+          },
+          {
+            "type": "heading",
+            "text": "Timeout"
+          },
+          {
+            "type": "code",
+            "text": "Execution timed out after 100ms."
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[{code: …}]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"code\": \"import time\\ntime.sleep(10)\", \"timed_out\": true, \"ms\": 100}"
         }
       ],
       "resources": []

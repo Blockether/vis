@@ -25,7 +25,7 @@ e2e/
 
 - **want** / **wantnot** — `{path: [substring, ...]}` checks on the resulting files.
 - **want_answer** — substrings the final answer must contain (REPL / non-file tasks).
-- **want_tools** — extension tools that must finish successfully, such as `repl_eval`.
+- **want_tools** — extension tools that must finish successfully, such as `patch`.
 - **want_forms** — legacy substring checks on sandbox source; not execution evidence.
 - **want_answer_json** — the exact final JSON value, with no extra facts or keys.
   A single JSON code fence is accepted. Duplicate object keys are rejected.
@@ -73,7 +73,7 @@ e2e/
 
 ```sh
 python3 e2e/run.py                              # every scenario across all roots
-python3 e2e/run.py clj-rename py-repl-compute   # a subset by id
+python3 e2e/run.py clj-rename py-add-func       # a subset by id
 VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 e2e/run.py
 
 # Run each scenario on multiple models. The command succeeds only if every
@@ -81,7 +81,7 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 e2e/run.py
 VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
 
 # Pin exact native effort and reject missing evidence or a changed route:
-VIS_PROVIDER=github-copilot VIS_MODEL=gpt-6-astra VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-repl-compute
+VIS_PROVIDER=github-copilot VIS_MODEL=gpt-6-astra VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-add-param
 ```
 
 Environment variables: `VIS_MODELS` (comma-separated models, default
@@ -142,6 +142,5 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_W
 
 ## Add a scenario
 
-Create `<root>/scenarios/<id>/scenario.json` and `files/...` under the main
-`e2e/` directory or a language pack's `e2e/` directory. The runner discovers
-scenario folders automatically.
+Create `<root>/scenarios/<id>/scenario.json` and `files/...` under the `e2e/`
+directory. The runner discovers scenario folders automatically.

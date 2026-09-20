@@ -278,17 +278,13 @@ With the jail enabled, the parent process environment is excluded.
 includes the full environment. `LD_*`, `DYLD_*`, `PERL*` and `BASH_ENV` are
 always refused.
 
-A shell or REPL call can add or override variables. Literal values are recorded
+A shell call can add or override variables. Literal values are recorded
 in the transcript, so use a source reference for secrets:
 
 ```python
 sh = await shell("npm test", {"env": {"NODE_ENV": "test"}})
-r = await repl_start({"language": "python",
-                      "env": {"STRIPE_KEY": {"keychain": "vis-stripe"}}})
+sh = await shell("./deploy.sh", {"env": {"STRIPE_KEY": {"keychain": "vis-stripe"}}})
 ```
-
-Vis refuses to reuse a running REPL with different `env` values. Stop it before
-starting one with a different environment.
 
 ## Router
 
@@ -389,7 +385,7 @@ jail:
 `when.os` accepts `macos`, `linux`, `wsl` or `windows`. A missing admitted path
 is reported by `vis-agent doctor`.
 
-`repl_connect` attaches to an existing process, which Vis cannot jail. Processes
+A tool that attaches to an already running process cannot jail it. Processes
 Vis starts are jailed when `jail.enabled` is true.
 
 [Process jail and network policy](jail.md) explains the policy in full, including
@@ -509,7 +505,6 @@ are inferred without this metadata. To declare roots explicitly:
 # vis.yml
 python:
   source_paths: [src, lib/vendor, ~/shared/py]
-  runner: project     # default run_tests backend: project | vispython
 ```
 
 Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
@@ -517,14 +512,6 @@ These roots precede packages from the selected environment; project and shared p
 An [editable package install](extension-development.md) supplies its own import
 roots through `.pth` files or backend hooks; it does not need these layout overrides.
 Import roots do not grant filesystem permissions or install dependencies.
-`runner: project` runs the project's own pytest with its installed
-dependencies; `vispython` runs in the embedded sandbox.
-An explicit `runner` argument on the call
-(`run_tests({"language": "python", "runner": "project"})`) overrides this
-default for one run.
-
-The project interpreter is chosen automatically: uv, then Poetry, then `.venv`
-or `venv`, then `python3`.
 
 ## MCP servers
 

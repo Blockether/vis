@@ -312,8 +312,8 @@
   "What `doc()` prints: a hand-ordered short list of the verbs a session starts
    from, not a corpus dump. Everything else remains addressable through
    `apropos(pattern)` and `doc(name)`."
-  ["apropos" "doc" "read_session" "fold_session" "ls" "grep" "cat" "patch" "shell" "run_tests"
-   "repl_eval" "lint_code" "format_code" "attach" "mcp__call"])
+  ["apropos" "doc" "read_session" "fold_session" "ls" "grep" "cat" "patch" "shell" "attach"
+   "mcp__call"])
 
 ;; The three things the two verbs PRINT
 

@@ -272,8 +272,8 @@
 (defn list-resources
   "Vector of live resource DATA maps for `session`, dead ones pruned and every
    health-capable `status` refreshed first (parallel, hard-timeout probes).
-   This is what the footer renders and what `repl_status` answers from — ONLY
-   the calling session's resources. Nothing about a resource rides in ctx."
+   This is what the footer renders — ONLY the calling session's resources.
+   Nothing about a resource rides in ctx."
   [session]
   (prune! session)
   (refresh-health! session)
@@ -454,8 +454,8 @@
 
 ;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
 ;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`.
-;; The id comes from the caller that started the resource — a `shell` handle or
-;; a `repl_status` result — never from ctx, which carries no resource at all.
+;; The id comes from the caller that started the resource — a `shell` handle —
+;; never from ctx, which carries no resource at all.
 ;; Wired by the loop via env/set-python-binding!,
 ;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
 
@@ -480,8 +480,7 @@
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
    Closures bind the session so the tools are session-scoped by construction.
    Returns are projected to strings-only (`->model-result`) since they cross the
-   boundary as the tool result; `stop!` stays keyword-keyed for
-   internal callers (e.g. the REPL pack's `repl_stop`)."
+   boundary as the tool result; `stop!` stays keyword-keyed for internal callers."
   [session]
   {'resource-stop (fn [id]
                     (->model-result (stop! session (->id id))))})

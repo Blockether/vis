@@ -33,7 +33,6 @@
   {"session_id" "s1"
    "session_workspace" {"root" "/repo" "isolated" false "vcs_kind" "git"}
    "session_env" {"host" {"os" "macos"} "project" {"kind" "single"}}
-   "session_language_tools" {"clojure" ["repl_eval" "repl_start"]}
    "session_routing" {"model" "gpt-5.5"}})
 
 ;; A realistic cross-turn state change: the session title changed.
@@ -73,11 +72,6 @@
   (it "no state change ⇒ no delta (frozen prefix stays warm)"
       (let [m0 (cr/ctx-static-map {:ctx base-ctx})]
         (expect (nil? (cr/render-ctx-delta m0 m0)))))
-  (it
-    "does NOT project language capabilities into ctx (the EXTENSIONS prompt block already names them)"
-    (let [m (cr/ctx-static-map {:ctx base-ctx})]
-      (expect (not (contains? m "language_tools")))
-      (expect (not (contains? m "session_language_tools")))))
   (it "projects the immutable security snapshot as standing session access"
       (let [access
             {"generation" "sha256:abc"
@@ -144,11 +138,11 @@
                                                       "session_turn" 4
                                                       "session_goal" {"id" "g1"
                                                                       "objective"
-                                                                      "remove tree-sitter"
+                                                                      "remove the legacy cache"
                                                                       "status" "active"
                                                                       "revision" 1})})]
         (expect (str/includes? boundary "session[\"goal\"] = "))
-        (expect (str/includes? boundary "\"objective\": \"remove tree-sitter\""))
+        (expect (str/includes? boundary "\"objective\": \"remove the legacy cache\""))
         (expect (str/includes? boundary "\"status\": \"active\""))))
   (it "omits the goal line for a session without a goal"
       (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]

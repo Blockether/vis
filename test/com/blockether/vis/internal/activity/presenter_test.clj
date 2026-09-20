@@ -513,7 +513,7 @@
          "iteration_id" "iteration-2"
          "iteration" 1
          "source" "code"
-         "tool" "repl_eval"
+         "tool" "python_execution"
          "classification" "python-error"
          "user_request" request
          "code" "raise ValueError(\"Fixture failure\")"

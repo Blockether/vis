@@ -21,8 +21,8 @@ compliance.
 - **State:** sessions and results are stored locally, outside model requests.
   Configured providers receive the context required for inference.
 - **Distribution:** `vis-agent` selects a managed JVM source checkout or native
-  binary. Language packs, providers, persistence and speech are part of the
-  engine; the TUI is a separate app module.
+  binary. Providers, persistence and speech are part of the engine; the TUI is
+  a separate app module.
 - **Network:** providers, tools, package downloads and notifications can make
   network requests. See §9 for data handling.
 
@@ -30,7 +30,7 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 55 unique, across 3 `deps.edn` modules (root + siblings).
+- **Direct dependency coordinates:** 52 unique, across 3 `deps.edn` modules (root + siblings).
 - **Total direct jar size:** ~37 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
@@ -141,9 +141,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.172` | Apache-2.0 | 619 KB | Blockether (in-house) |
-| `com.blockether/vis-lang-clojure` | `git:ce108eac30b161e29265d97dff83cfa249e3b461` | Apache-2.0 | source checkout | Blockether (in-house) |
-| `com.blockether/vis-lang-interface` | `git:d30dbd71428d0dad72b1894c1a545c190f80a0ef` | Apache-2.0 | source checkout | Blockether (in-house) |
-| `com.blockether/vis-lang-python` | `git:e517e54a3acfb9c7d32ec76a0ae099f6f8027f46` | Apache-2.0 | source checkout | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:aad4ee579eb927f8924085c5afea74685ac9b90d` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
@@ -206,8 +203,8 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | License | Count |
 |---|---|
-| Apache-2.0 | 16 |
 | EPL-1.0 | 16 |
+| Apache-2.0 | 13 |
 | MIT | 12 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |

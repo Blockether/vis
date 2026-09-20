@@ -12,11 +12,6 @@ def greet(name: str, *, loud: bool = False):
     return name.upper() if loud else name
 
 
-def format_toml(options):
-    """Format the TOML files one `format_code` call names."""
-    return {"op": "format_code", "language": "toml", "files": [], "changed": 0}
-
-
 def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     calls = []
     monkeypatch.setattr(vis, "_registration", {"spec": None})
@@ -28,9 +23,6 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     command = vis.SlashCommand("greet", greet)
     hook = vis.OpHook(["shell"], lambda event: None)
     network_filter = vis.NetworkFilter(lambda request: request)
-    surface = vis.LanguageSurface(
-        language="toml", extensions=["toml"], format=format_toml
-    )
     extension = vis.Extension(
         name="greeter",
         description="Greeting tools",
@@ -39,7 +31,6 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
         providers=[provider],
         slash_commands=[command],
         op_hooks=[hook],
-        language_tools=[surface],
         network_filters=[network_filter],
         env=["SDK_EXAMPLE_ENV"],
     )
@@ -47,7 +38,7 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     assert vis._registration["spec"] is None
     assert extension.symbols == (symbol,)
     assert hook.ops == ("shell",)
-    for value in (symbol, provider, command, hook, surface, network_filter, extension):
+    for value in (symbol, provider, command, hook, network_filter, extension):
         assert is_dataclass(value)
         assert not hasattr(value, "__dict__")
         assert all(field.type for field in fields(value))
@@ -66,12 +57,6 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     assert wire["providers"][0]["marker"] == "provider"
     assert wire["slash_commands"][0]["marker"] == "slash"
     assert wire["op_hooks"][0]["ops"] == ["shell"]
-    assert wire["language_tools"][0]["marker"] == "language_surface"
-    assert wire["language_tools"][0]["language"] == "toml"
-    assert wire["language_tools"][0]["extensions"] == ["toml"]
-    assert wire["language_tools"][0]["format"]({})["op"] == "format_code"
-    # A surface carries exactly the capabilities it declares.
-    assert "lint" not in wire["language_tools"][0]
     assert wire["network_filters"][0]["marker"] == "network_filter"
     with pytest.raises(ValueError, match="once per file"):
         vis.register_extension(extension)
@@ -92,7 +77,6 @@ def test_dictionary_builders_are_retired(name):
         "providers",
         "slash_commands",
         "op_hooks",
-        "language_tools",
         "network_filters",
     ],
 )
@@ -267,36 +251,6 @@ def test_presentation_sections_are_typed_immutable_and_portable():
 def test_gate_declarations_reject_invalid_execution_semantics(ops, phase):
     with pytest.raises(ValueError):
         vis.OpHook(ops, lambda event: None, phase=phase)
-
-
-def test_language_surface_capabilities_follow_the_canonical_contract():
-    contract = _contracts.definition("surface", "language_surface")
-    assert set(vis._LANGUAGE_CAPABILITIES) == set(
-        contract["properties"]["capabilities"]["items"]["enum"]
-    )
-
-
-@pytest.mark.parametrize(
-    "kwargs, error",
-    [
-        ({"language": "TOML", "format": format_toml}, ValueError),
-        ({"language": "", "format": format_toml}, ValueError),
-        ({"language": "toml"}, ValueError),
-        (
-            {"language": "toml", "extensions": ["toml", ""], "format": format_toml},
-            ValueError,
-        ),
-        ({"language": "toml", "extensions": "toml", "format": format_toml}, ValueError),
-        (
-            {"language": "toml", "is_exact_syntax": "yes", "format": format_toml},
-            TypeError,
-        ),
-        ({"language": "toml", "syntax": "parser"}, TypeError),
-    ],
-)
-def test_language_surface_refuses_an_unserviceable_language(kwargs, error):
-    with pytest.raises(error):
-        vis.LanguageSurface(**kwargs)
 
 
 def test_registration_snapshots_collections_and_provider_config(monkeypatch):

@@ -59,11 +59,6 @@
     "grep",
     "ls",
     "shell",
-    "repl_eval",
-    "repl_start",
-    "patch",
-    "format_code",
-    "lint_code",
-    "run_tests"
+    "patch"
   ]
 }

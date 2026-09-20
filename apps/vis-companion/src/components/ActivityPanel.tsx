@@ -41,10 +41,6 @@ const ACTIVITY_VERBS: Record<string, readonly [running: string, settled: string,
     cat: ['Reading', 'Read', 'Read failed'],
     patch: ['Patching', 'Patched', 'Patch refused'],
     shell: ['Running', 'Ran', 'Command failed'],
-    run_tests: ['Running tests', 'Ran tests', 'Tests failed'],
-    lint_code: ['Linting', 'Linted', 'Lint failed'],
-    format_code: ['Formatting', 'Formatted', 'Format failed'],
-    repl_eval: ['Evaluating', 'Evaluated', 'Eval failed'],
     // What a code block did to the tree with its own hands. The change is already past
     // when it is reported, and its head says how much of the tree moved at once.
     change: ['Changing', 'Changed', 'Change failed'],

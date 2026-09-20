@@ -48,15 +48,11 @@
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.host :as python-host]
-            [com.blockether.vis.internal.gateway.resources :as resources]
-            [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
@@ -660,7 +656,7 @@
 
 (defn ^:no-doc bind-test-host!
   "Install the ordinary trusted-extension host, except that a test may not mount a
-   live view into the session running `run_tests`. Unit tests supply an in-memory
+   live view into the session running those tests. Unit tests supply an in-memory
    host when they need to exercise live envelopes; accidentally reaching this
    callback fails the test at the boundary instead of publishing test work to a
    human channel and filing its record as a conversation artifact."
@@ -1198,214 +1194,6 @@
           (assoc :error @err))
         {:allow? true}))))
 
-;; Language surfaces — one Python pack per language, behind the engine's own
-;; `format_code` / `lint_code` / `run_tests` / `repl_*` verbs and the write
-;; gate's syntax verdict. A handler is NOT a tool of its own: the foundation
-;; surface owns the Activity those verbs present, and these adapters only carry
-;; data across the boundary. Every dispatcher reads `:ext/language-tools` from
-;; the registry per call, so a `/reload` replaces the entry itself and nothing
-;; here can serve a callable from a closed context.
-
-(def ^:private language-capability
-  "Python `vis.LanguageSurface` key -> the language-tool key dispatchers read."
-  {"format" :format-fn
-   "lint" :lint-fn
-   "test" :test-fn
-   "repl_eval" :repl-eval-fn
-   "repl_start" :start-repl-fn
-   "syntax" :syntax-fn
-   "balance" :balance-fn})
-
-(defn- checked-language-result
-  "A handler result, refused when its capability has a schema and the result
-   breaks it. A `run_tests` result is completed first, so a runner reporting only
-   its own counts still answers the full `test_result` the tool promises."
-  [capability language result]
-  (surface/check
-    capability
-    (if (= :test-fn capability) (surface/complete-test-result language result) result)))
-
-(defn- language-call-adapter
-  "`format_code` / `lint_code` / `run_tests` / `repl_eval` handler for one Python
-   language surface. The callable receives that tool's OPTIONS dict (string keys)
-   and answers the capability's result dict; a Python error or a contract
-   violation becomes a failure envelope naming the extension and the capability."
-  [ext-name ctx capability language pyfn]
-  (fn [env payload]
-    (try (let [result (plainify
-                        (call-py-ext ext-name env ctx pyfn [(stringify-deep (or payload {}))]))]
-           (extension/success {:result (checked-language-result capability language result)}))
-         (catch Throwable t
-           (extension/failure
-             {:result nil
-              :throwable t
-              :metadata {:extension ext-name :language language :capability (name capability)}})))))
-
-(defn- repl-project-dir
-  "The canonical project directory a REPL call names: its `cwd`, expanded and —
-   when relative — resolved against the workspace root, else the root itself.
-   Resolved ONCE here, so every capability of a surface agrees on WHICH directory
-   a REPL belongs to and the worker never has to guess it."
-  ^String [env opts]
-  (let [root
-        (or (:workspace/root env) (System/getProperty "user.dir"))
-
-        dir
-        (paths/expand-home (str (or (get opts "cwd") "")))
-
-        ^java.io.File f
-        (cond (str/blank? dir) (io/file root)
-              (.isAbsolute (io/file dir)) (io/file dir)
-              :else (io/file root dir))]
-
-    (.getCanonicalPath f)))
-
-(defn- register-repl-resource!
-  "Mirror a REPL a Python surface just started into the session's resources, so
-   `ctx`, the footer and `repl_stop <id>` reach a process the worker owns. Only a
-   live pid registers, and its `stop-fn` asks that same surface to end it."
-  [ext-name env language dir result stop!]
-  (when (and (:session-id env) (= "up" (get result "status")) (get result "pid"))
-    (resources/register! (:session-id env)
-                         {:id (str (or (get result "id") (str "repl:" dir)))
-                          :kind :repl
-                          :label (str language " REPL " (.getName (io/file dir)))
-                          :status :up
-                          :detail {"cwd" dir "cmd" (get result "cmd")}
-                          :pid (get result "pid")
-                          :owner (keyword "ext" (str ext-name))
-                          :language (keyword language)}
-                         {:stop-fn stop!})
-    (notifications/notify! (str "● " language " REPL up — " (.getName (io/file dir)))
-                           :level :success
-                           :ttl-ms 4000)))
-
-(defn- language-repl-adapter
-  "REPL lifecycle handler: the callable receives the op (`\"start\"`, `\"status\"`,
-   `\"stop\"` or `\"connect\"`) and that call's options, with `cwd` already resolved
-   to the project directory.
-
-   A start also carries this call's `env` delta RESOLVED (`{NAME value}`, nil to
-   unset) and its fingerprint: sources — keychain, dotenv, a command — are the
-   engine's to resolve, and only the child may see a value, so what comes back is
-   names and digests. A live REPL started with a different env is refused, never
-   silently replaced."
-  [ext-name ctx language pyfn]
-  (fn [env op opts]
-    (let [op
-          (if (string? op) op "status")
-
-          dir
-          (repl-project-dir env opts)
-
-          call
-          (fn [called-op payload]
-            (plainify
-              (call-py-ext ext-name env ctx pyfn [(str called-op) (stringify-deep payload)])))]
-
-      (try
-        (let [values
-              (when (= "start" op) (process-jail/call-env-values (get opts "env")))
-
-              fingerprint
-              (when (= "start" op) (process-jail/env-fingerprint values))
-
-              payload
-              (cond-> (assoc (or opts {}) "cwd" dir)
-                (= "start" op)
-                (assoc "env"
-                  values "env_fingerprint"
-                  fingerprint))]
-
-          (when (= "start" op)
-            (let [running (call "status" {"cwd" dir})]
-              (when-let [refusal (and (= "up" (get running "status"))
-                                      (process-jail/env-mismatch-refusal (str (or (get running "id")
-                                                                                  dir))
-                                                                         (get running "env")
-                                                                         fingerprint))]
-                (throw (ex-info (:message refusal)
-                                {:type ::repl-env-mismatch
-                                 :language language
-                                 :env (:differing refusal)})))))
-          (let [result (call op payload)]
-            (case op
-              "start"
-              (register-repl-resource! ext-name
-                                       env
-                                       language
-                                       dir
-                                       result
-                                       (fn []
-                                         (call "stop" {"cwd" dir})))
-
-              "stop"
-              (some->> (get result "id")
-                       str
-                       (resources/unregister! (:session-id env)))
-
-              nil)
-            (extension/success {:result result})))
-        (catch Throwable t
-          (extension/failure
-            {:result nil
-             :throwable t
-             :metadata {:extension ext-name :language language :capability "repl_start"}}))))))
-
-(defn- language-repl-eval-adapter
-  "`repl_eval` for a Python surface: a bare code string becomes the options map
-   the capability documents, and `cwd` names the project directory whose REPL
-   evaluates it."
-  [ext-name ctx language pyfn]
-  (let [call (language-call-adapter ext-name ctx :repl-eval-fn language pyfn)]
-    (fn [env payload]
-      (let [opts (if (map? payload) payload {"code" (str payload)})]
-        (call env (assoc opts "cwd" (repl-project-dir env opts)))))))
-
-(defn- language-syntax-adapter
-  "Syntax verdict for the write gate. The callable receives
-   `{'language','source'}` and answers a `syntax_result` document — not an
-   envelope, because `editing.parse` reads the verdict itself. A malformed
-   verdict throws there, which leaves that edit to the engine's own parser."
-  [ext-name ctx pyfn]
-  (fn [request]
-    (surface/check :syntax-fn
-                   (plainify
-                     (call-py-ext ext-name nil ctx pyfn [(stringify-deep (or request {}))])))))
-
-(defn- language-balance-adapter
-  "Delimiter repair for one spliced file. The callable receives
-   `{'language','source','original','spans','subject'}` — the whole file an edit
-   would write, the text it replaced, and that edit's own line spans — and
-   answers `{'ok': True, 'content': …, 'notes': [...]}` for a repair it accepts,
-   `{'ok': False, 'why': …}` for a repair it refuses to write, or nothing when
-   it found none. The whole policy lives in the pack; this only carries the
-   answer back. A handler that fails answers nil, so the editors refuse that
-   splice exactly as they do for a language with no repair at all."
-  [ext-name ctx language pyfn]
-  (fn [request]
-    (try (let [answer
-               (plainify (call-py-ext ext-name nil ctx pyfn [(stringify-deep (or request {}))]))
-
-               content
-               (get answer "content")
-
-               why
-               (get answer "why")]
-
-           (cond (not (map? answer)) nil
-                 (and (get answer "ok") (string? content))
-                 {:ok? true
-                  :content content
-                  :notes (into [] (comp (map str) (remove str/blank?)) (get answer "notes"))}
-                 (util/non-blank-string? why) {:ok? false :why (str/trim why)}
-                 :else nil))
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::language-balance-failed
-                      :data {:extension ext-name :language language :error (ex-message t)}})
-           nil))))
-
 ;; Registration dict -> extension spec
 
 (defn- symbol-name
@@ -1471,49 +1259,6 @@
                :fn
                (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))}))
           (get spec "ops"))))
-
-(defn- ->language-surface
-  "One `vis.LanguageSurface(...)` registration -> the `:ext/language-tools` entry
-   the engine dispatches on, so a Python pack and a bundled Clojure pack are
-   indistinguishable from the registry's side. Only declared handlers appear, and
-   the entry's capabilities are exactly what the surface implements."
-  [ext-name ctx spec]
-  (let [language
-        (str (get spec "language"))
-
-        extensions
-        (mapv str (get spec "extensions"))
-
-        entry
-        (reduce (fn [acc [py-key capability]]
-                  (let [pyfn (get spec py-key)]
-                    (if-not (fn? pyfn)
-                      acc
-                      (assoc acc
-                        capability
-                        (case capability
-                          :syntax-fn
-                          (language-syntax-adapter ext-name ctx pyfn)
-
-                          :balance-fn
-                          (language-balance-adapter ext-name ctx language pyfn)
-
-                          :repl-eval-fn
-                          (language-repl-eval-adapter ext-name ctx language pyfn)
-
-                          :start-repl-fn
-                          (language-repl-adapter ext-name ctx language pyfn)
-
-                          (language-call-adapter ext-name ctx capability language pyfn))))))
-                {:language language}
-                language-capability)]
-
-    (cond-> entry
-      (seq extensions)
-      (assoc :extensions extensions)
-
-      (some? (get spec "is_exact_syntax"))
-      (assoc :is-exact-syntax (boolean (get spec "is_exact_syntax"))))))
 
 ;; ── Providers: DECODED against a declared shape, never walked ────────────────
 ;; A typed `vis.Provider(...)` declaration -> a canonical provider descriptor entry, and a
@@ -1855,9 +1600,6 @@
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
-        language-tools
-        (mapv #(->language-surface ext-name ctx %) (get reg "language_tools"))
-
         prompt
         (get reg "prompt")
 
@@ -1895,9 +1637,6 @@
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)
-
-      (seq language-tools)
-      (assoc :ext/language-tools language-tools)
 
       (string? prompt)
       (assoc :ext/prompt-fn prompt)
@@ -1986,81 +1725,10 @@
                [p (dissoc e :context :ext)]))
         @loaded))
 
-(defonce
-  ^{:no-doc true
-    :doc
-    "The extension files Vis MATERIALIZES, as classpath resources under
-   `vis-extensions/`.
-
-   Vis ships none of its own: a language pack registers the entry files and the
-   packages they import with `register-bundled-extension-sources!` when it
-   initializes. Registration is explicit, like the registration manifest, because
-   a native image lists no resource DIRECTORY — a file is written down here or it
-   does not exist. A package module is NEVER scanned as an entry of its own."}
-  bundled-extension-sources
-  (atom []))
-
-(defn ^:no-doc register-bundled-extension-sources!
-  "Add `paths`, classpath resources relative to `vis-extensions/`, to the set
-   materialized into the bundled extensions directory. Registering the same path
-   twice keeps the first position, so the order a pack declares is stable."
-  [paths]
-  (swap! bundled-extension-sources (fn [current]
-                                     (into current
-                                           (comp (remove (set current)) (distinct))
-                                           paths))))
-
-(defn ^:no-doc materialize-bundled-extensions!
-  "Write the bundled extension sources into `dir` and answer `dir`, or nil when
-   anything about the copy fails — a shipped surface is a convenience and must
-   never fail startup.
-
-   A file is rewritten only when its bytes differ, so every scan after the first
-   costs a read; a `.py` file this version no longer ships is DELETED, because the
-   directory belongs to Vis and a stale surface would keep claiming its language."
-  ^File [^File dir]
-  (try (let [sources
-             (into {}
-                   (map (fn [rel]
-                          [rel (classpath-src (str "vis-extensions/" rel))]))
-                   @bundled-extension-sources)
-
-             wanted
-             (into #{}
-                   (map (fn [rel]
-                          (.getCanonicalPath (io/file dir rel))))
-                   (keys sources))]
-
-         (doseq [[rel content] sources]
-           (let [target (io/file dir rel)]
-             (io/make-parents target)
-             (when-not (and (.isFile target) (= content (slurp target))) (spit target content))))
-         (doseq [^File f (file-seq dir)]
-           (when (and (.isFile f)
-                      (str/ends-with? (.getName f) ".py")
-                      (not (wanted (.getCanonicalPath f))))
-             (.delete f)))
-         dir)
-       (catch Throwable t
-         (tel/log! {:level :warn
-                    :id ::bundled-extensions-unavailable
-                    :data {:dir (str dir) :error (ex-message t)}})
-         nil)))
-
-(defn ^:no-doc bundled-extensions-dir
-  "`~/.vis/extensions-bundled`, holding the surfaces Vis ships, or nil when they
-   could not be written. Scanned FIRST, so a user or project file registering the
-   same extension name replaces a bundled one."
-  []
-  (materialize-bundled-extensions!
-    (io/file (System/getProperty "user.home") ".vis" "extensions-bundled")))
-
 (defn ^:no-doc default-extension-dirs
   []
-  (into []
-        (remove nil?)
-        [(bundled-extensions-dir) (io/file (System/getProperty "user.home") ".vis" "extensions")
-         (io/file (System/getProperty "user.dir") ".vis" "extensions")]))
+  [(io/file (System/getProperty "user.home") ".vis" "extensions")
+   (io/file (System/getProperty "user.dir") ".vis" "extensions")])
 
 (defn ^:no-doc test-file?
   "A `test_*.py` / `*_test.py` module — a Python test, never an extension entry."

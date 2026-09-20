@@ -454,7 +454,7 @@ describe('a running transcript row without canonical session state', () => {
       });
     });
 
-    await waitFor(() => expect(screen.queryByText(/RUNNING · RUN_TESTS/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/RUNNING · SUITE/)).toBeNull());
   });
 });
 

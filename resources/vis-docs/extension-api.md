@@ -64,7 +64,6 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `activation` | `None` | Optional `(env) -> bool`; `False` hides the extension for that turn |
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
-| `language_tools` | `()` | `vis.LanguageSurface` packs serving one language's formatting, linting, tests, REPL and syntax checks; see [language extensions](language-extensions.md) |
 | `network_filters` | `()` | `vis.NetworkFilter` request/response policy; see [network filters](jail.md#project-network-filters) |
 | `providers` | `()` | `vis.Provider` declarations |
 | `ctx` | `None` | Optional `(env) -> dict` merged into the model's session context |
@@ -209,8 +208,8 @@ method**, including nested methods. Namespace-level Activity is rejected.
 
 An Activity explains a tool call to the person following the session. Put the
 action in the headline, the target or outcome in the summary, and useful evidence
-in the content. Use sentence-case labels such as "Read file", "Run tests" or
-"Check service health", rather than `run_tests`, qualified method names, object
+in the content. Use sentence-case labels such as "Read file", "Search files" or
+"Check service health", rather than `search_files`, qualified method names, object
 representations or all-caps sentences. Keep proper names such as GitHub and
 acronyms such as SDK. Use consistent terminology and no profanity or vulgarity.
 Leave the case of filenames, code, commands and returned content unchanged.

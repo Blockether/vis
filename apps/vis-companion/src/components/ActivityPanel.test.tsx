@@ -62,7 +62,7 @@ it('keeps embedded document headings and code inside their Activity step', () =>
   openEverySettledStep();
   expect(screen.getByRole('heading', { name: 'Activity', level: 5 })).toBeVisible();
   expect(screen.queryAllByRole('region', { name: 'text code' })).toHaveLength(0);
-  // Issue #260: a clean run_tests row no longer embeds its runner output.
+  // Issue #260: a clean verification row no longer embeds its runner output.
   expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(1);
 });
 
@@ -384,7 +384,7 @@ describe('joined Activity operation groups', () => {
     'shows every operation group without pagination when work is %s',
     (state) => {
       const activity = reads();
-      const rows = ['grep', 'cat', 'ls', 'patch', 'run_tests', 'lint_code', 'shell'].map(
+      const rows = ['grep', 'cat', 'ls', 'patch', 'doc', 'attach', 'shell'].map(
         (operation, sequence) => ({
           ...activity.rows[0],
           id: `operation-${sequence}`,
@@ -636,7 +636,7 @@ describe("one form's Activity on the phone", () => {
     });
     const chronologyText = chronology.textContent ?? '';
     expect(chronologyText.indexOf('Searched 18 matches')).toBeLessThan(
-      chronologyText.indexOf('Running tests suite'),
+      chronologyText.indexOf('suite'),
     );
     // The band folds independently; it does not add another live region.
     expect(chronologyText).not.toContain('[{query: needle}]');
@@ -669,7 +669,7 @@ describe("one form's Activity on the phone", () => {
 
     paintActivity({ activity: settled });
 
-    expect(activityReceiptText(settled, 12_600)).toBe('SHELL · RUN_TESTS · 12.6s');
+    expect(activityReceiptText(settled, 12_600)).toBe('SHELL · SUITE · 12.6s');
     expect(activityReceiptText({ ...settled, rows: [settled.rows[0]] }, 66)).toBe(
       'SHELL · git status · 66ms',
     );
@@ -787,12 +787,12 @@ describe('a run reads as one thread', () => {
     expect(screen.getByText('Cancelled')).toBeVisible();
   });
 
-  it('names the work with a verb', () => {
+  it('names a builtin with a verb and an extension operation by its own name', () => {
     paintActivity();
 
     const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
     expect(chronology).toContain('Searched 18 matches');
-    expect(chronology).toContain('Running tests suite');
+    expect(chronology).toContain('suite');
   });
 
   it('answers a patch with what it changed, and folds only the patch itself', () => {

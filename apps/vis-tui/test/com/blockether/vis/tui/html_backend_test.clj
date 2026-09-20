@@ -241,14 +241,14 @@
     (let [rows
           [{:id "lint-0"
             :sequence 0
-            :operation "lint_code"
+            :operation "lint"
             :state "succeeded"
             :presentation {:headline "Linted"
                            :summary "1 error · 0 warnings · 0 info · 2 files checked"
                            :content [{:type "text" :text "BODY_0"}]}}
            {:id "lint-1"
             :sequence 1
-            :operation "lint_code"
+            :operation "lint"
             :state "succeeded"
             :presentation {:headline "Linted"
                            :summary "No lint findings · 2 files checked"
@@ -285,7 +285,7 @@
       (paint!)
       (click! ":#band")
       ;; The group counts its runs; each run says which one it is and how it ended.
-      (is (re-find #"Lint ×2" (text)))
+      (is (re-find #"Linted ×2" (text)))
       (is (re-find #"1: Linted" (text)))
       (is (re-find #"2: Linted" (text)))
       (is (empty? (bodies)))
@@ -327,13 +327,13 @@
                                 (.current interactions/hit-map)))
             opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
-        (is (= 7 (count rows)))
+        (is (= 6 (count rows)))
         (let [painted (paint-activity-review! hs rows opened)]
           (is (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
         (doseq [[row expected] (map vector
                                     rows
                                     ["greeting" "Hi" "greeting_test.clj" "captured" "disclosure"
-                                     "lazytest" "disclosure"])]
+                                     "disclosure"])]
           (paint-activity-review! hs rows opened)
           (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
                                     (.current interactions/hit-map)))
@@ -352,16 +352,6 @@
             (is (= (cell-grid html cols 80) grid))
             (is (str/includes? text expected))
             (is (not (re-find #"Thread id|Is pass" text)))
-            (when (= "run_tests" (name (:operation row)))
-              ;; Issue #260: the finished row names what the call selected, and a
-              ;; clean run leaves the runner transcript out of the disclosure. The mark
-              ;; that opens the row rides with that name, not at the end of the line.
-              (is (re-find (if (= cols 40)
-                             #"Ran tests [▸▾] · test/"
-                             #"test/activity_test\.clj · 12 tests · 0 failed")
-                           text))
-              (is (not (str/includes? text "12 tests passed.")))
-              (is (not (re-find #"Metric|Result|Field|Value" text))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 
 (defn activity-table-rows
@@ -402,8 +392,8 @@
           (doseq [[x y] headers]
             (is (.isBold ^com.googlecode.lanterna.TextCharacter (get-in grid [y x])))))))))
 
-(deftest repl-result-html-native-parity-test
-  (let [rows (-> (io/resource "vis-contract/fixtures/activity-repl.json")
+(deftest execution-result-html-native-parity-test
+  (let [rows (-> (io/resource "vis-contract/fixtures/activity-execution.json")
                  slurp
                  json/read-str
                  activity-contract/from-wire
@@ -590,13 +580,12 @@
                 ts
                 (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (paint-activity-review! ts
-                              [(merge {:id "run-tests"
-                                       :sequence 0
-                                       :operation "run_tests"
-                                       :presentation {:headline "Run tests"}}
-                                      row-state)]
-                              {:vis.channel-tui/baseline :expand})
+      (paint-activity-review!
+        ts
+        [(merge
+           {:id "run-tests" :sequence 0 :operation "suite" :presentation {:headline "Run tests"}}
+           row-state)]
+        {:vis.channel-tui/baseline :expand})
       (let [lines
             (mapv (fn [row]
                     (apply str

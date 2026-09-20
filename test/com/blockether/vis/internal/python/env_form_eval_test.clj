@@ -143,7 +143,7 @@
 (defdescribe
   sandbox-denial-hint-test
   "A sandbox capability denial (filesystem / native / process) maps to an
-   ACTIONABLE hint steering to grep / cat / repl_eval — not the bare
+   ACTIONABLE hint steering to grep / cat / patch — not the bare
    `PermissionError` the model kept hitting when it reached for
    importlib.exec_module / open() on a project file.
 
@@ -163,7 +163,7 @@
           (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
           (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
           (expect (clojure.string/includes? (str m) "grep({\"query\": q, \"context\": 3})"))
-          (expect (clojure.string/includes? (str m) "repl_eval"))
+          (expect (clojure.string/includes? (str m) "patch(path, edits)"))
           (expect (clojure.string/includes? (str m) "workspace.filesystem"))
           (expect (clojure.string/includes? (str m) "vis.yml"))
           (expect (clojure.string/includes? (str m) "/reload"))
@@ -182,7 +182,7 @@
                          "spec.loader.exec_module(mod)")
                     "t1/i1")
                   [:error :message])]
-          (expect (clojure.string/includes? (str m) "repl_eval"))))))
+          (expect (clojure.string/includes? (str m) "patch(path, edits)"))))))
 
 (defdescribe
   precise-hint-test

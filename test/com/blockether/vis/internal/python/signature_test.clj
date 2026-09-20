@@ -58,10 +58,9 @@
              (ep/run-python-block
                ctx
                (str
-                 "import inspect\n" "observed = {}\n"
-                 "for name, probe in signature_probes.items():\n"
-                 "    fn = globals()[probe['binding']]\n"
-                 "    actual = inspect.signature(fn)\n"
+                 "import inspect\n"
+                 "observed = {}\n" "for name, probe in signature_probes.items():\n"
+                 "    fn = globals()[probe['binding']]\n" "    actual = inspect.signature(fn)\n"
                  "    expected = probe['signature'].replace('...', 'Ellipsis')\n"
                  "    assert str(actual) == expected, (name, str(actual), expected)\n"
                  "    observed[name] = actual.parameters\n"
@@ -69,11 +68,6 @@
                  "assert publish['kind'].kind is inspect.Parameter.KEYWORD_ONLY\n"
                  "assert publish['kind'].default is inspect.Parameter.empty\n"
                  "assert publish['title'].default is Ellipsis\n"
-                 "evaluate = observed['repl_eval']\n"
-                 "assert list(evaluate).count('language') == 1\n"
-                 "assert evaluate['language'].default is None\n"
-                 "assert evaluate['code'].kind is inspect.Parameter.KEYWORD_ONLY\n"
-                 "assert evaluate['code'].default is inspect.Parameter.empty\n"
                  "assert observed['grep']['query'].kind is inspect.Parameter.KEYWORD_ONLY\n"
                  "assert observed['grep']['paths'].default is Ellipsis\n"
                  "assert not observed['main-agent-instructions']\n"

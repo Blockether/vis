@@ -9,7 +9,7 @@ environment to use, how to install packages and what the sandbox can access.
 
 Each session has its own Python state. The sandbox and trusted Python extensions
 use separate namespaces.
-Tools such as `grep`, `cat`, `patch`, `shell` and `run_tests` are available as
+Tools such as `grep`, `cat`, `patch` and `shell` are available as
 Python functions. `apropos` and `doc` inspect the available API synchronously.
 
 ## Experiment with extension declarations
@@ -87,13 +87,13 @@ editable copies in both contexts.
 A tool returns its complete result to Python, but only printed text reaches the
 model's next request. The agent can keep a large result in a variable and inspect
 just the fields it needs. For example, these calls show progressively more of a
-test result:
+shell result:
 
 ```python
-r = await run_tests({"language": "python"})
-print(r)                 # verdict, counts and bounded diagnostics
-print(r["failures"])     # every recorded fault
-print(r["output"])       # full returned runner output
+r = await shell("ls -la")
+print(r["status"])       # running, exited or timed out
+print(r.logs(-20))       # the last twenty output lines
+print(r["out"])          # everything the process has written
 ```
 
 Shell results are dictionary-like handles with `wait`, `logs`, `type` and `stop`
@@ -205,60 +205,6 @@ attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
 Here `specification` and `report` are the Markdown strings you produced. Read-only
 prevents human comment saves, not a producer's later update under the same filename.
 See [draft diffs](drafts.md) for reviewable patches from an isolated working copy.
-
-## Sandbox versus project Python
-
-Use a project interpreter when code needs your project's dependencies. It has
-its own environment, separate from the agent's sandbox:
-
-| Code | Where it runs |
-| --- | --- |
-| computations, tool calls and result filtering | `python_execution` (the sandbox) |
-| work against the project's own environment | a project interpreter: `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": ...})` |
-
-The project interpreter runs as a subprocess selected from `uv`, Poetry, a
-`.venv` or `python3`. It uses the same jail and network policy as shell
-processes. Allow dependency cache directories through `workspace.filesystem`.
-`repl_connect` attaches to an existing process, which Vis cannot jail.
-
-`run_tests("python", {"runner": "project"})` uses the project's pytest.
-Use `"runner": "vispython"` for the sandbox runner. The default is configurable
-through `python.runner`; see [Configuration](configuration.md#python-import-roots).
-
-### Select the package directory in a monorepo
-
-`cwd` selects the Python project for both REPLs and the project test runner.
-It defaults to the workspace root, **not the parent of a selected test file**.
-Pytest can discover a nested `pyproject.toml` after launch; that does not change
-which interpreter Vis already launched. A `.venv` in a nested package is not
-selected when `cwd` still names the monorepo root.
-
-For example, in the Vis checkout:
-
-```python
-print(await run_tests({
-    "language": "python", "runner": "project", "cwd": "packages/vis-agent",
-    "path": "tests/test_contracts.py",
-}))
-print(await repl_start({"language": "python", "cwd": "packages/vis-agent"}))
-print(await repl_eval({
-    "language": "python", "cwd": "packages/vis-agent",
-    "code": "import sys, jsonschema; print(sys.executable, sys.prefix, jsonschema.__file__)",
-}))
-```
-
-Check the returned `command`/`cmd` and `cwd` before changing dependencies. A
-missing `jsonschema` under system Python does not mean it is missing from the
-package's `.venv`. If absent there too, prepare that project's declared dependencies;
-do not merge unrelated environments by appending shared packages to `PYTHONPATH`.
-
-`repl_start(..., env={...})` supplies variables when creating that process;
-`repl_eval` cannot change its startup environment. An existing REPL is reused,
-not rebuilt after installing dependencies or changing configuration. Stop it by
-its returned id and start it again when its startup environment must change.
-The project test runner launches a separate process; it does not inherit a REPL's
-per-start environment overrides. Temporary verification REPLs should be stopped
-when the checks are finished.
 
 ## Runtime locations
 

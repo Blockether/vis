@@ -3,13 +3,12 @@
    contexts and assert on the registry + adapter contracts. Boots real
    Python sessions (on the shared engine), no model in the loop."
   (:require [babashka.http-client :as http]
-            [cheshire.core :as json]
+            [charred.api :as json]
             [com.blockether.svar.core :as svar]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.contract.activity :as activity-contract]
-            [com.blockether.vis.contract.surface :as contract-surface]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.python.env :as ep]
@@ -32,7 +31,6 @@
             [com.blockether.vis.internal.provider.limits-format :as limits-format]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -54,6 +52,11 @@
            [java.nio.file.attribute FileAttribute]))
 
 ;; Harness
+
+(defn- json-text
+  "JSON for embedding in generated Python source; charred escapes `/` by default."
+  [value]
+  (json/write-json-str value :escape-slash false))
 
 (defdescribe bootstrap-python-test
              ;; Regression, td-f2732d: JSON slash escaping made the embedded API invalid Python.
@@ -1751,7 +1754,7 @@ vis.register_extension(vis.Extension(
                ;; A failed block can still have written files; the after hook must see it.
                (let [code
                      (str "with open("
-                          (json/generate-string (str written))
+                          (json-text (str written))
                           ", 'w') as f:\n"
                           "    f.write('value = 1\\n')\n"
                           "raise ValueError('after the write')")
@@ -1768,7 +1771,7 @@ vis.register_extension(vis.Extension(
                  (expect (= 2 (get state "completed"))))
                (let [code
                      (str "# blocked_write\n"
-                          "with open(" (json/generate-string (str blocked))
+                          "with open(" (json-text (str blocked))
                           ", 'w') as f:\n" "    f.write('must not run')")
 
                      result
@@ -1855,10 +1858,10 @@ vis.register_extension(vis.Extension(
             (expect (str/includes? (first (get (report) "findings")) "not been checked"))
             (let [result (run-block (str "from pathlib import Path\n"
                                          "path = Path("
-                                         (json/generate-string (str file))
+                                         (json-text (str file))
                                          ")\n"
                                          "path.write_text("
-                                         (json/generate-string nested)
+                                         (json-text nested)
                                          ")"))]
               (expect (nil? (:error result)) (pr-str result))
               (expect (= {"checked" 1 "limit" 3 "findings" ["src/orders.py:4: nesting 4 exceeds 3"]}
@@ -1869,7 +1872,7 @@ vis.register_extension(vis.Extension(
               (expect (empty? (get (report) "findings"))))
             (check-activity "1 file checked · 0 findings" "No nesting findings.")
             (let [result (run-block (str "with open(path, 'w') as f:\n"
-                                         "    f.write(" (json/generate-string nested)
+                                         "    f.write(" (json-text nested)
                                          ")\n" "raise ValueError('after the write')"))]
               (expect (some? (:error result)))
               (expect (= ["src/orders.py:4: nesting 4 exceeds 3"] (get (report) "findings"))))
@@ -1885,7 +1888,7 @@ vis.register_extension(vis.Extension(
                      "lines = cat(path).splitlines()\n"
                      "anchors = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
                      "print(patch(path, [{'from': anchors[0], 'to': anchors[-1], 'replace': "
-                     (json/generate-string replacement)
+                     (json-text replacement)
                      "}]))"))]
                 (expect (nil? (:error result)) (pr-str result))
                 (expect (= replacement (slurp file)))
@@ -1930,7 +1933,7 @@ vis.register_extension(vis.Extension(
                              (#'lp/run-python-code
                               ctx
                               (str "report = read_ci_report("
-                                   (json/generate-string (str file))
+                                   (json-text (str file))
                                    ")\nprint(report.passed, report.failed)\nprint(report.path)")
                               :env
                               env))]
@@ -1942,7 +1945,7 @@ vis.register_extension(vis.Extension(
                  (doseq [[passed failed summary] [[42 1 "42 passed · 1 failed"]
                                                   [42 0 "42 passed · 0 failed"]
                                                   [0 0 "No tests reported"]]]
-                   (spit file (json/generate-string {:passed passed :failed failed}))
+                   (spit file (json-text {:passed passed :failed failed}))
                    (let [result (run-report)
                          rows (get-in result [:activity :rows])
                          row (first rows)]
@@ -2337,20 +2340,20 @@ vis.register_extension(vis.Extension(
 
             (expect (= :openai-compatible-responses (:api-style provider)))
             (expect (= (or configured-path credential-path preset-path) (:responses-path provider)))
-            (with-redefs [http/post (fn [url opts]
-                                      (swap! requests conj
-                                        {:url url :body (json/parse-string (:body opts) true)})
-                                      {:status 200
-                                       :headers {}
-                                       :body (if (= :stream (:as opts))
-                                               (io/input-stream (.getBytes
-                                                                  (str "data: "
-                                                                       (json/generate-string
-                                                                         {:type "response.completed"
-                                                                          :response reply})
-                                                                       "\n\ndata: [DONE]\n\n")
-                                                                  StandardCharsets/UTF_8))
-                                               (json/generate-string reply))})]
+            (with-redefs [http/post
+                          (fn [url opts]
+                            (swap! requests conj
+                              {:url url :body (json/read-json (:body opts) :key-fn keyword)})
+                            {:status 200
+                             :headers {}
+                             :body (if (= :stream (:as opts))
+                                     (io/input-stream (.getBytes (str "data: "
+                                                                      (json-text
+                                                                        {:type "response.completed"
+                                                                         :response reply})
+                                                                      "\n\ndata: [DONE]\n\n")
+                                                                 StandardCharsets/UTF_8))
+                                     (json-text reply))})]
               (expect (= "ok"
                          (:content (svar/ask-code! router
                                                    (cond-> {:routing {:provider :responsesfixture
@@ -5369,10 +5372,10 @@ vis.register_extension(vis.Extension(
                                                         (str "assert len(hits) == 1, repr(hits)\n"
                                                              "assert hits[0].type == 'skill'\n"
                                                              "assert hits[0].body == "
-                                                             (json/generate-string description)
+                                                             (json-text description)
                                                              "\n"
                                                              "assert "
-                                                             (json/generate-string body)
+                                                             (json-text body)
                                                              " in doc(hits[0])\n")
                                                         "assert not hits, repr(hits)\n")
                                                       "print('discovery verified')"))]
@@ -5943,184 +5946,3 @@ vis.register_extension(vis.Extension(
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (= "positional!\nkeyword!\nok\n" (:stdout answer))))
             (finally (ep/dispose-python-context! ctx))))))))
-
-;; Language surfaces — a Python pack behind the engine's own language tools
-
-(def ^:private language-surface-py
-  "\"\"\"Language surface fixture: one Python pack serving a made-up language.\"\"\"
-
-import blockether.vis.extension as vis
-
-
-def _format(options):
-    if options.get(\"broken\"):
-        # A result without `op` breaks the format_result contract on purpose.
-        return {\"changed\": 0}
-    paths = options.get(\"paths\", [])
-    return {
-        \"op\": \"format_code\",
-        \"changed\": len(paths),
-        \"files\": [{\"path\": path, \"changed\": True, \"formatter\": \"fixture\"} for path in paths],
-    }
-
-
-def _lint(options):
-    return {\"findings\": [{\"level\": \"warning\", \"message\": \"stray section\", \"line\": 2}]}
-
-
-def _test(options):
-    return {
-        \"mode\": \"cli\",
-        \"pass\": 2,
-        \"fail\": 1,
-        \"failures\": [{\"test\": \"parses\", \"type\": \"error\", \"message\": \"boom\"}],
-    }
-
-
-def _syntax(request):
-    findings = [
-        {\"line\": number, \"col\": 0, \"kind\": \"unclosed\", \"delimiter\": \"(\", \"text\": line}
-        for number, line in enumerate(request[\"source\"].splitlines(), 1)
-        if line.rstrip().endswith(\"(\")
-    ]
-    return {
-        \"language\": request[\"language\"],
-        \"is_clean\": not findings,
-        \"findings\": findings,
-    }
-
-
-def _balance(request):
-    source = request[\"source\"]
-    if not source.rstrip().endswith(\"(\"):
-        return None
-    return {\"ok\": True, \"content\": source + \")\\n\", \"notes\": [\"closed one form\"]}
-
-
-vis.register_extension(vis.Extension(
-    name=\"fixture-language\",
-    description=\"Language surface fixture extension.\",
-    kind=\"language\",
-    language_tools=[
-        vis.LanguageSurface(
-            language=\"fixturelang\",
-            extensions=[\"vfix\"],
-            is_exact_syntax=True,
-            format=_format,
-            lint=_lint,
-            test=_test,
-            syntax=_syntax,
-            balance=_balance,
-        )
-    ],
-))
-")
-
-(defn- fixture-surface
-  "The one language-tool entry the fixture extension registers."
-  []
-  (first (:ext/language-tools (registered "fixture-language"))))
-
-(defdescribe
-  language-surface-test
-  (it "decodes a Python surface into the language-tool entry the engine dispatches"
-      (with-loaded {"fixturelang.py" language-surface-py}
-                   (fn [result _]
-                     (expect (zero? (:failed result)) (pr-str result))
-                     (let [entry (fixture-surface)]
-                       (expect (= "fixturelang" (:language entry)))
-                       (expect (= ["vfix"] (:extensions entry)))
-                       (expect (true? (:is-exact-syntax entry)))
-                       ;; A surface gains exactly the capabilities its Python declaration implements.
-                       (expect (= #{"format" "lint" "test" "syntax" "balance"}
-                                  (set (get (contract-surface/->surface entry) "capabilities"))))
-                       (expect (contract-surface/valid-surface? entry))))))
-  (it "answers format_code and lint_code with checked results in a success envelope"
-      (with-loaded {"fixturelang.py" language-surface-py}
-                   (fn [_ _]
-                     (let [entry
-                           (fixture-surface)
-
-                           formatted
-                           ((:format-fn entry) {} {"paths" ["notes.vfix"]})
-
-                           linted
-                           ((:lint-fn entry) {} {})]
-
-                       (expect (extension/envelope-success? formatted))
-                       (expect (= "format_code" (get-in formatted [:result "op"])))
-                       (expect (= [{"path" "notes.vfix" "changed" true "formatter" "fixture"}]
-                                  (get-in formatted [:result "files"])))
-                       (expect (extension/envelope-success? linted))
-                       (expect (= "stray section"
-                                  (get-in linted [:result "findings" 0 "message"])))))))
-  (it "refuses a malformed handler result with the contract's own explanation"
-      (with-loaded {"fixturelang.py" language-surface-py}
-                   (fn [_ _]
-                     (let [res ((:format-fn (fixture-surface)) {} {"broken" true})]
-                       (expect (extension/envelope-failure? res))
-                       (expect (str/includes? (str (get-in res [:error :message]))
-                                              "contract violation"))))))
-  (it "completes a partial run_tests result before it leaves the extension"
-      (with-loaded {"fixturelang.py" language-surface-py}
-                   (fn [_ _]
-                     (let [res
-                           ((:test-fn (fixture-surface)) {} {})
-
-                           result
-                           (:result res)]
-
-                       (expect (extension/envelope-success? res))
-                       ;; The runner reported counts; the contract owns the rest.
-                       (expect (= "fixturelang" (get result "language")))
-                       (expect (= 3 (get result "total")))
-                       (expect (= 1 (get result "errored")))
-                       (expect (false? (get result "is_pass")))
-                       (expect (= "boom" (get-in result ["failures" 0 "message"])))))))
-  (it "owns the syntax verdict and the delimiter repair for the language it claims"
-      (with-loaded {"fixturelang.py" language-surface-py}
-                   (fn [_ _]
-                     (let [dirty
-                           "value = (\n"
-
-                           findings
-                           (parse/error-nodes "fixturelang" dirty)]
-
-                       ;; The surface adds its file type, and claiming the verdict guards it.
-                       (expect (= "fixturelang" (parse/detect-language "notes.vfix")))
-                       (expect (= "fixturelang" (parse/guarded-language "notes.vfix")))
-                       (expect (= [1] (mapv :line findings)))
-                       (expect (= "unclosed" (:kind (first findings))))
-                       (expect (empty? (parse/error-nodes "fixturelang" "value = 1\n")))
-                       (expect (= :introduced-error
-                                  (:status
-                                    (parse/transition-verdict "fixturelang" "value = 1\n" dirty))))
-                       (expect (= {:ok? true :content "value = (\n)\n" :notes ["closed one form"]}
-                                  ((:balance-fn (fixture-surface))
-                                    {"language" "fixturelang" "source" dirty}))))))))
-
-(defdescribe
-  bundled-extension-registry-test
-  (it "materializes what the packs registered, once each, and drops what none of them ships"
-      (with-redefs [pyx/bundled-extension-sources (atom [])]
-        (let [dir (temp-dir)
-              stale (write-ext! dir "language_surface_fortran.py" "boom\n")
-              _ (do (pyx/register-bundled-extension-sources! ["vis_registry_fixture.py"])
-                    ;; A pack that registers the same file twice registers it once.
-                    (pyx/register-bundled-extension-sources! ["vis_registry_fixture.py"]))
-              materialized (pyx/materialize-bundled-extensions! dir)]
-
-          (expect (= ["vis_registry_fixture.py"] @pyx/bundled-extension-sources))
-          (expect (= dir materialized))
-          (expect (str/includes? (slurp (io/file dir "vis_registry_fixture.py"))
-                                 "registry fixture"))
-          ;; The directory belongs to vis: a surface no pack ships stops claiming its language.
-          (expect (not (.exists stale))))))
-  (it "survives a registered file that is not on the classpath"
-      (with-redefs [pyx/bundled-extension-sources (atom ["vis_registry_absent.py"])]
-        (expect (nil? (pyx/materialize-bundled-extensions! (temp-dir))))))
-  (it "scans the materialized directory first, so a user or project file replaces a packaged one"
-      (let [dir (temp-dir)]
-        (with-redefs [pyx/bundled-extensions-dir (constantly dir)]
-          (expect (= (.getPath dir)
-                     (.getPath ^java.io.File (first (pyx/default-extension-dirs)))))))))

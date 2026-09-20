@@ -1107,7 +1107,7 @@
                             {:kind :result :text "18 matches"}]}
                 {:id "call-2"
                  :sequence 2
-                 :operation :run_tests
+                 :operation :suite
                  :presenter :tests
                  :classification :verification
                  :state :running

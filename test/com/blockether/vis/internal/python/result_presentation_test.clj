@@ -91,98 +91,6 @@
         (doseq [text ["exit=1" "first diagnostic" "last diagnostic" "omitted" "r['out']"]]
           (expect (str/includes? out text))))))
 
-(defdescribe compact-format-result-test
-             (it "prints only the formatting summary while preserving the complete mapping"
-                 (let [out (check-result
-                             {"op" "format_code"
-                              "summary" "2 of 100 files changed"
-                              "formatters" ["zprint"]
-                              "files" (vec (repeat 100 {"path" "src/example.clj" "changed" false}))}
-                             "assert len(r['files']) == 100\nprint(r)")]
-                   (expect (= "format_code: 2 of 100 files changed · zprint\n" out))))
-             (it "keeps formatting errors visible"
-                 (let [out (check-result {"op" "format_code"
-                                          "summary" "Formatting incomplete"
-                                          "files" [{"path" "src/broken.clj"
-                                                    "unbalanced" "Unmatched delimiter"}]}
-                                         "print(r)")]
-                   (expect (str/includes? out "src/broken.clj: Unmatched delimiter")))))
-
-(defdescribe
-  compact-test-result-test
-  (it "summarizes a green run without runner boilerplate"
-      (let [out (check-result {"op" "run_tests"
-                               "is_pass" true
-                               "total" 48
-                               "fail" 0
-                               "skipped" 2
-                               "ms" 2100
-                               "output" "runner boilerplate"
-                               "failures" []
-                               "hint" nil}
-                              "assert r['output'] == 'runner boilerplate'\nprint(r)")]
-        (expect (str/starts-with? out "run_tests: PASS; 48 tests; 0 failures; 2 skipped; 2.1s"))
-        (expect (not (str/includes? out "runner boilerplate")))))
-  (it
-    "bounds long runner output only in the preview and preserves read-back"
-    (doseq [passed? [false true]]
-      (let
-        [output (str "report-start\n"
-                     (apply str (repeat 12000 "a"))
-                     "\nmiddle diagnostic\n"
-                     (apply str (repeat 12000 "b"))
-                     "\nreport-end")
-         out
-         (check-result
-           {"op" "run_tests" "is_pass" passed? "total" 1 "fail" (if passed? 0 1) "output" output}
-           (str
-             "expected = 'report-start\\n' + 'a' * 12000 + '\\nmiddle diagnostic\\n' + 'b' * 12000 + '\\nreport-end'\n"
-             "assert r['output'] == expected\n" "assert dict(r)['output'] == expected\n"
-             "assert json.loads(json.dumps(r))['output'] == expected\n" "print(r)"))]
-
-        (expect (< (count out) 2500))
-        (expect (str/includes? out "r['output']"))
-        (expect (not (str/includes? out "middle diagnostic")))
-        (when-not passed?
-          (expect (str/includes? out "report-start"))
-          (expect (str/includes? out "report-end"))))))
-  (it "prints faults and diagnostics even when counts or the verdict are incomplete"
-      (let [out (check-result {"op" "run_tests"
-                               "is_pass" false
-                               "total" 1
-                               "fail" 1
-                               "errored" 1
-                               "exit" 1
-                               "repl_unusable" true
-                               "failures" [{"test" "test_value"
-                                            "type" "error"
-                                            "file" "test/value.py"
-                                            "message" "expected a value"}]
-                               "output" "runner stack trace"
-                               "warning" "layout could not be read"
-                               "hint" "start a fresh REPL"}
-                              "print(r)")]
-        (doseq [text ["FAIL" "test_value" "test/value.py" "expected a value" "runner stack trace"
-                      "repl_unusable" "start a fresh REPL" "layout could not be read"]]
-          (expect (str/includes? out text)))))
-  (it "never invents a pass when the runner times out or returns no verdict"
-      (doseq [[data expected] [[{"is_pass" true "timed_out" true} "TIMEOUT"]
-                               [{"is_pass" true "exit" 1} "FAIL"] [{"is_pass" true "fail" 1} "FAIL"]
-                               [{"is_pass" nil} "UNKNOWN"] [{"is_pass" true "total" 0} "NO TESTS"]]]
-        (expect (str/includes? (check-result (assoc data "op" "run_tests") "print(r)") expected))))
-  (it "bounds multiple faults explicitly, with every fault still available"
-      (let [out (check-result {"op" "run_tests"
-                               "is_pass" false
-                               "failures" (mapv (fn [i]
-                                                  {"test" (str "test_" i)
-                                                   "type" "fail"
-                                                   "message" (apply str (repeat 1000 "m"))})
-                                                (range 20))}
-                              "assert len(r['failures']) == 20\nprint(r)")]
-        (expect (< (count out) 5000))
-        (expect (str/includes? out "15 more"))
-        (expect (str/includes? out "r['failures']")))))
-
 (defdescribe
   compact-session-result-test
   (it
@@ -324,7 +232,7 @@
       (tpc/with-own
         [ctx
          {'fixture (fn []
-                     {"op" "run_tests" "is_pass" true "total" 3 "fail" 0})
+                     {"op" "shell" "id" "demo" "status" "exited" "exit" 0 "out" "ok\n"})
           'council-fixture (fn []
                              (assoc (council-entry 7) "op" "council.get"))}
          (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
@@ -333,7 +241,7 @@
                                                "print(apropos(r'^doc$'))\n"
                                                "print(await council_fixture())"))]
           (expect (nil? (:error result)) (pr-str (:error result)))
-          (expect (str/includes? (:stdout result) "run_tests: PASS; 3 tests; 0 failures"))
+          (expect (str/includes? (:stdout result) "shell demo: exited; exit=0"))
           (expect (str/includes? (:stdout result) "tool doc — "))
           (expect (str/includes? (:stdout result) "Entry #7"))
           (expect (str/includes? (:stdout result) "Keep the existing cancellation boundary."))))))

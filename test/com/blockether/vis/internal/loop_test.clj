@@ -5623,7 +5623,6 @@
                  (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS "print(1)")))
       ;; Every bounded-call floor stays ABOVE the plain default, so a block that
       ;; makes one still gets that call's own budget plus the widener's grace.
-      (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)))
       (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)))
       (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS)))
   (it "extends the outer eval timeout when shell code asks for a longer timeout"
@@ -5643,16 +5642,13 @@
       ;; below that would clamp the watchdog back UNDER the shell envelope and kill
       ;; a legal wait with a bare `Timeout` and no output.
       (expect (< (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
-  (it "reads a millisecond budget too, so repl_eval's own timeout is not preempted"
+  (it "reads a millisecond budget too, so an explicit ms budget is not preempted"
       ;; REGRESSION: the scan only understood seconds, so an explicitly long
-      ;; `timeout_ms` (repl_eval, MCP) died at the 120s watchdog instead.
-      (expect (= 310000
-                 (eval-timeout-ms-for-code
-                   120000
-                   "await repl_eval(\"clojure\", code=\"(x)\", timeout_ms=300000)")))
+      ;; `timeout_ms` (an MCP call, an extension tool) died at the 120s watchdog
+      ;; instead.
+      (expect (= 310000 (eval-timeout-ms-for-code 120000 "await probe(timeout_ms=300000)")))
       ;; Sub-second budgets round UP, never to a zero-second widening.
-      (expect (= 120000
-                 (eval-timeout-ms-for-code 120000 "await repl_eval(\"clojure\", timeout_ms=500)"))))
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "await probe(timeout_ms=500)"))))
   (it "floors the watchdog above a bounded call whose timeout is NOT a literal"
       ;; REGRESSION: the watchdog EQUALLED shell's own 120s default, and a
       ;; timeout that is a variable / expression / plain default is invisible
@@ -5683,25 +5679,8 @@
       (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                  (eval-timeout-ms-for-code 120000
                                            "r = await shell(command=\"x\", timeout_secs=180)")))
-      ;; A test run owns a multi-minute budget and answers timeouts itself.
-      (expect (= (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)
-                 (eval-timeout-ms-for-code
-                   120000
-                   "r = await run_tests({\"paths\": [\"test/a_test.clj\"]})")))
       ;; Prose that merely mentions the word must not widen anything.
       (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
-  (it "keeps the eval wall above a test run's own ten-minute budget"
-      ;; One run may legitimately take ten minutes — a cold full suite pays
-      ;; JVM start, namespace loading and compilation before the first
-      ;; assertion. The run answers its own timeout with a STRUCTURED result,
-      ;; so the watchdog above it has to fire later than the run's budget or
-      ;; that result is lost and the block dies on a bare `Timeout`.
-      (expect (= (* 10 60 1000) rt/RUN_TESTS_TIMEOUT_MS))
-      (expect (= rt/RUN_TESTS_FLOOR_SECS (quot rt/RUN_TESTS_TIMEOUT_MS 1000)))
-      (expect (< rt/RUN_TESTS_TIMEOUT_MS
-                 (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS
-                                           "r = await run_tests({\"paths\": [\"test\"]})")))
-      (expect (< (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
   (it "floors the watchdog above a block that reaches the network"
       ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
       ;; own per-request default is 30s, a sweep loops over N hosts, and the

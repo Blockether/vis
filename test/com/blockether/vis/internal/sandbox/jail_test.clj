@@ -37,12 +37,11 @@
                   (fn [_ options]
                     options)]
 
-      (doseq [policy [base (pj/language-process-policy base nil)]]
-        (let [sent (:policy (pj/spawn! ["/bin/true"] nil policy {:environment {}}))]
-          (is (some #{java-home} (:read-only sent)))
-          (is (not (some #{java-home} (:read-write sent))))
-          (is (= [denied] (:deny-read sent)))
-          (is (= [java-home] (:deny-write sent))))))))
+      (let [sent (:policy (pj/spawn! ["/bin/true"] nil base {:environment {}}))]
+        (is (some #{java-home} (:read-only sent)))
+        (is (not (some #{java-home} (:read-write sent))))
+        (is (= [denied] (:deny-read sent)))
+        (is (= [java-home] (:deny-write sent)))))))
 
 (deftest runtime-policy-value
   (testing "live roots + read-write grants are read-write, read-only stays read-only"
@@ -237,131 +236,6 @@
                  "GIT_SSL_CAINFO" "PIP_CERT" "AWS_CA_BUNDLE" "CARGO_HTTP_CAINFO" "DENO_CERT"]]
         (is (= ca (get e v)) (str v " must point at the CA PEM"))))))
 
-(deftest repl-jail-contract
-  (testing "language policy preserves the wall and adds toolchain access"
-    (let [base
-          {:roots-fn (constantly ["/tmp"])
-           :net-enabled? false
-           :repl-proxy-port 1000
-           :repl-ca-file "/repl-ca.pem"
-           :allow-read-write ["/w"]
-           :allow-read ["/r"]}
-
-          policy
-          (pj/repl-policy base 54321)]
-
-      (is (false? (:net-enabled? policy)))
-      (is (= 1000 (:proxy-port policy)))
-      (is (= 54321 (:loopback-port policy)))
-      (is (some #{"~/.vis/logs"} (:allow-read-write policy)))
-      (is (some #{"/w"} (:allow-read-write policy)))
-      (is (some #{"~/.sdkman"} (:allow-read policy)))
-      (is (nil? (:inbound-ports policy)) "the shell dev-server ports are not inherited")))
-  (testing "unknown and disposed sessions fail before native spawn"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                          #"session jail is not registered"
-                          (pj/session-process-spawn! "no-such-session" ["/bin/true"] "/tmp")))
-    (is (thrown? clojure.lang.ExceptionInfo (pj/session-process-spawn! nil ["/bin/true"] "/tmp"))))
-  (testing "one contract resolves policy, environment and process lifecycle"
-    (pj/register-session-jail! "t-sid"
-                               (constantly {:roots-fn (constantly ["/tmp"])
-                                            :net-enabled? false
-                                            :repl-proxy-port nil
-                                            :env-values {"VIS_TEST_VALUE" "managed"}}))
-    (try (let [^Process process (pj/session-process-spawn! "t-sid" ["/bin/sh" "-c"
-                                                                    "printf %s \"$VIS_TEST_VALUE\""]
-                                                           "/tmp" {:merge-stderr? true})]
-           (is (= 0 (.waitFor process)))
-           (is (= "managed" (slurp (.getInputStream process))))
-           (is (pos? (.pid process))))
-         (finally (pj/unregister-session-jail! "t-sid")))))
-
-(defn- fake-jdk!
-  "A JDK-shaped directory whose `bin/java` is a runnable stand-in launcher that
-   answers `answer`, so a test can tell WHICH `java` a child actually found."
-  [dir answer]
-  (let [launcher (io/file dir "bin" "java")]
-    (io/make-parents launcher)
-    (spit launcher (str "#!/bin/sh\nprintf %s " answer "\n"))
-    (.setExecutable launcher true false)
-    (.getAbsolutePath (io/file dir))))
-
-(defn- delete-tree!
-  "Delete `file` and everything below it."
-  [^java.io.File file]
-  (when (.isDirectory file) (run! delete-tree! (.listFiles file)))
-  (.delete file))
-
-(deftest selected-java-home-leads-the-child-path
-  ;; #264: a call that SELECTED a JDK still ran every nested bare `java` — a
-  ;; `tools.deps` prep JVM above all — from whatever the operator's `PATH` named
-  ;; first, because a `ProcessBuilder` resolves argv[0] there and never reads
-  ;; `JAVA_HOME`.
-  (let [dir
-        (io/file (System/getProperty "java.io.tmpdir") (str "vis-jdk-" (System/nanoTime)))
-
-        chosen
-        (fake-jdk! (io/file dir "chosen") "chosen-jdk")
-
-        bin
-        (str chosen "/bin")]
-
-    (try (testing "the selected launcher is found first and everything else still resolves"
-           (let [policy (pj/with-selected-java-home {:allow-read ["/ro"]
-                                                     :env-values {"JAVA_HOME" chosen}})]
-             (is (= (str bin java.io.File/pathSeparator (System/getenv "PATH"))
-                    (get-in policy [:env-values "PATH"])))
-             (is (some #{chosen} (:allow-read policy))
-                 "a confined child may read the JDK it was told to run")))
-         (testing "an environment that also selects PATH wins whole"
-           (let [policy (pj/with-selected-java-home {:env-values {"JAVA_HOME" chosen
-                                                                  "PATH" "/only/here"}})]
-             (is (= "/only/here" (get-in policy [:env-values "PATH"])))))
-         (testing "an environment that UNSETS PATH keeps it unset"
-           (let [policy (pj/with-selected-java-home {:env-values {"JAVA_HOME" chosen}
-                                                     :env-removals ["PATH"]})]
-             (is (nil? (get-in policy [:env-values "PATH"])))))
-         (testing "an unenforced jail still names the launcher, and grants no roots"
-           (let [policy (pj/with-selected-java-home {:disabled? true
-                                                     :env-values {"JAVA_HOME" chosen}})]
-             (is (str/starts-with? (get-in policy [:env-values "PATH"]) bin))
-             (is (nil? (:allow-read policy)))))
-         (testing "a JAVA_HOME whose bin holds no executable java selects nothing"
-           (let [policy {:env-values {"JAVA_HOME" (.getAbsolutePath (io/file dir "empty"))}}]
-             (is (= policy (pj/with-selected-java-home policy)))))
-         (testing "an environment Vis chose nothing in is left exactly as it is"
-           (let [policy {:env-values {}}]
-             (is (= policy (pj/with-selected-java-home policy)))))
-         (finally (delete-tree! dir)))))
-
-(deftest selected-java-home-reaches-a-nested-bare-java
-  ;; The failing shape from #264 end to end: the child resolves a BARE `java`,
-  ;; with no shell alias and no `JAVA_HOME` lookup of its own, and must land on
-  ;; the JDK this call selected.
-  (let [dir
-        (io/file (System/getProperty "java.io.tmpdir") (str "vis-jdk-spawn-" (System/nanoTime)))
-
-        chosen
-        (fake-jdk! (io/file dir "chosen") "chosen-jdk")
-
-        run-java
-        (fn [opts]
-          (let [^Process process (pj/session-process-spawn! "t-java-home" ["/bin/sh" "-c" "java"]
-                                                            "/tmp" (merge {:merge-stderr? true}
-                                                                          opts))]
-            (.waitFor process)
-            (str/trim (slurp (.getInputStream process)))))]
-
-    (pj/register-session-jail! "t-java-home"
-                               (constantly {:roots-fn (constantly ["/tmp" (.getCanonicalPath dir)])
-                                            :net-enabled? false
-                                            :repl-proxy-port nil}))
-    (try (is (= "chosen-jdk" (run-java {:env {"JAVA_HOME" chosen}}))
-             "a nested bare `java` runs the JDK the call selected")
-         (is (not= "chosen-jdk" (run-java {}))
-             "a call that selected no JDK leaves the child's search order alone")
-         (finally (pj/unregister-session-jail! "t-java-home") (delete-tree! dir)))))
-
 (deftest env-scrub-allowlist
   (testing
     "a confined child inherits ONLY the non-secret allowlist plus the RESOLVED
@@ -513,41 +387,7 @@
       (is (= "1" (get full "KEEP")))
       (is (nil? (get full "DROP")))
       ;; PATH is on the inherit allowlist: the removal outranks it.
-      (is (nil? (get full "PATH")))))
-  (testing "a fingerprint carries the SHAPE of a delta and never a value"
-    (let [fp (pj/env-fingerprint {"TOKEN" "s3cret-value" "GONE" nil})]
-      (is (= #{"TOKEN" "GONE"} (set (keys fp))))
-      (is (not (str/includes? (pr-str fp) "s3cret-value")))
-      (is (= "unset" (get fp "GONE")))
-      (is (= fp (pj/env-fingerprint {"TOKEN" "s3cret-value" "GONE" nil})))
-      (is (not= fp (pj/env-fingerprint {"TOKEN" "another-value" "GONE" nil})))))
-  ;; Regression, issue #repl-consistency: only the Clojure pack compared a REUSED
-  ;; REPL's env, so `repl_start` meant "reuse or refuse" in one language and
-  ;; "silently kill and respawn" in the others. The refusal is minted HERE now,
-  ;; so every pack answers the same words.
-  (testing "one refusal, shared: a live REPL's env is compared by NAME, never by value"
-    (let [running
-          (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "s3cret-value"})
-
-          same
-          (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "s3cret-value"})
-
-          other
-          (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "other-value"})
-
-          refusal
-          (pj/env-mismatch-refusal "pyrepl:~/proj" running other)]
-
-      (is (empty? (pj/env-difference running same)))
-      (is (nil? (pj/env-mismatch-refusal "pyrepl:~/proj" running same)))
-      (is (= ["TOKEN"] (:differing refusal)))
-      (is (str/includes? (:message refusal) "pyrepl:~/proj"))
-      (is (str/includes? (:message refusal) "repl_stop"))
-      ;; names and digests only — no value reaches the message
-      (is (not (str/includes? (:message refusal) "s3cret-value")))
-      (is (not (str/includes? (:message refusal) "other-value")))
-      ;; an ADDED or DROPPED name differs too
-      (is (= ["EXTRA"] (pj/env-difference running (assoc running "EXTRA" "d")))))))
+      (is (nil? (get full "PATH"))))))
 
 (deftest configured-deny-rules-refuse-host-tools
   ;; #263: the host file tools run in THIS process, which no sandbox confines, so
@@ -642,7 +482,7 @@
                            (fn [_ options]
                              options)]
 
-               (doseq [child [policy (pj/language-process-policy policy nil)
+               (doseq [child [policy
                               (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
                  (let [sent (:deny-read (:policy
                                           (pj/spawn! ["/bin/true"] nil child {:environment {}})))]

@@ -379,9 +379,8 @@
                    (folded->pos {:pos ["server"] :opt-pos ["tool" "args"]}
                                 ["linear" "get_issue" {"args" {"id" 7}}])))
         ;; a :rest shape keeps the trailing opts dict its impl already expects.
-        (expect (= ["python" {"cwd" "/tmp"}]
-                   (folded->pos {:lead-opt "language" :rest :always}
-                                ["python" (kw {"cwd" "/tmp"})])))
+        (expect (= ["fast" {"cwd" "/tmp"}]
+                   (folded->pos {:lead-opt "mode" :rest :always} ["fast" (kw {"cwd" "/tmp"})])))
         ;; a SKIPPED optional cannot be spread positionally, exactly as in the
         ;; all-keyword case: the map passes through and the tool refuses it.
         (expect (= ["data.yml" {"end" 35}]
@@ -465,21 +464,20 @@
                    (extension/with-context {:env {:session-id "sid-inner"}}
                                            (:session-id extension/*current-environment*)))))))
 
-;; ── format_code/lint_code/etc. share invoke-symbol-wrapper with draft-aware cwd ──
+;; ── plain :inject-env? symbols share invoke-symbol-wrapper with draft-aware cwd ──
 ;;
-;; Turn 10-13's bug (`shell`/`repl*` bypassing `with-context`) lived in
+;; Turn 10-13's bug (`shell` bypassing `with-context`) lived in
 ;; `run-native-handler`, the seam ONLY for symbols carrying an explicit
-;; `:ext.symbol/handler`. `format_code`/`lint_code` (and every plain
-;; `:inject-env? true` engine symbol without a `:handler`) never went through
-;; that seam at all: they dispatch through `invoke-symbol-wrapper`, which has
-;; wrapped every call in `with-context` since before this investigation
-;; started. This pins that the SAME generic path — the one
-;; `format_code`/`lint_code` actually use — resolves `workspace/*workspace-root*`
-;; from the call's own `:workspace/root`, so a draft session's format/lint
-;; already run against the draft, not trunk.
+;; `:ext.symbol/handler`. Every plain `:inject-env? true` engine symbol
+;; without a `:handler` never went through that seam at all: they dispatch
+;; through `invoke-symbol-wrapper`, which has wrapped every call in
+;; `with-context` since before this investigation started. This pins that the
+;; SAME generic path resolves `workspace/*workspace-root*` from the call's own
+;; `:workspace/root`, so a draft session's tools already run against the draft,
+;; not trunk.
 (defn draft-cwd-probe
-  "A plain engine-bound symbol shaped like format_code/lint_code: no :handler,
-   :inject-env? true so the live env lands as its first argument."
+  "A plain engine-bound symbol: no :handler, :inject-env? true so the live env
+   lands as its first argument."
   [env]
   (extension/success {:result {"root" (str workspace/*workspace-root*)
                                "env-root" (str (:workspace/root env))}}))
@@ -557,13 +555,12 @@
 (defdescribe
   symbol-signature-test
   ;; Before this, a bound tool reported the async trampoline's own `(*a, **k)`
-  ;; and no docstring, so `inspect.signature(run_tests)` / `help(run_tests)`
+  ;; and no docstring, so `inspect.signature(grep)` / `help(grep)`
   ;; could not show a single parameter the host declares for it.
   (it "reads a Python parameter list off the declared :call shape"
-      (expect (= "(language=None, **kwargs)"
+      (expect (= "(mode=None, **kwargs)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
-                                                          :call {:lead-opt "language"
-                                                                 :rest :always}})))
+                                                          :call {:lead-opt "mode" :rest :always}})))
       (expect (= "(server, tool=None, args=None)"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                           :call {:pos ["server"]
@@ -587,7 +584,7 @@
                                                              :inject-env? true
                                                              :arglists '([env & args])}))))
   (it "answers the EMPTY parameter list for a tool that takes nothing"
-      ;; `languages()`. nil here would leave the sandbox reporting the async
+      ;; `council.threads()`. nil here would leave the sandbox reporting the async
       ;; trampoline's `(*a, **k)` — arguments the tool actually refuses.
       (expect (= "()"
                  (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn :arglists '([])})))
@@ -600,9 +597,9 @@
               [[#:ext.symbol{:call {:pos ["content"] :rest :always}
                              :params [{:name "kind" :required? true} {:name "title"}]}
                 "(content, *, kind, title=..., **kwargs)"]
-               [#:ext.symbol{:call {:lead-opt "language" :rest :always}
-                             :params [{:name "language"} {:name "code" :required? true}
-                                      {:name "cwd"}]} "(language=None, *, code, cwd=..., **kwargs)"]
+               [#:ext.symbol{:call {:lead-opt "mode" :rest :always}
+                             :params [{:name "mode"} {:name "code" :required? true} {:name "cwd"}]}
+                "(mode=None, *, code, cwd=..., **kwargs)"]
                [#:ext.symbol{:call {:pos [] :rest :always} :params [{:name "group_id"}]}
                 "(*, group_id=..., **kwargs)"]
                [#:ext.symbol{:call {:pos ["options"] :rest :always}
@@ -636,7 +633,6 @@
                        :params [{:name "ignored"}]}))))
   (it "signs the live registry's named options without duplicating leading arguments"
       (let [sigs (extension/sandbox-symbol-signatures)]
-        (expect (str/starts-with? (get sigs 'run_tests) "(language=None, *, path=..."))
         (expect (str/includes? (get sigs 'shell) "cwd=..."))
         (expect (str/starts-with? (get sigs 'grep) "(*, query=..., paths=..."))
         (expect (str/starts-with? (get sigs 'council.publish) "(content, *, kind, "))))
@@ -809,15 +805,16 @@
             docs
             (extension/sandbox-symbol-docs)]
 
-        (expect (str/starts-with? (str (get ks 'repl_eval)) "Keys: ") (str (get ks 'repl_eval)))
-        (expect (str/includes? (str (get ks 'repl_eval)) "code (REQUIRED)")
-                (str (get ks 'repl_eval)))
-        (expect (not (str/includes? (str (get docs 'repl_eval)) "code (REQUIRED)")))
+        (expect (str/starts-with? (str (get ks 'council.publish)) "Keys: ")
+                (str (get ks 'council.publish)))
+        (expect (str/includes? (str (get ks 'council.publish)) "kind (REQUIRED)")
+                (str (get ks 'council.publish)))
+        (expect (not (str/includes? (str (get docs 'council.publish)) "kind (REQUIRED)")))
         (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks)))))
-  ;; Regression, doc quality: `run_tests` answered "execution metadata,
-  ;; counts/details, output, timeout, and REPL-recovery diagnostics" — thirty
-  ;; keys a caller could only learn by printing the map, on the one tool every
-  ;; verification goes through. Every other bound tool already named its own.
+  ;; Regression, doc quality: a bound tool answered "execution metadata,
+  ;; counts/details, output, timeout, and recovery diagnostics" — thirty keys a
+  ;; caller could only learn by printing the map. Every other bound tool already
+  ;; named its own.
   (it "names the keys of a result instead of describing them in nouns"
       (doseq [entry (live-tool-entries)]
         (let [sym (:ext.symbol/symbol entry)
@@ -825,22 +822,7 @@
 
           ;; A contract that answers TEXT says so and has no keys to name.
           (expect (or (re-find #"(?i)plain string" result) (<= 2 (count (named-keys result))))
-                  (str sym " names no key of its result: " result)))))
-  (it "states the verdict, the counts and the fault rows a test run answers with"
-      (let [result
-            (->> (live-tool-entries)
-                 (filter #(= 'run_tests (:ext.symbol/symbol %)))
-                 first
-                 :ext.symbol/result
-                 str)
-
-            named
-            (named-keys result)]
-
-        ;; Read a red run, do not rerun it louder: the fault rows are already here.
-        (doseq [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message"
-                   "output"]]
-          (expect (contains? named k) (str "run_tests never names `" k "`: " result))))))
+                  (str sym " names no key of its result: " result))))))
 
 (defn activity-success-probe
   "Observed test operation that returns one canonical successful envelope."

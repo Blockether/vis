@@ -97,7 +97,7 @@ Whole skill body."}
   (let [es [{:name "numpy" :text "Array module."}
             {:name "numpy.linalg.solve" :text "Solve a matrix equation."}
             {:name "pandas.read_csv" :text "Read comma-separated data."}
-            {:name "run_tests" :text "Runs project tests."}]]
+            {:name "shell" :text "Runs a command."}]]
     (it "matches names with a caller-supplied regular expression"
         (expect (= ["numpy" "numpy.linalg.solve"] (mapv :name (dc/search es #"numpy(?:\..*)?"))))
         (expect (= ["numpy.linalg.solve" "pandas.read_csv"] (mapv :name (dc/search es #"\.")))))
@@ -131,11 +131,7 @@ Whole skill body."}
   "Call shapes the live handlers REFUSE, each one cross-validated against the
    running tool before it was banned here — a document that shows one of them
    teaches a call that cannot work."
-  [[#"(?:run_tests|repl_eval|format_code|lint_code)\(\"[^\"]*\"\)"
-    (str "a lone string argument: the language surface reads the pack from "
-         "{\"language\": \"…\"} (or the FIRST of two arguments), so a lone string "
-         "is the PAYLOAD and the call lands on the workspace's primary pack")]
-   [#"grep\(\s*[\"\[]" "a positional query: grep takes ONE options map"]])
+  [[#"grep\(\s*[\"\[]" "a positional query: grep takes ONE options map"]])
 
 (defdescribe
   no-document-teaches-a-refused-call-shape-test
@@ -151,7 +147,7 @@ Whole skill body."}
 
           (expect (nil? (re-find re (:text e))) (str (:name e) " documents " what)))))
   (it "catches each banned shape when one does appear"
-      (let [offender "run_tests(\"python\") grep(\"q\")"]
+      (let [offender "grep(\"q\")"]
         (expect (= (count refused-call-shapes)
                    (count (filter (fn [[re _]]
                                     (re-find re offender))

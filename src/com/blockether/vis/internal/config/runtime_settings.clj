@@ -15,7 +15,7 @@
 
    A BACKSTOP for guest code that would never finish on its own (`while True:`, a
    wedged frame), never a co-deadline for work that is progressing. Every BOUNDED
-   call a block makes — shell, `run_tests`, HTTP — is already floored ABOVE this
+   call a block makes — shell, HTTP — is already floored ABOVE this
    number by the widener below, so what this number really bounds is the in-sandbox
    compute no scan can see: a large parse, an image pass, an analytic loop over
    thousands of files. At two minutes that work was killed exactly where it got
@@ -184,32 +184,6 @@
    `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
   1800)
 
-(def RUN_TESTS_TIMEOUT_MS
-  "The budget for ONE `run_tests` run, in every pack — ten minutes.
-
-   The Clojure pack uses this for both nREPL evaluation and owned CLI processes
-   (one deadline across shadow-cljs compilation and execution). The Python pack
-   waits this long on the project interpreter's pytest. [[RUN_TESTS_FLOOR_SECS]]
-   keeps the eval watchdog above all of them; no runner owns another literal.
-
-   Overrunning it is reported as a STRUCTURED result — a wedged nREPL, a killed
-   pytest process, the output that did arrive — so the number says when we stop
-   believing the suite will finish, never how much work a suite may legitimately
-   do. Five minutes did not cover a cold full-suite run (JVM start, namespace
-   loading, compilation), and such a run died with nothing to show for it.
-
-   Stays under [[MAX_EVAL_TIMEOUT_MS]] minus the widener's grace."
-  (* 10 60 1000))
-
-(def RUN_TESTS_FLOOR_SECS
-  "Floor for an eval that calls `run_tests`: the run's OWN budget, in seconds.
-
-   A test run answers its own timeout with a structured test result, and nothing
-   preempts a direct tool call. Called from `python_execution` it must not die
-   earlier at the generic eval watchdog and lose that result, so the widener
-   floors the block's wall here and adds `shell-timeout-eval-grace-ms` on top."
-  (quot (long RUN_TESTS_TIMEOUT_MS) 1000))
-
 (def HTTP_CALL_FLOOR_SECS
   "Floor for an eval that reaches the NETWORK through the HTTP shims (`requests`,
    `httpx`, `urllib3`, `urlopen`).
@@ -236,8 +210,6 @@
 ;; guest in a host call for up to the same cap.
 (def ^:private shell-call-re #"\bshell\s*\(|\.wait\s*\(")
 
-(def ^:private run-tests-call-re #"\brun_tests\s*\(")
-
 (def ^:private http-call-re
   #"\b(?:requests|httpx|urllib3)\s*\.|\b(?:import|from)\s+(?:requests|httpx|urllib3)\b|\burlopen\s*\(")
 
@@ -249,8 +221,8 @@
 (defn explicit-shell-timeout-secs
   "Best-effort scan for an EXPLICIT timeout override in Python code, in seconds.
    Reads `timeout_secs` / `timeout` / `secs` (seconds) and `timeout_ms`
-   (milliseconds, rounded up) — `repl_eval` and MCP calls spell their budget in
-   ms, a shell handle's `.wait(secs=…)` in seconds, and leaving a spelling out let
+   (milliseconds, rounded up) — an MCP call or an extension tool spells its budget
+   in ms, a shell handle's `.wait(secs=…)` in seconds, and leaving a spelling out let
    a deliberately long call die at the default watchdog. The real tool still owns
    validation/clamping; this only prevents the outer watchdog from preempting a
    longer requested budget."
@@ -284,8 +256,7 @@
    ONE request, and the block is almost always a LOOP of them."
   [code]
   (let [code (str code)]
-    (max-of [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
-             (when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
+    (max-of [(when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
              (when (re-find shell-call-re code) MAX_SHELL_TIMEOUT_SECS)])))
 
 (defn eval-timeout-ms-for-code

@@ -857,18 +857,18 @@ export const MergedResults: Story = {
         position: 1,
         forms: [
           {
-            source: "print(await run_tests({'language': 'clojure'}))",
-            stdout: 'run_tests: PASS\n98 tests\n0 failures',
+            source: "print(await shell('npm test'))",
+            stdout: 'npm test: PASS\n98 tests\n0 failures',
             duration_ms: 1200,
           },
           {
-            source: "print(await format_code({'language': 'clojure'}))",
-            stdout: 'format_code: PASS\n2 files checked',
+            source: "print(await shell('npm run format'))",
+            stdout: 'npm run format: PASS\n2 files checked',
             duration_ms: 40,
           },
           {
-            source: "print(await lint_code({'language': 'clojure'}))",
-            stdout: 'lint_code: PASS\n0 warnings',
+            source: "print(await shell('npm run lint'))",
+            stdout: 'npm run lint: PASS\n0 warnings',
             duration_ms: 80,
           },
         ],
@@ -881,13 +881,13 @@ export const MergedResults: Story = {
     await expect(canvas.getAllByRole('button', { name: 'Expand result' })).toHaveLength(1);
     const result = canvas.getByRole('button', { name: 'Expand result' });
     await expect(result).toHaveTextContent('RESULT +7 more');
-    await expect(canvas.queryByText('run_tests: PASS', { exact: false })).toBeNull();
+    await expect(canvas.queryByText('npm test: PASS', { exact: false })).toBeNull();
     await userEvent.click(result);
     const body = canvasElement.querySelector('[data-code-result]')!;
-    await expect(body).toHaveTextContent('run_tests: PASS');
-    await expect(body).toHaveTextContent('lint_code: PASS');
+    await expect(body).toHaveTextContent('npm test: PASS');
+    await expect(body).toHaveTextContent('npm run lint: PASS');
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse result' }));
-    await expect(body).not.toHaveTextContent('run_tests: PASS');
+    await expect(body).not.toHaveTextContent('npm test: PASS');
   },
 };
 

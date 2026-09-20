@@ -59,7 +59,7 @@
 
 (defn- reserved-loopback-ports
   "All loopback ports off-limits to a jailed child: the shared authenticated
-   proxy, every session-attributed language front door, and gateway control-plane
+   proxy, every session-attributed front door, and gateway control-plane
    ports. A proxy can therefore never pivot into another proxy listener."
   []
   (into @extra-reserved-ports
@@ -75,7 +75,7 @@
   token)
 
 (defn unregister-session!
-  "Drop a session's policy and stop its optional language-process front door.
+  "Drop a session's policy and stop its optional session front door.
    Idempotent; the shared proxy + CA remain gateway-owned."
   [token]
   (when token

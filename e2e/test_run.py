@@ -54,11 +54,13 @@ class ScenarioFilesTest(unittest.TestCase):
         self.assertNotIn("symbol_rename", scenario["prompt"])
         self.assertIn("(ns foo.core)", scenario["want"]["src/foo/core.clj"])
 
-    def test_project_computation_explicitly_requires_the_managed_repl(self):
-        scenario = run.load_scenarios(["py-repl-compute"])[0]
-        self.assertEqual(["repl_eval"], scenario["want_tools"])
-        self.assertIn("repl_eval", scenario["prompt"])
-        self.assertIn("repl_stop", scenario["prompt"])
+    def test_extension_probe_scenario_requires_the_registered_extension_tools(self):
+        scenario = run.load_scenarios(["extension-contract-discovery"])[0]
+        self.assertEqual(
+            ["contract_probe.record", "contract_probe.status"], scenario["want_tools"]
+        )
+        self.assertIn("contract_probe", scenario["prompt"])
+        self.assertIn("shell", scenario["forbid_tools"])
 
 
 class CacheMetricValidationTest(unittest.TestCase):

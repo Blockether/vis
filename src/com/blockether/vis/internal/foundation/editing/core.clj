@@ -2,7 +2,7 @@
   "Host-side file reading, search, listing and anchored editing.
 
    `cat` and `grep` return line/hash addresses consumed by `patch`. One patch
-   validates every edit and the resulting syntax before replacing one file.
+   validates every edit before replacing one file.
    `list-directories` supplies the Python `ls` shim. Standard Python owns file
    creation, copying, moving and deletion.
 
@@ -19,7 +19,6 @@
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
-            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.config.core :as config]
@@ -3375,56 +3374,6 @@
            (when edit-count (str " at edit " (inc (long edit-index)) " of " edit-count))
            " — nothing was written."))))
 
-(defn- patch-parse-gate
-  "Run the shared parse transition check after splicing and before writing. `patch`
-   alone may repair delimiters, confined to the lines this call changed; raw writers
-   consume the same verdict without changing their candidate bytes."
-  [rel lang ^String original ^String updated span-label spans]
-  (let [{:keys [status after]} (parse/transition-verdict lang original updated)]
-    (case status
-      :unguarded
-      {:content updated :clause ""}
-
-      :clean
-      {:content updated :clause "  parse: clean"}
-
-      :still-broken
-      {:content updated :clause (str "  parse: still broken at line " (:line (first after)))}
-
-      :introduced-error
-      (let [e (first after)
-            repair (parse/repair {:language lang
-                                  :source updated
-                                  :original original
-                                  :spans spans})]
-
-        (if (:ok? repair)
-          {:content (:content repair)
-           :clause
-           (str "  parse: clean (delimiters repaired: " (str/join ", " (:notes repair)) ")")}
-          (patch-refusal! rel
-                          {:reason :parse-broken :error-line (:line e)}
-                          (into [(str "  "
-                                      rel
-                                      ": "
-                                      span-label
-                                      "; "
-                                      (name lang)
-                                      ": "
-                                      (if (:missing? e) "MISSING" "ERROR")
-                                      " at replacement line "
-                                      (:line e)
-                                      ", col "
-                                      (:col e)
-                                      (when-let [t (some-> (:text e)
-                                                           str
-                                                           str/trim
-                                                           not-empty)]
-                                        (str " — near " (pr-str (subs t 0 (min 60 (count t)))))))]
-                                (when-let [why (:why repair)]
-                                  [(str "  repair: " why)]))
-                          "patch refused — the edit would not parse; nothing was written."))))))
-
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written, how
    many edits landed in that ONE write, how the file's line count moved, and the
@@ -3595,9 +3544,9 @@
 
 (defn- patch-file!
   "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
-   write. Atomic for the FILE: every span resolves, every shape is checked and the
-   spliced result is parse-gated BEFORE anything reaches disk, so a refusal — a
-   stale anchor, an overlap, a syntax break — leaves the file exactly as the caller
+   write. Atomic for the FILE: every span resolves and every shape is checked
+   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
+   leaves the file exactly as the caller
    last read it. The splice runs from the END of the file backwards, so the order
    the edits arrive in is irrelevant and no anchor from the caller's own read can
    go stale mid-batch. The answer is the status line and one row per edit, carrying
@@ -3652,17 +3601,10 @@
                 original
                 (sort-by :start #(compare %2 %1) resolved))
 
-        ;; Only a language a registered surface JUDGES may gate a write. Vis carries
-        ;; no parser of its own, so `guarded-language` answers nil for every file type
-        ;; nobody claims — prose included — and those writes go through unchecked.
-        lang
-        (parse/guarded-language rel)
-
         ;; Where each edit ENDED UP: walk the spans in file order carrying the line
         ;; delta every earlier edit already applied, so every anchor reported below is
-        ;; one a next call can spend without a `cat` — and so the parse gate knows
-        ;; exactly which lines of the NEW content this call may have its delimiters
-        ;; repaired in. Pure: it reads the resolved spans, never the write.
+        ;; one a next call can spend without a `cat`. Pure: it reads the resolved
+        ;; spans, never the write.
         applied
         (:rows
           (reduce
@@ -3702,35 +3644,10 @@
             {:delta 0 :rows []}
             (sort-by :start resolved)))
 
-        gate
-        (patch-parse-gate rel
-                          lang
-                          original
-                          updated
-                          (str total
-                               (if (= 1 (long total)) " edit" " edits")
-                               ", lines " (reduce min (map :from-line resolved))
-                               ".." (reduce max (map :to-line resolved)))
-                          (mapv (fn [{:keys [new-from written]}]
-                                  (let [from (long new-from)]
-                                    (if (zero? (long written))
-                                      ;; A deletion writes NO line: what it left behind is a
-                                      ;; SEAM between the line above it and the line that moved
-                                      ;; up into its place, and the delimiters it took with it
-                                      ;; belong to one of those two. Naming the line the deleted
-                                      ;; text used to occupy names a line that no longer exists,
-                                      ;; so every repair of a deletion fell "outside the edit".
-                                      [(max 1 (dec from)) from]
-                                      [from (+ from (dec (long written)))])))
-                                applied))
-
-        ;; What actually reaches disk: the splice, or the delimiter repair the gate
-        ;; accepted for it. Every anchor, count and diff below is taken from THIS.
+        ;; What actually reaches disk. Every anchor, count and diff below is taken
+        ;; from THIS.
         ^String written-content
-        (:content gate)
-
-        parse-clause
-        (:clause gate)
+        updated
 
         ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
         ;; copied read, and it lands in the file verbatim — say so on the status line
@@ -3764,7 +3681,7 @@
                                            total
                                            (count (hashline/split-content-lines original))
                                            (count new-lines)
-                                           (str parse-clause gutter-clause))
+                                           (str gutter-clause))
                         "\n"
                         (str/join "\n" (patch-edit-rows applied new-lines)))
            ;; The unified diff is METADATA, not payload: the human channel can
@@ -3841,11 +3758,8 @@
        "range is canonical; `to` defaults to `from` only for one line, and `replace: \"\"` deletes. Every "
        "endpoint must match its exact current `line:hash`; a mismatch is refused, never relocated by hash. "
        "The edits may be listed in ANY order because all resolve against ONE read. NEVER restate the text you "
-       "are replacing. Atomic: a stale anchor, an overlap or a syntax-breaking write refuses the WHOLE batch "
-       "and writes NOTHING, naming the edit and carrying the current anchor or range. A delimiter you OMITTED is put "
-       "back where the text you replaced had it — mid-line, or a lost opening `(` — and the line it produced "
-       "is named; one you WROTE is never deleted or retyped, so a closer too many, or `(` typed where `]` "
-       "belongs, is refused instead of guessed at.")
+       "are replacing. Atomic: a stale anchor or an overlap refuses the WHOLE batch "
+       "and writes NOTHING, naming the edit and carrying the current anchor or range.")
      :call {:pos ["path" "edits"]}
      :before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
      :tag :mutation

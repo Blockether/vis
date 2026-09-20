@@ -158,9 +158,8 @@ Vis uses Lazytest, **not `clojure.test`** (which is silently undiscovered here):
 `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`.
 Use `lazytest.core/set-ns-context!` and `around-each` instead of `use-fixtures`.
 
-Use `run_tests` for the affected paths. A clean JVM runs `clojure -M:test`, optionally
-`--namespace my.ns-test` or `--var my.ns-test/my-test`. A reused REPL reloads test namespaces only:
-reload changed production namespaces or stop that REPL before rerunning. ClojureScript tests belong
+Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally
+`--namespace my.ns-test` or `--var my.ns-test/my-test`. ClojureScript tests belong
 to the project's shadow-cljs build; inspect printed counts, not just its exit code.
 
 Passing JVM tests or a successful native build do not prove the binary runs. Interop changes need the relevant

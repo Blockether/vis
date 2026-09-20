@@ -56,70 +56,6 @@ def _shell(result):
     return "\n".join(lines)
 
 
-def _tests(result):
-    faults = result.get("failures") or []
-    failed = (
-        result.get("is_pass") is False
-        or result.get("error")
-        or result.get("exit") not in (None, 0)
-        or result.get("fail", 0)
-        or result.get("errored", 0)
-        or result.get("repl_wedged")
-        or result.get("repl_unusable")
-        or faults
-    )
-    if result.get("timed_out"):
-        verdict = "TIMEOUT"
-    elif failed:
-        verdict = "FAIL"
-    elif result.get("total") == 0:
-        verdict = "NO TESTS"
-    else:
-        verdict = "PASS" if result.get("is_pass") is True else "UNKNOWN"
-    parts = [f"run_tests: {verdict}"]
-    for key, label in (
-        ("total", "tests"),
-        ("fail", "failures"),
-        ("errored", "errors"),
-        ("skipped", "skipped"),
-    ):
-        if result.get(key) is not None:
-            parts.append(f"{result[key]} {label}")
-    if result.get("selected") is not None and result.get("selected") != result.get(
-        "total"
-    ):
-        parts.append(f"{result['selected']} selected")
-    if result.get("ms") is not None:
-        parts.append(_duration(result["ms"]))
-    lines = ["; ".join(parts)]
-    context = [
-        str(result[key])
-        for key in ("language", "framework", "target")
-        if result.get(key)
-    ]
-    if context:
-        lines.append(_bounded(" / ".join(context), "dict(r)", 500))
-    for key in ("repl_wedged", "repl_unusable", "recovered"):
-        if result.get(key):
-            lines.append(f"{key}=True")
-    if result.get("exit") not in (None, 0):
-        lines.append(f"exit={result['exit']}")
-    lines.extend(_details(result))
-    for index, fault in enumerate(faults[:5]):
-        location = fault.get("file") or fault.get("ns") or ""
-        text = f"{fault.get('type', 'fault')} {location} {fault.get('test', '?')}: {fault.get('message', '')}"
-        lines.append(_bounded(text, f"r['failures'][{index}]", 600))
-    if len(faults) > 5:
-        lines.append(f"… {len(faults) - 5} more faults; read r['failures'].")
-    output = result.get("output")
-    if output:
-        if verdict != "PASS":
-            lines.append(_bounded(output, "r['output']", 2000))
-        else:
-            lines.append(f"Runner output: {len(output)} chars in r['output'].")
-    return "\n".join(lines)
-
-
 def _session(result):
     session = result.get("session") or {}
     transcript = result.get("transcript")
@@ -245,19 +181,6 @@ def _result_repr(result):
             and "id" in result
         ):
             return _shell(result)
-        if op == "run_tests":
-            return _tests(result)
-        if op == "format_code" and result.get("summary"):
-            scope = result.get("formatters") or [result.get("formatter")]
-            suffix = ", ".join(str(item) for item in scope if item)
-            lines = [
-                "format_code: " + result["summary"] + (" · " + suffix if suffix else "")
-            ]
-            for item in [result, *(result.get("files") or [])]:
-                for key in ("error", "unbalanced"):
-                    if item.get(key):
-                        lines.append(f"{item.get('path') or key}: {item[key]}")
-            return "\n".join(lines)
         if op == "read_session":
             return _session(result)
         if op in ("council.publish", "council.get", "council.read", "council.threads"):
