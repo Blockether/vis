@@ -146,7 +146,7 @@
                 slice — every form lives on the iteration row.
 
      `:attachments` - byte-free descriptors for the OUTBOUND artifacts
-                (matplotlib figures, `attach` payloads) the iter's
+                (images and documents from `attach`) the iter's
                 tool calls produced, joined from the `session_attachment`
                 rail via `db-list-iteration-attachments`. Each carries a
                 read-back `:id` so the bytes stay lazily fetchable
@@ -618,8 +618,8 @@
     (str "_iteration error:_\n" (render-fenced "text" (str error)) "\n")))
 
 (defn- render-attachments
-  "List the OUTBOUND artifacts (matplotlib figures, `attach` payloads) an
-   iteration's tool calls produced, each with its read-back id. Bytes are NEVER
+  "List the OUTBOUND artifacts (`attach` payloads) an iteration's tool calls
+   produced, each with its read-back id. Bytes are NEVER
    inlined — the reader fetches them on demand via `db-read-attachment` /
    `read_attachment(<id>)`. nil when the iteration produced none."
   [attachments]

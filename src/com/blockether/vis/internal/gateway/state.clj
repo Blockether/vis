@@ -1510,7 +1510,7 @@
         (str "\nhint: " hint)))))
 
 (defn iteration-attachments
-  "Ordered OUTBOUND artifacts (matplotlib figures / produced images) a tool call
+  "Ordered OUTBOUND artifacts (images and documents from `attach`) a tool call
    persisted under iteration `iid` as METADATA ONLY — the
    `db-list-iteration-attachments-meta` shape, never a byte of payload — or `[]`.
    THE canonical, ordered, UNFILTERED list. Everything a client sees is derived
@@ -2256,7 +2256,7 @@
                          ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
                []))
 
-        ;; Produced artifacts (matplotlib figures, `attach`ed images) as the
+        ;; Produced artifacts (images and documents from `attach`) as the
         ;; SAME lean descriptors the live `iteration.completed` frame carries —
         ;; byte-free, so history costs nothing on the wire, and a remote client
         ;; lazy-fetches the bytes from the attachment endpoint. Without this a

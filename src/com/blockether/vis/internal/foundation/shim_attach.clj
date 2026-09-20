@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.foundation.shim-attach
-  "Built-in sandbox SHIM: `attach` — the GENERIC
-   producer twin of the matplotlib capture. A tool running in `python_execution`
+  "Built-in sandbox SHIM: `attach` — the ONE way a block hands an artifact it
+   produced to the engine. A tool running in `python_execution`
    writes any artifact (a PNG it rendered, a CSV/JSON/PDF/wav it built, whatever)
    and hands it to `attach(path)` (or `attach(data, filename)` for bytes it
    never wrote out), getting back the stored artifact's DESCRIPTOR; the
-   engine then OWNS the bytes as a durable `session_iteration_attachment` row,
-   exactly like a matplotlib figure — surviving a web/TUI restart and (for image
-   media-types) replayable to a vision model cross-turn.
+   engine then OWNS the bytes as a durable `session_iteration_attachment` row —
+   surviving a web/TUI restart and (for image media-types) replayable to a
+   vision model cross-turn.
 
    No parsing, no round-trip through the model-facing stdout: we control the whole
    boundary. The Python side reads the file through the sandbox's OWN confined
@@ -14,15 +14,14 @@
    the roots raises the normal sandbox error), sniffs the media-type (magic bytes
    then extension then utf-8 probe), base64-encodes, and calls the tiny host
    bridge `__vis_record_attachment__`, which appends the attachment map to the
-   per-block `*image-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
+   per-block `*attachment-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
    drains that sink into the block outcome's `:attachments`; the loop stamps each with
    the producing block's tool-call-id and hands them to `db-store-iteration!`'s
    `:attachments`. The artifact's `:id` and `:version` are minted at the sink, so
    the block that produced it can address it immediately.
 
-   Registered unconditionally as a foundation shim (like shim-yaml /
-   shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `attach` into
-   every sandbox."
+   Registered unconditionally as a foundation shim, alongside `ls`: its
+   `:ext/sandbox-shims` entry autoloads `attach` into every sandbox."
   (:require [com.blockether.imaging :as imaging]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.core :as vis]
@@ -36,14 +35,13 @@
    surface needs in order to SHOW it: `[abs-path width height]`.
 
    For an image the pixel dimensions are probed and the attach shim prints a
-   `vis-image` display fence so a graphical TUI/web paints the picture inline
-   (the same fence matplotlib's `plt.show()` emits). For a PDF or an HTML page
-   ([[attachments/viewer-document-media-type?]]) there are no pixels to probe: the
-   dimensions are 0 and the shim prints a `vis-doc` fence instead, which the TUI
+   `vis-image` display fence so a graphical TUI/web paints the picture inline.
+   For a PDF or an HTML page ([[attachments/viewer-document-media-type?]]) there
+   are no pixels to probe: the dimensions are 0 and the shim prints a `vis-doc`
+   fence instead, which the TUI
    hands to the system viewer and the companion renders inside a sandboxed
-   frame. Either way the bytes are written HOST-side (like
-   `__vis_mpl_render_file__`), so display works even when the sandbox's own
-   Python filesystem is denied.
+   frame. Either way the bytes are written HOST-side, so display works even
+   when the sandbox's own Python filesystem is denied.
 
    Returns nil for any other media-type — a CSV/TSV table prints its own
    `vis-table` fence from the shim and mints no display file — and for bytes that

@@ -27,8 +27,8 @@
    marker stripping, gifsicle differencing -- before it becomes a BLOB or a
    backend PUT. That is the only transformation this rail performs, it is
    verified per payload (strictly smaller AND the same format at the same
-   dimensions and frame count, else the original is kept), and it is why a
-   matplotlib figure costs a fraction of a row."
+   dimensions and frame count, else the original is kept), and it is why an
+   attached PNG costs a fraction of a row."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [com.blockether.vis.internal.util :as util])

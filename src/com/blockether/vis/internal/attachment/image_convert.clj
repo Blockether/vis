@@ -57,8 +57,8 @@
 (def svg-media-types
   "Vector containers vis RASTERIZES on the way in instead of refusing. No
    provider reads SVG -- it is markup, not pixels -- but unlike a HEIC the
-   pixels are recoverable: the document is rendered here, so a matplotlib
-   `savefig(format=\"svg\")` or a dropped icon still reaches the model."
+   pixels are recoverable: the document is rendered here, so an attached SVG
+   chart or a dropped icon still reaches the model."
   #{"image/svg+xml" "image/svg" "application/svg+xml" "text/svg+xml"})
 
 (defn svg-media-type?
@@ -474,7 +474,7 @@
    `:lossy`/`:quality`/`:format`/`:max-*` license a re-encode).
 
    The second exception to \"never re-compress\", and a narrower one than
-   [[fit-within]]: the PICTURE is untouched, only its encoding is. A matplotlib
+   [[fit-within]]: the PICTURE is untouched, only its encoding is. A rendered
    or screenshot PNG comes out of a speed-tuned encoder and routinely costs
    several times the bytes it needs -- bytes that are then paid in the
    `session_attachment` BLOB, in every `/poll` + SSE replay of that row, and in

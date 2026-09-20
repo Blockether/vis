@@ -300,10 +300,10 @@ def __vis_install_attach__():
                 print("[Attached: " + name + "] " + cap)
         return row
 
-    # A Pillow image is the OTHER in-memory picture this sandbox produces
-    # (`PIL` is a first-class shim here), so `attach(img, 'crop.png')` has to
-    # work exactly like the matplotlib idiom instead of falling through to the
-    # path branch and reporting the repr as a missing file.
+    # A Pillow image is the OTHER in-memory picture a block can hand over
+    # (when the sandbox has Pillow installed), so `attach(img, 'crop.png')` has
+    # to work exactly like the matplotlib idiom instead of falling through to
+    # the path branch and reporting the repr as a missing file.
     __vis_pil_encoders = {
         ".png": "PNG",
         ".jpg": "JPEG",

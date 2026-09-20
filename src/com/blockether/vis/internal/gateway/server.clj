@@ -3303,7 +3303,7 @@
 
 (defn- attachment-bytes-handler
   "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx — the raw bytes of ONE
-   outbound artifact (a matplotlib figure / produced image) a tool call emitted
+   outbound artifact (a produced image or document) a tool call emitted
    in iteration `:iid`, addressed by its 0-based `:idx` in the iteration's ordered
    attachment list — the SAME list (and order) the live `iteration.completed`
    descriptors index. Served with the artifact's own Content-Type so a native

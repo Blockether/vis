@@ -400,7 +400,7 @@
    exactly these four in its rejection (`the image data you provided does not
    represent a valid image … supported image formats: ['image/jpeg',
    'image/png', 'image/gif', 'image/webp']`); OpenAI and Gemini are supersets.
-   Anything else — an `image/svg+xml` figure from `attach`/matplotlib, a
+   Anything else — an `image/svg+xml` figure from `attach`, a
    BMP screenshot — is a hard 400, and since attachments
    REPLAY on every later turn ONE such row kills the whole session."
   #{"image/jpeg" "image/png" "image/gif" "image/webp"})

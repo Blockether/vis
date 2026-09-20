@@ -28,8 +28,7 @@
                        (= 0x61 (bit-and (aget d 5) 0xff))))))) ; a
 
 (defn- rgba->argb
-  "Straight RGBA8 rows (the cdylib's frame shape) -> a packed 0xAARRGGBB int[],
-  the shape the PIL shim's raster holds."
+  "Straight RGBA8 rows (the cdylib's frame shape) -> a packed 0xAARRGGBB int[]."
   ^ints [^bytes b]
   (let [n
         (alength b)

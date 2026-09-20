@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.mpl-capture
-  "Per-block collection of explicit attachments and rendered matplotlib figures.
+  "Per-block collection of the artifacts a block produced through `attach`.
 
    Producers call `record-attachment!` with bytes they already hold.
    `run-python-block` binds `*attachment-sink*` and drains it into the block's

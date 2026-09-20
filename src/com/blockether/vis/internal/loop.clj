@@ -5991,8 +5991,7 @@
                              ;; One block = one tool call, so this is the call's whole
                              ;; stdout (no per-form split).
                              :stdout (:stdout execution)
-                             ;; Artifacts the block PRODUCED (matplotlib
-                             ;; show/savefig or an `attach` call),
+                             ;; Artifacts the block PRODUCED (an `attach` call),
                              ;; captured at the SOURCE into the sandbox sink —
                              ;; carried down so the DB attachment OWNS the bytes.
                              :attachments (:attachments execution)
@@ -9686,10 +9685,10 @@
                         block-code (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         ;; Outbound artifacts a tool call PRODUCED this
-                        ;; iteration: every artifact a block PRODUCED (matplotlib
-                        ;; `plt.show()`/`savefig`), captured at the SOURCE into the
+                        ;; iteration: every artifact a block PRODUCED with
+                        ;; `attach`, captured at the SOURCE into the
                         ;; sandbox sink and stamped with the block's tool-call-id, so
-                        ;; the figure PNG is OWNED by the DB and survives a
+                        ;; the image bytes are OWNED by the DB and survive a
                         ;; restart / replay (V1 only kept the temp-file path).
                         iteration-attachments
                         (into (vec (:linked-report-attachments iteration-result))
@@ -9991,11 +9990,11 @@
                                                 ;; and model context both read it.
                                                 :forms-vec forms-vec
                                                 ;; Outbound image artifacts this iteration's
-                                                ;; tool calls produced (matplotlib figures),
+                                                ;; tool calls produced with `attach`,
                                                 ;; each `{:tool-call-id :media-type :base64 …}`.
                                                 ;; The conversation-suffix replays them as a
                                                 ;; vision user message so the model SEES its
-                                                ;; own plots within the turn.
+                                                ;; own images within the turn.
                                                 :attachments iteration-attachments
                                                 :reinspect-attachments reinspection-attachments
                                                 :ctx-diff iter-ctx-diff
