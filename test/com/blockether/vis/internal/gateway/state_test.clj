@@ -3890,7 +3890,7 @@
         (try (spit (#'bus/session-file sid)
                    (str/join (map #(str (wire/json-str %) "\n")
                                   [{:_producer (str (java.util.UUID/randomUUID))
-                                    :_pid (var-get #'bus/producer-pid) ; a LIVE producer
+                                    :_pid (bus/producer-pid) ; a LIVE producer
                                     :_store true
                                     :schema 1
                                     :seq 5

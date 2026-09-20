@@ -84,7 +84,7 @@
                                  (str (java.util.UUID/randomUUID))
 
                                  live-pid
-                                 (var-get #'bus/producer-pid)]
+                                 (bus/producer-pid)]
 
                              (write! "sid-live"
                                      [(turn-started prod live-pid "sid-live" "T-live")
@@ -183,7 +183,7 @@
               f
               (#'bus/session-file sid)]
 
-          (write! sid [(turn-started prod (var-get #'bus/producer-pid) sid "T-cursor")])
+          (write! sid [(turn-started prod (bus/producer-pid) sid "T-cursor")])
           (let [gate
                 (promise)
 
@@ -200,7 +200,7 @@
             (Thread/sleep 100)
             ;; producer appends while the drain is parked, then a subscriber hydrates
             (spit f
-                  (str (wire/json-str (delta prod (var-get #'bus/producer-pid) "T-cursor")) "\n")
+                  (str (wire/json-str (delta prod (bus/producer-pid) "T-cursor")) "\n")
                   :append
                   true)
             (future (bus/hydrate! sid))
@@ -297,7 +297,7 @@
               (str (java.util.UUID/randomUUID))
 
               pid
-              (var-get #'bus/producer-pid)
+              (bus/producer-pid)
 
               sid
               "sid-generation"
@@ -766,7 +766,7 @@
                   "tail-hydrate-no-newline"
 
                   started
-                  (turn-started "sibling" (var-get #'bus/producer-pid) sid "T")
+                  (turn-started "sibling" (bus/producer-pid) sid "T")
 
                   f
                   (journal! sid (str (wire/json-str started) "\n" (line "turn.completed")))]
@@ -848,3 +848,19 @@
                                (expect (.isFile f))
                                (expect (zero? @reads))
                                (expect (empty? @capture))))))))
+
+(defdescribe producer-identity-is-this-process-test
+             ;; Regression: `producer-id` and `producer-pid` were top-level VALUES, and a
+             ;; native image evaluates top-level forms at BUILD time — so every process
+             ;; started from one binary published under the same producer id and the same
+             ;; (build-time, long dead) pid. Siblings then read each other's journal lines
+             ;; as their own, and every liveness marker looked orphaned to the next process
+             ;; that scanned the directory: `live-turns` lost running sessions and a project
+             ;; header counted fewer live sessions than the rows under it showed LIVE.
+             ;; `native-producer-identity-test` guards the linked image; this guards the
+             ;; contract.
+             (it "stamps the RUNNING process's pid"
+                 (expect (= (.pid (java.lang.ProcessHandle/current)) (bus/producer-pid))))
+             (it "builds the self marker from this process's own producer id"
+                 (expect (= (str "\"_producer\":\"" (bus/producer-id) "\"")
+                            @(var-get #'bus/self-marker)))))

@@ -64,15 +64,31 @@
   "Run the orphan-journal sweep about this often (wall-clock ms)."
   (* 60 1000))
 
-(defonce ^{:doc "Stable per-process id: foreign events carry a different one."} producer-id
-  (str (java.util.UUID/randomUUID)))
+(defonce ^:private process-identity
+  ;; A DELAY, never a value: a native image evaluates every top-level form at
+  ;; BUILD time, so an id or a pid computed here was frozen INTO the binary and
+  ;; every vis process on the machine then published under the same producer id
+  ;; and the same (long dead) pid. Siblings read each other's journal lines as
+  ;; their own, and a liveness marker written by one process looked orphaned to
+  ;; the next one that scanned the directory — live sessions vanished from
+  ;; `live-turns` while their rows still said LIVE. Forced on first use, which
+  ;; only ever happens at runtime (`discovery/current-pid` reads the pid the
+  ;; same way).
+  (delay {:id (str (java.util.UUID/randomUUID))
+          :pid (try (.pid (java.lang.ProcessHandle/current)) (catch Throwable _ -1))}))
 
-(def ^:private producer-pid
+(defn producer-id
+  "Stable per-process id: foreign events carry a different one."
+  ^String []
+  (:id @process-identity))
+
+(defn producer-pid
   "This process's OS pid, tagged onto every published event as `:_pid`. Lets a
    consumer tell a turn genuinely streaming in a live SIBLING process apart from
    one orphaned by a crashed/restarted daemon — the difference between hydrating
    a live turn and reaping a dead one."
-  (try (.pid (java.lang.ProcessHandle/current)) (catch Throwable _ -1)))
+  []
+  (:pid @process-identity))
 
 (defn- producer-alive?
   "True when the OS process that produced a journal event is still running. A
@@ -80,7 +96,7 @@
    never reap a turn we cannot PROVE is orphaned."
   [pid]
   (or (nil? pid)
-      (= (long pid) (long producer-pid))
+      (= (long pid) (long (producer-pid)))
       (try (.isPresent (java.lang.ProcessHandle/of (long pid))) (catch Throwable _ true))))
 
 (defn- events-dir
@@ -181,7 +197,7 @@
                (wire/json-str {"schema" 1
                                "session_id" (str sid)
                                "turn_id" (str turn-id)
-                               "pid" producer-pid
+                               "pid" (producer-pid)
                                "started_at" (util/now-ms)}))
          (invalidate-live-cache!))
        (catch Throwable t (tel/log! :debug ["gateway-bus: live mark failed" (ex-message t)])))
@@ -306,7 +322,7 @@
              (str (get request "id"))
 
              kept
-             (if (= (long producer-pid) (long (or (get marker "pid") -1)))
+             (if (= (long (producer-pid)) (long (or (get marker "pid") -1)))
                (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))
                [])]
 
@@ -315,7 +331,7 @@
          (spit (waiting-file sid)
                (wire/json-str {"schema" 1
                                "session_id" (str sid)
-                               "pid" producer-pid
+                               "pid" (producer-pid)
                                "requests" (conj kept {"id" rid "since" (util/now-ms)})}))
          (invalidate-waiting-cache!))
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting mark failed" (ex-message t)])))
@@ -530,7 +546,7 @@
 
              line
              (str (wire/json-str
-                    (gateway-contract/stamp-journal-line event producer-id producer-pid store?))
+                    (gateway-contract/stamp-journal-line event (producer-id) (producer-pid) store?))
                   "\n")]
 
          (with-open [raf (RandomAccessFile. f "rw")]
@@ -784,10 +800,11 @@
 
 (defonce ^:private tailer (atom nil))
 
-(def ^:private ^String self-marker
-  "The exact producer metadata fragment this process writes. A raw substring test
-   short-circuits JSON parsing for our own journal lines."
-  (str "\"_producer\":\"" producer-id "\""))
+(defonce ^:private self-marker
+  ;; The exact producer metadata fragment this process writes. A raw substring
+  ;; test short-circuits JSON parsing for our own journal lines. A DELAY for the
+  ;; same reason as `process-identity`: built here, resolved at runtime.
+  (delay (str "\"_producer\":\"" (producer-id) "\"")))
 
 ;; One growable read buffer, reused across polls. drain-file! runs ONLY on the
 ;; single tailer thread (poll-once! drains files sequentially), so steady-state
@@ -801,9 +818,9 @@
   ;; streaming producer tails its own journal, so this avoids parse-then-discard
   ;; on nearly every line it just wrote. The `"_producer"` equality below stays as
   ;; a correctness backstop for the (foreign) lines that do get parsed.
-  (when-not (.contains line self-marker)
+  (when-not (.contains line ^String @self-marker)
     (when-let [event (wire/parse-json line)]
-      (when-not (= (gateway-contract/journal-producer event) producer-id)
+      (when-not (= (gateway-contract/journal-producer event) (producer-id))
         (when-let [f @deliver-fn]
           (let [store? (gateway-contract/journal-stored? event)
                 clean (gateway-contract/strip-journal-metadata event)]
@@ -953,7 +970,7 @@
                               (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8))
                             (remove str/blank?)
                             (keep wire/parse-json))
-                foreign (remove #(= (gateway-contract/journal-producer %) producer-id) events)
+                foreign (remove #(= (gateway-contract/journal-producer %) (producer-id)) events)
                 ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
                 ;; THIS process) means the turn is done — don't re-stream it.
                 terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
