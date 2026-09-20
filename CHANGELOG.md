@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.15] - 2026-09-21
+
+### Added
+- Leave a session with a swipe on iOS: swipe in from the left edge of a session screen and the app
+  takes you back to the session list.
+
+### Fixed
+- Read a live view on a narrow phone screen again: a table stays inside the screen instead of
+  running past its edge.
+- Get a clear error for a path your operating system cannot use: reading or patching a file whose
+  name is too long, or carries a stray NUL byte, now fails naming that argument instead of ending
+  the step with an unexplained crash.
+- Reach a project's session groups from the Python SDK: the gateway client now has methods for
+  listing, creating, renaming, reordering and deleting groups, and for filing a session under one.
+
 ## [v0.2.14] - 2026-09-20
 
 ### Added
@@ -6466,7 +6481,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.14...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.15...HEAD
+[v0.2.15]: https://github.com/Blockether/vis/compare/v0.2.14...v0.2.15
 [v0.2.14]: https://github.com/Blockether/vis/compare/v0.2.13...v0.2.14
 [v0.2.13]: https://github.com/Blockether/vis/compare/v0.2.12...v0.2.13
 [v0.2.12]: https://github.com/Blockether/vis/compare/v0.2.11...v0.2.12
