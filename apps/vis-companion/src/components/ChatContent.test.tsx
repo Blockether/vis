@@ -856,6 +856,36 @@ describe('user bubble recordings', () => {
     expect(container.querySelector('audio')).toBe(player);
     expect(container.querySelector('audio')?.currentTime).toBe(7);
   });
+
+  // The gateway ships the words as TIMED LINES beside the plain string. A bubble
+  // that dropped them left the player unable to follow its own transcript.
+  it('hands the timed transcript lines to the recording row', () => {
+    const { container } = render(
+      <UserMessage
+        attachments={[
+          {
+            id: 'timed-audio',
+            filename: 'memo.m4a',
+            media_type: 'audio/mp4',
+            base64: 'AAAAIGZ0eXBNNEEg',
+            transcription: 'first line second line',
+            transcription_segments: [
+              { start: 0, end: 1.5, text: 'first line' },
+              { start: 1.5, end: 3, text: 'second line' },
+            ],
+          },
+        ]}
+      >
+        listen
+      </UserMessage>,
+    );
+    const band = container.querySelector('[aria-expanded]');
+    if (band) fireEvent.click(band);
+
+    expect(Array.from(container.querySelectorAll('button')).map((row) => row.textContent)).toContain(
+      'second line',
+    );
+  });
 });
 // ONE picture is a plate; several are a GALLERY. A transcript where somebody
 // dropped four screenshots used to be four 60svh plates stacked down the

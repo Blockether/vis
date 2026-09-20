@@ -1,5 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { PICTURE_SUMMARY, RECORDING_TRANSCRIPT, STORY_PICTURES } from '../dev/story-data';
+import {
+  PICTURE_SUMMARY,
+  RECORDING_SEGMENTS,
+  RECORDING_TRANSCRIPT,
+  STORY_PICTURES,
+} from '../dev/story-data';
 import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
 import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } from './Media';
 
@@ -62,6 +67,20 @@ export const Grid: Story = {
 export const Recording: Story = {
   render: () => (
     <MediaRecording name="memo-2.m4a" meta="M4A · 412KB" transcription={RECORDING_TRANSCRIPT}>
+      <RecordingPlayer />
+    </MediaRecording>
+  ),
+};
+
+/** The words as TIMED LINES: the one being spoken lights up, and pressing one plays it. */
+export const RecordingTimed: Story = {
+  render: () => (
+    <MediaRecording
+      name="memo-4.m4a"
+      meta="M4A · 412KB"
+      transcription={RECORDING_TRANSCRIPT}
+      transcriptionSegments={RECORDING_SEGMENTS}
+    >
       <RecordingPlayer />
     </MediaRecording>
   ),

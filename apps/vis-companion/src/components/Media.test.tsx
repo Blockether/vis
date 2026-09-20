@@ -243,6 +243,54 @@ describe('MediaRecording', () => {
     );
     expect(blank).not.toContain('TRANSCRIPTION');
   });
+
+  // Regression: the speech engine timestamps every token it decodes, and the row
+  // threw the timings away — the words stood still while the audio moved, and the
+  // only way back to a sentence was dragging the scrubber until it turned up.
+  it('follows the player through timed lines and seeks to the one pressed', async () => {
+    const { container } = render(
+      <MediaRecording
+        name="memo.m4a"
+        transcription="buy milk and call back"
+        transcriptionSegments={[
+          { start: 0, end: 2, text: 'buy milk' },
+          { start: 2, end: 4, text: 'and call back' },
+        ]}
+      >
+        <RecordingPlayer src="blob:memo" />
+      </MediaRecording>,
+    );
+    await userEvent.click(screen.getByText('TRANSCRIPTION'));
+    const first = screen.getByRole('button', { name: 'buy milk' });
+    const second = screen.getByRole('button', { name: 'and call back' });
+    expect(first).toHaveAttribute('aria-current', 'true');
+
+    const audio = container.querySelector('audio');
+    if (audio) {
+      audio.currentTime = 2.5;
+      fireEvent.timeUpdate(audio);
+    }
+    expect(second).toHaveAttribute('aria-current', 'true');
+    expect(first).not.toHaveAttribute('aria-current');
+
+    await userEvent.click(second);
+    expect(audio?.currentTime).toBe(2);
+  });
+
+  // Nothing placed the words in the audio — an older recording, or an engine that
+  // only returns a string. The band is still the quotation it always was.
+  it('quotes the whole transcript when there are no timings', async () => {
+    render(
+      <MediaRecording name="memo.m4a" transcription="buy milk and call back">
+        <RecordingPlayer src="blob:memo" />
+      </MediaRecording>,
+    );
+    await userEvent.click(screen.getByText('TRANSCRIPTION'));
+    expect(screen.getByText(/buy milk and call back/).textContent).toBe(
+      '“buy milk and call back”',
+    );
+    expect(screen.queryByRole('button', { name: 'buy milk' })).toBeNull();
+  });
 });
 
 // The platform's own `<audio controls>` is another program's widget on this

@@ -100,6 +100,21 @@
 
 (def <-json vis/<-json)
 
+(defn- ->segments-json
+  "Timed transcript lines as the JSON its column holds, or nil when a recording has
+   none: `{:start :end :text}` per line, in seconds, which is what a player needs to
+   highlight the sentence that is sounding and to seek to one somebody clicked."
+  [segments]
+  (when (seq segments) (->json (mapv #(select-keys % [:start :end :text]) segments))))
+
+(defn- <-segments-json
+  "The column back as `{:start :end :text}` lines. `<-json` never keywordizes, so the
+   keys are restored HERE rather than at every read site."
+  [value]
+  (not-empty (some->> value
+                      <-json
+                      (mapv #(update-keys % keyword)))))
+
 (def ^:private blob-freeze-opts
   "Nippy options for every BLOB column. Zstd — `io.airlift/aircompressor`, pure
    Java, already on Nippy's own classpath, no JNI — instead of Nippy's default
@@ -3018,6 +3033,9 @@
                                     ;; The recording's own words, transcribed once on
                                     ;; the way in - see the column's comment in V1.
                                     :transcription (not-empty (str (:transcription att)))
+                                    ;; ...and the timed lines they were spoken in.
+                                    :transcription_segments (->segments-json
+                                                              (:transcription-segments att))
                                     :created_at now}
                                    payload)]})))))
 
@@ -3119,6 +3137,9 @@
              ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
              ;; something could read it; every other row carries nil rather than "".
              :transcription (not-empty (str (:transcription row)))
+             ;; ...and WHERE each line of them is spoken, so a player can follow the
+             ;; transcript it shows. Absent when the engine reported no times.
+             :transcription-segments (<-segments-json (:transcription_segments row))
              :storage-uri (:storage_uri row)
              :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
              :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
@@ -3229,7 +3250,7 @@
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
    :filename :reference :view_id :live_invocation_id :live_activity_id :version :audience
-   :commentable :storage_uri :size_bytes :transcription
+   :commentable :storage_uri :size_bytes :transcription :transcription_segments
    [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
@@ -3286,6 +3307,7 @@
                "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
                "tool_call_id, position, kind, media_type, filename, view_id, live_invocation_id, live_activity_id, "
                "version, audience, commentable, storage_uri, size_bytes, transcription, "
+               "transcription_segments, "
                "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
                "FROM session_attachment WHERE session_turn_iteration_id IN ("
                (str/join "," (repeat (count ids) "?"))
@@ -3356,8 +3378,8 @@
          [:a.reference :reference] [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
          [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
          [:a.commentable :commentable] [:a.storage_uri :storage_uri]
-         [:a.transcription :transcription] [:a.size_bytes :size_bytes]
-         [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
+         [:a.transcription :transcription] [:a.transcription_segments :transcription_segments]
+         [:a.size_bytes :size_bytes] [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
 (defn db-list-session-attachments-meta
@@ -3748,6 +3770,8 @@
                                       :audience (attachments/normalize-audience (:audience att))
                                       :commentable (if (true? (:commentable att)) 1 0)
                                       :transcription (not-empty (str (:transcription att)))
+                                      :transcription_segments (->segments-json
+                                                                (:transcription-segments att))
                                       :created_at now}
                                      (attachment-live-view-cols att)
                                      payload)]}))))))
@@ -3770,8 +3794,11 @@
    Changed words invalidate the owning session's exact provider prefix, so the next
    request rebuilds it from durable history. Repeating the same words is a no-op.
 
+   `segments` is the same words cut into the timed lines a player follows, written
+   beside them; a run that produced no times leaves the column as it was.
+
    Returns true when the inbound row exists and has the requested words."
-  [db-info session-turn-soul-id position transcription]
+  [db-info session-turn-soul-id position transcription segments]
   (boolean
     (when (and (ds db-info) session-turn-soul-id position (not (str/blank? (str transcription))))
       (sqlite-write-tx!
@@ -3781,15 +3808,23 @@
                 [:and [:= :session_turn_soul_id (->ref session-turn-soul-id)]
                  [:= :session_turn_iteration_id nil] [:= :position position]]
 
+                segments-json
+                (->segments-json segments)
+
                 row
                 (query-one! tx-info
-                            {:select [:transcription] :from :session_attachment :where where})]
+                            {:select [:transcription :transcription_segments]
+                             :from :session_attachment
+                             :where where})]
 
             (when row
-              (when (not= (str transcription) (:transcription row))
+              (when (or (not= (str transcription) (:transcription row))
+                        (and segments-json (not= segments-json (:transcription_segments row))))
                 (execute! tx-info
                           {:update :session_attachment
-                           :set {:transcription (str transcription)}
+                           :set (cond-> {:transcription (str transcription)}
+                                  segments-json
+                                  (assoc :transcription_segments segments-json))
                            :where where})
                 ;; A prefix captured before these words existed cannot replay them.
                 ;; Rebuild the next request from durable history in every session state.

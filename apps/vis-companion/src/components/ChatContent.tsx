@@ -1925,6 +1925,7 @@ const AttachmentTile = memo(function AttachmentTile({
         name={name}
         meta={mediaMeta(attachment)}
         transcription={attachment.transcription}
+        transcriptionSegments={attachment.transcription_segments}
         transcriptionStatus={attachment.transcription_status}
       >
         {failed ? (
@@ -3963,6 +3964,7 @@ export const UserMessage = memo(function UserMessage({
               name={att.filename}
               meta={mediaMeta(att)}
               transcription={att.transcription}
+              transcriptionSegments={att.transcription_segments}
               transcriptionStatus={att.transcription_status}
             >
               <RecordingPlayer src={attachmentSrc(att)} />

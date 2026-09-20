@@ -241,11 +241,18 @@
                                                             :data {:filename (:filename attachment)
                                                                    :error (ex-message t)}})
                                                  nil))]
-      (try (let [text (some-> (speech/transcribe! {:audio-path (str file)})
-                              str
-                              str/trim
-                              not-empty)
-                 outcome (if text {:transcription text} {:status SILENT :reason :no-speech})]
+      (try (let [{:keys [text segments]} (speech/transcribe! {:audio-path (str file)})
+                 words (some-> text
+                               str
+                               str/trim
+                               not-empty)
+                 outcome (if words
+                           ;; The words, and — when the engine timed them — WHERE each line of
+                           ;; them is spoken, so a player can follow the transcript it shows.
+                           (cond-> {:transcription words}
+                             (seq segments)
+                             (assoc :transcription-segments (vec segments)))
+                           {:status SILENT :reason :no-speech})]
 
              (log-outcome! attachment outcome started)
              outcome)
@@ -322,9 +329,12 @@
    means the attachment is not a recording and has no transcription outcome at all;
    anything else IS the outcome — it already carries words, or this machine cannot
    make any right now."
-  [{:keys [media-type transcription] :as attachment}]
+  [{:keys [media-type transcription transcription-segments] :as attachment}]
   (cond (not (attachments/audio-media-type? media-type)) nil
-        (not (str/blank? (str transcription))) {:transcription (str transcription)}
+        (not (str/blank? (str transcription))) (cond-> {:transcription (str transcription)}
+                                                 (seq transcription-segments)
+                                                 (assoc :transcription-segments
+                                                   (vec transcription-segments)))
         (not (enabled?)) (unavailable :disabled)
         (nil? (engine)) (unavailable :no-engine)
         (not (available?)) (unavailable :not-ready)
@@ -411,6 +421,9 @@
                     (cond-> (dissoc attachment :transcription-status)
                       (:transcription answer)
                       (assoc :transcription (:transcription answer))
+
+                      (seq (:transcription-segments answer))
+                      (assoc :transcription-segments (vec (:transcription-segments answer)))
 
                       (:status answer)
                       (assoc :transcription-status (:status answer)))))))

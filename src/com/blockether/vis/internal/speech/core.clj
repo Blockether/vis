@@ -332,7 +332,13 @@
 
     (case direction
       :transcribe
-      {:text (str result)}
+      ;; An engine may answer with the words alone, or with the words AND where each
+      ;; line of them falls in the audio (`:segments`) — the built-in one does, so a
+      ;; player can follow the transcript while it plays.
+      (let [answer (if (map? result) result {:text result})]
+        (cond-> {:text (str (:text answer))}
+          (seq (:segments answer))
+          (assoc :segments (vec (:segments answer)))))
 
       :synthesize
       (let [result-map
@@ -351,7 +357,8 @@
 
 (defn transcribe!
   "Run `audio-path` through the resolved transcription engine on THIS thread, reporting
-   `{:phase :progress}` to `on-progress`. Returns the transcript."
+   `{:phase :progress}` to `on-progress`. Returns `{:text …}`, plus `:segments` when the
+   engine also said WHERE in the recording each line of the transcript is spoken."
   [{:keys [engine-id on-progress] :as request}]
   (let [engine
         (resolve-engine :transcribe engine-id)
@@ -360,9 +367,9 @@
         (reporter on-progress)]
 
     (report {:phase :preparing :progress 0})
-    (let [text (:text (call-engine :transcribe engine request report nil))]
+    (let [answer (call-engine :transcribe engine request report nil)]
       (report {:phase :done :progress 100})
-      text)))
+      answer)))
 
 (defn synthesize!
   "Speak `text` through the resolved synthesis engine on THIS thread, reporting

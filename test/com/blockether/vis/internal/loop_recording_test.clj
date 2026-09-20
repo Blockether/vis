@@ -233,13 +233,13 @@
 
       (persistence/db-set-session-prompt-cache-state! db state-id checkpoint)
       (persistence/db-set-session-prompt-cache-state! db other-state-id checkpoint)
-      (expect (false? (persistence/db-set-turn-attachment-transcription! db tid 9 "words")))
+      (expect (false? (persistence/db-set-turn-attachment-transcription! db tid 9 "words" nil)))
       (expect (= checkpoint (persistence/db-get-session-prompt-cache-state db state-id)))
-      (expect (true? (persistence/db-set-turn-attachment-transcription! db tid 0 "words")))
+      (expect (true? (persistence/db-set-turn-attachment-transcription! db tid 0 "words" nil)))
       (expect (nil? (persistence/db-get-session-prompt-cache-state db state-id)))
       (expect (= checkpoint (persistence/db-get-session-prompt-cache-state db other-state-id)))
       (persistence/db-set-session-prompt-cache-state! db state-id checkpoint)
-      (expect (true? (persistence/db-set-turn-attachment-transcription! db tid 0 "words")))
+      (expect (true? (persistence/db-set-turn-attachment-transcription! db tid 0 "words" nil)))
       (expect (= checkpoint (persistence/db-get-session-prompt-cache-state db state-id))))))
 
 (defdescribe

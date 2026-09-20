@@ -10245,7 +10245,8 @@
              (persistance/db-set-turn-attachment-transcription! db-info
                                                                 session-turn-id
                                                                 position
-                                                                words))
+                                                                words
+                                                                (:transcription-segments after)))
            (catch Throwable t
              (tel/log! {:level :warn
                         :id ::transcript-store-failed

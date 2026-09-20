@@ -99,6 +99,26 @@
       (register-fake! "fresh words")
       (let [rows (at/transcribe-attachments [(assoc (memo) :transcription "stored words")])]
         (expect (= "stored words" (:transcription (first rows))))
+        (expect (empty? @calls))))
+  ;; A transcript nobody can follow while it plays is a wall of text: the lines and
+  ;; the seconds they occupy ride beside the words so a player can highlight the one
+  ;; that is sounding and seek to the one somebody taps.
+  (it "carries the timed lines the engine put the words into"
+      (register-fake! {:text "buy milk" :segments [{:start 0.0 :end 1.5 :text "buy milk"}]})
+      (let [row (first (at/transcribe-attachments [(memo)]))]
+        (expect (= "buy milk" (:transcription row)))
+        (expect (= [{:start 0.0 :end 1.5 :text "buy milk"}] (:transcription-segments row)))))
+  (it "keeps the lines a previous run already stored"
+      (register-fake! "fresh words")
+      (let [stored
+            [{:start 0.0 :end 1.0 :text "stored words"}]
+
+            row
+            (first (at/transcribe-attachments [(assoc (memo)
+                                                 :transcription "stored words"
+                                                 :transcription-segments stored)]))]
+
+        (expect (= stored (:transcription-segments row)))
         (expect (empty? @calls)))))
 
 ;; Regression, issue: a recording the machine could not transcribe came back as a bare

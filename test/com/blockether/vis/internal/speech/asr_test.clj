@@ -284,3 +284,28 @@
                  (expect (= [] (asr/chunk-plan -5 16000 20.0)))
                  (expect (= [[0 1000]] (asr/chunk-plan 1000 0 20.0)))
                  (expect (= [[0 1000]] (asr/chunk-plan 1000 16000 0.0)))))
+
+;; The times were always produced and always thrown away: a transducer stamps every
+;; token, and the row under the player could not follow the audio without them.
+(defdescribe token-timestamps-test
+             (it "glues sub-word pieces into words and shifts them to where the chunk starts"
+                 (expect (= [{:text "transcript" :start 10.0 :end 10.75}
+                             {:text "please" :start 11.0 :end 11.5}]
+                            (asr/tokens->words (into-array String ["▁trans" "cript" "▁please"])
+                                               (float-array [0.0 0.5 1.0])
+                                               (float-array [0.5 0.25 0.5])
+                                               10.0))))
+             (it "lets a word the model gave no duration run until the next one starts"
+                 (let [words (asr/tokens->words (into-array String ["▁one" "▁two"])
+                                                (float-array [0.0 1.0])
+                                                (float-array [])
+                                                0.0)]
+                   (expect (= ["one" "two"] (mapv :text words)))
+                   (expect (= 1.0 (:end (first words))))
+                   (expect (< 1.0 (double (:end (second words)))))))
+             (it "answers nothing when the engine reported no times at all"
+                 (expect (= []
+                            (asr/tokens->words (into-array String ["▁one"])
+                                               (float-array [])
+                                               (float-array [])
+                                               0.0)))))

@@ -883,6 +883,7 @@ function ArtifactDetail({
               press away here too rather than only in the message it arrived on. */}
           <MediaRecording
             transcription={artifact.transcription}
+            transcriptionSegments={artifact.transcriptionSegments}
             transcriptionStatus={artifact.transcriptionStatus}
           >
             <RecordingPlayer src={url} />

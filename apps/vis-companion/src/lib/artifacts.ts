@@ -18,7 +18,12 @@
  */
 
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
-import type { IterationAttachment, SessionArtifactRow, TranscriptTurn } from './types';
+import type {
+  IterationAttachment,
+  SessionArtifactRow,
+  TranscriptionSegment,
+  TranscriptTurn,
+} from './types';
 
 /** Media types that ride the transcript as a document, never as model input. */
 const FRAME_MEDIA = new Set(['application/pdf', 'text/html', 'application/xhtml+xml']);
@@ -238,6 +243,11 @@ export interface SessionArtifact {
    */
   transcriptionStatus?: string;
   /**
+   * The same words as TIMED LINES, when the engine could place them — what lets the
+   * sheet's player light the line being spoken and seek to a line that is pressed.
+   */
+  transcriptionSegments?: TranscriptionSegment[];
+  /**
    * Every cut of this artifact, NEWEST FIRST and including this one — present
    * only on a collapsed list (`collapseArtifactVersions`). The primary view is
    * always the head; the rest is the history behind it.
@@ -274,6 +284,7 @@ function toArtifact(
     commentable: attachment.commentable === true,
     transcription: attachment.transcription,
     transcriptionStatus: attachment.transcription_status,
+    transcriptionSegments: attachment.transcription_segments,
   };
 }
 

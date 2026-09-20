@@ -65,3 +65,35 @@
                  (expect (= "I want to fix it"
                             (engine/clean-transcript "I, I, I, I want to fix it")))
                  (expect (= "don't worry" (engine/clean-transcript "don't don't worry")))))
+
+(defn- spoken
+  "Words with the seconds they occupy, as the recognizer hands them over."
+  [& specs]
+  (mapv (fn [[text start end]]
+          {:text text :start start :end end})
+        specs))
+
+;; The words alone cannot be FOLLOWED while the recording plays. Cleaning has to
+;; happen on timed words for the same reason: strip a stutter out of finished text
+;; and every time after it belongs to a word that is no longer there.
+(defdescribe
+  timed-transcript-test
+  (it "cleans stutters out of timed words and leaves the survivors where they were"
+      (let [cleaned (engine/clean-words
+                      (spoken ["uh" 0.0 0.2] ["I" 0.3 0.4] ["I" 0.5 0.6] ["want" 0.7 1.0]))]
+        (expect (= ["I" "want"] (mapv :text cleaned)))
+        (expect (= [0.3 0.7] (mapv :start cleaned)))))
+  (it "ends a line at a full stop"
+      (let [segments (engine/words->segments
+                       (spoken ["Buy" 0.0 0.3] ["milk." 0.3 0.8] ["Then" 0.9 1.2]))]
+        (expect (= ["Buy milk." "Then"] (mapv :text segments)))
+        (expect (= 0.0 (:start (first segments))))
+        (expect (= 0.8 (:end (first segments))))))
+  (it "ends a line at a pause when nobody spoke a full stop"
+      (expect
+        (= ["buy milk" "then call"]
+           (mapv :text
+                 (engine/words->segments
+                   (spoken ["buy" 0.0 0.3] ["milk" 0.3 0.8] ["then" 2.5 2.8] ["call" 2.8 3.2]))))))
+  (it "leaves untimed words out of the lines a player follows"
+      (expect (= [] (engine/words->segments [{:text "hello"}])))))

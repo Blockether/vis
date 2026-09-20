@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
-            OfflineStream OfflineTransducerModelConfig WaveReader]
+            OfflineRecognizerResult OfflineStream OfflineTransducerModelConfig WaveReader]
            [java.io File]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
@@ -293,23 +293,122 @@
                         (conj (subvec ranges 0 (- (count ranges) 2)) [(prev 0) (tail 1)]))
                       ranges))))))
 
+(def ^:private word-mark
+  "SentencePiece's word-start marker (U+2581). A transducer emits SUB-WORD pieces —
+   `▁trans`, `cript`, `ion` — and this mark is the one thing in the stream that says
+   a new WORD begins here rather than the last one continuing."
+  "▁")
+
+(def ^:private trailing-word-seconds
+  "How long a word lasts when the model reported no duration for it and no word
+   follows: long enough to highlight, short enough to end with the recording."
+  0.2)
+
+(defn tokens->words
+  "Pure: sherpa's sub-word tokens and their start times as whole WORDS —
+   `{:text :start :end}` in seconds, shifted by `offset-seconds`.
+
+   The pieces are glued back into words, each keeping the first piece's start and the
+   last piece's end, because a reader follows words and not word pieces. `durations`
+   may be empty — a legal result — and a word without one lasts until the next word
+   begins."
+  [tokens timestamps durations offset-seconds]
+  (let [offset
+        (double offset-seconds)
+
+        texts
+        (vec tokens)
+
+        starts
+        (vec timestamps)
+
+        lengths
+        (vec durations)
+
+        n
+        (min (count texts) (count starts))
+
+        joined
+        (loop [i
+               0
+
+               acc
+               []]
+
+          (if (>= i (long n))
+            acc
+            (let [piece
+                  (str (nth texts i))
+
+                  start
+                  (+ offset (double (nth starts i)))
+
+                  end
+                  (+ start (max 0.0 (double (get lengths i 0.0))))
+
+                  text
+                  (str/replace piece word-mark "")
+
+                  prev
+                  (peek acc)]
+
+              (recur (inc i)
+                     (if (or (nil? prev) (str/starts-with? piece word-mark))
+                       (conj acc {:text text :start start :end end})
+                       (conj (pop acc)
+                             (assoc prev
+                               :text (str (:text prev) text)
+                               :end (max (double (:end prev)) end))))))))
+
+        words
+        (filterv #(not (str/blank? (:text %))) joined)]
+
+    (mapv (fn [i]
+            (let [word
+                  (nth words i)
+
+                  next-word
+                  (get words (inc i))]
+
+              (if (> (double (:end word)) (double (:start word)))
+                word
+                (assoc word
+                  :end (if next-word
+                         (double (:start next-word))
+                         (+ (double (:start word)) (double trailing-word-seconds)))))))
+          (range (count words)))))
+
 (defn- decode-chunk!
-  "One `[start end]` range through its own stream. A stream is single-use, so a
-   fresh one per chunk is the API's own contract, not a precaution."
+  "One `[start end]` range through its own stream, as `{:text :words}`. A stream is
+   single-use, so a fresh one per chunk is the API's own contract, not a precaution.
+
+   Sherpa times every token from the start of the audio IT WAS GIVEN, so a chunk's
+   timestamps are relative to that chunk. Each word is shifted by where the chunk
+   begins in the recording — without it the second half of a long memo highlights
+   the first half's sentences."
   ;; NO primitive hints on the numbers: five arguments is one past the four a
   ;; primitive-taking fn may have, and the ints are cast at the call below anyway.
-  ^String [^OfflineRecognizer r ^floats samples sample-rate start end]
+  [^OfflineRecognizer r ^floats samples sample-rate start end]
   (let [^OfflineStream stream (.createStream r)]
-    (try (.acceptWaveform stream
-                          (java.util.Arrays/copyOfRange samples (int start) (int end))
-                          (int sample-rate))
-         (.decode r stream)
-         (str/trim (.getText (.getResult r stream)))
-         (finally (try (.release stream) (catch Throwable _))))))
+    (try
+      (.acceptWaveform stream
+                       (java.util.Arrays/copyOfRange samples (int start) (int end))
+                       (int sample-rate))
+      (.decode r stream)
+      (let [^OfflineRecognizerResult result (.getResult r stream)
+            offset (if (pos? (long sample-rate))
+                     (/ (double (long start)) (double (long sample-rate)))
+                     0.0)]
+
+        {:text (str/trim (.getText result))
+         :words
+         (tokens->words (.getTokens result) (.getTimestamps result) (.getDurations result) offset)})
+      (finally (try (.release stream) (catch Throwable _))))))
 
 (defn transcribe-file!
   "Transcribe `audio-path` with local Parakeet TDT int8 through the sherpa-onnx
-   Java API. Auto-downloads the model on first use. Returns plain text.
+   Java API. Auto-downloads the model on first use. Returns `{:text :words}`: the
+   whole transcript, and every WORD with the seconds it occupies in the recording.
 
    `opts` may carry `:on-progress`, called with `{:phase :progress}` (`:preparing`
    while the model and the native runtime are being made ready, then
@@ -368,13 +467,17 @@
            ^OfflineRecognizer r
            (recognizer files)]
 
-       (try (->> plan
-                 (map (fn [[start end]]
-                        (let [text (decode-chunk! r samples sample-rate start end)]
-                          (report {:phase :transcribing
-                                   :progress (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
-                          text)))
-                 (remove str/blank?)
-                 (str/join " ")
-                 str/trim)
+       (try (let [decoded (mapv (fn [[start end]]
+                                  (let [chunk (decode-chunk! r samples sample-rate start end)]
+                                    (report {:phase :transcribing
+                                             :progress
+                                             (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
+                                    chunk))
+                                plan)]
+              {:text (->> decoded
+                          (map :text)
+                          (remove str/blank?)
+                          (str/join " ")
+                          str/trim)
+               :words (into [] (mapcat :words) decoded)})
             (finally (try (.release r) (catch Throwable _))))))))

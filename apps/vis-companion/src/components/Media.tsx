@@ -1,4 +1,13 @@
-import { useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 import { artifactMedia, attachmentBytes } from '../lib/artifacts';
 import {
@@ -8,6 +17,7 @@ import {
   mediaTileFrameClass,
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
+import type { TranscriptionSegment } from '../lib/types';
 import { PauseIcon, PlayIcon } from './icons';
 import { Disclosure, PROSE } from './ui';
 
@@ -65,6 +75,30 @@ const TRANSCRIPTION_STATUS_LABEL: Record<string, string> = {
 };
 
 /**
+ * The needle a recording's player and its own words SHARE.
+ *
+ * The player arrives as `children`, so the card that paints the transcript cannot
+ * reach into it — the two meet here instead. The card owns the `<audio>` handle and
+ * the current position; the player fills the handle and publishes the position as it
+ * advances; a line of the transcript seeks by writing `currentTime`. A player
+ * standing on its own reads the default below and behaves exactly as it did before.
+ */
+type RecordingTimeline = {
+  /** Where the needle is, in seconds. */
+  position: number;
+  /** The card's `<audio>` handle, or null when no card is listening. */
+  audioRef: RefObject<HTMLAudioElement | null> | null;
+  /** The player's report that the needle moved. */
+  onPosition: (seconds: number) => void;
+};
+
+const RecordingTimelineContext = createContext<RecordingTimeline>({
+  position: 0,
+  audioRef: null,
+  onPosition: () => undefined,
+});
+
+/**
  * `mm:ss`, or `h:mm:ss` once a recording passes the hour — a meeting is measured
  * in hours, and `72:14` is not a time anybody reads.
  */
@@ -101,15 +135,25 @@ export function RecordingPlayer({
   /** The bytes would not decode — the caller paints its own failure line. */
   onError?: () => void;
 }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const timeline = useContext(RecordingTimelineContext);
+  const ownRef = useRef<HTMLAudioElement>(null);
+  // Inside a recording card the CARD owns the element and the clock, so a sentence
+  // pressed in the transcript moves this scrubber too. Alone, the player owns both.
+  const audioRef = timeline.audioRef ?? ownRef;
   const [isPlaying, setIsPlaying] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  const [ownElapsed, setOwnElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  const elapsed = timeline.audioRef ? timeline.position : ownElapsed;
   // A stream still being fetched reports `Infinity` or `NaN` for its length, and
   // a scrubber cannot be drawn against either: until the metadata lands the bar
   // stays empty and inert rather than jumping to a made-up position.
   const total = Number.isFinite(duration) && duration > 0 ? duration : 0;
   const position = total > 0 ? Math.min(elapsed, total) : 0;
+
+  const moveTo = (seconds: number) => {
+    setOwnElapsed(seconds);
+    timeline.onPosition(seconds);
+  };
 
   const toggle = () => {
     const audio = audioRef.current;
@@ -127,7 +171,7 @@ export function RecordingPlayer({
     const next = Number(event.target.value);
     if (!audio || !Number.isFinite(next)) return;
     audio.currentTime = next;
-    setElapsed(next);
+    moveTo(next);
   };
 
   return (
@@ -139,12 +183,12 @@ export function RecordingPlayer({
         className="hidden"
         onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
         onDurationChange={(event) => setDuration(event.currentTarget.duration)}
-        onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
+        onTimeUpdate={(event) => moveTo(event.currentTarget.currentTime)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
           setIsPlaying(false);
-          setElapsed(0);
+          moveTo(0);
         }}
         onError={onError}
       />
@@ -197,11 +241,18 @@ export function RecordingPlayer({
  * code face said "machine output" about a sentence a person said. There is no mic
  * beside the player either: the control already announces itself as audio, and a glyph
  * that repeats the widget next to it only takes column width from the scrubber.
+ *
+ * When the words arrive as TIMED LINES, the band FOLLOWS the audio: the line being
+ * spoken is lit as the needle reaches it, and pressing a line jumps the recording
+ * there and plays on from it. It is the same question asked in both directions —
+ * "where am I in these words?" and "play me this sentence" — and it costs nothing
+ * beyond the timestamps the speech engine already produced.
  */
 export function MediaRecording({
   name,
   meta,
   transcription,
+  transcriptionSegments,
   transcriptionStatus,
   children,
 }: {
@@ -216,6 +267,12 @@ export function MediaRecording({
    */
   transcription?: string;
   /**
+   * The same words CUT INTO TIMED LINES, when the engine could place them in the
+   * audio. The band then follows playback instead of standing still, and each line
+   * is somewhere to jump to.
+   */
+  transcriptionSegments?: TranscriptionSegment[];
+  /**
    * WHY there are none, when there are none: `pending` while the speech engine is
    * still working, `unavailable` when this machine could not read the recording,
    * `silent` when it read the whole thing and nobody spoke.
@@ -223,11 +280,33 @@ export function MediaRecording({
   transcriptionStatus?: string;
   children: ReactNode;
 }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [position, setPosition] = useState(0);
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
   const transcript = transcription?.trim() ?? '';
-  const statusLabel = transcript
-    ? ''
-    : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ''] ?? '');
+  const lines = (transcriptionSegments ?? []).filter((line) => line.text.trim().length > 0);
+  const spoken = transcript.length > 0 || lines.length > 0;
+  const statusLabel = spoken ? '' : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ''] ?? '');
+  // The line being SPOKEN is the last one that has STARTED: a needle caught in the
+  // breath between two sentences keeps the sentence it just finished lit rather
+  // than blinking off, and a player parked before the first word lights nothing.
+  const activeLine = lines.reduce(
+    (found, line, index) => (line.start <= position ? index : found),
+    -1,
+  );
+
+  const playFrom = (seconds: number) => {
+    const audio = audioRef.current;
+    setPosition(seconds);
+    if (!audio) return;
+    try {
+      audio.currentTime = seconds;
+      void Promise.resolve(audio.play()).catch(() => undefined);
+    } catch {
+      // A platform that refuses playback still moved the needle there.
+    }
+  };
+
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
       {/* ONE card: the player, and the name strip DOCKED under it on the same
@@ -236,7 +315,13 @@ export function MediaRecording({
           transcription band between the two, so borrowing it left the name
           floating in a three-sided box under a second box. */}
       <div className="min-w-0 border border-code-edge bg-code">
-        <div className="min-w-0 p-2">{children}</div>
+        <div className="min-w-0 p-2">
+          <RecordingTimelineContext.Provider
+            value={{ position, audioRef, onPosition: setPosition }}
+          >
+            {children}
+          </RecordingTimelineContext.Provider>
+        </div>
         {name || meta || statusLabel ? (
           <figcaption className="flex min-w-0 items-center gap-2 border-t border-code-edge bg-thinking-surface px-2 py-1 font-mono text-chip text-footer-muted">
             <span className="min-w-0 flex-1 truncate">{name}</span>
@@ -251,7 +336,7 @@ export function MediaRecording({
           </figcaption>
         ) : null}
       </div>
-      {transcript ? (
+      {spoken ? (
         <div className="min-w-0">
           <Disclosure
             isOpen={isTranscriptOpen}
@@ -262,11 +347,27 @@ export function MediaRecording({
             TRANSCRIPTION
           </Disclosure>
           {isTranscriptOpen ? (
-            <p
-              className={`min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint ${PROSE}`}
-            >
-              {`“${transcript}”`}
-            </p>
+            lines.length > 0 ? (
+              <div className="min-w-0 border-l-2 border-code-edge bg-code px-3 py-2">
+                {lines.map((line, index) => (
+                  <button
+                    key={`${line.start}-${index}`}
+                    type="button"
+                    onClick={() => playFrom(line.start)}
+                    aria-current={index === activeLine ? 'true' : undefined}
+                    className={`block w-full min-w-0 cursor-pointer whitespace-pre-wrap break-words border-0 bg-transparent py-0.5 text-left text-meta italic ${PROSE} ${index === activeLine ? 'text-accent-ink' : 'text-dialog-hint mouse:hover:text-accent'}`}
+                  >
+                    {line.text}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p
+                className={`min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint ${PROSE}`}
+              >
+                {`“${transcript}”`}
+              </p>
+            )
           ) : null}
         </div>
       ) : null}

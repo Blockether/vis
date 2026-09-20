@@ -693,6 +693,16 @@ export const RECORDING_PEAKS: number[] = Array.from(
 export const RECORDING_TRANSCRIPT =
   'Draw the vocabulary in the gallery instead of writing another mockup, and keep the data beside it so the frames stop disagreeing.';
 
+/** The same words CUT INTO TIMED LINES, the way the speech engine places them. */
+export const RECORDING_SEGMENTS: { start: number; end: number; text: string }[] = [
+  {
+    start: 0,
+    end: 4.1,
+    text: 'Draw the vocabulary in the gallery instead of writing another mockup,',
+  },
+  { start: 4.1, end: 8.6, text: 'and keep the data beside it so the frames stop disagreeing.' },
+];
+
 /** A picture with no bytes to fetch: the plate is what the story is about. */
 function picture(fill: string, label: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"><rect width="240" height="240" fill="${fill}"/><text x="120" y="128" font-family="monospace" font-size="20" fill="#f7f7f7" text-anchor="middle">${label}</text></svg>`;

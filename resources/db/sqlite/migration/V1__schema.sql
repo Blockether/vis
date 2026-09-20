@@ -755,6 +755,14 @@ CREATE TABLE session_attachment (
   -- resumed session re-renders both without transcribing anything again. NULL for
   -- every attachment that is not a recording, and for one nothing could read.
   transcription             TEXT,
+
+  -- TRANSCRIPTION_SEGMENTS: the same words, cut into the lines they were spoken in,
+  -- as a JSON array of {start, end, text} with the seconds each line occupies. The
+  -- transcript alone cannot be followed while the recording plays: a player needs to
+  -- know which sentence is sounding right now, and a click on a sentence needs to
+  -- know where to seek to. NULL for every attachment that is not a recording, and
+  -- for one whose engine reported no times.
+  transcription_segments    TEXT,
   bytes                     BLOB,
   storage_uri               TEXT,
 

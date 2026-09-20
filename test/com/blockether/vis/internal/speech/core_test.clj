@@ -54,7 +54,7 @@
     {:transcribe [(echo-engine :parakeet-local "local") (echo-engine :other "other")]}
     (fn []
       (is (= :parakeet-local (:id (speech/default-engine :transcribe))))
-      (is (= "other" (speech/transcribe! {:audio-path "/tmp/a.wav" :engine-id :other})))
+      (is (= "other" (:text (speech/transcribe! {:audio-path "/tmp/a.wav" :engine-id :other}))))
       (with-redefs-fn {#'speech/env-engine-id (constantly :other)}
         #(is (= :other (:id (speech/default-engine :transcribe)))))
       (is (= "Unknown speech transcription engine: missing"

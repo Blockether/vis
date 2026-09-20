@@ -554,6 +554,22 @@ export interface VoiceEngineAbsence {
   reasons?: string[];
 }
 
+/**
+ * ONE LINE of a recording's transcript, with the stretch of audio it was heard in.
+ *
+ * The speech engine already timestamps every token it decodes, so the gateway cuts
+ * the transcript into sentence-sized spans and ships them beside the plain text.
+ * The player uses them to light the line being spoken and to jump to one; anything
+ * that only wants the words keeps reading `transcription`.
+ */
+export interface TranscriptionSegment {
+  /** Seconds from the start of the recording where the line begins. */
+  start: number;
+  /** Seconds from the start of the recording where it ends. */
+  end: number;
+  /** The words of that stretch. */
+  text: string;
+}
 export interface GatewayAttachment {
   id?: string;
   source?: string;
@@ -578,6 +594,13 @@ export interface GatewayAttachment {
    * that says nothing and a recording nobody could transcribe must not look alike.
    */
   transcription_status?: string;
+  /**
+   * The same words CUT INTO TIMED LINES, when the engine could place them in the
+   * audio — sentence-sized spans in the order they were spoken. The player lights
+   * the line being spoken and seeks to one that is pressed; absent for everything
+   * older than timed transcripts, and the row falls back to the plain string.
+   */
+  transcription_segments?: TranscriptionSegment[];
 }
 
 /**
@@ -609,6 +632,8 @@ export interface IterationAttachment {
   transcription?: string;
   /** {@link GatewayAttachment.transcription_status} for a PRODUCED recording. */
   transcription_status?: string;
+  /** {@link GatewayAttachment.transcription_segments} for a PRODUCED recording. */
+  transcription_segments?: TranscriptionSegment[];
   /** Stable identity of the settled live view this artifact is the record of. */
   view_id?: string;
   /** Trusted producer identity for a settled live-view receipt. */

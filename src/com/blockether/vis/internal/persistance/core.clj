@@ -513,7 +513,7 @@
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
 
 (defdelegate db-set-turn-attachment-transcription!
-             [db-info session-turn-soul-id position transcription])
+             [db-info session-turn-soul-id position transcription segments])
 
 (defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
 

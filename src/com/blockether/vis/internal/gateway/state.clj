@@ -1591,7 +1591,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-status view-id owner commentable]}]
+                       transcription-segments transcription-status view-id owner commentable]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1626,7 +1626,14 @@
               ;; same as a recording nobody ever spoke into
               ;; ([[com.blockether.vis.internal.attachment.audio-transcribe/statuses]]).
               (not-empty (str transcription-status))
-              (assoc :transcription_status (str transcription-status)))))
+              (assoc :transcription_status (str transcription-status))
+
+              ;; …and WHERE each line of those words is spoken, in seconds. The
+              ;; transcript alone cannot be FOLLOWED: a player needs to know which
+              ;; sentence is sounding to highlight it, and where to seek when the
+              ;; reader taps one.
+              (seq transcription-segments)
+              (assoc :transcription_segments (wire/->wire (vec transcription-segments))))))
         rows))
 
 (defn- live-attachment-descriptors

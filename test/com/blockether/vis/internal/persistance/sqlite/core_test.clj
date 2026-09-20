@@ -4189,19 +4189,27 @@
              [{:media-type "image/png" :base64 b64 :filename "shot.png" :size 3 :source :user}
               {:media-type "audio/mp4" :base64 b64 :filename "memo.m4a" :size 3 :source :user}]})
 
+          row-at
+          (fn [filename]
+            (first (filter #(= filename (:filename %)) (vis/db-list-turn-attachments s tid))))
+
           words-at
           (fn [filename]
-            (:transcription (first (filter #(= filename (:filename %))
-                                           (vis/db-list-turn-attachments s tid)))))]
+            (:transcription (row-at filename)))
+
+          segments
+          [{:start 0.0 :end 1.2 :text "buy milk"}]]
 
       ;; The turn stored the recording without waiting for an hour of speech.
       (expect (nil? (words-at "memo.m4a")))
-      (expect (true? (vis/db-set-turn-attachment-transcription! s tid 1 "buy milk")))
+      (expect (true? (vis/db-set-turn-attachment-transcription! s tid 1 "buy milk" segments)))
       (expect (= "buy milk" (words-at "memo.m4a")))
+      ;; The timings ride WITH the words, so the player can follow its own transcript.
+      (expect (= segments (:transcription-segments (row-at "memo.m4a"))))
       ;; Position addresses ONE row: the picture beside it is untouched.
       (expect (nil? (words-at "shot.png")))
       ;; Nothing to say is not something to store.
-      (expect (false? (vis/db-set-turn-attachment-transcription! s tid 1 "  ")))
+      (expect (false? (vis/db-set-turn-attachment-transcription! s tid 1 "  " nil)))
       (expect (= "buy milk" (words-at "memo.m4a"))))))
 
 (defdescribe

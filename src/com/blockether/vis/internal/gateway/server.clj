@@ -3416,7 +3416,11 @@
                                (not (str/blank? words))
                                (not= words (:transcription before)))]
 
-              (persistance/db-set-turn-attachment-transcription! (lp/db-info) tid position words))
+              (persistance/db-set-turn-attachment-transcription! (lp/db-info)
+                                                                 tid
+                                                                 position
+                                                                 words
+                                                                 (:transcription-segments after)))
           response (if (= "true" (query-str request "transcription_only"))
                      (mapv #(dissoc % :base64) refreshed)
                      refreshed)]
