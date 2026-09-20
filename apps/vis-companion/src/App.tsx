@@ -66,6 +66,7 @@ import {
   tabHash,
 } from './lib/router';
 import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
+import { useEdgeBack } from './lib/edge-back';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -1048,6 +1049,15 @@ export function App() {
   // A media query is a runtime fact, read here so every render asks it once.
   const isDesk = useDeskRail();
 
+  // THE WAY BACK IS ALSO A STROKE. On a phone the transcript IS the screen, so a
+  // finger drawn in from its leading edge takes the same step the header's arrow
+  // takes and Android's back gesture takes: out of the session, back to the list.
+  // On a desk the list is already standing beside the transcript, so there is
+  // nowhere to come back to and the gesture stands down. Where the system owns
+  // that edge itself — Android's own back gesture — the web view is sent a
+  // cancel rather than a lift, and a stroke taken away was never released here.
+  const sessionPaneRef = useEdgeBack(!isDesk && openTarget ? leaveSession : null);
+
   if (!ready) return <Splash />;
 
   // A session already open keeps its own screen; the offline gate is about the
@@ -1163,7 +1173,7 @@ export function App() {
           <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
         )}
         {shellView === 'session' && openTarget && client && subscriptions && (
-          <div className="h-full min-h-0 min-w-0 flex-1">
+          <div ref={sessionPaneRef} className="h-full min-h-0 min-w-0 flex-1">
             <SessionScreen
               key={`${openTarget.conn.url}:${openTarget.sid}`}
               client={client}
