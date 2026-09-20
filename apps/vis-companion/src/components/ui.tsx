@@ -2213,7 +2213,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className={`${position} inset-0 z-50 flex justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
+      className={`${position} inset-0 z-50 flex justify-center transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
         stopsAtContent ? 'items-end' : 'items-stretch'
       }`}
       role="presentation"
@@ -2246,10 +2246,16 @@ export function Modal({
            a size: its layer is the session pane, not the window, so the box takes all of
            it. The question rectangle inside a pane is a small window in the middle of one.
 
-          The scrim is settings' own — ink at 85% under a 2px blur, faded
-          in rather than snapped on. That dialog was hand-rolled beside this one and
-          was the better looking of the two, so its glass moved IN HERE and the copy
-          moved out; `sm:max-w-xl` is its width, for the same reason. */}
+          The scrim is settings' own — its width (`sm:max-w-xl`) and its fade, which
+          arrives rather than snaps on. What it no longer carries is PAINT. Reported,
+          with settings open over a live session: every arriving message made the picker
+          inside the dialog flicker. A `backdrop-filter` re-rasterises everything it
+          covers and everything stacked above it whenever the page beneath changes, and
+          a streaming transcript changes on nearly every frame — so the blur dragged the
+          dialog and its open lists through the transcript's repaint. The ink wash went
+          with it, by the same call: a dialog stands OVER the application without
+          painting on it, and every box carries its own paper.
+          `ui.conventions.test.ts` holds the layer clear. */}
       <div
         className={`flex w-full flex-col ${boxWidth} ${boxHeight}`}
         role="presentation"

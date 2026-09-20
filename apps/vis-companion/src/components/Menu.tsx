@@ -77,7 +77,7 @@ export function AnchoredPanel({
 }) {
   return createPortal(
     <div
-      className={`fixed inset-0 z-50 bg-black/40 ${role === 'menu' ? 'sm:bg-transparent' : ''}`}
+      className="fixed inset-0 z-50"
       role="presentation"
       onClick={onDismiss}
     >

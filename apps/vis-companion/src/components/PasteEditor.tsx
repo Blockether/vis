@@ -27,7 +27,7 @@ export function PasteEditor({
   // the app shell without creating its own fixed WebKit layer.
   return (
     <div
-      className="absolute inset-0 z-50 flex h-full items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
+      className="absolute inset-0 z-50 flex h-full items-stretch justify-center p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onDismiss();
       }}

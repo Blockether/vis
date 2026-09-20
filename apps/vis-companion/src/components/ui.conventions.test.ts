@@ -293,3 +293,39 @@ describe('every control is drawn in the gallery', () => {
     }
   });
 });
+
+// A DIALOG STANDS OVER THE APPLICATION WITHOUT PAINTING ON IT
+//
+// Reported: with settings open over a live session, every arriving message made the
+// picker inside the dialog flicker. A `backdrop-filter` re-rasterises everything it
+// covers and everything stacked above it whenever the page beneath changes, and a
+// streaming transcript changes on nearly every frame. The ink wash went with the blur
+// by the same call: no dialog dims or blurs what it covers. Each box carries its own
+// paper, so nothing below it has to be painted for the dialog to be legible.
+describe('a dialog neither blurs nor dims what it covers', () => {
+  /** Every class list in a file, written either as a string or as a template. */
+  const classLists = (source: string) =>
+    [...source.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`)/g)].map(
+      ([, quoted, templated]) => quoted ?? templated ?? '',
+    );
+
+  it('asks for no backdrop filter on any layer the app ships', () => {
+    for (const [path, source] of production) {
+      for (const classes of classLists(source)) {
+        expect(classes.match(/\bbackdrop-[\w[\]-]+/)?.[0], `${path} class`).toBeUndefined();
+      }
+    }
+  });
+
+  it('leaves the full-layer scrim of every overlay unpainted', () => {
+    for (const [path, source] of production) {
+      for (const classes of classLists(source)) {
+        // A layer that covers its whole host and stands in the stack: a scrim. An
+        // opaque surface (`bg-ink`, `bg-black`) is a PAGE of its own and may paint;
+        // a translucent wash is the application showing through, dimmed.
+        if (!/\binset-0\b/.test(classes) || !/\bz-\[?\d/.test(classes)) continue;
+        expect(classes.match(/\bbg-[\w-]+\/\d+/)?.[0], `${path} scrim`).toBeUndefined();
+      }
+    }
+  });
+});
