@@ -130,12 +130,8 @@ export const Button = forwardRef<
      * Invisible reach preserves a 44px touch target; owners leave at least 8px
      * between adjacent targets. `compact` centres the button in a header and
      * uses metadata type under a pointer. `panel` keeps fixed horizontal padding.
-     * `band` is the verb INSIDE a transcript band, where the row around it is one
-     * line of text: under a pointer its face steps under that 28px row and its
-     * padding narrows, so the row reads as a line with an action in it instead of
-     * as a box. The touch face is unchanged.
      */
-    density?: 'default' | 'compact' | 'panel' | 'band';
+    density?: 'default' | 'compact' | 'panel';
   }
 >(function Button(
   {
@@ -200,7 +196,6 @@ export const Button = forwardRef<
     default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
-    band: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui mouse:h-6 mouse:min-h-6 mouse:px-2 mouse:text-meta`,
   }[density];
   const frame = `rounded-none py-0.5 ${scale}`;
 
@@ -877,16 +872,25 @@ export function Disclosure({
 export function BandLabel({
   className = '',
   tone = 'default',
+  weight = 'name',
   children,
 }: {
   className?: string;
   /** Only failure and interruption labels override the primary text color. */
   tone?: 'default' | 'err' | 'hint';
+  /**
+   * `state` is the word a band ENDS on — LIVE, while the run is going — rather than
+   * the name it opens with. It stands in the full weight of the verb beside it and
+   * underlines under the pointer as that verb does, so the end of the row reads as
+   * one line of type instead of a label wedged against a control.
+   */
+  weight?: 'name' | 'state';
   children: ReactNode;
 }) {
   const ink = tone === 'err' ? 'text-err' : tone === 'hint' ? 'text-dialog-hint' : 'text-white';
+  const face = weight === 'state' ? 'font-bold tracking-[0.06em] hover:underline' : BAND_NAME;
   return (
-    <span className={`select-none truncate font-mono text-ui ${BAND_NAME} ${ink} ${className}`}>
+    <span className={`select-none truncate font-mono text-ui ${face} ${ink} ${className}`}>
       {children}
     </span>
   );
@@ -1286,19 +1290,29 @@ export function MetaButton({
  *
  * A queued turn or a pasted block that opens an editor. Hover changes only the
  * foreground. `isToken` adds a dotted underline for text standing in for more.
+ *
+ * `isBand` is the same prose ENDING AN EXECUTION BAND: the verb that stops a run,
+ * sharing its line with the state word after it. It takes the band's weight, caps
+ * and tracking, and wears no face at all — a box inside a line of text reads as a
+ * box — so it says it is pressable by underlining itself under the pointer. The
+ * 44px touch reach lives in a pseudo-element, leaving the row its own height.
  */
 export function TextButton({
   isToken = false,
+  isBand = false,
   className = '',
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { isToken?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isToken?: boolean; isBand?: boolean }) {
+  const face = isBand
+    ? 'relative select-none whitespace-nowrap font-bold uppercase tracking-[0.06em] text-white after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline disabled:opacity-60 mouse:after:content-none'
+    : `px-1 text-dialog-foreground enabled:hover:text-accent-ink focus-visible:bg-hover ${
+        isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
+      }`;
   return (
     <button
       type="button"
-      className={`min-w-0 px-1 text-left font-mono text-ui text-dialog-foreground transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${
-        isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
-      } ${className}`}
+      className={`min-w-0 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {children}

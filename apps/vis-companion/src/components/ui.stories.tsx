@@ -225,7 +225,7 @@ export const Buttons: Story = {
           Disabled
         </Button>
       </Group>
-      <Group of="Button, four densities">
+      <Group of="Button, three densities">
         <Button variant="secondary">Default</Button>
         <Button variant="secondary" density="compact">
           Compact
@@ -233,13 +233,11 @@ export const Buttons: Story = {
         <Button variant="secondary" density="panel">
           Panel
         </Button>
-        <Button variant="secondary" density="band">
-          Band
-        </Button>
       </Group>
       <Group of="The word-only verbs">
         <TextButton>Show more</TextButton>
         <TextButton isToken>claude-opus-5</TextButton>
+        <TextButton isBand>Interrupt</TextButton>
         <LoadMore label="Load earlier turns" onClick={() => {}}>
           Earlier
         </LoadMore>
@@ -464,6 +462,9 @@ export const Chips: Story = {
       </Group>
       <Group of="Band furniture">
         <BandLabel>Recent</BandLabel>
+        <BandLabel tone="hint" weight="state">
+          LIVE
+        </BandLabel>
         <SectionHeader>Machines</SectionHeader>
       </Group>
     </Sheet>

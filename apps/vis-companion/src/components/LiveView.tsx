@@ -20,6 +20,7 @@ import {
   Modal,
   PROSE,
   Spinner,
+  TextButton,
   ViewHeading,
   ViewLayout,
   ViewParagraph,
@@ -1171,24 +1172,45 @@ export function LiveViewPanel({
               )}
             </span>
           )}
-          {!isSettled && onInterrupt && !isArmed && (
-            <Button
-              variant="secondary"
-              density={embedded ? 'band' : 'default'}
-              className="shrink-0 self-center"
-              onClick={() => setNote('')}
-              disabled={isInterrupting}
-            >
-              {isInterrupting ? 'Stopping...' : 'Interrupt'}
-            </Button>
-          )}
-          {/* LIVE ENDS THE ROW, in the band's own weight. The word is the run's STATE, so it
-              reads last, the way the terminal prints it, and the verb stands before it wearing
-              a face sized UNDER the row rather than one that fills it. */}
+          {!isSettled &&
+            onInterrupt &&
+            !isArmed &&
+            (embedded ? (
+              <TextButton
+                isBand
+                className="shrink-0 self-center"
+                onClick={() => setNote('')}
+                disabled={isInterrupting}
+              >
+                {isInterrupting ? 'Stopping...' : 'Interrupt'}
+              </TextButton>
+            ) : (
+              <Button
+                variant="secondary"
+                className="shrink-0 self-center"
+                onClick={() => setNote('')}
+                disabled={isInterrupting}
+              >
+                {isInterrupting ? 'Stopping...' : 'Interrupt'}
+              </Button>
+            ))}
+          {/* The band ends INTERRUPT | LIVE: the verb, the rule a terminal prints between two
+              words, and the run's state last. The touch target keeps its 44px reach in an
+              invisible pseudo-element, so the row stays a line of text under the finger too. */}
           {embedded && !isSettled && (
-            <BandLabel tone="hint" className="shrink-0">
-              LIVE
-            </BandLabel>
+            <>
+              {onInterrupt && !isArmed && (
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 select-none font-mono text-ui text-dialog-hint"
+                >
+                  |
+                </span>
+              )}
+              <BandLabel tone="hint" weight="state" className="shrink-0">
+                LIVE
+              </BandLabel>
+            </>
           )}
           <ViewState view={view} isSettled={isSettled} />
         </header>

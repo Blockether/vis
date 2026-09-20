@@ -23,18 +23,32 @@ it('renders the embedded live view as a borderless band on its shared background
   expect(header).toHaveClass('min-h-11', 'mouse:min-h-7');
 });
 
-// User report (screenshot): LIVE stood in light type BEFORE a stop that filled the row. The row
-// ends with LIVE in the band's own weight, and the verb before it wears a face sized under the row.
-it('ends the live band with a bold LIVE and a smaller interrupt before it', () => {
+// User report (screenshot): LIVE stood in light type beside a stop that wore a BUTTON. The row
+// ends as one line of type now — INTERRUPT | LIVE — both words in full weight, the verb carrying
+// no face at all, and the rule a terminal prints standing between them.
+it('ends the live band with a bold INTERRUPT | LIVE and no button face', () => {
   const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded onInterrupt={() => {}} />);
   const live = mounted.getByText('LIVE');
   const interrupt = mounted.getByRole('button', { name: 'Interrupt' });
   const row = Array.from(live.closest('header')!.children);
   expect(row.indexOf(interrupt)).toBeLessThan(row.indexOf(live));
   expect(row.at(-1)).toBe(live);
-  expect(live).toHaveClass('font-semibold');
-  expect(interrupt).toHaveClass('mouse:h-6', 'mouse:min-h-6', 'mouse:px-2');
-  expect(interrupt).not.toHaveClass('mouse:min-h-7');
+  expect(live).toHaveClass('font-bold');
+  expect(interrupt).toHaveClass('font-bold');
+  // Caps are the band's, the WORD stays the app's: a screen reader still hears "Interrupt".
+  expect(interrupt).toHaveClass('uppercase');
+  expect(interrupt.textContent).toBe('Interrupt');
+  // No face: no frame, no paper, no padding of its own.
+  expect(interrupt.className).not.toMatch(/(?:^|\s)(?:border|bg-|min-h-|h-\d|px-)/);
+  // The rule divides the two words and is furniture, so it is never spoken.
+  const rule = row[row.indexOf(interrupt) + 1];
+  expect(rule.textContent).toBe('|');
+  expect(rule).toHaveAttribute('aria-hidden', 'true');
+  // A line of text says "target" by underlining what the pointer is on.
+  expect(interrupt).toHaveClass('enabled:hover:underline');
+  expect(live).toHaveClass('hover:underline');
+  // Losing the face must not lose the 44px touch reach it used to give.
+  expect(interrupt).toHaveClass('after:absolute', 'after:-inset-y-3.5');
 });
 
 // THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A run painted in place stood taller

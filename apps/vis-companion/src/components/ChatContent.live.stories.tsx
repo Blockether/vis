@@ -141,17 +141,23 @@ export const Running: Story = {
     // The transcript STATES the run: its newest status, and no log painted in place.
     await expect(controls.getByText('Waiting for integration tests')).toBeVisible();
     await expect(controls.queryByRole('button', { name: 'Build log' })).toBeNull();
-    // The interrupt rides the run's own band, centred in the row rather than padded away from a
-    // frame, and its face stays UNDER the row it rides: the band reads as a line of text with an
-    // action in it. LIVE ends that line in the band's own weight — the user reported it reading as
-    // light type beside a stop that filled the row.
+    // The row ends as one line of type — INTERRUPT | LIVE. The verb rides the run's own band,
+    // centred in the row and wearing no face at all, and both words stand in the band's full
+    // weight with a printed rule between them: the user reported LIVE reading as light type
+    // beside a stop that filled the row.
     const interrupt = controls.getByRole('button', { name: 'Interrupt' });
-    const row = liveFrame.querySelector('header')!.getBoundingClientRect();
+    const band = liveFrame.querySelector('header')!;
+    const row = band.getBoundingClientRect();
     const key = interrupt.getBoundingClientRect();
     await expect(key.top - row.top).toBeCloseTo(row.bottom - key.bottom, 0);
     await expect(key.height).toBeLessThan(row.height);
+    const verb = getComputedStyle(interrupt);
+    await expect(Number(verb.fontWeight)).toBeGreaterThanOrEqual(700);
+    await expect(verb.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    await expect(verb.paddingLeft).toBe('0px');
+    await expect(band.textContent).toContain('|');
     const live = controls.getByText('LIVE');
-    await expect(Number(getComputedStyle(live).fontWeight)).toBeGreaterThanOrEqual(600);
+    await expect(Number(getComputedStyle(live).fontWeight)).toBeGreaterThanOrEqual(700);
     const state = live.getBoundingClientRect();
     await expect(state.left).toBeGreaterThanOrEqual(key.right);
     await expect(state.right).toBeCloseTo(row.right, 0);
