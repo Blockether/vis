@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +10,15 @@ import {
   mediaPendingClass,
   mediaTileFrameClass,
 } from '../lib/media-frame';
-import { MediaGrid, MediaPlate, MediaRecording, MediaTile, mediaMeta, mediaSummary } from './Media';
+import {
+  MediaGrid,
+  MediaPlate,
+  MediaRecording,
+  MediaTile,
+  RecordingPlayer,
+  mediaMeta,
+  mediaSummary,
+} from './Media';
 
 /** The frame element of a rendered plate/tile, class list and all. */
 const frame = (html: string) => /<div class="([^"]*)"/u.exec(html)?.[1] ?? '';
@@ -234,5 +242,47 @@ describe('MediaRecording', () => {
       </MediaRecording>,
     );
     expect(blank).not.toContain('TRANSCRIPTION');
+  });
+});
+
+// The platform's own `<audio controls>` is another program's widget on this
+// app's paper: a grey rounded pill, its own typeface, its own AirPlay and
+// overflow buttons, and its own idea of contrast. What a listener uses is a
+// button, a scrubber and a clock.
+describe('RecordingPlayer', () => {
+  it("hands the row this app's own controls instead of the platform's", () => {
+    const html = renderToStaticMarkup(<RecordingPlayer src="blob:memo" />);
+
+    expect(html).toContain('<audio');
+    expect(html).not.toMatch(/<audio[^>]*controls/u);
+    expect(html).toContain('aria-label="Play"');
+    expect(html).toContain('type="range"');
+  });
+
+  // An hour-long recording is the case that made this necessary, and `61:15` is
+  // not a time anybody reads.
+  it('clocks a long recording in hours, and flips the one button as it runs', () => {
+    const view = render(<RecordingPlayer src="blob:memo" />);
+    const audio = view.container.querySelector('audio');
+    expect(audio).toBeInTheDocument();
+    if (!audio) return;
+    Object.defineProperty(audio, 'duration', { value: 3675, configurable: true });
+
+    fireEvent.loadedMetadata(audio);
+    expect(screen.getByText('0:00 / 1:01:15')).toBeInTheDocument();
+
+    fireEvent.play(audio);
+    expect(screen.getByLabelText('Pause')).toBeInTheDocument();
+    fireEvent.pause(audio);
+    expect(screen.getByLabelText('Play')).toBeInTheDocument();
+  });
+
+  // Metadata that has not landed reports `NaN`, and a scrubber cannot be drawn
+  // against it — the bar stays inert rather than claiming a position.
+  it('waits for the length before it offers seeking', () => {
+    const view = render(<RecordingPlayer />);
+    const scrubber = view.container.querySelector('input[type="range"]');
+
+    expect(scrubber).toBeDisabled();
   });
 });

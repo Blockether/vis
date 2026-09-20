@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 
 import { artifactMedia, attachmentBytes } from '../lib/artifacts';
 import {
@@ -8,6 +8,7 @@ import {
   mediaTileFrameClass,
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
+import { PauseIcon, PlayIcon } from './icons';
 import { Disclosure, PROSE } from './ui';
 
 /**
@@ -64,6 +65,117 @@ const TRANSCRIPTION_STATUS_LABEL: Record<string, string> = {
 };
 
 /**
+ * `mm:ss`, or `h:mm:ss` once a recording passes the hour — a meeting is measured
+ * in hours, and `72:14` is not a time anybody reads.
+ */
+function clockTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00';
+  const whole = Math.floor(seconds);
+  const secs = String(whole % 60).padStart(2, '0');
+  const mins = Math.floor(whole / 60) % 60;
+  const hours = Math.floor(whole / 3600);
+  return hours > 0 ? `${hours}:${String(mins).padStart(2, '0')}:${secs}` : `${mins}:${secs}`;
+}
+
+/**
+ * The control that plays ONE recording, in this app's own face.
+ *
+ * `<audio controls>` hands the row to the PLATFORM, and the platform paints a grey
+ * lozenge with its own typeface, its own AirPlay and overflow buttons and its own
+ * idea of contrast — a widget from another program parked on the transcript's own
+ * paper. The element itself stays, because it is what decodes and plays; it is
+ * hidden behind the three things a listener actually uses: a play/pause button at
+ * thumb size, a scrubber that fills with the accent ink as it advances, and the
+ * clock. Nothing else — every further glyph is column width taken from the only
+ * part anybody drags.
+ *
+ * The scrubber is a real `input[type=range]`, so a keyboard and a screen reader
+ * get seeking for free; only its face is ours.
+ */
+export function RecordingPlayer({
+  src,
+  onError,
+}: {
+  /** Where the bytes are. Absent while the URL is still being fetched. */
+  src?: string;
+  /** The bytes would not decode — the caller paints its own failure line. */
+  onError?: () => void;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [duration, setDuration] = useState(0);
+  // A stream still being fetched reports `Infinity` or `NaN` for its length, and
+  // a scrubber cannot be drawn against either: until the metadata lands the bar
+  // stays empty and inert rather than jumping to a made-up position.
+  const total = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  const position = total > 0 ? Math.min(elapsed, total) : 0;
+
+  const toggle = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    try {
+      if (audio.paused) void Promise.resolve(audio.play()).catch(() => undefined);
+      else audio.pause();
+    } catch {
+      // A platform that refuses playback leaves the button exactly where it was.
+    }
+  };
+
+  const seek = (event: ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    const next = Number(event.target.value);
+    if (!audio || !Number.isFinite(next)) return;
+    audio.currentTime = next;
+    setElapsed(next);
+  };
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        className="hidden"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onDurationChange={(event) => setDuration(event.currentTarget.duration)}
+        onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          setElapsed(0);
+        }}
+        onError={onError}
+      />
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={isPlaying ? 'Pause' : 'Play'}
+        className="flex size-11 shrink-0 items-center justify-center border border-code-edge bg-thinking-surface text-accent-ink mouse:size-9 mouse:hover:text-accent"
+      >
+        {isPlaying ? <PauseIcon className="size-3.5" /> : <PlayIcon className="size-3.5" />}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={total || 1}
+        step="any"
+        value={position}
+        onChange={seek}
+        disabled={total <= 0}
+        aria-label="Seek"
+        style={{ '--played': `${total > 0 ? (position / total) * 100 : 0}%` } as CSSProperties}
+        className="h-1 w-full min-w-0 flex-1 cursor-pointer appearance-none bg-[linear-gradient(to_right,var(--color-accent-ink)_var(--played),var(--color-code-edge)_var(--played))] disabled:cursor-default [&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-accent-ink [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:bg-accent-ink"
+      />
+      <span className="shrink-0 font-mono text-chip tabular-nums text-footer-muted">
+        {clockTime(position)} / {clockTime(total)}
+      </span>
+    </div>
+  );
+}
+
+/**
  * ONE recording as a ROW: the platform's own player, the file name under it, and —
  * when something could read the audio — its TRANSCRIPTION, folded away.
  *
@@ -118,8 +230,26 @@ export function MediaRecording({
     : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ''] ?? '');
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
-      <div className="min-w-0 border border-code-edge bg-code p-2">
-        <div className="min-w-0">{children}</div>
+      {/* ONE card: the player, and the name strip DOCKED under it on the same
+          paper. `mediaCaptionClass` cuts its own top border away because a
+          plate's caption sits straight on the picture frame — a recording has a
+          transcription band between the two, so borrowing it left the name
+          floating in a three-sided box under a second box. */}
+      <div className="min-w-0 border border-code-edge bg-code">
+        <div className="min-w-0 p-2">{children}</div>
+        {name || meta || statusLabel ? (
+          <figcaption className="flex min-w-0 items-center gap-2 border-t border-code-edge bg-thinking-surface px-2 py-1 font-mono text-chip text-footer-muted">
+            <span className="min-w-0 flex-1 truncate">{name}</span>
+            {/* Its OWN word beside the format, never joined to it: what the
+                reader is waiting for is not a property of the container. */}
+            {statusLabel ? (
+              <span className="shrink-0 uppercase tracking-wider text-dialog-hint">
+                {statusLabel}
+              </span>
+            ) : null}
+            {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
+          </figcaption>
+        ) : null}
       </div>
       {transcript ? (
         <div className="min-w-0">
@@ -139,16 +269,6 @@ export function MediaRecording({
             </p>
           ) : null}
         </div>
-      ) : statusLabel ? (
-        <p className="min-w-0 truncate px-2 py-1 text-meta uppercase tracking-wider text-dialog-hint">
-          {statusLabel}
-        </p>
-      ) : null}
-      {name ? (
-        <figcaption className={mediaCaptionClass}>
-          <span className="min-w-0 flex-1 truncate">{name}</span>
-          {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
-        </figcaption>
       ) : null}
     </figure>
   );

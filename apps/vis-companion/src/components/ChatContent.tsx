@@ -91,7 +91,15 @@ import {
   mediaTileContentClass,
   type MediaLayout,
 } from '../lib/media-frame';
-import { MediaGrid, MediaPlate, MediaRecording, MediaTile, mediaMeta, mediaSummary } from './Media';
+import {
+  MediaGrid,
+  MediaPlate,
+  MediaRecording,
+  MediaTile,
+  RecordingPlayer,
+  mediaMeta,
+  mediaSummary,
+} from './Media';
 
 // Inline code is an ATOMIC value rather than running words: its own box keeps the
 // authored spaces intact while still wrapping multi-word commands within a narrow
@@ -1927,13 +1935,7 @@ const AttachmentTile = memo(function AttachmentTile({
         ) : !url ? (
           <div className="h-11 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
         ) : (
-          <audio
-            src={url}
-            controls
-            preload="metadata"
-            onError={() => setFailed(true)}
-            className="h-11 w-full"
-          />
+          <RecordingPlayer src={url} onError={() => setFailed(true)} />
         )}
       </MediaRecording>
     );
@@ -3841,6 +3843,7 @@ export const UserMessage = memo(function UserMessage({
   createdAt?: number;
 }) {
   const parts = parseUserMessage(children);
+  const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
   // in the assistant trace, so only the `user` rail belongs in the user bubble.
@@ -3849,6 +3852,12 @@ export const UserMessage = memo(function UserMessage({
     (a) => !!a.base64 && /^(image|video|audio)\//.test(a.media_type),
   );
   const files = userAttachments.filter((a) => !/^(image|video|audio)\//.test(a.media_type));
+  // An empty request still parses to ONE empty text part, so "is there a body?" is
+  // a question about the WORDS, never about the array's length. A message with
+  // nothing at all in it keeps its bubble, because that empty paper is all there
+  // is of it; a message whose whole content is the file it carries does not,
+  // because the attachment below already stands for it.
+  const hasBody = words || userAttachments.length === 0;
   // The very rule the assistant rail follows (`mediaGroupLayout`): ONE picture
   // is a plate with its own caption, several are a gallery. A clip always keeps
   // the plate, since the platform's controls do not fit a gallery tile, and a
@@ -3889,44 +3898,50 @@ export const UserMessage = memo(function UserMessage({
         </span>
         <TurnStamp position={position} createdAt={createdAt} />
       </div>
-      <div
-        className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}
-      >
-        {requestKind === 'council' ? (
-          <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
-        ) : (
-          parts.map((part) =>
-            part.type === 'text' ? (
-              <span key={part.key}>{part.text}</span>
-            ) : part.type === 'image' ? (
-              <span
-                key={part.key}
-                className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
-              >
-                {part.summary}
-              </span>
-            ) : (
-              // Full-bleed to the bubble's own `px-3`: the rules then read as the
-              // bubble's dividers instead of a stray box hairline-close to the
-              // sentence above and below it. Vertical margin is the paste's ONLY
-              // separation from that prose, so it stays wider than the block's own
-              // padding.
-              <details
-                key={part.key}
-                className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
-              >
-                <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-                  <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+      {/* A message that is ONLY an attachment has no body, and the bubble painted
+          for it anyway was a bare strip of paper with the role's rail down its
+          side — a blank quotation standing over the file the human actually sent.
+          The rail carries on down the attachment blocks below. */}
+      {requestKind === 'council' || hasBody ? (
+        <div
+          className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}
+        >
+          {requestKind === 'council' ? (
+            <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
+          ) : (
+            parts.map((part) =>
+              part.type === 'text' ? (
+                <span key={part.key}>{part.text}</span>
+              ) : part.type === 'image' ? (
+                <span
+                  key={part.key}
+                  className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
+                >
                   {part.summary}
-                </summary>
-                <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
-                  <code>{part.content}</code>
-                </pre>
-              </details>
-            ),
-          )
-        )}
-      </div>
+                </span>
+              ) : (
+                // Full-bleed to the bubble's own `px-3`: the rules then read as the
+                // bubble's dividers instead of a stray box hairline-close to the
+                // sentence above and below it. Vertical margin is the paste's ONLY
+                // separation from that prose, so it stays wider than the block's own
+                // padding.
+                <details
+                  key={part.key}
+                  className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
+                >
+                  <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+                    <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+                    {part.summary}
+                  </summary>
+                  <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
+                    <code>{part.content}</code>
+                  </pre>
+                </details>
+              ),
+            )
+          )}
+        </div>
+      ) : null}
       {files.length > 0 && (
         <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
           <DocStack>
@@ -3950,7 +3965,7 @@ export const UserMessage = memo(function UserMessage({
               transcription={att.transcription}
               transcriptionStatus={att.transcription_status}
             >
-              <audio src={attachmentSrc(att)} controls preload="metadata" className="h-11 w-full" />
+              <RecordingPlayer src={attachmentSrc(att)} />
             </MediaRecording>
           ))}
           {clips.map((att, index) => (

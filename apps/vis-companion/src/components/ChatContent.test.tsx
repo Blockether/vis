@@ -787,8 +787,12 @@ describe('user bubble recordings', () => {
       </UserMessage>,
     );
 
-  it('plays what it cannot show', () => {
-    expect(html()).toMatch(/<audio[^>]*controls/u);
+  it("plays what it cannot show, in this app's own face", () => {
+    // The platform's `controls` are a grey pill with another program's typeface
+    // and its own AirPlay and overflow buttons, parked on the transcript's paper.
+    expect(html()).toMatch(/<audio/u);
+    expect(html()).not.toMatch(/<audio[^>]*controls/u);
+    expect(html()).toContain('aria-label="Play"');
     expect(text(html())).toContain('memo.m4a');
     expect(text(html())).toContain('M4A');
   });
@@ -797,6 +801,29 @@ describe('user bubble recordings', () => {
   // frame around silence.
   it("never stands a recording on a picture's plate", () => {
     expect(html()).not.toContain(mediaFrameClass);
+  });
+
+  // Regression: a message that was ONLY a recording still painted its bubble —
+  // an empty strip of paper with the user rail down its side, standing over the
+  // file the human actually sent.
+  it('paints no bubble for a message that carries only an attachment', () => {
+    const attachmentOnly = renderToStaticMarkup(
+      <UserMessage
+        attachments={[
+          {
+            filename: 'memo.m4a',
+            media_type: 'audio/mp4',
+            base64: 'AAAAIGZ0eXBNNEEg',
+            size: 12,
+          },
+        ]}
+      >
+        {''}
+      </UserMessage>,
+    );
+
+    expect(attachmentOnly).not.toContain('border-you-role bg-code');
+    expect(text(attachmentOnly)).toContain('memo.m4a');
   });
 
   it('keeps the same player when gateway metadata catches up', () => {

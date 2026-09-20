@@ -48,7 +48,7 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { MediaRecording } from './Media';
+import { MediaRecording, RecordingPlayer } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
 import { AlertIcon, ClipIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
@@ -885,7 +885,7 @@ function ArtifactDetail({
             transcription={artifact.transcription}
             transcriptionStatus={artifact.transcriptionStatus}
           >
-            <audio src={url} controls preload="metadata" className="h-11 w-full" />
+            <RecordingPlayer src={url} />
           </MediaRecording>
         </div>
       </DetailOverlay>

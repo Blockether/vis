@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { PICTURE_SUMMARY, RECORDING_TRANSCRIPT, STORY_PICTURES } from '../dev/story-data';
 import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
-import { MediaGrid, MediaPlate, MediaRecording, MediaTile } from './Media';
+import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } from './Media';
 
 /**
  * WHAT A TURN CARRIED, ON THE PAPER THE TRANSCRIPT GIVES IT.
@@ -62,7 +62,7 @@ export const Grid: Story = {
 export const Recording: Story = {
   render: () => (
     <MediaRecording name="memo-2.m4a" meta="M4A · 412KB" transcription={RECORDING_TRANSCRIPT}>
-      <audio controls preload="metadata" className="h-11 w-full" />
+      <RecordingPlayer />
     </MediaRecording>
   ),
 };
@@ -71,7 +71,7 @@ export const Recording: Story = {
 export const RecordingSilent: Story = {
   render: () => (
     <MediaRecording name="memo-3.m4a" meta="M4A · 96KB" transcriptionStatus="silent">
-      <audio controls preload="metadata" className="h-11 w-full" />
+      <RecordingPlayer />
     </MediaRecording>
   ),
 };
