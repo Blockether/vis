@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `--subdirectory` stays for sources outside the catalog.
 - Open a file from a step: press a path a session read or patched and it opens in your editor on
   the machine that session runs on, limited to the files in that session's workspace.
+- Fold a live table by its branches: the terminal and the app both show one head per branch,
+  closed until you open it and counting its own rows.
 
 ### Fixed
 - Ship the macOS desktop installer again: the release build keeps its Rust compile cache outside
