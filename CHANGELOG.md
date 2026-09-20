@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.14] - 2026-09-20
+
 ### Added
 - Give a confined extension child the exact paths it needs: `vis.jailed_shell(...)` now takes
   `allow_read_write` and `unix_connect`, so a language pack can hand its runtime the one
@@ -6464,7 +6466,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.13...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.14...HEAD
+[v0.2.14]: https://github.com/Blockether/vis/compare/v0.2.13...v0.2.14
 [v0.2.13]: https://github.com/Blockether/vis/compare/v0.2.12...v0.2.13
 [v0.2.12]: https://github.com/Blockether/vis/compare/v0.2.11...v0.2.12
 [v0.2.11]: https://github.com/Blockether/vis/compare/v0.2.10...v0.2.11
