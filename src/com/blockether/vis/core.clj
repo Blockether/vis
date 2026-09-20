@@ -59,6 +59,7 @@
     [com.blockether.vis.internal.gateway.client :as gateway-client]
     [com.blockether.vis.internal.gateway.server :as gateway]
     [com.blockether.vis.contract.wire :as wire]
+    [com.blockether.vis.internal.foundation.environment.languages :as languages]
     [com.blockether.vis.internal.provider.limits-format :as limits-format]
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.extension.manifest :as manifest]
@@ -66,11 +67,14 @@
     [com.blockether.vis.internal.main :as binary]
     [com.blockether.vis.internal.channel.render :as ir]
     [com.blockether.vis.internal.channel.notifications :as notifications]
+    [com.blockether.vis.internal.foundation.editing.parse :as parse]
     [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.activity.presenter :as presenter]
     [com.blockether.vis.internal.session.progress :as progress]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis.internal.python.format :as pyfmt]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.python.project :as python-project]
     [com.blockether.vis.internal.python.test-runner :as python-test-runner]
     [com.blockether.vis.internal.provider.key-store :as provider-key-store]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -78,6 +82,7 @@
     [com.blockether.vis.internal.session.model :as session-model]
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.config.runtime-settings :as runtime-settings]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.channel.slash :as slash]
     [com.blockether.vis.internal.channel.theme :as theme]
@@ -710,7 +715,8 @@
              [list-resources resources/list-resources]
              [get-resource resources/get-resource]
              [resource-logs resources/logs]
-             [stop-resource! resources/stop!])
+             [stop-resource! resources/stop!]
+             [stop-session-resources! resources/stop-all!])
 
 ;; Standard language-process jail contract — packs hand every managed REPL or
 ;; test runner to the one runtime-owned native spawn boundary.
@@ -724,7 +730,8 @@
              ;; ONE refusal, shared: a live REPL started with another env is a
              ;; DIFFERENT REPL in every language, never a silent replacement.
              [env-difference process-jail/env-difference]
-             [env-mismatch-refusal process-jail/env-mismatch-refusal])
+             [env-mismatch-refusal process-jail/env-mismatch-refusal]
+             [unregister-session-jail! process-jail/unregister-session-jail!])
 
 ;; Turn runtime / iteration loop / environment / sessions
 (import-vars [turn! lp/turn!]
@@ -784,6 +791,53 @@
 ;; callers must use `prompt/build-iteration-context` directly.
 
 (import-vars [assemble-initial-messages prompt/assemble-initial-messages])
+
+;; Host API for compiled-in packs
+;;
+;; A pack is an ordinary Clojure library that this distribution compiles in and
+;; the manifest initializes — a language surface, for example. It registers like
+;; any extension and owns its own tools, so it needs the same result envelopes,
+;; workspace facts and budgets a built-in uses. What a pack may build on is named
+;; here; the `internal` tree behind it stays private and free to move.
+(import-vars [success extension/success]
+             [failure extension/failure]
+             [scan-languages languages/scan]
+             [parse-repair parse/repair]
+             [python-project-layout python-project/project-layout]
+             [render-test-report python-test-runner/render-test-report]
+             [expand-home paths/expand-home]
+             [ensure-log-date-dir! paths/ensure-log-date-dir!]
+             [sha256 util/sha256]
+             [non-blank-string? util/non-blank-string?]
+             [RUN_TESTS_TIMEOUT_MS runtime-settings/RUN_TESTS_TIMEOUT_MS])
+
+;; Activity presentation toolkit
+;;
+;; A pack declares `:activity` at its own binding, exactly like a built-in. These
+;; are the shared primitives that presentation is built from, so pack rows carry
+;; the same bounded, redacted evidence shapes as engine rows.
+(import-vars [activity-field presenter/field]
+             [activity-label presenter/label]
+             [activity-scalar presenter/scalar]
+             [activity-preview presenter/session-preview]
+             [activity-summary-line presenter/summary-line]
+             [activity-counted-label presenter/counted-label]
+             [activity-select-result presenter/select-result]
+             [activity-visible-result presenter/visible-result]
+             [activity-result-blocks presenter/result-blocks])
+
+;; `foundation.environment.core` and `foundation.shell` build ON this facade, so
+;; these two resolve on first call instead of at load time.
+
+(defn environment-snapshot
+  "The cached workspace environment: `{:host :git :languages :monorepo :repositories}`."
+  []
+  ((requiring-resolve 'com.blockether.vis.internal.foundation.environment.core/snapshot)))
+
+(defn kill-process-tree!
+  "Kill a process and every process it started."
+  [process]
+  ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/kill-tree!) process))
 
 ;; Channel event bus
 (def add-channel-event-listener!

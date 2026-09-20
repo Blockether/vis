@@ -31,15 +31,18 @@
       (some-> (:operation event)
               name)))
 
-(defn- field [m k] (when (map? m) (get m k (get m (keyword k)))))
+;; Presentation primitives shared with compiled-in packs. `vis.core` re-exports
+;; them under `activity-*` names so a library that owns a tool binding builds the
+;; same evidence shapes as a built-in, without reaching into this namespace.
+(defn field [m k] (when (map? m) (get m k (get m (keyword k)))))
 
-(defn- label
+(defn label
   [value]
   (-> (if (keyword? value) (name value) (str value))
       (str/replace #"[_-]" " ")
       str/capitalize))
 
-(defn- scalar
+(defn scalar
   [value]
   (cond (nil? value) "None"
         (keyword? value) (name value)
@@ -53,7 +56,7 @@
          :else "text")
    "text" text})
 
-(defn- visible-result
+(defn visible-result
   [value]
   (cond (map? value) (into {}
                            (keep (fn [[k v]]
@@ -105,7 +108,7 @@
                                            running? "Running"
                                            :else "Exit code unavailable")}]))}))
 
-(defn- result-blocks
+(defn result-blocks
   "Keep metadata in readable text; tables are reserved for comparable records."
   [value]
   (cond (or (nil? value) (and (coll? value) (empty? value))) []
@@ -312,7 +315,7 @@
    "update_goal" ["objective" "reason"]
    "mcp__call" ["content" "tools"]})
 
-(defn- select-result
+(defn select-result
   [fields value]
   (cond (map? value) (into {}
                            (keep (fn [key]
@@ -322,7 +325,7 @@
         (sequential? value) (mapv #(select-result fields %) value)
         :else value))
 
-(defn- counted-label [n singular] (str n " " singular (when (not= n 1) "s")))
+(defn counted-label [n singular] (str n " " singular (when (not= n 1) "s")))
 
 (defn- format-summary
   "Summarize complete format results using only counts and outcome flags, never source text."
@@ -398,7 +401,7 @@
                (map #(field value %) ["error" "warning" "info"]))
        (empty? (field value "findings"))))
 
-(defn- session-preview
+(defn session-preview
   [value limit]
   (let [limit
         (long limit)
@@ -415,7 +418,7 @@
     (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
          (when (or (> characters limit) (next lines)) "…"))))
 
-(defn- summary-line [parts] (str/join " · " (remove str/blank? parts)))
+(defn summary-line [parts] (str/join " · " (remove str/blank? parts)))
 
 (defn- draft-summary
   [op value]
