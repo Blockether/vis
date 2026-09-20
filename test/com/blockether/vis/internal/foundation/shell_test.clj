@@ -3071,3 +3071,57 @@
                                   (expect (false? (get r "timed_out")))
                                   (expect (str/includes? (str (get r "out")) "done")))
                                 (finally (resources/stop-all! sid)))))))))
+
+(defdescribe
+  jailed-shell-grants-test
+  ;; A language pack spawns its runtime through `vis.jailed_shell` and then has to talk
+  ;; to it. The pty a shell child runs under cannot carry the pack's JSON protocol, so
+  ;; the pack creates a rendezvous endpoint of its own and hands the child that ONE
+  ;; path — `allow_read_write` for a FIFO, `unix_connect` for a socket — instead of
+  ;; widening the jail or leaving the runtime outside it.
+  (it "reads a grant as one path or as a list, and refuses anything else"
+      (let [granted #'shell/granted-paths]
+        (expect (nil? (granted {} :unix_connect "unix_connect")))
+        (expect (nil? (granted {"unix_connect" "  "} :unix_connect "unix_connect")))
+        (expect
+          (= ["/tmp/vis-rendezvous.sock"]
+             (granted {"unix_connect" "/tmp/vis-rendezvous.sock"} :unix_connect "unix_connect")))
+        (expect (= ["/tmp/a" "/tmp/b"]
+                   (granted {"allow_read_write" ["/tmp/a" "/tmp/b"]}
+                            :allow_read_write
+                            "allow_read_write")))
+        (expect (try (granted {"allow_read_write" [42]} :allow_read_write "allow_read_write")
+                     false
+                     (catch Throwable t
+                       (str/includes? (str t) "allow_read_write takes path strings"))))
+        (expect (try (granted {"unix_connect" 7} :unix_connect "unix_connect")
+                     false
+                     (catch Throwable t
+                       (str/includes? (str t) "unix_connect must be a path string or a list"))))))
+  (it "adds the grants to a live policy and leaves a disabled one alone"
+      (let [merged
+            #'shell/with-granted-paths
+
+            grants
+            {:allow-read-write ["/tmp/fifo"] :unix-connect ["/tmp/s.sock"]}]
+
+        (expect (= {:disabled? true} (merged {:disabled? true} grants)))
+        (expect (= {:allow-read-write ["/workspace" "/tmp/fifo"] :unix-connect ["/tmp/s.sock"]}
+                   (merged {:allow-read-write ["/workspace"]} grants)))
+        (expect (= {:net-enabled? true} (merged {:net-enabled? true} {})))))
+  (it "spawns with the grants in the options map"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [started (:result (shell/jailed-shell nil
+                                                       {"id" "jailed-grants"
+                                                        "command" "printf granted"
+                                                        "allow_read_write" ["/tmp/vis-grant-fifo"]
+                                                        "unix_connect" ["/tmp/vis-grant.sock"]}))
+                  done (:result (shell/jailed-shell
+                                  nil
+                                  {"op" "wait" "id" (get started "id") "seconds" 20}))]
+
+              (try (expect (str/ends-with? (str (get done "out")) "granted"))
+                   (expect (= 0 (get done "exit")))
+                   (finally (shell/jailed-shell nil {"op" "stop" "id" (get started "id")})))))))))

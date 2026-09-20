@@ -30,9 +30,11 @@ not change the policy for other managed processes.
 | `python_execution` | CPython filesystem, process and socket guards while the jail is enabled; HTTP then uses the gateway policy |
 | Python extension code and its ordinary `subprocess` calls | trusted host code, outside the session jail |
 
-A trusted extension can opt into confinement with `vis.jailed_shell(...)` or use the
-invoking session's snapshot with `vis.jailed_shell_session(...)`. Project extension
-files are executable plugins and require the same review as build scripts.
+A trusted extension can opt into confinement with `vis.jailed_shell(...)`, which reads
+the merged configuration at every spawn. Project extension files are executable plugins
+and require the same review as build scripts. A confined child can be given the exact
+paths it needs on top of the session roots with the `allow_read_write` and `unix_connect`
+options; see [Extension API](extension-api.md).
 
 ## Filesystem access
 

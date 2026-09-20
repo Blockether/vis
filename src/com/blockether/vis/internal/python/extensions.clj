@@ -564,15 +564,6 @@
                                 extension/*current-environment*
                                 opts))))
     (put! g
-          "__vis_host_jailed_shell_session__"
-          ;; Session-snapshot jail: stable for the session and unavailable
-          ;; when a process-level callback has no invoking session.
-          (fn [opts]
-            (host-tool-result ((requiring-resolve
-                                 'com.blockether.vis.internal.foundation.shell/session-jailed-shell)
-                                extension/*current-environment*
-                                opts))))
-    (put! g
           "__vis_host_request_input__"
           ;; Typed input View pause: one JSON request object in, one JSON
           ;; answer object out. BLOCKS this extension call until the human

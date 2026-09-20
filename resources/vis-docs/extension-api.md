@@ -687,13 +687,34 @@ not read by the extension is captured in its log. Child processes receive
 pipes rather than a terminal; output is drained into an 8 MiB buffer per
 stream, including while the extension waits for the child to exit.
 
-To confine a child, use a jailed shell:
+To confine a child, use `vis.jailed_shell({...})`. It applies the jail policy from the
+merged configuration on disk, re-read at every spawn, and works with or without a session.
+`vis.shell({...})` applies no jail at all.
 
-| Call | Policy | Needs a session |
+Both calls return the same live handle: `sh.logs()`, `sh.wait(30)`, `sh.type("y")` and
+`sh.stop()` drive the process you started.
+
+A jailed child sees the session's roots and the egress proxy, which is rarely everything a
+language runtime needs. Two options on `vis.jailed_shell` add exactly what you created for
+it, and nothing else:
+
+| Option | Value | Use it for |
 | --- | --- | --- |
-| `vis.shell({...})` | none | no |
-| `vis.jailed_shell({...})` | merged configuration on disk, read at each spawn | no |
-| `vis.jailed_shell_session({...})` | the invoking session's policy snapshot | yes |
+| `allow_read_write` | one path or a list of paths | a FIFO or working file your extension made outside the session roots |
+| `unix_connect` | one socket path or a list of them | a unix socket your extension is listening on |
+
+```python
+sh = vis.jailed_shell({
+    "command": "java -cp … my.runtime",
+    "cwd": project,
+    "env": {"MY_RUNTIME_SOCKET": socket_path},
+    "unix_connect": [socket_path],
+})
+```
+
+Use them when the child has to talk back to the extension: a shell child runs under a real
+terminal, so its merged output cannot carry a request/response protocol. Give the child a
+rendezvous endpoint instead. Both options are ignored when the jail is disabled.
 
 `vis.fs` provides filesystem operations with extension permissions: `mkdir`,
 `write`, `read` (bytes), `read_text`, `copy`, `move`, `list`, `stat` and `remove`.

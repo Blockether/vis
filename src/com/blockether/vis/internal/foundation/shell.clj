@@ -2436,7 +2436,7 @@
 
 (defn shell-dispatch
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
-   (`trusted-extension-shell`, `jailed-shell`, `session-jailed-shell`) whose
+   (`trusted-extension-shell` and `jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
    one call that spawns one command — and drives what came back through the
@@ -2620,6 +2620,42 @@
                       (assoc-in [:security-policy :jail-enabled] false))
                   opts))
 
+(defn- granted-paths
+  "Exact paths a trusted extension hands its OWN jailed child, on top of the session
+   roots. A language pack spawns its runtime through [[jailed-shell]] and then has to
+   talk to it: a pty cannot carry a JSON request/response protocol, so the pack creates
+   a rendezvous endpoint — a FIFO or a unix socket in its own run directory — and the
+   child needs that ONE path, not a wider workspace. Anything that is not a nonblank
+   path string is refused here, where the message can still name the option."
+  [opts k what]
+  (let [v (opt opts k)]
+    (cond (nil? v) nil
+          (string? v) (when-not (str/blank? v) [v])
+          (or (sequential? v) (instance? java.util.Collection v))
+          (into []
+                (map (fn [x]
+                       (if (and (string? x) (not (str/blank? x)))
+                         x
+                         (throw (ex-info (str what " takes path strings, got " (pr-str x) ".")
+                                         {:type ::bad-option :option what :value x})))))
+                v)
+          :else (throw (ex-info
+                         (str what " must be a path string or a list of them, got " (pr-str v) ".")
+                         {:type ::bad-option :option what :value v})))))
+
+(defn- with-granted-paths
+  "Merge a caller's explicit grants into a freshly built jail policy. A DISABLED policy
+   is returned untouched: there is no boundary to widen."
+  [policy {:keys [allow-read-write unix-connect]}]
+  (if (:disabled? policy)
+    policy
+    (cond-> policy
+      (seq allow-read-write)
+      (update :allow-read-write (fnil into []) allow-read-write)
+
+      (seq unix-connect)
+      (update :unix-connect (fnil into []) unix-connect))))
+
 (defn- latest-jail-policy
   "Strictly build one process policy from the currently merged config. This is
    called at the spawn boundary: invalid current config throws, and no session or
@@ -2710,21 +2746,19 @@
 (defn jailed-shell
   "Run `vis.jailed_shell` through a strict policy read from the latest merged
    on-disk configuration at every process spawn. Works with or without a session;
-   invalid current config refuses that spawn instead of using a snapshot."
-  [env opts]
-  (shell-dispatch (-> (or env {})
-                      (assoc :shell-origin "jailed-extension")
-                      (assoc :jail-policy-fn #(latest-jail-policy env)))
-                  opts))
+   invalid current config refuses that spawn instead of using a snapshot.
 
-(defn session-jailed-shell
-  "Run `vis.jailed_shell_session` through the invoking session's immutable jail
-   snapshot. Requires a live session and never re-reads configuration."
+   `allow_read_write` and `unix_connect` are the CALLER's own grants, added to that
+   policy by [[granted-paths]]: the extension hands its child the exact rendezvous
+   endpoint it created and nothing else. A disabled jail ignores them."
   [env opts]
-  (when-not (:session-id env)
-    (throw (ex-info "jailed_shell_session is available only while handling a session"
-                    {:type ::no-session})))
-  (shell-dispatch (assoc env :shell-origin "jailed-session") opts))
+  (let [grants {:allow-read-write (granted-paths opts :allow_read_write "allow_read_write")
+                :unix-connect (granted-paths opts :unix_connect "unix_connect")}]
+    (shell-dispatch (-> (or env {})
+                        (assoc :shell-origin "jailed-extension")
+                        (assoc :jail-policy-fn #(with-granted-paths (latest-jail-policy env)
+                                                                    grants)))
+                    opts)))
 
 ;; Env injection — the before-fn hands the impl its env as first arg
 

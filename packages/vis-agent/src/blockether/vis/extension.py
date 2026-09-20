@@ -70,9 +70,6 @@ class Host(Protocol):
     def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one shell op inside the workspace jail."""
 
-    def jailed_shell_session(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell op inside a persistent jailed session."""
-
     def request_input(
         self,
         request_json: str,
@@ -2417,7 +2414,7 @@ def _shell_options(name, opts):
 
 class Shell(dict):
     # A SHELL RESULT IS A LIVE HANDLE — the SAME contract the model's sandbox gets.
-    # `vis.shell`, `vis.jailed_shell` and `vis.jailed_shell_session` all answer this
+    # `vis.shell` and `vis.jailed_shell` both answer this
     # dict-with-methods, so an extension drives a process on the object the call
     # returned (`sh.logs()`, `sh.wait(30)`, `sh.type('y')`, `sh.stop()`) instead of
     # hand-authoring `{'op': 'logs', 'id': …}` maps. It IS a dict — `sh['exit']`,
@@ -2470,12 +2467,6 @@ def shell(opts):
 def jailed_shell(opts):
     # Strictly re-read the latest merged on-disk config at each process spawn.
     call = _shell_call("jailed_shell")
-    return Shell(call(opts), call)
-
-
-def jailed_shell_session(opts):
-    # Explicitly use the invoking session's immutable policy snapshot.
-    call = _shell_call("jailed_shell_session")
     return Shell(call(opts), call)
 
 

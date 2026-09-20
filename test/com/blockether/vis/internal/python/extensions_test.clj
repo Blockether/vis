@@ -3620,10 +3620,13 @@ vis.register_extension(vis.Extension(
           (expect (re-find #"Invalid Vis configuration" (str (get second-run "note"))))
           (expect (= 2 @loads))))))
   (it
-    "keeps the latest and session-snapshot jail APIs distinct"
+    "keeps ONE jailed shell API, the latest-config one"
+    ;; `vis.jailed_shell_session` and its `__vis_host_jailed_shell_session__` door were
+    ;; removed: the session and the extension run in separate processes, so a session
+    ;; policy snapshot bought nothing over the merged config read at every spawn.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['out']\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(session)]))"}
+       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -3631,8 +3634,8 @@ vis.register_extension(vis.Extension(
               latest
               (symbol-fn ext 'latest)
 
-              session
-              (symbol-fn ext 'session)
+              removed
+              (symbol-fn ext 'removed)
 
               seen
               (atom [])
@@ -3643,16 +3646,9 @@ vis.register_extension(vis.Extension(
           (with-redefs [shell/jailed-shell (fn [actual-env opts]
                                              (swap! seen conj [actual-env opts])
                                              {"out" "latest"})]
-            (expect (= "latest" (:result (latest))))
-            (expect (try (shell/session-jailed-shell nil {"command" "echo refused"})
-                         false
-                         (catch Throwable t
-                           (str/includes?
-                             (str t)
-                             "jailed_shell_session is available only while handling a session"))))
             (binding [extension/*current-environment* env]
-              (expect (= "session\n" (:result (session)))))
-            ;; The session API did not cross the latest-config host callback.
+              (expect (= "latest" (:result (latest))))
+              (expect (= ["False" "False"] (:result (removed)))))
             (expect (= [{"command" "echo latest"}] (mapv second @seen))))))))
   (it
     "unwraps the host tool ENVELOPE so a shelling extension crosses the boundary"
