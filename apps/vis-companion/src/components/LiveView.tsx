@@ -687,17 +687,33 @@ function TableRows({
    */
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
 
+  // A branch OWNS its legs wherever the producer listed them. GitHub returns a matrix
+  // interleaved with the rest of the run, so walking the rows in order put the head
+  // above the first leg it met and left the other four stranded as parentless rows
+  // further down the table — under whichever head happened to come next.
+  const legs = new Map<string, LiveRow[]>();
+  for (const row of rows) {
+    if (!row.branch) continue;
+    const kept = legs.get(row.branch);
+    if (kept) kept.push(row);
+    else legs.set(row.branch, [row]);
+  }
+
   const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
   const seen = new Set<string>();
   for (const row of rows) {
     // A declared branch is the producer's own grouping: one leg folds like five, so a
     // table never mixes folded parents with flat rows that still repeat their parent.
     const group = row.branch || undefined;
-    if (group && !seen.has(group)) {
-      seen.add(group);
-      visible.push({ kind: 'group', label: group });
+    if (!group) {
+      visible.push({ kind: 'row', row });
+      continue;
     }
-    if (!group || openGroups.has(group)) visible.push({ kind: 'row', row });
+    if (seen.has(group)) continue;
+    seen.add(group);
+    visible.push({ kind: 'group', label: group });
+    if (openGroups.has(group))
+      for (const leg of legs.get(group) ?? []) visible.push({ kind: 'row', row: leg });
   }
 
   const span = Math.max(1, node.columns.length);

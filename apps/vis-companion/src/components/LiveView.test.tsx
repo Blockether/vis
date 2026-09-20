@@ -337,6 +337,41 @@ describe('selecting a table row', () => {
     );
     expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
   });
+  // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: GitHub lists a matrix
+  // interleaved with the rest of the run, so a branch head showed the first leg it met
+  // and the remaining legs stood in the table as rows belonging to no parent.
+  it('gathers a branch legs under its own head, however the run interleaves them', () => {
+    const view = matrixView([]);
+    const hosts = hostsTable(view);
+    hosts.rows = [
+      {
+        id: 'ios',
+        cells: ['Release apps / iOS', 'queued'],
+        tone: 'running',
+        branch: 'Release apps',
+      },
+      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
+      {
+        id: 'android',
+        cells: ['Release apps / Android', 'running'],
+        tone: 'running',
+        branch: 'Release apps',
+      },
+    ];
+    paint({ view, onSelect: vi.fn() });
+
+    expect(screen.queryByRole('button', { name: 'Select Release apps / Android' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Release apps' }));
+    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Select Release apps / Android' })).toBeVisible();
+
+    const order = screen.getAllByRole('row').map((row) => row.textContent ?? '');
+    const at = (text: string) => order.findIndex((line) => line.includes(text));
+    expect(at('Release apps')).toBeLessThan(at('iOS'));
+    expect(at('iOS')).toBeLessThan(at('Android'));
+    expect(at('Android')).toBeLessThan(at('Publish docs'));
+  });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
   // tinted its first cell, so the table looked like a cell picker instead of a row picker.
   it('paints the selected state across the whole job row', () => {
