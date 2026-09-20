@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.11] - 2026-09-20
+
+### Added
+- Serve a language from an extension. Vis no longer ships language tooling in the engine:
+  `vis-lang-interface` owns the contract, and `vis-lang-clojure` and `vis-lang-python` provide
+  formatting, linting, tests, the REPL, delimiter repair and syntax verdicts as ordinary
+  extensions. A guide in the manual shows how to serve your own language from Python.
+- Ask `grep` for one row per matching file with `is_files_only`, each with that file's hit count,
+  and read the files a capped page has not shown you.
+- Get the same ignore-aware walk as a flat list of paths with `ls(..., as_paths=True)`.
+- Follow a recording with its timed transcript: the player lights the line being spoken and seeks
+  to the line you press.
+- Choose the build that runs with `vis-agent switch`, so you can try a published beta and restore
+  the stable release without editing installation state by hand.
+- See every toggle in the TUI: settings now come from the gateway's own catalog, so a toggle the
+  engine or an extension registers appears in the terminal as well as the app.
+- Read desktop alerts with the phone's words - the answer, or the question waiting on you.
+- Open a session row's menu with a right-click in the desktop app.
+
+### Fixed
+- Search a directory with a regex the native prefilter cannot compile - lookaround, a
+  backreference, an atomic group, `\K` - instead of answering zero hits.
+- Run code and write files with drafts enabled while the OS jail is off. The guard refused every
+  code block, draft-related or not, and the documentation described the same wrong rule.
+- Repaint the whole TUI screen after resizing the terminal with a dialog open.
+- Call MCP servers from the sandbox: documentation, hints and the `doc()` index named the wire
+  tool instead of the `mcp_call` the sandbox binds.
+- Reach the model with a result that nests a non-string key, such as an MCP server's JSON Schema.
+- Play a recording inside the transcript card, with its transcription under it, and keep a delete
+  confirmation at the row's own height.
+- Open the desktop version you selected, and remove superseded desktop copies at launch.
+- Read a goal in the same turn that set it.
+- Declare the session alert route in the gateway contract, so the schema and the running router
+  agree again.
+
+### Changed
+- Drafts are experimental: the toggle sits under Experimental and is off by default.
+- Rewind is gone, with its slash commands, store and HTTP route.
+- Transcription stops at an hour of audio and settles as unavailable past that cap, so one long
+  recording no longer pins the speech worker for every later turn.
+- Vis releases an idle session's Python worker after three minutes instead of fifteen.
+
 ## [v0.2.10] - 2026-09-18
 
 Includes everything prepared for v0.2.9, whose native verification blocked publication.
