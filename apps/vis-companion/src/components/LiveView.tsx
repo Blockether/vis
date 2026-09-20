@@ -1581,5 +1581,5 @@ export function LiveView({
       load={readLog(view.id)}
     />
   ));
-  return embedded ? panels : <div className="space-y-3">{panels}</div>;
+  return embedded ? panels : <div className="min-w-0 space-y-3">{panels}</div>;
 }

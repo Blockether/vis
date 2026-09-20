@@ -211,6 +211,87 @@ export const BandRhythm: Story = {
 };
 
 export const Unmatched: Story = { args: { liveViews: [{ ...view, owner: undefined }] } };
+
+// A run nobody could match to an Activity paints its whole picture in the transcript, and its
+// rows state one line each: a step timeline and a result link print a name that is longer than a
+// phone is wide, and they say so by ending in an ellipsis or wrapping.
+const longRun: LiveView = {
+  ...view,
+  id: 'release-run',
+  title: 'Verify release source',
+  description: '22 jobs',
+  owner: undefined,
+  nodes: [
+    {
+      id: 'steps',
+      type: 'steps',
+      label: 'Timeline',
+      steps: [
+        {
+          id: 'isolation',
+          label: 'vis-agent-linux-arm64.tar.gz · Provision and verify Linux isolation · 6s',
+          tone: 'ok',
+        },
+        {
+          id: 'image',
+          label: 'vis-agent-linux-arm64.tar.gz · Build native image · 4m 12s',
+          tone: 'running',
+        },
+      ],
+    },
+    {
+      id: 'links',
+      type: 'link',
+      links: [
+        {
+          id: 'run',
+          label: 'This run',
+          target: 'https://gateway.example.com/actions/runs/4344',
+          target_kind: 'url',
+        },
+        {
+          id: 'ubuntu',
+          label: 'Failed · Verify release source / python-package / ubuntu-latest / 3.11',
+          target: 'https://gateway.example.com/actions/runs/4344/job/9883',
+          target_kind: 'url',
+        },
+        {
+          id: 'macos',
+          label: 'Failed · Verify release source / python-package / macos-26 / pypy3.11',
+          target: 'https://gateway.example.com/actions/runs/4344/job/9963',
+          target_kind: 'url',
+        },
+      ],
+    },
+  ],
+};
+
+// Regression, user report (screenshot): on a phone that picture dragged the whole card past the
+// right edge of the screen — the box lost its right border and the failed jobs were cut off
+// mid-word. The rail is a COLUMN of the message grid: it takes the reading width it is given, and
+// the widest line a row could print never becomes the width of the card.
+export const NarrowUnmatched: Story = {
+  args: { liveViews: [longRun] },
+  play: async ({ canvas }) => {
+    await document.fonts.ready;
+    const panel = canvas.getByText(longRun.title).closest('section')!;
+    const rail = panel.parentElement!;
+    const box = panel.getBoundingClientRect();
+    const card = rail.parentElement!.getBoundingClientRect();
+    await expect(rail.getBoundingClientRect().width).toBeLessThanOrEqual(card.width);
+    await expect(box.width).toBeLessThanOrEqual(card.width);
+    await expect(box.right).toBeLessThanOrEqual(Math.min(card.right, window.innerWidth) + 1);
+    // Every row stops inside the box, so the frame stays closed and a long name ends in the
+    // ellipsis or the wrap the panel already prints for it.
+    for (const row of panel.querySelectorAll(':scope > ul > li')) {
+      await expect(row.getBoundingClientRect().right).toBeLessThanOrEqual(box.right + 1);
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+    }
+    for (const link of canvas.getAllByRole('link')) {
+      await expect(link.getBoundingClientRect().right).toBeLessThanOrEqual(box.right + 1);
+    }
+  },
+};
 export const Settled: Story = {
   args: {
     liveViews: [],
