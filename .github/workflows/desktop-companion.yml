@@ -77,6 +77,13 @@ jobs:
       # RUNNER_TEMP is cleaned between jobs; never upload the persistent npm cache.
       - name: Use job-local npm cache
         run: echo "npm_config_cache=$RUNNER_TEMP/vis-npm-cache" >> "$GITHUB_ENV"
+
+      # Checkout cleans the workspace, so a target directory inside it starts empty
+      # on every attempt and a Pake build that hit its own 15-minute command timeout
+      # can never resume. Keep the Cargo target outside the checkout: on a reusable
+      # runner the next attempt continues the compile instead of restarting it.
+      - name: Keep the Cargo target out of the cleaned workspace
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/vis/desktop-target" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -95,7 +102,7 @@ jobs:
           # This is the actual CARGO_TARGET_DIR used by desktop-package.mjs,
           # not a repository target directory that Pake never writes.
           path: |
-            apps/vis-companion/build/desktop-target
+            ~/.cache/vis/desktop-target
             ~/.cargo/registry
             ~/.cargo/git
           key: pake-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache.outputs.compiler }}-3.15.7-${{ hashFiles('apps/vis-companion/package-lock.json', 'apps/vis-companion/scripts/desktop-package.mjs') }}
