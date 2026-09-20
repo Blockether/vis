@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Fold a live table by its parents: the terminal and the app both show one head per parent,
   closed until you open it and counting its own rows.
 
+### Changed
+- A live table row names its group with `parent` instead of `branch`. Call
+  `vis.table(...).upsert(row_id, cells, parent=...)`, or `view.row(row_id, cells, parent=...)`,
+  and update any extension that passed `branch=`; the old name is gone.
 ### Fixed
 - Ship the macOS desktop installer again: the release build keeps its Rust compile cache outside
   the directory the runner wipes, so the universal build finishes inside Pake's own time limit
