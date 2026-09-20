@@ -40,6 +40,52 @@ async function catalog(env, origin, ctx) {
   if (cache) ctx.waitUntil(cache.put(key, reply(data, 200, false, 'public, max-age=60')));
   return data;
 }
+
+// One interactive inspection costs up to ~90 GitHub calls. They are charged against a shared
+// hourly ceiling, in blocks, so submissions cannot spend the quota discovery depends on.
+// Scheduled discovery is never charged.
+const GITHUB_BUDGET_PER_HOUR = 1200,
+  GITHUB_BUDGET_BLOCK = 16,
+  CATALOG_VERSION = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})((a|b|rc)(0|[1-9]\d{0,8}))?$/;
+
+function inspectionBudget(env) {
+  let remaining = 0;
+  return async () => {
+    if (remaining > 0) {
+      remaining -= 1;
+      return;
+    }
+    const hour = new Date().toISOString().slice(0, 13),
+      charged = await env.DB.prepare(
+        'INSERT INTO github_budget (hour, calls) VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET calls=calls+? WHERE calls+?<=? RETURNING calls',
+      )
+        .bind(
+          hour,
+          GITHUB_BUDGET_BLOCK,
+          GITHUB_BUDGET_BLOCK,
+          GITHUB_BUDGET_BLOCK,
+          GITHUB_BUDGET_PER_HOUR,
+        )
+        .first();
+    if (!charged)
+      throw new RequestError('The catalog reached its hourly GitHub budget. Try again later.', 429);
+    remaining = GITHUB_BUDGET_BLOCK - 1;
+  };
+}
+
+async function detail(env, origin, id, version, ctx) {
+  // Refuse an impossible version before D1 sees it, then cache what every page load repeats.
+  if (version && !CATALOG_VERSION.test(version)) return null;
+  const cache = globalThis.caches?.default,
+    key = new Request(
+      origin + '/api/extensions/' + id + (version ? '?version=' + encodeURIComponent(version) : ''),
+    );
+  const saved = await cache?.match(key);
+  if (saved) return saved.json();
+  const item = await extensionDetail(env, id, version);
+  if (item && cache) ctx.waitUntil(cache.put(key, reply(item, 200, false, 'public, max-age=60')));
+  return item;
+}
 async function protectedSource(request, env, path) {
   const action = path === '/api/preview' ? 'extension-preview' : 'extension-submit';
   const source = await protectedBody(request, env, action, [
@@ -91,7 +137,8 @@ async function handle(request, env, ctx) {
               headers: { ...security, Location: extensionPath(listing) + url.search },
             });
           data.item =
-            listing && (await extensionDetail(env, listing.id, url.searchParams.get('version')));
+            listing &&
+            (await detail(env, url.origin, listing.id, url.searchParams.get('version'), ctx));
           if (!data.item) {
             data.detailError = true;
             status = 404;
@@ -107,10 +154,12 @@ async function handle(request, env, ctx) {
     if (path === '/api/extensions')
       return reply(await catalog(env, url.origin, ctx), 200, false, 'public, max-age=60');
     if (/^\/api\/extensions\/[0-9a-f]{24}$/.test(path)) {
-      const item = await extensionDetail(
+      const item = await detail(
         env,
+        url.origin,
         path.split('/').at(-1),
         url.searchParams.get('version'),
+        ctx,
       );
       return item
         ? reply(item, 200, false, 'public, max-age=60')
@@ -132,7 +181,7 @@ async function handle(request, env, ctx) {
   if (request.method !== 'POST' || !['/api/preview', '/api/submissions'].includes(path))
     return reply({ error: 'Method not allowed.' }, 405);
   const source = await protectedSource(request, env, path);
-  const metadata = await inspectRepository(source, env);
+  const metadata = await inspectRepository(source, env, inspectionBudget(env));
   if (path === '/api/preview') return reply(metadata);
   const submission = await queueRelease(env, metadata);
   return reply(submission, submission.status === 'pending' ? 202 : 200);
@@ -161,6 +210,15 @@ export default {
     return request.method === 'HEAD' ? new Response(null, response) : response;
   },
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(Promise.all([discoverReleases(env), refreshRepositoryStats(env)]));
+    // Discovery spends no interactive budget; it only drops windows nobody can charge again.
+    ctx.waitUntil(
+      Promise.all([
+        discoverReleases(env),
+        refreshRepositoryStats(env),
+        env.DB.prepare('DELETE FROM github_budget WHERE hour < ?')
+          .bind(new Date(Date.now() - 2 * 3600 * 1000).toISOString().slice(0, 13))
+          .run(),
+      ]),
+    );
   },
 };

@@ -188,7 +188,8 @@ export function releaseVersion(version) {
     prerelease: !!match[4],
   };
 }
-export function githubClient(env) {
+// `guard` is called before every GitHub request so a caller can meter its own budget.
+export function githubClient(env, guard) {
   const signal = AbortSignal.timeout(20000);
   return async (path) => {
     const headers = {
@@ -197,6 +198,7 @@ export function githubClient(env) {
       'X-GitHub-Api-Version': '2022-11-28',
     };
     if (env.GITHUB_TOKEN) headers.Authorization = 'Bearer ' + env.GITHUB_TOKEN;
+    if (guard) await guard();
     const response = await fetch('https://api.github.com' + path, {
       headers,
       redirect: 'manual',
@@ -213,7 +215,7 @@ export function githubClient(env) {
     return JSON.parse(await readBounded(response, 1024 * 1024));
   };
 }
-export async function inspectRepository(source, env) {
+export async function inspectRepository(source, env, guard) {
   const submittedURL = repositoryURL(source.repository_url),
     subdirectory = projectFolder(source.subdirectory);
   assert(
@@ -228,7 +230,7 @@ export async function inspectRepository(source, env) {
         /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(source.release_tag)),
     'Use a GitHub release tag, such as v1.2.0.',
   );
-  const github = githubClient(env);
+  const github = githubClient(env, guard);
   const repo = await github(api);
   assert(repo.private === false, 'Only public GitHub repositories can be listed.');
   const repository = repo.full_name,

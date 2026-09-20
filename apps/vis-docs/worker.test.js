@@ -23,9 +23,12 @@ beforeEach(async () => {
   fixture.controls.contents.clear();
   fixture.controls.manifest = readFileSync('examples/vis-greeter/pyproject.toml', 'utf8');
   await fixture.db.batch(
-    ['DELETE FROM submissions', 'DELETE FROM releases', 'DELETE FROM extensions'].map((sql) =>
-      fixture.db.prepare(sql),
-    ),
+    [
+      'DELETE FROM submissions',
+      'DELETE FROM releases',
+      'DELETE FROM extensions',
+      'DELETE FROM github_budget',
+    ].map((sql) => fixture.db.prepare(sql)),
   );
   await fixture.runtime.purgeCache();
 });
@@ -191,7 +194,8 @@ test('pending submissions and their refreshes cannot publish or replace a public
   ).text();
   expect(html).toContain('vis-greeter');
   expect(html).toContain('id="install-command"');
-  expect(html).toContain('--subdirectory');
+  expect(html).toContain('&#39;example/extensions/plugins/greeting&#39;');
+  expect(html).not.toContain('--subdirectory');
 });
 test('SSR supports search, categories, sort, views and executable-free metadata', async () => {
   const items = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'));
@@ -589,4 +593,60 @@ test('discovery fails explicitly rather than publishing an empty catalog when D1
     expect(response.status).toBe(503);
     expect(response.headers.get('cache-control')).toBe('no-store');
   }
+});
+
+test('interactive inspections share an hourly GitHub budget', async () => {
+  const hour = new Date().toISOString().slice(0, 13);
+  expect((await post('/api/preview')).status).toBe(200);
+  const charged = await fixture.db
+    .prepare('SELECT calls FROM github_budget WHERE hour=?')
+    .bind(hour)
+    .first();
+  expect(charged.calls).toBeGreaterThanOrEqual(16);
+  expect(charged.calls % 16).toBe(0);
+  await fixture.db.prepare('UPDATE github_budget SET calls=1192 WHERE hour=?').bind(hour).run();
+  fixture.controls.requests = [];
+  const refused = await post('/api/preview');
+  expect(refused.status).toBe(429);
+  expect((await refused.json()).error).toContain('hourly GitHub budget');
+  expect(refused.headers.get('Retry-After')).toBe('60');
+  expect(fixture.controls.requests.some((url) => url.includes('api.github.com'))).toBe(false);
+});
+
+test('a saturated review queue refuses new submissions instead of growing', async () => {
+  await fixture.db
+    .prepare(
+      "INSERT INTO submissions (id, extension_id, revision, metadata, submitted_at) WITH RECURSIVE queued(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM queued WHERE i<500) SELECT printf('%024d',i),printf('%024d',i),printf('%040d',i),'{}','2026-01-01T00:00:00.000Z' FROM queued",
+    )
+    .run();
+  const response = await post('/api/submissions', { revision: fixture.revision });
+  expect(response.status).toBe(429);
+  expect((await response.json()).error).toContain('review queue is full');
+  expect(response.headers.get('Retry-After')).toBe('60');
+  expect((await fixture.db.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n).toBe(500);
+});
+
+test('detail reads are cached and an impossible version never reaches the database', async () => {
+  const pending = await (await post('/api/submissions', { revision: fixture.revision })).json();
+  for (const sql of moderationStatements('approve', pending.id)) await fixture.db.prepare(sql).run();
+  const id = await identity('https://github.com/example/extensions\nplugins/greeting');
+  const first = await fixture.runtime.dispatchFetch(
+    'https://center.example.com/api/extensions/' + id,
+  );
+  expect(first.status).toBe(200);
+  expect(first.headers.get('cache-control')).toContain('max-age=60');
+  await fixture.db.prepare('DELETE FROM extensions').run();
+  const cached = await fixture.runtime.dispatchFetch(
+    'https://center.example.com/api/extensions/' + id,
+  );
+  expect(cached.status).toBe(200);
+  expect((await cached.json()).name).toBe('vis-greeter');
+  for (const version of ["1.0.0' OR 1=1", '1.0', 'latest', '1.0.0.0'])
+    expect(
+      (
+        await fixture.runtime.dispatchFetch(
+          'https://center.example.com/api/extensions/' + id + '?version=' + encodeURIComponent(version),
+        )
+      ).status,
+    ).toBe(404);
 });

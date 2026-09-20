@@ -7,6 +7,8 @@ import {
   repositoryURL,
 } from './github.js';
 
+// Moderation is human work: an unbounded queue is a denial-of-service target, not a backlog.
+const PENDING_SUBMISSIONS = 500;
 export async function queueRelease(env, metadata) {
   const existing = await env.DB.prepare(
     'SELECT revision,status FROM releases WHERE extension_id=? AND version=?',
@@ -30,11 +32,27 @@ export async function queueRelease(env, metadata) {
   if (listed && JSON.parse(listed.metadata).name !== metadata.name)
     throw new RequestError('A release cannot change the extension package name.', 409);
   const now = new Date().toISOString();
-  await env.DB.prepare(
-    'INSERT INTO submissions (id, extension_id, revision, metadata, submitted_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(extension_id, revision) DO NOTHING',
+  const queued = await env.DB.prepare(
+    'INSERT INTO submissions (id, extension_id, revision, metadata, submitted_at) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM submissions) < ? ON CONFLICT(extension_id, revision) DO NOTHING RETURNING id',
   )
-    .bind(id, metadata.id, metadata.revision, JSON.stringify({ ...metadata, checked_at: now }), now)
-    .run();
+    .bind(
+      id,
+      metadata.id,
+      metadata.revision,
+      JSON.stringify({ ...metadata, checked_at: now }),
+      now,
+      PENDING_SUBMISSIONS,
+    )
+    .first();
+  if (!queued) {
+    const waiting = await env.DB.prepare(
+      'SELECT id FROM submissions WHERE extension_id=? AND revision=?',
+    )
+      .bind(metadata.id, metadata.revision)
+      .first();
+    if (!waiting)
+      throw new RequestError('The review queue is full. Try again after moderation.', 429);
+  }
   return { id, status: 'pending' };
 }
 

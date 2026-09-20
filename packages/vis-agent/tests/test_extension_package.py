@@ -81,6 +81,59 @@ def test_subdirectory_cannot_escape_the_repository(directory):
         package.project_subdirectory(directory)
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "example/extensions/plugins/greeting",
+        "Example/Extensions/plugins/greeting",
+        "https://github.com/example/extensions/plugins/greeting",
+        "https://github.com/Example/Extensions/plugins/greeting/",
+        "https://vis.blockether.com/extensions/example/extensions/plugins/greeting",
+    ],
+)
+def test_catalog_identifier_carries_the_project_folder(source):
+    assert package.github_source(source) == (REPOSITORY, "plugins/greeting")
+    assert package.github_source(source, "plugins/greeting") == (
+        REPOSITORY,
+        "plugins/greeting",
+    )
+    with pytest.raises(ValueError, match="once"):
+        package.github_source(source, "plugins/other")
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["example/extensions", REPOSITORY, REPOSITORY + "/", "Example/Extensions.git"],
+)
+def test_identifier_without_a_folder_selects_the_repository_root(source):
+    assert package.github_source(source) == (REPOSITORY, "")
+    assert package.github_source(source, "plugins/greeting") == (
+        REPOSITORY,
+        "plugins/greeting",
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "vis-greeter",
+        "example",
+        "https://vis.blockether.com/extensions/example",
+        "https://example.test/example/extensions/plugins/greeting",
+        "example//extensions/plugins",
+    ],
+)
+def test_catalog_identifier_needs_an_owner_and_repository(source):
+    with pytest.raises(ValueError, match="GitHub"):
+        package.github_source(source)
+
+
+@pytest.mark.parametrize("folder", ["../outside", "plugins/../other", ".git/hooks"])
+def test_catalog_identifier_folder_cannot_escape_the_repository(folder):
+    with pytest.raises(ValueError):
+        package.github_source("example/extensions/" + folder)
+
+
 def test_manifest_inspection_never_imports_code(tmp_path):
     source = project(tmp_path / "source")
     with (source / "pyproject.toml").open("a") as manifest:
@@ -528,6 +581,48 @@ def test_repository_slug_does_not_silently_select_a_local_directory(
     linked = package.install("./example/extensions", tmp_path / "linked", trust=True)
     assert linked["mode"] == "source"
     assert (tmp_path / "linked/vis-greeter/current").resolve() == local
+
+
+def test_catalog_identifier_selects_the_folder_for_every_lifecycle_command(releases):
+    _, target, _ = releases
+    installed = package.install(
+        "example/extensions/plugins/greeting", target, trust=True, version="1.0.0"
+    )
+    assert installed["mode"] == "github"
+    assert installed["subdirectory"] == "plugins/greeting"
+    status = package.versions("example/extensions/plugins/greeting", directory=target)
+    assert (status["subdirectory"], status["installed"]) == (
+        "plugins/greeting",
+        "1.0.0",
+    )
+    updated = package.update(
+        "https://vis.blockether.com/extensions/example/extensions/plugins/greeting",
+        target,
+        trust=True,
+    )
+    assert updated["version"] == "1.1.0"
+    restored = package.rollback(
+        "https://github.com/example/extensions/plugins/greeting", target, trust=True
+    )
+    assert restored["version"] == "1.0.0"
+
+
+def test_local_project_keeps_priority_over_a_catalog_folder(
+    releases, tmp_path, monkeypatch
+):
+    _, target, _ = releases
+    local = project(tmp_path / "example/extensions/plugins/greeting")
+    monkeypatch.chdir(tmp_path)
+    linked = package.install(
+        "example/extensions/plugins/greeting", tmp_path / "linked", trust=True
+    )
+    assert linked["mode"] == "source"
+    assert (tmp_path / "linked/vis-greeter/current").resolve() == local
+    # An explicit release selector names the catalog, not the local folder.
+    pinned = package.install(
+        "example/extensions/plugins/greeting", target, trust=True, version="1.0.0"
+    )
+    assert (pinned["mode"], pinned["subdirectory"]) == ("github", "plugins/greeting")
 
 
 def test_default_install_selects_stable_and_prerelease_is_explicit(releases):

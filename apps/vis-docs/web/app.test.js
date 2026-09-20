@@ -110,7 +110,7 @@ test('every extension uses its GitHub owner/repository as its catalog name', asy
   expect($('.project-details .facts').textContent).not.toContain('Python package');
   for (const command of ['versions', 'update', 'rollback']) {
     expect($('#detail').textContent).toContain(
-      `vis-agent extension ${command} '${item.repository.toLowerCase()}' --subdirectory '${item.subdirectory}'`,
+      `vis-agent extension ${command} '${item.repository.toLowerCase()}/${item.subdirectory}'`,
     );
     expect($('#detail').textContent).not.toContain(`vis-agent extension ${command} '${item.name}'`);
   }
@@ -323,8 +323,7 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect(installCommand(item)).toBe(
     [
       'vis-agent extension install',
-      "'example/extension-examples'",
-      "--subdirectory 'extensions/greeting'",
+      "'example/extension-examples/extensions/greeting'",
       "--version '1.0.0'",
       '--project',
       '--trust',
@@ -333,7 +332,7 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect(installCommand(item)).toContain("--version '1.0.0'");
   expect(installCommand(item)).not.toMatch(/registry|zip/i);
   expect(installCommand({ ...item, subdirectory: "tools/O'Reilly" })).toContain(
-    "--subdirectory 'tools/O'\\''Reilly'",
+    "'example/extension-examples/tools/O'\\''Reilly'",
   );
   expect($('#source-link').href).toBe(item.source_url);
   const writeText = vi.fn().mockResolvedValue();
@@ -357,9 +356,11 @@ test('install choices render highlighted multiline shell commands and reset copy
   await tick();
   expect($('#install-scope').value).toBe('project');
   expect($('#install-command .token.function').textContent).toBe('vis-agent extension install');
-  expect($('#install-command .token.keyword').textContent).toBe('--subdirectory');
-  expect($('#install-command .token.string').textContent).toBe("'example/extension-examples'");
-  expect($('#install-command').textContent.split('\n')).toHaveLength(6);
+  expect($('#install-command .token.keyword').textContent).toBe('--version');
+  expect($('#install-command .token.string').textContent).toBe(
+    "'example/extension-examples/extensions/greeting'",
+  );
+  expect($('#install-command').textContent.split('\n')).toHaveLength(5);
   const writeText = vi.fn().mockResolvedValue();
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   $('#copy-command').click();

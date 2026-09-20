@@ -181,7 +181,9 @@ for example `/extensions/example/extensions/plugins/greeting`. Folder names keep
 their case and each path segment is URL-encoded. Cards, release links and discovery
 indexes share these URLs. Previously shared hash URLs redirect to the readable
 address, preserving query parameters such as `?version=1.2.0`. Internal listing IDs
-and ID-based API routes remain unchanged.
+and ID-based API routes remain unchanged. `vis-agent extension install` takes that same
+path as one identifier — `owner/repository`, `owner/repository/folder`, the repository
+URL or the extension page URL — so no separate `--subdirectory` argument is needed.
 
 Only approved listings, releases and comments are public. Pending entries live in
 `submissions`, without an anonymous read API. A repository/folder pair identifies a
@@ -261,7 +263,7 @@ a successful conclusion. Then verify that the public catalog lists the expected 
 and SHA, allowing for the cache delay above:
 
 ```sh
-vis-agent extension versions https://github.com/example/extensions --subdirectory tools/greeting
+vis-agent extension versions example/extensions/tools/greeting
 ```
 
 The operator command rechecks public GitHub metadata and the tag/SHA match, then uses
@@ -383,6 +385,21 @@ D1 is reachable only through a Worker binding. Public reads share one cached cat
 snapshot for 60 seconds regardless of filters; detail lookups use the primary key.
 Static assets bypass the Worker. Writes require same-origin JSON, bounded inputs,
 Turnstile and a rate-limit check. Search and sorting do not produce new database scans.
+
+Interactive inspections share one hourly GitHub budget kept in D1: 1,200 API calls per hour,
+charged in blocks of 16 before the calls are made. Over budget, `/api/preview` and
+`/api/submissions` answer 429 with `Retry-After`, and scheduled discovery is never charged,
+so a burst of submissions cannot spend the quota the catalog needs to refresh listings.
+The review queue holds at most 500 pending submissions; beyond that, a new submission
+answers 429 until moderators clear it. Detail reads are cached for 60 seconds per extension
+and version, and a `version` outside canonical `MAJOR.MINOR.PATCH[aN|bN|rcN]` answers 404
+before any query runs.
+
+These limits bound the known amplification, not every abuse. The write rate limit is still
+per Cloudflare location rather than global, a submission still proves no ownership of the
+repository it lists, and one accepted inspection can still make up to about 90 GitHub calls,
+one per declared source and skill directory. Collapsing those file checks into a single
+recursive tree read is open work.
 
 The current Free allowances are 100,000 Worker requests/day, 10 ms CPU/request,
 5 million D1 rows read/day, 100,000 written/day, and 500 MB/database (5 GB/account).

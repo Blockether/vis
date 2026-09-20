@@ -71,7 +71,8 @@ extensions:
 
 Replace the example repository and version with a reviewed, approved release. A declaration accepts
 `source`, optional `subdirectory`, and either `version` or a full lowercase Git
-`revision`. Selectors apply only to GitHub sources. Local paths are relative to the
+`revision`. The `source` may also carry the folder (`example/vis-tools/extensions/vis-tools`);
+name it once. Selectors apply only to GitHub sources. Local paths are relative to the
 YAML file declaring them, not the shell's working directory.
 
 ```bash
@@ -195,11 +196,10 @@ vis-agent extension install example/greeting \
   --trust
 ```
 
-For an extension inside a monorepo, add its package directory:
+For an extension inside a monorepo, add its project folder to the identifier:
 
 ```bash
-vis-agent extension install example/extensions \
-  --subdirectory tools/greeting \
+vis-agent extension install example/extensions/tools/greeting \
   --version 1.2.0 \
   --project \
   --trust
@@ -219,9 +219,10 @@ Moving or deleting a GitHub tag cannot change an approved version's SHA.
 
 For source outside the catalog, use `--revision` with a reviewed full lowercase
 40-character commit SHA instead of `--version`. This deliberately bypasses catalog
-approval, not trust or manifest checks. Use a GitHub `owner/repository` slug or its
-HTTPS `github.com/owner/repository` URL. Select a monorepo folder with `--subdirectory`,
-not a file or tree URL.
+approval, not trust or manifest checks. Use the catalog identifier shown on the extension
+page (`owner/repository` or `owner/repository/folder`), its `github.com/owner/repository`
+HTTPS URL or the extension page URL itself — not a file or tree URL. For source that is
+not in the catalog, `--subdirectory` names the folder instead.
 
 GitHub installation stages and validates only the selected project before atomically
 activating a source snapshot. The catalog stores no source distributions. Submodules
@@ -243,12 +244,12 @@ vis-agent extension rollback example/greeting --version 1.1.0 --project --trust
 ```
 
 Vis finds the installed repository in the selected global or project scope. If you
-installed several extensions from that repository, add `--subdirectory` to select
-one; Vis refuses to guess. Use `--subdirectory .` to select its root project.
+installed several extensions from that repository, name the folder in the identifier to
+select one; Vis refuses to guess. Use `--subdirectory .` to select its root project.
 Before installation, `versions` needs the folder shown in the catalog, for example:
 
 ```bash
-vis-agent extension versions example/extensions --subdirectory tools/greeting
+vis-agent extension versions example/extensions/tools/greeting
 ```
 
 `versions` shows the installed version, approved history, latest stable version and
@@ -304,8 +305,8 @@ distribution name for dependency metadata, internal storage and package-prefixed
 5. After approval, publish subsequent GitHub Releases in the same repository and folder.
    Scheduled discovery validates them and queues new versions for moderation without
    another submission form. The current approved version stays available during review.
-6. After approval, use `vis-agent extension versions` with the repository slug and optional
-   `--subdirectory` to confirm the available version and its reviewed commit SHA.
+6. After approval, use `vis-agent extension versions` with the identifier from the extension
+   page to confirm the available version and its reviewed commit SHA.
 
 Catalog releases use canonical `MAJOR.MINOR.PATCH`, optionally followed by `aN`, `bN`
 or `rcN`, for example `1.3.0rc1`. Mark prereleases on GitHub too. Local package validation

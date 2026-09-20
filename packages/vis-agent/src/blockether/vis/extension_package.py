@@ -16,7 +16,7 @@ import tomllib
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
@@ -30,6 +30,7 @@ except ImportError:
     from pip._vendor.packaging.utils import canonicalize_name
     from pip._vendor.packaging.version import Version
 
+CATALOG = "https://vis.blockether.com"
 CATEGORIES = ("tools", "providers", "workflows")
 MAX_METADATA = 128 * 1024
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
@@ -75,6 +76,42 @@ def github_repository(value):
             "Use a GitHub owner/repository slug or HTTPS repository URL; set the project folder separately"
         )
     return "https://github.com" + path.lower()
+
+
+def github_source(value, subdirectory=None):
+    """Split one catalog identifier into a repository URL and its project folder.
+
+    Accepts `owner/repository`, the Extension Center listing path
+    `owner/repository/folder`, an HTTPS GitHub repository URL with an optional
+    folder, and a listing URL such as
+    `https://vis.blockether.com/extensions/owner/repository/folder`. An empty
+    `subdirectory` leaves the folder to the identifier; a folder named in both
+    places must agree.
+    """
+    if not isinstance(value, str):
+        raise ValueError("Use a GitHub owner/repository slug or HTTPS repository URL")
+    listing = CATALOG + "/extensions/"
+    text = value
+    if text.startswith(listing):
+        text = "/".join(unquote(part) for part in text[len(listing) :].split("/"))
+    prefix = "https://github.com/"
+    if text.startswith("https://") and not text.startswith(prefix):
+        github_repository(text)
+    segments = (
+        (text[len(prefix) :] if text.startswith(prefix) else text)
+        .rstrip("/")
+        .split("/")
+    )
+    repository = github_repository(prefix + "/".join(segments[:2]))
+    folder = project_subdirectory("/".join(segments[2:]))
+    if subdirectory:
+        selected = project_subdirectory(subdirectory)
+        if folder and selected != folder:
+            raise ValueError(
+                "Name the project folder once: in the source or with --subdirectory"
+            )
+        return repository, selected
+    return repository, folder
 
 
 def manifest_metadata(text, vis_version=None, python_version=None):
@@ -307,9 +344,6 @@ def _copy_project(source, destination):
     shutil.copytree(source, destination, ignore=excluded)
 
 
-CATALOG = "https://vis.blockether.com"
-
-
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -495,13 +529,16 @@ def _installed_repository(directory, repository, subdirectory=None, required=Tru
 
 
 def versions(source, subdirectory=None, directory=None):
-    """List approved releases for a repository slug or URL, including its installed version.
+    """List approved releases for a catalog identifier, including the installed version.
 
-    With no folder, use the sole installed project from this repository in the
-    selected scope, or the repository root when it is not installed.
+    A source may name its project folder, as `owner/repository/folder` or the
+    matching GitHub or Extension Center URL. With no folder, use the sole installed
+    project from this repository in the selected scope, or the repository root when
+    it is not installed.
     """
-    repository = github_repository(source)
-    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    repository, folder = github_source(source, subdirectory)
+    if subdirectory is None and not folder:
+        folder = None
     installed = None
     if directory is not None:
         _, installed = _installed_repository(
@@ -783,6 +820,7 @@ def install(
     """Install an approved version, an explicit SHA, or a linked local project.
 
     No selector means the latest approved stable release, never a moving branch.
+    A GitHub source may carry its project folder, as `owner/repository/folder`.
     Release selection does not import publisher code. Dependency preparation is on reload.
     Save admits the source as sync-owned and returns its declaration and a rollback token;
     the host writes configuration, then discards the token on success.
@@ -798,11 +836,15 @@ def install(
     path = Path(source).expanduser()
     local = path.is_dir() or (path.is_file() and path.name == "pyproject.toml")
     try:
-        source = github_repository(source)
-        local = False
+        repository, folder = github_source(source, subdirectory)
     except ValueError:
         if not local:
             raise
+    else:
+        # An existing local project keeps priority, unless a release selector
+        # makes the catalog identifier explicit.
+        if not (local and folder and version is None and revision is None):
+            source, subdirectory, local = repository, folder, False
     release = None
     if local and version is not None:
         raise ValueError(
@@ -824,8 +866,9 @@ def update(
     """Update a managed repository slug or URL; select a folder when several are installed."""
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
-    repository = github_repository(source)
-    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    repository, folder = github_source(source, subdirectory)
+    if subdirectory is None and not folder:
+        folder = None
     active, current = _installed_repository(directory, repository, folder)
     name = current["name"]
     release = _select(
@@ -872,8 +915,9 @@ def rollback(
     """
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
-    repository = github_repository(source)
-    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    repository, folder = github_source(source, subdirectory)
+    if subdirectory is None and not folder:
+        folder = None
     active, current = _installed_repository(directory, repository, folder)
     name = current["name"]
     if version is not None:
@@ -922,12 +966,11 @@ def _sync_spec(spec):
     if not isinstance(source, str) or not source or any(ord(c) < 32 for c in source):
         raise ValueError("Extension source must be a nonempty path or GitHub URL")
     remote = "://" in source
-    source = (
-        github_repository(source)
-        if remote
-        else str(Path(source).expanduser().resolve())
-    )
-    folder = project_subdirectory(spec.get("subdirectory", ""))
+    if remote:
+        source, folder = github_source(source, spec.get("subdirectory", ""))
+    else:
+        source = str(Path(source).expanduser().resolve())
+        folder = project_subdirectory(spec.get("subdirectory", ""))
     version, revision = spec.get("version"), spec.get("revision")
     if version is not None:
         if not isinstance(version, str):

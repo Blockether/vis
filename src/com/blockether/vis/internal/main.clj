@@ -4011,7 +4011,7 @@
      :kind :positional
      :type :string
      :required true
-     :doc "GitHub owner/repository slug or HTTPS URL, pyproject.toml or source directory."}
+     :doc "Catalog identifier owner/repository[/folder], HTTPS URL, pyproject.toml or directory."}
     {:name "trust"
      :kind :flag
      :type :boolean
@@ -4019,7 +4019,7 @@
     {:name "subdirectory"
      :kind :flag
      :type :string
-     :doc "Folder containing pyproject.toml and extension.py; defaults to repository root."}
+     :doc "Project folder when the source names the repository only; defaults to its root."}
     {:name "revision"
      :kind :flag
      :type :string
@@ -4120,7 +4120,7 @@
                :kind :positional
                :type :string
                :required true
-               :doc "GitHub owner/repository slug or HTTPS repository URL."}
+               :doc "Catalog identifier owner/repository[/folder] or HTTPS repository URL."}
               {:name "subdirectory"
                :kind :flag
                :type :string
@@ -4155,13 +4155,13 @@
                 "Restore the previous pinned source or choose an older approved release.")
      :cmd/usage (str "vis-agent extension "
                      command
-                     " REPOSITORY --trust [--subdirectory PATH] [--version VERSION] [--project]")
+                     " SOURCE --trust [--subdirectory PATH] [--version VERSION] [--project]")
      :cmd/args
      [{:name "source"
        :kind :positional
        :type :string
        :required true
-       :doc "GitHub owner/repository slug or HTTPS URL of an installed extension."}
+       :doc "Catalog identifier owner/repository[/folder] or HTTPS URL of an installation."}
       {:name "subdirectory"
        :kind :flag
        :type :string

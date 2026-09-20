@@ -63,3 +63,8 @@ CREATE TABLE IF NOT EXISTS comment_votes (
   value INTEGER NOT NULL CHECK(value IN (-1,1)),
   PRIMARY KEY(comment_id,voter)
 );
+-- Interactive GitHub inspections share one hourly call budget. Scheduled discovery is never charged.
+CREATE TABLE IF NOT EXISTS github_budget (
+  hour TEXT PRIMARY KEY,
+  calls INTEGER NOT NULL CHECK(calls >= 0)
+);
