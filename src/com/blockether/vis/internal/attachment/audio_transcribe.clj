@@ -76,6 +76,18 @@
 
 (def ^:private ^:const MAX_REGISTRY_ENTRIES 64)
 
+(def MAX_PAYLOAD_BYTES
+  "The largest recording this machine will read: about an HOUR of speech.
+
+   Local transcription costs roughly one core for the length of the audio, so
+   duration is the whole price — and a recording longer than the sitting it came
+   from left the single worker busy while every later turn asked again and was
+   handed `pending` forever. An hour of speech-grade audio is around 30 MB; the
+   cap sits at 48 MiB so an hour recorded at a generous bitrate is never refused
+   for its bitrate, and anything past it settles as `unavailable` with a reason
+   the log can name instead of waiting for a transcript nobody will see."
+  (* 48 1024 1024))
+
 (defn enabled? "Whether attachment transcription may run at all." [] (toggles/enabled? TOGGLE_ID))
 
 (defn engine
@@ -293,6 +305,18 @@
                    outcome))))
     entry))
 
+(defn- payload-bytes
+  "How big this recording IS, without decoding it: base64 spends four characters on
+   every three bytes, and a terminal drop is already a file to stat."
+  ^long [{:keys [base64 path]}]
+  (let [payload (str base64)]
+    (if-not (str/blank? payload)
+      (quot (* 3 (long (count payload))) 4)
+      (if-let [^String on-disk (not-empty (str path))]
+        (let [file (File. on-disk)]
+          (if (.isFile file) (.length file) 0))
+        0))))
+
 (defn- gate
   "What is already decided before any engine is asked. `::ok` means \"go ahead\"; nil
    means the attachment is not a recording and has no transcription outcome at all;
@@ -305,6 +329,7 @@
         (nil? (engine)) (unavailable :no-engine)
         (not (available?)) (unavailable :not-ready)
         (str/blank? (str (or (:base64 attachment) (:path attachment)))) (unavailable :unreadable)
+        (> (payload-bytes attachment) (long MAX_PAYLOAD_BYTES)) (unavailable :too-long)
         :else ::ok))
 
 (defn outcome

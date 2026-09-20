@@ -280,3 +280,24 @@
                (expect (= "saved after the wait limit" (:transcription (settled (memo)))))
                (expect (= 1 (count @calls)))
                (finally (deliver hold true) (deref waiting 1000 nil) (future-cancel waiting)))))))
+
+;; Regression: a 46-minute recording held the one worker while every later turn of
+;; the session asked again and was handed `pending`. The words never arrived, the
+;; player carried TRANSCRIBING… forever, and nothing ever said why.
+(defdescribe recording-length-cap-test
+             (it "refuses a recording past the cap instead of queueing it forever"
+                 (register-fake! "words nobody would have waited for")
+                 (with-redefs [at/MAX_PAYLOAD_BYTES 4]
+                   (expect (= at/UNAVAILABLE
+                              (:transcription-status (first (at/transcribe-attachments
+                                                              [(memo "far past the cap")])))))
+                   (expect (empty? @calls)))
+                 ;; A cap is a fact about the FILE, so it is remembered — and anything under it
+                 ;; is transcribed exactly as before.
+                 (expect (= "words nobody would have waited for"
+                            (:transcription (first (at/transcribe-attachments
+                                                     [(memo "short enough")]))))))
+             (it "takes an hour of speech-grade audio"
+                 ;; 30 MB is about an hour; the cap sits above it so a generous bitrate is not
+                 ;; mistaken for a recording nobody should wait for.
+                 (expect (< (* 30 1024 1024) (long at/MAX_PAYLOAD_BYTES)))))
