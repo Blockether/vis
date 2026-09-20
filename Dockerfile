@@ -265,7 +265,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # No `gh`, no cloud CLI, no operator-specific package: this is the base image,
 # and site tooling is a layer in the deployment's own repository (see the
 # header). The list above is what VIS drives — its own git/ssh/ffmpeg/rg use
-# and the language packs that shell out to python, node, clojure and maven.
+# and the language extensions that shell out to python, node, clojure and maven.
 # github.com's SSH host keys, pinned into the SYSTEM known_hosts at build time.
 # A fresh container has an empty ~/.ssh, so the first `git fetch git@github.com:`
 # would have nothing to verify against: with no tty it cannot answer the TOFU
@@ -299,7 +299,7 @@ RUN set -eux; \
         echo "WITH_CHROME=false — chrome skipped"; \
     fi
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
-# JDK + clojure + maven: the Clojure language pack shells out to `clojure`
+# JDK + clojure + maven: the Clojure extension shells out to `clojure`
 # (`clojure -M:test`), which is unusable without a JDK on PATH — the exact
 # breakage found on the host, where GraalVM was installed but `java` was on
 # nobody's PATH.
