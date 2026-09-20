@@ -106,6 +106,12 @@
            ;; Regression: native lint could not locate clj_kondo/core__init.class.
            "linted = lint_code('clojure', {'code': '(ns probe) (unknown-call)'})\n"
            "assert 'unresolved-symbol' in str(linted), str(linted)\n" "print('NATIVE_LINT_READY')\n"
+           ;; The `general` provider COMPILES its target for the reflection and
+           ;; boxed-math warnings, which only exist at compile time — so the image
+           ;; has to carry a usable Clojure compiler, not just clj-kondo.
+           "reflected = lint_code('clojure', {'code': '(ns probe)\\n(defn f [x] (.length x))\\n'})\n"
+           "assert [f for f in reflected['findings'] if f['provider'] == 'general' and f['type'] == 'reflection'], str(reflected)\n"
+           "print('NATIVE_REFLECTION_LINT_READY')\n"
            ;; #225: Ruff binds configured FFM calls before returning any lint result.
            "for options in [{'code': 'import os\\n'}, {'paths': ['lint_target.py'], 'cwd': str(project_root_path)}]:\n"
            "    linted = lint_code('python', options)\n"
@@ -115,7 +121,17 @@
            "clean = lint_code('python', {'code': 'print(42)\\n'})\n"
            "assert clean['findings'] == [] and clean['error'] == 0, str(clean)\n"
            "formatted = format_code('python', {'code': 'x= 1\\n'})\n"
-           "assert formatted['changed'], str(formatted)\n" "print('NATIVE_PYTHON_LINT_READY')")
+           "assert formatted['changed'], str(formatted)\n"
+           "print('NATIVE_PYTHON_LINT_READY')\n"
+           ;; The delimiter repair a patch may apply is the Python language surface's
+           ;; now: the image has to reach it across the worker boundary.
+           "repair_target = project_root_path / 'repair.clj'\n"
+           "repair_target.write_text('(defn g [x]\\n  (+ x 1))\\n')\n"
+           "anchor = re.match(r'\\d+:[0-9a-f]{3}', cat(str(repair_target)).splitlines()[1]).group(0)\n"
+           "repaired = patch(str(repair_target), [{'from': anchor, 'replace': '  (+ x 2)'}])\n"
+           "assert 'delimiters repaired' in str(repaired), str(repaired)\n"
+           "assert repair_target.read_text() == '(defn g [x]\\n  (+ x 2))\\n', repair_target.read_text()\n"
+           "print('NATIVE_DELIMITER_REPAIR_READY')")
          tool {:id "format-native"
                :type "function"
                :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
@@ -254,7 +270,8 @@
                                    "NATIVE_PYTHON_TESTS_COLD_READY"
                                    "NATIVE_PYTHON_TESTS_RESTART_READY"
                                    "NATIVE_TEST_SUBPROCESS_READY" "NATIVE_PROCESS_CLEANUP_READY"
-                                   "NATIVE_CLOJURE_REPL_DEADLINE_READY" "NATIVE_PYTHON_LINT_READY"]]
+                                   "NATIVE_CLOJURE_REPL_DEADLINE_READY" "NATIVE_PYTHON_LINT_READY"
+                                   "NATIVE_DELIMITER_REPAIR_READY" "NATIVE_REFLECTION_LINT_READY"]]
                             (expect (str/includes? (pr-str tool-results) marker) output))
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model
