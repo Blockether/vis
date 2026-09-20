@@ -9,10 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [v0.2.13] - 2026-09-20
 
+### Added
+- Install an extension with one identifier: `vis-agent extension install owner/repository/folder`
+  also takes a repository URL or an extension page URL, so a catalog page shows a single command.
+  `--subdirectory` stays for sources outside the catalog.
+- Open a file from a step: press a path a session read or patched and it opens in your editor on
+  the machine that session runs on, limited to the files in that session's workspace.
+
 ### Fixed
 - Ship the macOS desktop installer again: the release build keeps its Rust compile cache outside
   the directory the runner wipes, so the universal build finishes inside Pake's own time limit
   instead of timing out and holding back the whole release.
+- Install a Python extension's dependencies on a jailed machine: the jail's proxy address now
+  carries the empty password uv needs before it will use a proxy at all, so an install no longer
+  fails with a name-resolution error.
+- Keep the transcript steady in the app: every painted turn survives the handover to live
+  streaming, your reading position holds when a turn settles, a cancelled turn keeps the work
+  already on screen, and live table legs stay grouped under their branch head.
+- Count the live sessions a project header shows: each Vis process mints its own journal producer
+  identity instead of the one baked into the binary at build time, so sibling processes no longer
+  read each other's journal lines as their own.
+- Read the file-open route from the Python SDK: the gateway client now has a method for
+  `POST /v1/sessions/:sid/fs/actions/open`.
 
 ## [v0.2.12] - 2026-09-20
 
