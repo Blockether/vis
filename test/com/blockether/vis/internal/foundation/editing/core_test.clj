@@ -312,21 +312,22 @@
                      (mapv :text (:hits out))))
           ;; the exact dead end `is_regex` exists to end
           (expect (empty? (:hits (rg {"query" "defn-? +grep-(tool|data)" "paths" [d]}))))))
-    (it "a pattern the native scanner cannot run is refused, not silently narrowed"
+    (it "a pattern the native scanner cannot narrow is ANSWERED, not refused"
         ;; Java compiles lookbehind; the native candidate scanner's Rust regex
         ;; does not, and would fall back to a LITERAL scan whose candidate set
         ;; misses every real hit — a false negative dressed up as an answer.
+        ;; Refusing it made a directory scope answer differently from a file
+        ;; scope for a pattern that works, so instead the candidate set widens to
+        ;; the whole ignore-aware scope and the JVM matcher decides.
         (let [_
               (write-temp! "rgregexlook/a.txt" "foobar\n")
 
-              err
-              (try
-                (rg {"query" "(?<=foo)bar" "paths" [(temp-dir-path "rgregexlook")] "is_regex" true})
-                nil
-                (catch clojure.lang.ExceptionInfo e e))]
+              out
+              (rg {"query" "(?<=foo)bar" "paths" [(temp-dir-path "rgregexlook")] "is_regex" true})]
 
-          (expect (some? err))
-          (expect (string/includes? (ex-message err) "native scanner"))))
+          (expect (= 1 (count (:hits out))))
+          (expect (= "foobar" (:text (first (:hits out)))))
+          (expect (true? (:prefilter-degraded? out)))))
     (it "grep answers regex CONTENT hits and turns the fuzzy NAME axis off"
         (let [d
               (temp-dir-path "grepregex")
@@ -807,7 +808,8 @@
             out
             (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
 
-        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact? :missing}
+        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact? :missing
+                     :prefilter-degraded?}
                    (set (keys out))))
         ;; both files match — breadth == displayed file count, fully counted.
         (expect (= 2 (:total-file-count out)))
@@ -1025,7 +1027,8 @@
             out
             (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
 
-        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
+        (expect (= #{:files :file-counts :truncated-by :total-file-count :total-file-count-exact?
+                     :missing :prefilter-degraded?}
                    (set (keys out))))
         (expect (= 2 (:total-file-count out)))
         (expect (true? (:total-file-count-exact? out)))
@@ -1042,7 +1045,8 @@
             (grep
               {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
 
-        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
+        (expect (= #{:files :file-counts :truncated-by :total-file-count :total-file-count-exact?
+                     :missing :prefilter-degraded?}
                    (set (keys out))))
         (expect (every? string? (:files out)))))
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
@@ -1840,26 +1844,29 @@
         (expect (string/includes? out "0 hits · 0 files"))
         (expect (string/includes? out "hint: "))
         (expect (string/includes? out "is_regex: True"))))
-  (it
-    "a capped sweep names the exact next call on line 1, breadth included"
-    (let [render
-          (private-fn "render-grep-text")
+  (it "a capped sweep names the exact next call on line 1, breadth included"
+      (let [render
+            (private-fn "render-grep-text")
 
-          head
-          (first (string/split-lines (render {"query" "defdescribe"
-                                              "matches" {}
-                                              "paths" []
-                                              "hit_count" 50
-                                              "file_count" 11
-                                              "total_file_count" 136
-                                              "total_file_count_is_exact" true
-                                              "hits_truncated_by" "limit"
-                                              "next_offset" 50})))]
+            head
+            (first (string/split-lines (render {"query" "defdescribe"
+                                                "matches" {}
+                                                "paths" []
+                                                "hit_count" 50
+                                                "file_count" 11
+                                                "total_file_count" 136
+                                                "total_file_count_is_exact" true
+                                                "hits_truncated_by" "limit"
+                                                "next_offset" 50})))]
 
-      (expect
-        (=
-          "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r) or grep({…, \"offset\": 50})"
-          head)))))
+        ;; A capped page also names the answer that is NOT a page: without it, the
+        ;; caller who wants "which files, how many times" rewrites the search as a
+        ;; hand-rolled walk instead of asking for files-only.
+        (expect
+          (= (str "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r) or"
+                  " grep({…, \"offset\": 50}); 125 more files match — add \"is_files_only\": True"
+                  " for every file with its hit count")
+             head)))))
 
 (defdescribe a-grep-hit-is-a-patch-anchor-test
              ;; The point of the whole scheme: search, then edit, with NO read between.
@@ -2958,8 +2965,8 @@
           (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
           (expect (= "grep: unknown keys: reggex. See doc(\"grep\")." (ex-message e)))
           (expect (= ["reggex"] (:unknown (ex-data e))))
-          (expect (= ["context" "exclude" "include" "is_hidden" "is_regex" "limit" "offset" "paths"
-                      "query"]
+          (expect (= ["context" "exclude" "include" "is_files_only" "is_hidden" "is_regex" "limit"
+                      "offset" "paths" "query"]
                      (:allowed (ex-data e))))))
     (it "a glob grep filters exactly like include, and excludes folds onto exclude"
         (write-temp! "aliasglob/a.clj" "needle here\n")
@@ -3717,9 +3724,9 @@
 
     (it "files-only scan aborts on interrupt instead of scanning to the end"
         (let [path (corpus! "rgscanintfo")]
-          (try (let [thrown (try (with-redefs-fn {(core-var "file-has-any-hit?")
+          (try (let [thrown (try (with-redefs-fn {(core-var "file-hit-count")
                                                   (interrupt-on-first-call (fn [_ _]
-                                                                             false))}
+                                                                             0))}
                                    #(grep {"query" ["alpha"] "paths" [path] "is_files_only" true}))
                                  nil
                                  (catch InterruptedException e e))]
@@ -4979,29 +4986,127 @@
 ;; Regression: grep answers ONE anchored TEXT block, but the model-facing prose still
 ;; described a keyed map — the blank-path refusal told the model to use "the keys under
 ;; matches", so it kept subscripting a string.
-(defdescribe grep-is-described-as-text-test
-             "Every model-facing description of grep says TEXT, never a map."
-             (it "the grep symbol contract promises text and names no result keys"
-                 (let [result
-                       (:ext.symbol/result editing/grep-symbol)
+(defdescribe
+  grep-is-described-as-text-test
+  "Every model-facing description of grep says TEXT, never a map."
+  (it "the grep symbol contract promises text and names no result keys"
+      (let [result
+            (:ext.symbol/result editing/grep-symbol)
 
-                       description
-                       (:ext.symbol/description editing/grep-symbol)]
+            description
+            (:ext.symbol/description editing/grep-symbol)]
 
-                   (expect (string/includes? result "Text, not a map"))
-                   (expect (not (string/includes? result "hit_count")))
-                   (expect (not (string/includes? description "hit_count")))
-                   (expect (string/includes? description "\"context\": 3"))
-                   (expect (string/includes? description "default 3"))
-                   (expect (string/includes? description "set it to 0"))
-                   (expect (string/includes? description "pure location/count sweeps"))))
-             (it
-               "the blank-path refusal no longer says grep returns a map"
-               (let [safe-path
-                     (private-fn "safe-path")
+        (expect (string/includes? result "Text, not a map"))
+        (expect (not (string/includes? result "hit_count")))
+        (expect (not (string/includes? description "hit_count")))
+        (expect (string/includes? description "\"context\": 3"))
+        (expect (string/includes? description "default 3"))
+        (expect (string/includes? description "set it to 0"))
+        (expect (string/includes? description "pure location/count sweeps"))))
+  (it "the grep symbol declares is_files_only as a key and describes it"
+      (let [names (mapv :name (:ext.symbol/params editing/grep-symbol))]
+        (expect (contains? (set names) "is_files_only"))
+        (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
+                                  "`is_files_only: True`"))
+        (expect (string/includes? (:ext.symbol/result editing/grep-symbol) "is_files_only"))))
+  (it "the blank-path refusal no longer says grep returns a map"
+      (let [safe-path
+            (private-fn "safe-path")
 
-                     message
-                     (try (safe-path "") nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+            message
+            (try (safe-path "") nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
-                 (expect (string/includes? message "anchored TEXT"))
-                 (expect (not (string/includes? message "returns a MAP"))))))
+        (expect (string/includes? message "anchored TEXT"))
+        (expect (not (string/includes? message "returns a MAP"))))))
+
+(defdescribe
+  grep-files-only-public-test
+  "`is_files_only` reaches the PUBLIC grep and answers WHICH files match and HOW
+   MANY times each. The engine implemented the mode all along while the tool
+   rejected the key as unknown — and that gap is what sent callers into a
+   hand-rolled `os.walk` + `read_text` over the whole tree for a question grep
+   could answer in one call."
+  (let [grep (grep-data-fn)]
+    (it "is accepted as a key and carries a per-file hit count"
+        (let [_ (write-temp! "grepfopub/a.txt" "alpha\nalpha\nbeta\n")
+              _ (write-temp! "grepfopub/b.txt" "alpha\n")
+              _ (write-temp! "grepfopub/c.txt" "nothing here\n")
+              d (temp-dir-path "grepfopub")
+              out (:result (grep {"query" ["alpha"] "paths" [d] "is_files_only" true}))]
+
+          (expect (true? (get out "is_files_only")))
+          (expect (= 2 (get out "file_count")))
+          (expect (= 3 (get out "hit_count")))
+          ;; densest file first, and the count is the number of matching LINES
+          (expect (= [2 1] (mapv #(long (val %)) (get out "file_counts"))))
+          (expect (empty? (get out "matches")))
+          (expect (nil? (get out "hits_truncated_by")))))
+    (it "answers COMPLETELY where the default content page is capped by limit"
+        (let [_ (dotimes [i 6]
+                  (write-temp! (format "grepfocap/f%d.txt" i) "alpha\nalpha\n"))
+              d (temp-dir-path "grepfocap")
+              content (:result (grep {"query" ["alpha"] "paths" [d] "limit" 3}))
+              files (:result (grep {"query" ["alpha"] "paths" [d] "is_files_only" true}))]
+
+          (expect (= "limit" (get content "hits_truncated_by")))
+          (expect (= 6 (get files "file_count")))
+          (expect (= 12 (get files "hit_count")))
+          (expect (nil? (get files "hits_truncated_by")))))
+    (it "an explicit limit still wins over the files-only default"
+        (let [_ (dotimes [i 4]
+                  (write-temp! (format "grepfolim/f%d.txt" i) "alpha\n"))
+              d (temp-dir-path "grepfolim")
+              out (:result (grep {"query" ["alpha"] "paths" [d] "is_files_only" true "limit" 2}))]
+
+          (expect (= 2 (get out "file_count")))
+          (expect (= "limit" (get out "hits_truncated_by")))
+          ;; paging in this mode advances by FILES, since one row is one file
+          (expect (= 2 (get out "next_offset")))))
+    (it "renders one `path  N` row per file, with no anchored lines"
+        (let [_ (write-temp! "grepforender/a.txt" "alpha\nalpha\n")
+              d (temp-dir-path "grepforender")
+              text
+              ;; `files_only` is the accepted alias for the same option
+              ((private-fn "render-grep-text")
+                (:result (grep {"query" ["alpha"] "paths" [d] "files_only" true})))
+              rows (filter #(string/includes? % "a.txt") (string/split-lines text))]
+
+          (expect (string/includes? (first (string/split-lines text)) "2 hits · 1 file"))
+          (expect (= 1 (count rows)))
+          (expect (string/ends-with? (first rows) "  2"))
+          (expect (not (string/includes? text "│")))))))
+
+(defdescribe
+  grep-regex-prefilter-degrade-test
+  "A pattern `java.util.regex` runs but Rust's `regex` cannot NARROW with —
+   lookaround, a backreference — answers the SAME hits for a DIRECTORY scope as
+   for a single FILE scope. The directory used to answer `0 hits`: fff falls back
+   to literal candidates, the literal matches nothing, and its own
+   `:regex-fallback-error` never arrives with the empty result. A silent false
+   negative in one scope and real hits in the other is exactly what teaches a
+   caller to stop trusting grep."
+  (let [grep (grep-data-fn)]
+    (it "a lookahead pattern gives a directory the same hits as the file"
+        (let [rel (write-temp! "grepdegrade/a.clj" "(defn grepx [] 1)\n(defn- grepx [] 2)\nplain\n")
+              d (temp-dir-path "grepdegrade")
+              pattern "defn(?!-)\\s+grepx"
+              dir-out (:result (grep {"query" pattern "paths" [d] "is_regex" true}))
+              file-out (:result (grep {"query" pattern "paths" [rel] "is_regex" true}))]
+
+          (expect (= 1 (get dir-out "hit_count")))
+          (expect (= (get file-out "hit_count") (get dir-out "hit_count")))
+          (expect (= (mapv (comp str key) (get file-out "matches"))
+                     (mapv (comp str key) (get dir-out "matches"))))
+          ;; the widened scan is REPORTED, because it costs time
+          (expect (string/includes? (str (get dir-out "hint")) "java.util.regex"))))
+    (it "a backreference pattern also survives the directory scope"
+        (let [_ (write-temp! "grepdegradeb/a.txt" "grepx grepx\nsomething else\n")
+              d (temp-dir-path "grepdegradeb")
+              out (:result (grep {"query" "(grepx) \\1" "paths" [d] "is_regex" true}))]
+
+          (expect (= 1 (get out "hit_count")))))
+    (it "a pattern that does not COMPILE is still refused, never widened"
+        (let [caught (try (grep {"query" "(defn[- ]?[a-z-]*root" "paths" ["src"] "is_regex" true})
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+          (expect (string/includes? (str caught) "does not compile"))))))

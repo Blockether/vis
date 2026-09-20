@@ -456,3 +456,61 @@
           (expect (= "failed" (:state projection)))
           (expect (= 1 (get-in projection [:counts :failed])))
           (expect (= 1 (count (:rows projection))))))))
+
+;; Regression, user report: feeding a listing to `cat` or `grep` meant parsing the
+;; rendered tree back into paths, so sessions fell back to a hand-rolled `os.walk`.
+;; `as_paths` answers the same walk as the flat list the next call actually needs.
+(defdescribe
+  ls-shim-as-paths-test
+  "`as_paths=True` answers a flat list of full paths instead of the tree."
+  (it
+    "returns the requested path joined with each entry, in listing order"
+    (let [ctx
+          (sandbox)
+
+          code
+          (str "d = \"src/com/blockether/vis/internal/foundation\"\n" "tree = ls(d)\n"
+               "paths = ls(d, as_paths=True)\n"
+               "labels = [l[2:].split(\" \")[0] for l in tree.split(\"\\n\")[1:]]\n"
+               "names = [(p[:-1].split(\"/\")[-1] + \"/\") if p.endswith(\"/\")\n"
+               "         else p.split(\"/\")[-1] for p in paths]\n"
+               "print(isinstance(paths, list),\n"
+               "      all(p.startswith(d + \"/\") for p in paths),\n"
+               "      names == labels,\n" "      any(p.endswith(\"/editing/\") for p in paths))")]
+
+      (expect (= "True True True True\n" (out ctx code)))))
+  (it "descends with depth and flattens a BATCH into one list"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "paths = ls([\"resources/vis-shims\",\n"
+                 "            \"src/com/blockether/vis/internal/foundation\"], depth=2,\n"
+                 "           as_paths=True)\n"
+                 "print(all(isinstance(p, str) for p in paths),\n"
+                 "      any(p.endswith(\"resources/vis-shims/ls.py\") for p in paths),\n"
+                 "      any(p.endswith(\"/foundation/editing/core.clj\") for p in paths),\n"
+                 "      not any(p.endswith(\"//\") for p in paths))")]
+
+        (expect (= "True True True True\n" (out ctx code)))))
+  (it "still hides dotfiles unless is_hidden asks for them"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "shown = ls(\".\", as_paths=True)\n"
+                 "print(not any(p.split(\"/\")[-1].startswith(\".\") for p in shown),\n"
+                 "      any(p.split(\"/\")[-1].startswith(\".\")\n"
+                 "          for p in ls(\".\", as_paths=True, is_hidden=True)))")]
+
+        (expect (= "True True\n" (out ctx code)))))
+  (it "documents the flag in the ONE text help and doc share"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "page = str(ls.__doc__)\n"
+                 "print(page.startswith(\"ls(paths='.',\"), \"as_paths=False\" in page,\n"
+                 "      \"as_paths=True\" in page)")]
+
+        (expect (= "True True True\n" (out ctx code))))))

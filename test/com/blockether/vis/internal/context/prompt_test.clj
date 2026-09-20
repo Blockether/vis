@@ -1531,7 +1531,15 @@
                    (expect (str/includes?
                              text
                              "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
-                   (expect (str/includes? text "`context`: lines per side (default 3)"))))
+                   (expect (str/includes? text "`context`: lines per side (default 3)"))
+                   ;; User report: §3 taught the grep call and stopped — a capped page and a
+                   ;; query that matches everywhere had no next step, so the same search ran
+                   ;; again instead of paging or asking WHICH files match.
+                   (expect (str/includes? text "A capped page continues itself with `next(r)`"))
+                   (expect
+                     (str/includes?
+                       text
+                       "`is_files_only: True` answers one row per matching file and its count"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".
@@ -1573,11 +1581,14 @@
   ;; Regression: the prompt omitted ls keywords, including the hidden alias.
   (it "states the ls signature, batching, return type, and hidden precedence"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None)"
-                      "`pattern`: case-sensitive basename glob (not regex), None disables"
-                      "applies at each depth, keeps ancestors; per-path specs override it"
-                      "accepts str/Path or a list; returns STRING"
-                      "Non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
+        (doseq
+          [rule
+           ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, as_paths=False)"
+            "`pattern`: case-sensitive basename glob (not regex), None disables"
+            "applies at each depth, keeps ancestors; per-path specs override it"
+            "accepts str/Path or a list"
+            "returns STRING, or a flat list of paths with `as_paths=True`"
+            "Non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe core-prompt-helper-lifecycle-test

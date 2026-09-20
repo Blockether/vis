@@ -142,6 +142,37 @@
    any result cap — so a pathological needle can't page the whole tree."
   5)
 
+(def ^:private rg-fff-wide-page-size
+  "Files one root may contribute when the NATIVE regex prefilter cannot run the
+   pattern (see `native-regex-unsupported?` and fff's own `:regex-fallback-error`).
+   The candidate set is then fff's WHOLE enumeration of that root — still
+   `.gitignore`/`.rgignore`-aware, so nothing descends `node_modules`/`target` —
+   and this is its ceiling, with `rg-search-budget-ms` bounding the reading."
+  20000)
+
+(def ^:private rg-files-only-limit
+  "Default display cap for `is_files_only`, in FILES. Files-only answers one
+   `path  N` row per file, so its cap is a file cap and can be far higher than
+   the hit cap a content page carries: the whole point of the mode is a COMPLETE
+   \"which files, how many times\" answer, which a 50-row page is not. An explicit
+   `limit` still wins."
+  500)
+
+(defn- native-regex-unsupported?
+  "True when `pattern` uses a construct Rust's `regex` crate cannot compile:
+   lookaround, a backreference, an atomic group, a possessive quantifier or `\\K`.
+   `java.util.regex` runs every one of them, so the pattern is VALID — only fff's
+   candidate prefilter cannot narrow with it.
+
+   Asked BEFORE the native grep runs, because fff drops its own
+   `:regex-fallback-error` on the path that matters: a pattern it cannot compile
+   falls back to LITERAL candidates, the literal matches nothing, and the empty
+   result returns before the error is attached. That is why a lookahead pattern
+   used to answer `0 hits` for a directory scope while the same pattern found
+   its hits in a single-FILE scope."
+  [^String pattern]
+  (boolean (re-find #"\(\?(?:=|!|<=|<!|>)|\\[1-9]|\\k<|[*+?]\+|\\K" (str pattern))))
+
 (defn- rg-fff-grep-files
   "Every file fff's native grep sees `query` in, PAGED to exhaustion (bounded by
    `rg-fff-grep-max-pages`). A single page stops at `page-limit` matches and hands
@@ -151,16 +182,25 @@
    `is-regex?` runs fff's NATIVE regex grep (`:mode :regex`) instead of the
    literal one, so a pattern narrows the candidate set as tightly as a literal
    needle does. fff's dialect is Rust's `regex` crate: on a pattern IT cannot
-   compile it silently FALLS BACK to literal matching and reports
-   `:regex-fallback-error` — a candidate set that misses every real hit, i.e.
-   exactly the false negative this whole path exists to avoid. So that fallback
-   is REFUSED here, naming the engine's own reason."
+   compile it FALLS BACK to literal matching and reports `:regex-fallback-error`,
+   so the narrowed set misses every real hit.
+
+   That is REPORTED as `:degraded?`, not refused. The JVM matcher
+   (`make-line-matcher`) is `java.util.regex`, which runs lookaround and
+   backreferences fine — refusing here made a directory scope answer differently
+   from a file scope for a pattern that works, which is exactly what teaches a
+   caller to hand-roll a walk. The caller widens the candidate set instead.
+
+   Returns `{:items [fff-item …] :degraded? BOOL}`."
   [idx ^String query is-regex?]
   (loop [offset
          0
 
          page
          0
+
+         degraded?
+         false
 
          acc
          (transient [])]
@@ -175,18 +215,8 @@
                      :max-file-size rg-fff-grep-max-file-size
                      :time-budget-ms 1500})
 
-          _
-          (when (and is-regex? (not (str/blank? (str regex-fallback-error))))
-            (throw (ex-info
-                     (str
-                       "grep is_regex pattern is not supported by the native scanner: " query
-                       " — " regex-fallback-error
-                       ". Rust regex syntax has no lookaround and no backreferences; rewrite the"
-                       " pattern without that construct, or drop is_regex to search it literally.")
-                     {:type :ext.foundation.editing/invalid-rg-spec
-                      :field :query
-                      :pattern query
-                      :engine-error (str regex-fallback-error)})))
+          degraded?
+          (or degraded? (and is-regex? (not (str/blank? (str regex-fallback-error)))))
 
           acc
           (reduce conj! acc matches)
@@ -194,9 +224,9 @@
           next-offset
           (long (or next-file-offset 0))]
 
-      (if (or (zero? next-offset) (>= (inc page) (long rg-fff-grep-max-pages)))
-        (persistent! acc)
-        (recur next-offset (inc page) acc)))))
+      (if (or degraded? (zero? next-offset) (>= (inc page) (long rg-fff-grep-max-pages)))
+        {:items (persistent! acc) :degraded? degraded?}
+        (recur next-offset (inc page) degraded? acc)))))
 
 (defn- rg-fff-rel-files
   "fff items → File objects resolved under `base`, dropping items with no path."
@@ -223,17 +253,22 @@
    `is-regex?` skips the path side for the same reason: fff's path search is a
    FUZZY SUBSEQUENCE over path text, which reads a PATTERN as literal characters
    and drags in a page of files that carry no match at all. Native regex grep
-   already owns content discovery in that mode."
+   already owns content discovery in that mode.
+
+   Returns `{:files [File …] :degraded? BOOL}` — `:degraded?` when the native
+   regex prefilter could not run the pattern, so these candidates are NOT the
+   universe the pattern really matches (see `rg-fff-grep-files`)."
   [idx ^File base query is-regex?]
   (let [path-items
         (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
           (->> (:items (fff/search idx {:query query :page-size 1000}))
                (filter #(rg-fff-path-hit? query %))))
 
-        grep-items
+        {:keys [items degraded?]}
         (rg-fff-grep-files idx query is-regex?)]
 
-    (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base grep-items))))
+    {:files (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base items))
+     :degraded? (boolean degraded?)}))
 
 (defn- search-root-kind
   "What a resolved search root IS on disk right now: `:dir` (fff can index it), `:file`
@@ -248,20 +283,46 @@
 (defn- rg-fff-root-files
   "`rg-fff-candidate-files` for ONE root: a FILE root is its own only candidate, a
    directory root leases a single fff index and realizes every needle's hits in it, and a
-   root that is neither is skipped."
+   root that is neither is skipped.
+
+   When the pattern is one Rust's `regex` cannot run — known up front by
+   `native-regex-unsupported?`, or reported by fff as a literal fallback — there
+   is no usable prefilter, so the root's candidate set WIDENS to fff's own
+   enumeration of it (still ignore-aware, capped by `rg-fff-wide-page-size`) and
+   the JVM matcher decides. Narrowing would answer zero hits for a pattern that
+   matches; widening only costs time, which `rg-search-budget-ms` bounds.
+
+   Returns `{:files [File …] :degraded? BOOL}`."
   [^File root needles is-regex? overlay]
   (case (search-root-kind root)
     :file
-    [root]
+    {:files [root] :degraded? false}
 
     :dir
-    (fff-index/with-index [idx (fff-index/lease root true overlay)]
-                          (let [base (.getCanonicalFile root)]
-                            ;; doall: realize the lazy hits INSIDE with-open, before the fresh
-                            ;; instance is closed.
-                            (doall (mapcat #(rg-fff-query-files idx base % is-regex?) needles))))
+    (fff-index/with-index
+      [idx (fff-index/lease root true overlay)]
+      (let [base
+            (.getCanonicalFile root)
 
-    []))
+            wide?
+            (and is-regex? (boolean (some native-regex-unsupported? needles)))
+
+            ;; doall: realize the lazy hits INSIDE with-open, before the fresh
+            ;; instance is closed.
+            per-needle
+            (when-not wide? (doall (mapv #(rg-fff-query-files idx base % is-regex?) needles)))
+
+            degraded?
+            (or wide? (boolean (some :degraded? per-needle)))]
+
+        (if degraded?
+          {:files (vec (rg-fff-rel-files
+                         base
+                         (:items (fff/search idx {:query "" :page-size rg-fff-wide-page-size}))))
+           :degraded? true}
+          {:files (vec (mapcat :files per-needle)) :degraded? false})))
+
+    {:files [] :degraded? false}))
 
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
@@ -283,17 +344,27 @@
    enumeration, which then had rg OPEN AND READ every file in the tree (measured
    170ms vs 8ms on this repo) for no extra recall.
    `is-regex?` swaps fff's literal content grep for its NATIVE regex grep, so a
-   pattern narrows the universe instead of widening it to the whole tree.
+   pattern narrows the universe instead of widening it to the whole tree — unless
+   Rust's `regex` cannot run that pattern at all, in which case the candidate set
+   WIDENS to fff's whole ignore-aware enumeration of the scope and the returned
+   vec carries `{:prefilter-degraded? true}` as METADATA, so the caller can say so
+   in a `hint`. The JVM matcher runs the pattern either way.
    Returns a File vec, deduped by canonical path."
   [roots needles is-regex? overlay]
-  (->> roots
-       (mapcat #(rg-fff-root-files % needles is-regex? overlay))
-       ;; dedup by canonical path, keep File objects
-       (reduce (fn [acc ^File f]
-                 (assoc acc (.getCanonicalPath f) f))
-               {})
-       vals
-       vec))
+  (let [per-root
+        (mapv #(rg-fff-root-files % needles is-regex? overlay) roots)
+
+        files
+        (->> per-root
+             (mapcat :files)
+             ;; dedup by canonical path, keep File objects
+             (reduce (fn [acc ^File f]
+                       (assoc acc (.getCanonicalPath f) f))
+                     {})
+             vals
+             vec)]
+
+    (with-meta files {:prefilter-degraded? (boolean (some :degraded? per-root))})))
 
 (def ^:private default-find-limit 50)
 
@@ -1306,7 +1377,8 @@
 (def ^:private find-spec-canonical-keys
   "grep's WHOLE key vocabulary — one canonical name per idea, the names
    `doc(\"grep\")` declares and the only ones the search itself reads."
-  #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"})
+  #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"
+    "is_files_only"})
 
 (def ^:private find-spec-aliases
   "Accepted aliases for canonical grep options. Supplying multiple names for
@@ -1323,7 +1395,8 @@
    "excludes" "exclude"
    "context_lines" "context"
    "regex" "is_regex"
-   "hidden" "is_hidden"})
+   "hidden" "is_hidden"
+   "files_only" "is_files_only"})
 
 (defn- fold-find-aliases
   "Normalizes aliases and rejects multiple keys for one option.
@@ -1799,7 +1872,15 @@
       (assoc "is_hidden" (get spec "is_hidden"))
 
       (contains? spec "is_regex")
-      (assoc "is_regex" (get spec "is_regex")))))
+      (assoc "is_regex" (get spec "is_regex"))
+
+      ;; FILES-ONLY is a CONTENT switch, so it has to travel with the content
+      ;; spec. Left out, the public grep REJECTED the key as unknown while the
+      ;; engine had implemented the mode all along — and a caller who wanted
+      ;; "which files, how many times" had nothing to ask for but a hand-rolled
+      ;; walk.
+      (contains? spec "is_files_only")
+      (assoc "is_files_only" (get spec "is_files_only")))))
 
 (defn- content-result
   "Build grep's CONTENT hits from an `rg-search` result: an ordered
@@ -1868,6 +1949,46 @@
      "first_hit" (when (pos? (count hits))
                    (let [{:keys [path line]} (nth hits 0)]
                      (str path ":" line)))}))
+
+(defn- files-result
+  "grep's FILES-ONLY answer from an `rg-search` result: every matching file with
+   its per-file hit COUNT, shaped with `content-result`'s keys so the renderer,
+   the paging and the summary line read the same names in both modes.
+
+   This is the cheap COMPLETE answer to \"which files, how many times\" — the
+   question that a 50-hit content page cannot answer and that used to be
+   re-implemented as `os.walk` + `read_text` over the whole tree. `matches` is
+   empty by construction (files-only carries no lines), `file_counts` IS the
+   answer, and rows are ordered by count then path so the densest file reads
+   first."
+  [out needles]
+  (let [counts
+        (:file-counts out)
+
+        files
+        (->> (:files out)
+             (sort-by (fn [p]
+                        [(- (long (get counts p 0))) (str p)]))
+             vec)
+
+        file-counts
+        (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+          (doseq [p files]
+            (.put fc p (long (get counts p 0))))
+          fc)]
+
+    {"needles" needles
+     "is_files_only" true
+     "matches" (java.util.LinkedHashMap.)
+     "hit_count" (reduce + 0 (map #(long (get counts % 0)) files))
+     "file_count" (count files)
+     "file_counts" file-counts
+     "total_file_count" (:total-file-count out)
+     "total_file_count_is_exact" (boolean (get out :total-file-count-exact? true))
+     "hits_truncated_by" (when (contains? #{:limit :bytes :time} (:truncated-by out))
+                           (name (:truncated-by out)))
+     ;; No line to point at in this mode, so the pointer is the densest FILE.
+     "first_hit" (first files)}))
 
 ;; grep's TEXT projection
 ;;
@@ -1949,6 +2070,12 @@
           (str files " of " (when-not exact? "~") total " files")
           (count-phrase files "file"))
 
+        files-only?
+        (boolean (get result "is_files_only"))
+
+        unseen
+        (if (and total (> (long total) files) (pos? files)) (- (long total) (long files)) 0)
+
         capped
         (let [content-cap
               (get result "hits_truncated_by")
@@ -1957,16 +2084,25 @@
               (get result "truncated_by")
 
               next-offset
-              (get result "next_offset")]
+              (get result "next_offset")
+
+              ;; A capped page is exactly where a caller gives up on grep and
+              ;; hand-rolls a walk over the tree, so line 1 also names the answer
+              ;; that is NOT a page: files-only is one row per matching file with
+              ;; its hit count, for the whole scope.
+              complete
+              (if (or files-only? (zero? (long unseen)))
+                ""
+                (str "; "
+                     (count-phrase unseen "more file")
+                     " match — add \"is_files_only\": True for every file with its hit count"))]
 
           (cond (= "time" content-cap) "  stopped at the scan budget — PARTIAL, narrow the scope"
                 (and next-offset
                      (or (contains? #{"limit" "bytes"} content-cap) (= "limit" name-cap)))
-                (str "  capped by "
-                     (or content-cap name-cap)
-                     " → next(r) or grep({…, \"offset\": "
-                     next-offset
-                     "})")
+                (str "  capped by " (or content-cap name-cap)
+                     " → next(r) or grep({…, \"offset\": " next-offset
+                     "})" complete)
                 :else ""))]
 
     (if ls?
@@ -1991,18 +2127,25 @@
         (set (map str (keys matches)))
 
         blocks
-        (mapv (fn [e]
-                (let [path
-                      (str (key e))
+        (if (get result "is_files_only")
+          ;; FILES-ONLY: one `path  N` row per matching file. No anchored lines
+          ;; exist in this mode, and the row set is the COMPLETE list for the
+          ;; scope, not a page of a bigger answer.
+          (mapv (fn [e]
+                  (str (key e) "  " (val e)))
+                counts)
+          (mapv (fn [e]
+                  (let [path
+                        (str (key e))
 
-                      runs
-                      (contiguous-runs (grep-hit-tuples (val e)))]
+                        runs
+                        (contiguous-runs (grep-hit-tuples (val e)))]
 
-                  (str path
-                       "  (" (get counts path (count runs))
-                       ")\n" (str/join "\n  ⋮\n"
-                                       (map #(hashline/render-hashline-block % "  ") runs)))))
-              matches)
+                    (str path
+                         "  (" (get counts path (count runs))
+                         ")\n" (str/join "\n  ⋮\n"
+                                         (map #(hashline/render-hashline-block % "  ") runs)))))
+                matches))
 
         name-rows
         (->> (get result "paths")
@@ -2113,7 +2256,10 @@
    pattern, a list still OR, the SAME smart-case rule (no uppercase in the
    pattern → case-insensitive) — and turns the fuzzy NAME axis OFF, because a
    pattern scored as a filename subsequence is noise. A pattern that does not
-   compile is REFUSED with its syntax error, never answered as zero hits. Every
+   COMPILE is REFUSED with its syntax error, never answered as zero hits; a
+   pattern the native prefilter cannot NARROW with (lookaround, backreference)
+   is still answered — the candidate set widens to the whole ignore-aware scope,
+   the JVM matcher runs the pattern, and `hint` says the scan went wide. Every
    hit lands in the CANONICAL flat result under `matches` —
    `{path {\"<lineno>\" {\"text\" … \"before\" [{\"line\" \"text\"}] \"after\" […]}}}`
    — each key the hit's 1-based line, `context` N adding the surrounding lines.
@@ -2122,6 +2268,11 @@
    actually scanned (including the default `.` expansion), and `missing_paths`
    for a scope that does not exist (never silently absorbed) — every one of them
    TOTAL: present on every result, `[]`/`null` when there is nothing to report.
+   `is_files_only: True` answers the other question: WHICH files match and HOW
+   MANY times each, as one `path  N` row per file for the whole scope, with no
+   per-line hits and no `context`. Its cap is a FILE cap (500 by default, an
+   explicit `limit` wins), so it is the cheap COMPLETE listing a capped content
+   page is not.
    A blank query is ls mode: it lists scoped files by frecency/recency without
    running CONTENT search or fuzzy query scoring.
 
@@ -2153,6 +2304,9 @@
      is_regex
      (boolean (get content-spec "is_regex"))
 
+     is_files_only
+     (boolean (get content-spec "is_files_only"))
+
      ls?
      (str/blank? (str query))
 
@@ -2165,7 +2319,7 @@
      (if ls? {:hits [] :total-file-count 0 :total-file-count-exact? true} (rg-search content-spec))
 
      content
-     (content-result content-out needles)
+     (if is_files_only (files-result content-out needles) (content-result content-out needles))
 
      content-hits
      (long (or (get content "hit_count") 0))
@@ -2192,7 +2346,10 @@
                       (conj (long (or item_count 0)))
 
                       (contains? #{"limit" "bytes"} (get content "hits_truncated_by"))
-                      (conj content-hits))]
+                      ;; FILES-ONLY pages by FILE: its display cap counts rows,
+                      ;; and one row is one file, not one hit.
+                      (conj
+                        (if is_files_only (long (or (get content "file_count") 0)) content-hits)))]
        (when-some [advance (some->> (seq advances)
                                     (apply min))]
          (when (pos? (long advance)) (+ (long (or offset 0)) (long advance)))))
@@ -2253,9 +2410,24 @@
          (str
            "Search stopped at its " (quot (long rg-search-budget-ms) 1000)
            "s scan budget — these results are PARTIAL, not the whole tree. "
-           "Narrow `paths` to a subdirectory, add `include`/`exclude` globs, or search a more distinctive term.")))]
+           "Narrow `paths` to a subdirectory, add `include`/`exclude` globs, or search a more distinctive term.")))
 
-    out))
+     ;; A WIDENED scan is a property of the answer's COST, not of the answer, so
+     ;; the note is PREPENDED to whatever hint the search already chose (a `time`
+     ;; cap still has to be the first thing after it).
+     wide-note
+     (when (and (not ls?) is_regex (:prefilter-degraded? content-out))
+       (str "This pattern cannot narrow the native prefilter (Rust `regex` has no"
+            " lookaround or backreferences), so grep matched it with `java.util.regex`"
+            " over every file in scope — the same hits, read the slow way. Narrow"
+            " `paths` or add `include` globs if it stops at the scan budget."))]
+
+    (cond-> out
+      wide-note
+      (assoc "hint"
+        (str wide-note
+             (when-let [h (get out "hint")]
+               (str " " h)))))))
 
 (defn- grep-tool
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
@@ -2354,8 +2526,8 @@
    Optional: `paths` (scope, default \".\"), `include` (globs — only files whose
    path/name matches), `exclude` (globs — files whose path/name matches are NOT
    searched; exclude WINS over include), `context` N (lines of context around
-   each hit), `is_files_only` (return the distinct matching file paths, no
-   per-line hits).
+   each hit), `is_files_only` (return the distinct matching file paths with the
+   number of matching LINES in each, and no per-line hits).
    Unknown keys are ignored so a stray annotation never hard-fails the call."
   [spec]
   (when-not (map? spec)
@@ -2484,7 +2656,11 @@
      :is_hidden (boolean (get spec "is_hidden"))
      :is_regex is_regex
      :limit (let [l (get spec "limit")]
-              (if (and (integer? l) (pos? (long l))) (long l) default-grep-limit))
+              (cond (and (integer? l) (pos? (long l))) (long l)
+                    ;; FILES-ONLY rows are one line each, so the content page's
+                    ;; 50 would cap the one mode whose job is completeness.
+                    is_files_only rg-files-only-limit
+                    :else default-grep-limit))
      :offset (let [o (get spec "offset")]
                (if (integer? o) (long o) 0))
      :context context
@@ -2623,12 +2799,31 @@
     (catch Throwable _ [])))
 
 (defn- file-has-any-hit?
-  "Short-circuit: true on first matching line. Used by :is_files_only mode
-   so we exit each file as fast as possible."
+  "Short-circuit: true on first matching line. Used by the files-only BREADTH
+   probe past the display cap, where only the yes/no matters."
   [^File f matches?]
   (try (with-open [r (io/reader f)]
          (boolean (some matches? (line-seq r))))
        (catch Throwable _ false)))
+
+(defn- file-hit-count
+  "How many LINES of `f` match — the per-file count `is_files_only` reports.
+   Reads the file through instead of stopping at the first hit, because the count
+   is what makes a files-only listing a complete ANSWER (\"which files, how many
+   times\") rather than another page to fetch. Polls `check-interrupt!` like the
+   content scan, so Esc lands mid-file; an unreadable file counts 0."
+  [^File f matches?]
+  (try (with-open [r (io/reader f)]
+         (loop [ls (line-seq r)
+                i 0
+                n 0]
+
+           (when (zero? (rem (long i) (long search-file-poll-lines))) (check-interrupt!))
+           (if-some [line (first ls)]
+             (recur (rest ls) (inc (long i)) (if (matches? line) (inc (long n)) n))
+             (long n))))
+       (catch InterruptedException e (throw e))
+       (catch Throwable _ 0)))
 
 (defn- rg-search
   "The rg search ENGINE: takes the public rg spec map and does the
@@ -2639,7 +2834,9 @@
    Returns one of:
      {:hits   [{:path :line :text :before? :after?} ...] :truncated-by KW :total-file-count N :total-file-count-exact? BOOL}  ;; content
    `:line` is the hit's 1-based line number.
-     {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW :total-file-count N :total-file-count-exact? BOOL}  ;; files-only
+     {:files [\"path/a\" …] :file-counts {\"path/a\" N} :truncated-by KW :total-file-count N :total-file-count-exact? BOOL}  ;; files-only
+   Both carry `:prefilter-degraded?` — true when the native regex prefilter could
+   not run the pattern and the scan widened to the whole ignore-aware scope.
 
    `:truncated-by` is `:limit` (hit count), `:bytes` (total-bytes budget), or
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
@@ -2729,8 +2926,18 @@
         ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
         ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
         ;; include/exclude globs + hidden-below-root guard here.
+        raw-candidates
+        (rg-fff-candidate-files roots needles is_regex search-overlay)
+
+        ;; Set when Rust's `regex` could not narrow with the pattern, so
+        ;; `raw-candidates` is the whole ignore-aware scope rather than a needle-
+        ;; narrowed set. The JVM matcher still decides every hit; the caller turns
+        ;; this into the `hint` that says the scan ran wide.
+        prefilter-degraded?
+        (boolean (:prefilter-degraded? (meta raw-candidates)))
+
         candidates
-        (->> (rg-fff-candidate-files roots needles is_regex search-overlay)
+        (->> raw-candidates
              (filter scan-file?)
              (remove (fn [^File f]
                        (and (not is_hidden) (rg-hidden-below-root? roots f)))))
@@ -2762,6 +2969,9 @@
     (cond
       is_files_only (let [out
                           (atom [])
+
+                          counts
+                          (atom {})
 
                           capped?
                           (atom false)
@@ -2798,13 +3008,20 @@
                           ;; PAGING: `total-files` is this page's position in the
                           ;; matching-file stream, so the first `offset` matches
                           ;; are counted for breadth and left out of the page.
-                          (when (file-has-any-hit? f matches?)
-                            (swap! total-files inc)
-                            (when (> (long @total-files) (long offset))
-                              (swap! out conj (rel-path f))
-                              (when (>= (count @out) (long limit)) (reset! capped? true))))))
+                          ;; COUNTED, not short-circuited: `path  N` is what makes
+                          ;; this mode an answer instead of another page.
+                          (let [n (file-hit-count f matches?)]
+                            (when (pos? (long n))
+                              (swap! total-files inc)
+                              (when (> (long @total-files) (long offset))
+                                (let [rel (rel-path f)]
+                                  (swap! out conj rel)
+                                  (swap! counts assoc rel (long n)))
+                                (when (>= (count @out) (long limit)) (reset! capped? true)))))))
                       {:files (vec @out)
+                       :file-counts @counts
                        :missing rg-missing-paths
+                       :prefilter-degraded? prefilter-degraded?
                        :truncated-by (cond @capped? :limit
                                            @time-capped? :time
                                            :else :end-of-results)
@@ -2873,6 +3090,7 @@
                                                                                    :bytes)))))))))
         {:hits (vec @out)
          :missing rg-missing-paths
+         :prefilter-degraded? prefilter-degraded?
          :truncated-by (or @cap-reason (when @time-capped? :time) :end-of-results)
          :total-file-count @total-files
          :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))}))))
@@ -3779,7 +3997,8 @@
        "anchor straight to `patch`. The page CONTINUES ITSELF when capped: `next(r)` is the next "
        "page (StopIteration when complete, so `next(r, None)` is the sentinel form), `r.pages()` "
        "walks them bounded, `r.all()` is every page as one text, `r.next_offset` is where the "
-       "next page starts.")
+       "next page starts. With `is_files_only` the rows are `<path>  <n>` — the file and how many "
+       "times it matches, no anchors.")
      :description
      (str
        "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
@@ -3794,6 +4013,9 @@
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`limit` (or `max_results` / `max_count` / `max_matches`) caps total results per page, not per file: "
        "a positive integer, default 50. "
+       "`is_files_only: True` answers one row per matching FILE with how many times it matches instead of "
+       "the lines — the whole picture when a query matches too much to page through; `limit` then counts "
+       "files (default 500). "
        "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
        "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
        "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
@@ -3801,7 +4023,8 @@
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
               {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
               {:name "limit" :note "or `max_results` / `max_count` / `max_matches`"}
-              {:name "offset"} {:name "is_hidden"}]
+              {:name "offset"} {:name "is_hidden"}
+              {:name "is_files_only" :note "one row per matching file"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation

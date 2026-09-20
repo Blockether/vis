@@ -53,6 +53,18 @@ def __vis_install_ls__():
             if children:
                 _render(children, prefix + ("  " if index == last else "\u2502 "), out)
 
+    def _paths(root, entries, out):
+        """Append every entry as a full path; a directory keeps a trailing `/`."""
+        for entry in entries:
+            full = _os.path.join(root, entry.get("name", ""))
+            if entry.get("type") == "dir":
+                out.append(full + "/")
+                children = entry.get("children")
+                if children:
+                    _paths(full, children, out)
+            else:
+                out.append(full)
+
     def _section(path, entries):
         """One directory: the `path  Nd Nf` header, then its tree."""
         home = _os.path.expanduser("~")
@@ -76,7 +88,15 @@ def __vis_install_ls__():
                 % (type(payload).__name__, exc, text)
             ) from exc
 
-    def ls(paths=".", depth=1, is_hidden=False, *, hidden=None, pattern=None):
+    def ls(
+        paths=".",
+        depth=1,
+        is_hidden=False,
+        *,
+        hidden=None,
+        pattern=None,
+        as_paths=False,
+    ):
         """Map a tree through the host's ignore-aware walk, as a compact STRING.
 
         ls(dir) returns a ready-to-print tree: a `path  Nd Nf` header, then one
@@ -96,6 +116,10 @@ def __vis_install_ls__():
         A per-path spec may override pattern, including None to disable it.
         Dotfiles need is_hidden=True (alias: hidden=True). If supplied, hidden
         overrides is_hidden; gitignored entries are never listed.
+        as_paths=True answers the same walk as a flat list of paths instead of
+        the tree, in the same order: each one is the requested path joined with
+        the entry name, directories keeping a trailing "/", so a relative
+        request answers relative paths. Ready for cat, grep or Path().
         Start at a known parent and batch only confirmed directories. A missing,
         protected or non-directory path fails the batch with a host tool error.
         A missing path names its nearest existing parent; read files with cat.
@@ -118,6 +142,11 @@ def __vis_install_ls__():
             )
         )
         rows = _decoded(payload)
+        if as_paths:
+            flat = []
+            for row in rows:
+                _paths(row["path"], row["entries"], flat)
+            return flat
         if one:
             return _section(rows[0]["path"], rows[0]["entries"])
         return "\n\n".join(_section(r["path"], r["entries"]) for r in rows)
@@ -127,7 +156,8 @@ def __vis_install_ls__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["ls"] = (
-        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None): directory contents from the "
+        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, as_paths=False): "
+        "directory contents from the "
         "host's ignore-aware walk, rendered as a compact printable STRING. "
         "ls(dir) -> a `path  Nd Nf` header then one tree line per entry, "
         "directories first then alphabetical: a directory is `name/` (with its "
@@ -143,7 +173,11 @@ def __vis_install_ls__():
         "parent; batch only confirmed directories. One missing, protected or "
         "non-directory path fails the batch with a host tool error; a missing path "
         "names the nearest existing directory. Read files with cat. A path is a "
-        "str or a pathlib.Path."
+        "str or a pathlib.Path. as_paths=True answers the same walk as a flat list "
+        "of paths instead of the tree, in the same order: each is the requested path "
+        "joined with the entry name, directories ending in '/', so a relative request "
+        "answers relative paths. ls(dir, depth=3, as_paths=True) is the whole file "
+        "list, ready for cat, grep or Path()."
     )
 
     # ONE text for one handle: `help(ls)` and `doc("ls")` read the same
