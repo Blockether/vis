@@ -5033,6 +5033,13 @@
                                      str)
                  :project_name (:project-name session)
                  :project_position (:project-position session)
+                 ;; The GROUP the human filed this conversation under, inside that
+                 ;; project. Name AND palette token travel with the row so a list
+                 ;; paints the group without a second request per session.
+                 :group_id (some-> (:group-id session)
+                                   str)
+                 :group_name (:group-name session)
+                 :group_color (:group-color session)
                  ;; The human's STAR, and the ONE place it lives: the GATEWAY owns it,
                  ;; so every client listing this session reads the same mark instead of
                  ;; each device holding its own copy. A RANK - compare it, never show
@@ -6092,6 +6099,57 @@
    count applied."
   [pid session-ids]
   (lp/reorder-project-sessions! pid session-ids))
+
+;; --- Session groups: the human's own bands inside ONE project (V8) ---
+
+(defn- session-group-wire
+  "Canonical (string-keyed) JSON-friendly projection of a persisted group."
+  [g]
+  (when g
+    (wire/canonical {:id (str (:id g))
+                     :project_id (some-> (:project-id g)
+                                         str)
+                     :name (:name g)
+                     ;; A palette TOKEN, never a hex string: the TUI paints it on a
+                     ;; terminal and the app out of a theme, from the SAME value.
+                     :color (:color g)
+                     :position (:position g)
+                     :session_count (:session-count g)
+                     :created_at (:created-at g)})))
+
+(defn list-session-groups
+  "Wire groups of one project, in their manual order. `[]` when it has none."
+  [pid]
+  (mapv session-group-wire (lp/session-groups pid)))
+
+(defn get-session-group [gid] (session-group-wire (lp/get-session-group gid)))
+
+(defn create-session-group!
+  "Create a group inside `pid`. `opts` keys: :name (required), :color (palette
+   token), :position."
+  [pid opts]
+  (session-group-wire (lp/create-session-group! pid opts)))
+
+(defn update-session-group!
+  "Patch a group: :name, :color and/or :position."
+  [gid opts]
+  (session-group-wire (lp/update-session-group! gid opts)))
+
+(defn delete-session-group!
+  "Delete a group. Its sessions are NEVER deleted: they stay in the project and
+   go back to ungrouped. Returns `{:group_id … :scattered_session_ids […]
+   :session_count n}` so a client can prune local state without re-reading."
+  [gid]
+  (let [sids (lp/session-group-session-ids gid)]
+    (lp/delete-session-group! gid)
+    {:group_id (str gid) :scattered_session_ids (mapv str sids) :session_count (count sids)}))
+
+(defn assign-session-group!
+  "File a session under `gid` (nil leaves it ungrouped inside its project).
+   Returns the refreshed soul."
+  [sid gid]
+  (lp/assign-session-group! sid gid)
+  (soul sid))
 
 (defn release-session!
   "Release the live runtime for a session while keeping persisted data resumable.

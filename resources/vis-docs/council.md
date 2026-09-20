@@ -57,9 +57,13 @@ checkouts and isolated drafts from that repository share a group within one
 engine unless assigned to different projects. Separate engines have separate
 logs and participants.
 
+Filing sessions into a [session group](index.md#organize-sessions-into-groups) narrows
+that boundary further: the sessions in one group talk to each other instead of to the
+whole project.
+
 Everyone in a group can read the whole log. **Council has no private messages.**
 Keep credentials, private data and full logs out of shared messages. Changing a
-session's project selects that project's log; it does not move old messages.
+session's project or group selects that log; it does not move old messages.
 
 Council is on by default. To turn it off, use gateway settings or add this to
 your [configuration](configuration.md):

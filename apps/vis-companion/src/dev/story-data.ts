@@ -47,6 +47,7 @@ import type {
   QueuePausedInfo,
   RouterProvider,
   Session,
+  SessionGroup,
   SessionUsage,
   SlashCommand,
   TranscriptIteration,
@@ -2091,6 +2092,43 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     awaiting_count: all.filter(isAwaiting).length,
     server_time_ms: STORY_FLEET_NOW,
   };
+  // GROUPS ARE THE GATEWAY'S, not this device's, so the adapter keeps them the way
+  // `/v1/session-groups` does: bands belonging to one project, counted over the rows
+  // filed under them. A band a story MAKES, renames or drops stays made for the rest
+  // of that story, and so does a session it files.
+  const made: SessionGroup[] = [];
+  const dropped = new Set<string>();
+  const filed = new Map<string, string | null>();
+  const bandOf = (row: Session) => (filed.has(row.id) ? filed.get(row.id)! : (row.group_id ?? null));
+  const bandsOf = (project: StoryProject | undefined): SessionGroup[] => {
+    if (!project) return [];
+    const named = new Map<string, SessionGroup>();
+    for (const group of made) {
+      if (group.project_id === project.projectId) named.set(group.id, group);
+    }
+    for (const row of project.rows) {
+      const id = bandOf(row);
+      if (id === null || named.has(id)) continue;
+      named.set(id, {
+        id,
+        project_id: project.projectId,
+        name: typeof row.group_name === 'string' ? row.group_name : 'Group',
+        color: typeof row.group_color === 'string' ? row.group_color : 'slate',
+        position: named.size,
+        session_count: 0,
+      });
+    }
+    return [...named.values()]
+      .filter((group) => !dropped.has(group.id))
+      .map((group) => ({
+        ...group,
+        session_count: project.rows.filter((row) => bandOf(row) === group.id).length,
+      }));
+  };
+  const projectAt = (root: string | null | undefined) =>
+    projects.find((project) => project.root === root) ?? projects[0];
+  const sent = (init?: RequestInit) =>
+    JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>;
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), {
       status: 200,
@@ -2115,6 +2153,68 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
         has_more: hasMore,
         next_cursor: hasMore && last ? fleetCursor(last) : null,
         ...(after || root ? {} : { overview }),
+      });
+    }
+    if (url.pathname === '/v1/session-groups') {
+      const project = projectAt(url.searchParams.get('root'));
+      if ((init?.method ?? 'GET') === 'GET') {
+        return answer({ project_id: project?.projectId ?? null, groups: bandsOf(project) });
+      }
+      const body = sent(init);
+      const owner = projectAt(typeof body.root === 'string' ? body.root : null);
+      const group: SessionGroup = {
+        id: `story-group-${made.length + 1}`,
+        project_id: owner?.projectId ?? null,
+        name: typeof body.name === 'string' ? body.name : 'Group',
+        color: typeof body.color === 'string' ? body.color : 'slate',
+        position: bandsOf(owner).length,
+        session_count: 0,
+      };
+      made.push(group);
+      return answer(group);
+    }
+    if (url.pathname.startsWith('/v1/session-groups/')) {
+      const gid = decodeURIComponent(url.pathname.slice('/v1/session-groups/'.length));
+      const project = projects.find((one) => bandsOf(one).some((band) => band.id === gid));
+      const band = bandsOf(project).find((one) => one.id === gid);
+      if (init?.method === 'DELETE') {
+        dropped.add(gid);
+        const scattered = (project?.rows ?? []).filter((row) => bandOf(row) === gid);
+        for (const row of scattered) filed.set(row.id, null);
+        return answer({
+          group_id: gid,
+          scattered_session_ids: scattered.map((row) => row.id),
+          session_count: scattered.length,
+        });
+      }
+      const body = sent(init);
+      // A band the fixture's own rows named is overridden by a made one with its id.
+      const next: SessionGroup = {
+        ...(band ?? { id: gid, project_id: null, name: 'Group', color: 'slate', position: 0 }),
+        session_count: band?.session_count ?? 0,
+        ...(typeof body.name === 'string' ? { name: body.name } : {}),
+        ...(typeof body.color === 'string' ? { color: body.color } : {}),
+        ...(typeof body.position === 'number' ? { position: body.position } : {}),
+      };
+      const held = made.findIndex((one) => one.id === gid);
+      if (held === -1) made.push(next);
+      else made[held] = next;
+      return answer(next);
+    }
+    const filing = url.pathname.match(/^\/v1\/sessions\/(.+)\/group$/);
+    if (filing) {
+      const sid = decodeURIComponent(filing[1]);
+      const row = all.find((one) => one.id === sid);
+      const body = sent(init);
+      const gid = typeof body.group_id === 'string' ? body.group_id : null;
+      filed.set(sid, gid);
+      const project = projects.find((one) => one.rows.some((held) => held.id === sid));
+      const band = bandsOf(project).find((one) => one.id === gid);
+      return answer({
+        ...row,
+        group_id: gid,
+        group_name: band?.name ?? null,
+        group_color: band?.color ?? null,
       });
     }
     return answer({});

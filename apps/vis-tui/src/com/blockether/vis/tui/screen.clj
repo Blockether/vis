@@ -1,47 +1,49 @@
 (ns com.blockether.vis.tui.screen
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.annotator :as annotator]
-            [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
-            [com.blockether.vis.tui.attachments :as attachments]
-            [com.blockether.vis.tui.attachment-intake :as attachment-intake]
-            [com.blockether.vis.tui.chat :as chat]
-            [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
-            [com.blockether.vis.tui.interactions :as interactions]
-            [com.blockether.vis.tui.command-suggest :as slash]
-            [com.blockether.vis.tui.components :as components]
-            [com.blockether.vis.tui.file-suggest :as file-suggest]
-            [com.blockether.vis.tui.file-picker :as file-picker]
-            [com.blockether.vis.tui.footer :as footer]
-            [com.blockether.vis.tui.frame :as frame]
-            [com.blockether.vis.tui.header :as header]
-            [com.blockether.vis.tui.agent-team :as agent-team]
-            [com.blockether.vis.tui.human-input :as hi]
-            [com.blockether.vis.tui.improve :as improve]
-            [com.blockether.vis.tui.input :as input]
-            [com.blockether.vis.tui.live-view :as lv]
-            [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.mcp :as mcp]
-            [com.blockether.vis.tui.provider :as provider]
-            [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.projects :as projects]
-            [com.blockether.vis.tui.render :as render]
-            [com.blockether.vis.tui.scroll :as scroll]
-            [com.blockether.vis.tui.selection :as selection]
-            [com.blockether.vis.tui.state :as state]
-            [com.blockether.vis.tui.terminal-image :as timg]
-            [com.blockether.vis.tui.transient :as tr]
-            [com.blockether.vis.tui.theme :as t]
-            [com.blockether.vis.tui.virtual :as virtual]
-            [com.blockether.vis.tui.voice-input :as voice-input]
-            [com.blockether.vis.tui.dialogs :as dlg]
-            [com.blockether.vis.tui.config :as vis-config]
-            [com.blockether.vis.tui.external-opener :as opener]
-            [com.blockether.vis.tui.header-model :as vis-header]
-            [com.blockether.vis.tui.paths :as vis-paths]
-            [com.blockether.vis.tui.workspace :as workspace]
-            [com.blockether.vis.tui.prompt-templates :as prompt-templates]
-            [taoensso.telemere :as tel])
+  (:require
+    [clojure.string :as str]
+    [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.tui.client :as vis]
+    [com.blockether.vis.tui.annotator :as annotator]
+    [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
+    [com.blockether.vis.tui.attachments :as attachments]
+    [com.blockether.vis.tui.attachment-intake :as attachment-intake]
+    [com.blockether.vis.tui.chat :as chat]
+    [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
+    [com.blockether.vis.tui.interactions :as interactions]
+    [com.blockether.vis.tui.command-suggest :as slash]
+    [com.blockether.vis.tui.components :as components]
+    [com.blockether.vis.tui.file-suggest :as file-suggest]
+    [com.blockether.vis.tui.file-picker :as file-picker]
+    [com.blockether.vis.tui.footer :as footer]
+    [com.blockether.vis.tui.frame :as frame]
+    [com.blockether.vis.tui.header :as header]
+    [com.blockether.vis.tui.agent-team :as agent-team]
+    [com.blockether.vis.tui.human-input :as hi]
+    [com.blockether.vis.tui.improve :as improve]
+    [com.blockether.vis.tui.input :as input]
+    [com.blockether.vis.tui.live-view :as lv]
+    [com.blockether.vis.tui.keymap :as keymap]
+    [com.blockether.vis.tui.mcp :as mcp]
+    [com.blockether.vis.tui.provider :as provider]
+    [com.blockether.vis.tui.primitives :as p]
+    [com.blockether.vis.tui.projects :as projects]
+    [com.blockether.vis.tui.render :as render]
+    [com.blockether.vis.tui.scroll :as scroll]
+    [com.blockether.vis.tui.selection :as selection]
+    [com.blockether.vis.tui.state :as state]
+    [com.blockether.vis.tui.terminal-image :as timg]
+    [com.blockether.vis.tui.transient :as tr]
+    [com.blockether.vis.tui.theme :as t]
+    [com.blockether.vis.tui.virtual :as virtual]
+    [com.blockether.vis.tui.voice-input :as voice-input]
+    [com.blockether.vis.tui.dialogs :as dlg]
+    [com.blockether.vis.tui.config :as vis-config]
+    [com.blockether.vis.tui.external-opener :as opener]
+    [com.blockether.vis.tui.header-model :as vis-header]
+    [com.blockether.vis.tui.paths :as vis-paths]
+    [com.blockether.vis.tui.workspace :as workspace]
+    [com.blockether.vis.tui.prompt-templates :as prompt-templates]
+    [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult
             ScrollBar$Geometry]
@@ -5543,6 +5545,20 @@
   (when (and pid (seq ids))
     (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil))))
 
+(defn- project-groups
+  "Read the session groups of every listed project in ONE pass. Keyed by project id, so the
+   rail can nest a group row under its project without a second round trip while
+   painting. A project whose read fails simply shows no groups this refresh."
+  [projects]
+  (into {}
+        (keep (fn [project]
+                (when-let [pid (some-> (get project "id")
+                                       str)]
+                  [pid
+                   (vec (try (vis/gateway-list-session-groups {:project-id pid})
+                             (catch Throwable _ nil)))])))
+        projects))
+
 (defn- refresh-projects!
   "Refresh the sidebar off the input thread, retaining the last usable list on failure."
   []
@@ -5550,8 +5566,9 @@
   (vis/worker-future
     "tui-projects"
     (fn []
-      (try (state/dispatch [:project-sidebar
-                            {:items (vec (vis/gateway-list-projects)) :loading? false}])
+      (try (let [projects (vec (vis/gateway-list-projects))]
+             (state/dispatch [:project-sidebar
+                              {:items projects :groups (project-groups projects) :loading? false}]))
            (catch Throwable _
              (state/dispatch [:project-sidebar
                               {:loading? false :error "Load failed · r retry"}]))))))
@@ -5605,6 +5622,148 @@
                  (state/dispatch [:project-sidebar
                                   {:loading? false :error "Add failed · check directory"}]))))))))
 
+(defn- group-color-items
+  "One pick row per palette token, straight from the gateway contract's closed
+   `session_group_color` vocabulary."
+  []
+  (mapv (fn [token]
+          {:id token :label (str "● " (str/capitalize (str token)))})
+        gateway-contract/session-group-colors))
+
+(defn- group-move-items
+  "Pick rows for a move: every group of the project, then the two verbs a move
+   always offers — a fresh group, or no group at all."
+  [groups]
+  (vec (concat (mapv (fn [group]
+                       {:id (str (get group "id"))
+                        :label (str (get group "name") "  (" (get group "session_count" 0) ")")})
+                     groups)
+               [{:id ::new-group :label "＋ New group…"}
+                {:id ::remove-group :label "✗ Remove from group"}])))
+
+(defn- create-group!
+  "Ask for a group name and colour, create it inside `pid`, and refresh the rail.
+   Returns the new group, or nil when the human cancels or the name is taken -
+   a group is addressed by the name a human typed, so a duplicate is a conflict."
+  [screen pid]
+  (when-let [entered (with-dialog-lock #(dlg/text-input-dialog!
+                                          screen
+                                          "New group" "Group name"
+                                          :body "A group holds sessions inside this project"))]
+    (when-not (str/blank? (str entered))
+      (let [color (:id (with-dialog-lock
+                         #(dlg/select-dialog! screen "Group colour" (group-color-items))))
+            group (try (vis/gateway-create-session-group! (cond-> {:name (str/trim (str entered))
+                                                                   :project-id pid}
+                                                            color
+                                                            (assoc :color color)))
+                       (catch Throwable _ nil))]
+
+        (refresh-projects!)
+        (if (get group "id")
+          (do (vis/notify! "Created group" :level :success :ttl-ms copy-success-ttl-ms) group)
+          (do (vis/notify! "Could not create that group - the name may already be taken"
+                           :level :warn
+                           :ttl-ms copy-success-ttl-ms)
+              nil))))))
+
+(defn- move-session-to-group!
+  "Move ONE session into a group inside its own project: pick an existing group,
+   make a fresh one, or leave the session ungrouped inside the project. Groups live
+   inside a project, so a session without one is asked to join a project first."
+  [screen sid]
+  (when sid
+    (let [pid (some-> (try (vis/gateway-soul (str sid)) (catch Throwable _ nil))
+                      (get "project_id")
+                      str
+                      not-empty)]
+      (if-not pid
+        (vis/notify! "Add this session to a project first - groups live inside one"
+                     :level :warn
+                     :ttl-ms copy-success-ttl-ms)
+        (let [groups (try (vis/gateway-list-session-groups {:project-id pid})
+                          (catch Throwable _ nil))
+              pick (with-dialog-lock #(dlg/searchable-select! screen
+                                                              "Move session to group…"
+                                                              (group-move-items groups)
+                                                              {:placeholder "Type to filter groups…"
+                                                               :enter-label "move"}))]
+
+          (when pick
+            (let [gid (cond (= (str ::new-group) (str (:id pick))) (get (create-group! screen pid)
+                                                                        "id")
+                            (= (str ::remove-group) (str (:id pick))) nil
+                            :else (:id pick))]
+              (when (or (= (str ::remove-group) (str (:id pick))) gid)
+                (try (vis/gateway-assign-session-group! (str sid) gid) (catch Throwable _ nil))
+                (refresh-projects!)
+                (vis/notify! (if gid "Moved session to group" "Removed session from group")
+                             :level :success
+                             :ttl-ms copy-success-ttl-ms)))))))))
+
+(defn- sidebar-row-menu!
+  "The rail's ⋯ menu for the row under the cursor: group verbs on a group row,
+   project verbs on a project row. Every verb that changes the gateway refreshes
+   the rail from the gateway's own answer."
+  [screen entry]
+  (let [group
+        (:group entry)
+
+        project
+        (:project entry)
+
+        pid
+        (some-> (get project "id")
+                str)
+
+        gid
+        (some-> (get group "id")
+                str)
+
+        pick
+        (with-dialog-lock
+          #(dlg/select-dialog!
+             screen
+             (if gid (str "Group · " (get group "name")) (str "Project · " (get project "name")))
+             (if gid
+               [{:id :rename :label "Rename group…"} {:id :recolour :label "Change group colour…"}
+                {:id :new :label "＋ New group…"} {:id :delete :label "✗ Delete group"}]
+               [{:id :new :label "＋ New group…"} {:id :refresh :label "Refresh projects"}])))]
+
+    (case (:id pick)
+      :new
+      (when pid (create-group! screen pid))
+
+      :rename
+      (when-let [entered (with-dialog-lock #(dlg/text-input-dialog! screen
+                                                                    "Rename group" "Group name"
+                                                                    :initial (str (get group
+                                                                                       "name"))))]
+        (when-not (str/blank? (str entered))
+          (try (vis/gateway-update-session-group! gid {:name (str/trim (str entered))})
+               (catch Throwable _ nil))
+          (refresh-projects!)))
+
+      :recolour
+      (when-let [color (:id (with-dialog-lock
+                              #(dlg/select-dialog! screen "Group colour" (group-color-items))))]
+        (try (vis/gateway-update-session-group! gid {:color color}) (catch Throwable _ nil))
+        (refresh-projects!))
+
+      :delete
+      (when (with-dialog-lock #(dlg/confirm-dialog!
+                                 screen
+                                 "Delete group"
+                                 "Delete this group? Its sessions stay in the project, ungrouped."))
+        (try (vis/gateway-delete-session-group! gid) (catch Throwable _ nil))
+        (refresh-projects!)
+        (vis/notify! "Deleted group" :level :success :ttl-ms copy-success-ttl-ms))
+
+      :refresh
+      (refresh-projects!)
+
+      nil)))
+
 (defn- toggle-project-sidebar!
   []
   (let [open? (not (get-in @state/app-db [:project-sidebar :open?]))]
@@ -5613,13 +5772,16 @@
 
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key."
-  [key select! add! refresh!]
+  [key select! add! refresh! menu!]
   (when (and (instance? MouseAction key)
              (= MouseActionType/MOVE (.getActionType ^MouseAction key))
              (.updateHovered projects/hit-map ^MouseAction key))
     (state/dispatch [:bump-render-version]))
   (when-let [[action value] (projects/key-action @state/app-db key)]
     (case action
+      :menu
+      (menu! value)
+
       :select
       (select! value)
 
@@ -6405,6 +6567,10 @@
                                 (vis/notify! (str "Could not delete session: " (ex-message t))
                                              :level :warn
                                              :ttl-ms copy-success-ttl-ms)))))
+                     ;; Ctrl+O in the navigator → move a session into a GROUP
+                     ;; inside its project. Pick an existing group, make a new
+                     ;; one, or leave the session ungrouped.
+                     (= :group (:action choice)) (move-session-to-group! screen (:id choice))
                      ;; Ctrl+B in the navigator → move a session into a
                      ;; persistent Project. Pick an existing one,
                      ;; make a new one, or remove it from its project.
@@ -6663,8 +6829,12 @@
                          (persist-tabs!)))))
                  add-project! #(add-project! screen select-project!)
                  switch-project! toggle-project-sidebar!
-                 sidebar-key!
-                 #(project-sidebar-key! % select-project! add-project! refresh-active-tab!)]
+                 sidebar-key! #(project-sidebar-key! %
+                                                     select-project!
+                                                     add-project!
+                                                     refresh-active-tab!
+                                                     (fn [entry]
+                                                       (sidebar-row-menu! screen entry)))]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.
@@ -7833,6 +8003,9 @@
                                      :show-sessions
                                      (show-sessions!)
 
+                                     :session-group
+                                     (move-session-to-group! screen (current-session-id))
+
                                      :switch-project
                                      (switch-project!)
 
@@ -8085,6 +8258,9 @@
 
                          :fork-at-turn
                          (do (switch-session! {:action :fork-at-turn}) (recur))
+
+                         :session-group
+                         (do (move-session-to-group! screen (current-session-id)) (recur))
 
                          :switch-project
                          (do (switch-project!) (recur))

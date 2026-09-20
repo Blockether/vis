@@ -119,6 +119,11 @@
    {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :never}
    {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}
    {:action :switch-project :key \w :label "project sidebar" :group "Session"}
+   ;; A group is the folder a session is filed in, so `d` (Emacs' dired letter)
+   ;; carries it: `g` can never be a prefix key, because C-g is the abort.
+   ;; Palette-only — the Session band of the hydra is full, and the project rail
+   ;; advertises its own `g` menu.
+   {:action :session-group :key \d :label "move to group" :group "Session" :show-when :never}
    {:action :close-tab :key \k :label "close tab" :group "Session" :show-when :multi-tab}
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.

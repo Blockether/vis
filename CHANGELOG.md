@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Give a confined extension child the exact paths it needs: `vis.jailed_shell(...)` now takes
   `allow_read_write` and `unix_connect`, so a language pack can hand its runtime the one
   rendezvous directory or socket it talks over instead of widening the whole jail.
+- Group the sessions inside a project: name a group, give it a colour, and file sessions
+  under it from the project menu in the app or the project sidebar in the terminal. A
+  group also narrows Council, so its sessions talk to each other instead of to the whole
+  project.
 
 ### Changed
 - `vis.jailed_shell_session` is gone. Call `vis.jailed_shell(...)`, which reads the merged

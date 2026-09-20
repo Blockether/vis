@@ -3,7 +3,7 @@
  * leading project starts open; folds are preferences that outlive a screen or webview.
  */
 
-/** Where the folds live: one entry per project a reader has ever folded. */
+/** Where the folds live: one entry per project — or group inside one — a reader has ever folded. */
 const STORE_KEY = 'vis.projectFolds';
 
 /**
@@ -17,6 +17,14 @@ const KEEP = 200;
 /** A project's identity here: the machine that owns it, then its workspace root. */
 export function projectFoldKey(machine: string, root: string): string {
   return `${machine}\u0000${root}`;
+}
+
+/**
+ * A GROUP inside that project: the same store, one segment deeper. A group folds on
+ * its own, so opening a project does not have to unroll every band the reader keeps shut.
+ */
+export function groupFoldKey(machine: string, root: string, groupId: string): string {
+  return `${projectFoldKey(machine, root)}\u0000${groupId}`;
 }
 
 function readFolds(): Record<string, boolean> {

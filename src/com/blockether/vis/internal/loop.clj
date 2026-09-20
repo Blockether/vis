@@ -12980,6 +12980,9 @@
      :project-id (:project-id session)
      :project-name (:project-name session)
      :project-position (:project-position session)
+     :group-id (:group-id session)
+     :group-name (:group-name session)
+     :group-color (:group-color session)
      :favorite-rank (:favorite-rank session)}))
 
 (defn by-channel
@@ -12995,6 +12998,9 @@
            :project-id (:project-id c)
            :project-name (:project-name c)
            :project-position (:project-position c)
+           :group-id (:group-id c)
+           :group-name (:group-name c)
+           :group-color (:group-color c)
            :favorite-rank (:favorite-rank c)})
         (persistance/db-list-sessions (db-info) channel)))
 
@@ -13067,6 +13073,49 @@
    manual order. Guests owned by another project are never stolen."
   [project-id session-ids]
   (persistance/db-adopt-and-reorder-project-sessions! (db-info) project-id session-ids))
+
+;; --- Session groups: the human's own groups inside ONE project (V8) ---
+
+(defn session-groups
+  "List the groups of `project-id`, in their manual order, each with a live
+   :session-count. `[]` when the project has none."
+  [project-id]
+  (persistance/db-list-session-groups (db-info) project-id))
+
+(defn get-session-group [group-id] (persistance/db-get-session-group (db-info) group-id))
+
+(defn create-session-group!
+  "Create a group inside `project-id`. `opts`: :name (required, unique in the
+   project), :color (palette token, defaults to \"slate\"), :position."
+  [project-id opts]
+  (persistance/db-create-session-group! (db-info) project-id opts))
+
+(defn update-session-group!
+  "Patch a group: :name, :color and/or :position."
+  [group-id opts]
+  (persistance/db-update-session-group! (db-info) group-id opts))
+
+(defn delete-session-group!
+  "Delete a group. Its sessions stay in the project, ungrouped."
+  [group-id]
+  (persistance/db-delete-session-group! (db-info) group-id))
+
+(defn session-group-session-ids
+  "Ids of every session soul filed under `group-id`, across channels.
+
+   MEMBERSHIP, like `project-session-ids`: an untitled conversation counts too."
+  [group-id]
+  (let [gid (str group-id)]
+    (->> (by-channel :all)
+         (filter (fn [s]
+                   (= gid (str (:group-id s)))))
+         (mapv :id))))
+
+(defn assign-session-group!
+  "File the session soul under `group-id` (nil leaves it ungrouped). Joining a
+   group of another project adopts the session into that project as well."
+  [session-id group-id]
+  (persistance/db-set-session-group! (db-info) session-id group-id))
 
 ;; Host title setter + public env accessor
 

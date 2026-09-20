@@ -483,6 +483,19 @@
 
 (defdelegate db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])
 
+;; --- Session groups: the human's own groups inside ONE project (V8) ---
+(defdelegate db-get-session-group [db-info group-id])
+
+(defdelegate db-list-session-groups [db-info project-id])
+
+(defdelegate db-create-session-group! [db-info project-id opts])
+
+(defdelegate db-update-session-group! [db-info group-id opts])
+
+(defdelegate db-delete-session-group! [db-info group-id])
+
+(defdelegate db-set-session-group! [db-info session-id group-id])
+
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
 

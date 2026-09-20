@@ -348,6 +348,21 @@ survive restarts, and the full history stays stored even when Vis summarizes
 completed work to make room for the next task. See
 [How Vis manages context](token-optimization.md).
 
+### Organize sessions into groups
+
+A busy project collects more sessions than one screen holds. Put the ones that belong
+together into a group — "Release apps", "Bug triage" — and that group gets its own name,
+colour and session count under the project, opened and closed like any other fold.
+
+In the desktop or phone app, open the **⋮** menu in a project's header and choose **New
+group**. The same menu renames a group, changes its colour, deletes it and files the
+sessions listed on that page into a group. In the terminal, press **Ctrl+X w** for the
+project sidebar and **g** on a project or group row for the same menu; **Ctrl+X d** moves
+the session you are in.
+
+Deleting a group keeps its sessions. They return to the project, ungrouped. A group also
+narrows who a session talks to in [Council](council.md#groups-and-settings).
+
 ## Updating vis
 
 ```bash

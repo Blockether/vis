@@ -1394,6 +1394,47 @@
   [pid session-ids]
   (send-json! "PATCH" (str "/v1/projects/" (enc pid) "/sessions") {:order (mapv str session-ids)}))
 
+;; --- Session groups: the human's own groups inside ONE project (V8) ---
+
+(defn list-session-groups
+  "GET /v1/session-groups — the groups of one project, in the human's order.
+   `opts`: :project (id) or :root (workspace path), :owner. Returns the :groups
+   vector; `[]` when that project has no groups yet."
+  [{:keys [project root owner]}]
+  (let [qs (->> [(when project (str "project=" (enc project))) (when root (str "root=" (enc root)))
+                 (when owner (str "owner=" (enc owner)))]
+                (remove nil?)
+                (str/join "&"))]
+    (get (send-json! "GET"
+                     (cond-> "/v1/session-groups"
+                       (seq qs)
+                       (str "?" qs)))
+         "groups")))
+
+(defn create-session-group!
+  "POST /v1/session-groups {name, color?, project_id?|root?} — create a group.
+   With `:root` the project is get-or-created first. Returns the group."
+  [opts]
+  (send-json! "POST" "/v1/session-groups" opts))
+
+(defn update-session-group!
+  "PATCH /v1/session-groups/:gid {name?, color?, position?} — rename, recolour or
+   reorder a group."
+  [gid opts]
+  (send-json! "PATCH" (str "/v1/session-groups/" (enc gid)) opts))
+
+(defn delete-session-group!
+  "DELETE /v1/session-groups/:gid — drop a group. Its sessions stay in the
+   project, ungrouped; the answer names them."
+  [gid]
+  (send-json! "DELETE" (str "/v1/session-groups/" (enc gid))))
+
+(defn assign-session-group!
+  "PUT /v1/sessions/:sid/group — file a session under a group (nil leaves it
+   ungrouped inside its project). Returns the soul."
+  [sid gid]
+  (send-json! "PUT" (str "/v1/sessions/" (enc sid) "/group") {:group_id (when gid (str gid))}))
+
 (defn release-session-runtime!
   "Release a session's live RUNTIME on the daemon WITHOUT touching the process
    client lease: stop its background resources (background `shell` children, managed REPLs)

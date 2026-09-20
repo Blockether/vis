@@ -83,30 +83,42 @@
                                                                     (not (:human-input local))))
                                 tabs))]
 
-             (into [{:kind :project-select
-                     :project project
-                     :label (get project "name" "Untitled project")
-                     :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
-                     :running running
-                     :needs-input (count waiting)
-                     :unread (count unread)
-                     :action [:select project]}]
-                   (map (fn [tab]
-                          (let [local
-                                (tab-state db tab)
+             (into
+               [{:kind :project-select
+                 :project project
+                 :label (get project "name" "Untitled project")
+                 :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
+                 :running running
+                 :needs-input (count waiting)
+                 :unread (count unread)
+                 :action [:select project]}]
+               (concat
+                 ;; Groups nest under their project: a group row is the project's
+                 ;; own structure, so it sits above the attention rows.
+                 (map (fn [group]
+                        {:kind :project-group
+                         :project project
+                         :group group
+                         :label (get group "name" "Untitled group")
+                         :color (get group "color")
+                         :group-count (long (or (get group "session_count") 0))
+                         :action [:select project]})
+                      (get-in db [:project-sidebar :groups pid]))
+                 (map (fn [tab]
+                        (let [local
+                              (tab-state db tab)
 
-                                session-id
-                                (or (get-in local [:session :id])
-                                    (get-in local [:human-input :request :session-id]))]
+                              session-id
+                              (or (get-in local [:session :id])
+                                  (get-in local [:human-input :request :session-id]))]
 
-                            {:kind (if (:human-input local) :project-input :project-unread)
-                             :project project
-                             :tab-id (:id tab)
-                             :unread? (contains? unread tab)
-                             :label (model/title-or-placeholder (:label tab))
-                             :action [:session (str session-id)]}))
-                        (filter #(or (:human-input (tab-state db %)) (contains? unread %))
-                                tabs))))))
+                          {:kind (if (:human-input local) :project-input :project-unread)
+                           :project project
+                           :tab-id (:id tab)
+                           :unread? (contains? unread tab)
+                           :label (model/title-or-placeholder (:label tab))
+                           :action [:session (str session-id)]}))
+                      (filter #(or (:human-input (tab-state db %)) (contains? unread %)) tabs)))))))
        (map-indexed #(assoc %2 :index (inc (long %1))))
        vec))
 
@@ -131,7 +143,8 @@
         visible
         (subvec entries start end)]
 
-    (if (and (> capacity 1) (#{:project-input :project-unread} (:kind (first visible))))
+    (if (and (> capacity 1)
+             (#{:project-group :project-input :project-unread} (:kind (first visible))))
       (into [(first (filter #(and (= :project-select (:kind %))
                                   (= (:project (first visible)) (:project %)))
                             entries))]
@@ -141,6 +154,10 @@
 (defn- row-status
   [entry opening width]
   (case (:kind entry)
+    :project-group
+    (let [n (long (:group-count entry))]
+      (str n (if (= 1 n) " session" " sessions")))
+
     :project-input
     (if (:unread? entry) " NEW · needs input " " needs input ")
 
@@ -206,6 +223,7 @@
                 (map-indexed vector (visible-entries db rows))
                 :let [row (+ 4 (long offset))
                       child? (not= :project-select kind)
+                      alert? (contains? #{:project-input :project-unread} kind)
                       active? (if child?
                                 (= (:tab-id entry) (:active-tab-id db))
                                 (= (str (get project "id")) (:active-project-id db)))
@@ -216,7 +234,9 @@
                       name-width (max 0 (- status-col row-left 1))]]
 
           (binding [t/dialog-bg (if active? t/input-field-bg t/terminal-bg)]
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/set-colors! g
+                           (if (= :project-group kind) (t/group-ink (:color entry)) t/dialog-fg)
+                           t/dialog-bg)
             (p/fill-rect! g (inc left) row (max 0 (- width 2)) 1)
             (p/styled g
                       (if active? [p/BOLD] [])
@@ -225,11 +245,19 @@
                                                 row
                                                 name-width
                                                 (and (:focused? sidebar) (= index (:index sidebar)))
-                                                (str (if child?
-                                                       (if (= :project-input kind) "! " "● ")
-                                                       (dlg/choice-mark true active?))
+                                                (str (case kind
+                                                       :project-select
+                                                       (dlg/choice-mark true active?)
+
+                                                       :project-input
+                                                       "! "
+
+                                                       :project-group
+                                                       "◆ "
+
+                                                       "● ")
                                                      label)))
-            (if child?
+            (if alert?
               (components/button!
                 g
                 status-col
@@ -238,10 +266,11 @@
                 kind
                 {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}})
               (do (p/set-colors! g
-                                 (if (or (pos? (long (:needs-input entry)))
-                                         (pos? (long (:unread entry))))
-                                   t/warning-fg
-                                   t/dialog-hint-key)
+                                 (cond (= :project-group kind) (t/group-ink (:color entry))
+                                       (or (pos? (long (or (:needs-input entry) 0)))
+                                           (pos? (long (or (:unread entry) 0))))
+                                       t/warning-fg
+                                       :else t/dialog-hint-key)
                                  t/dialog-bg)
                   (p/put-str! g status-col row status))))
           (.register interactions/hit-map
@@ -261,8 +290,13 @@
             (p/put-str! g (+ left 2) (- rows 4) (p/truncate-cols error (max 0 (- width 4))))))
         (when (> rows 5)
           (let [available (max 0 (- width 4))
-                hints ["↑↓ select · ↵ open · C-x w hide · Esc chat"
-                       "↑↓ · ↵ open · C-x w hide · Esc chat" "↑↓ · ↵ · C-x w · Esc"]
+                hints ["↑↓ select · ↵ open · g menu · C-x w hide · Esc chat"
+                       "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
+                       ;; The narrowest rail still spells every verb: tighter
+                       ;; separators buy the room the words need.
+                       "↑↓·↵ open·g menu·C-x w hide·Esc chat" "↑↓ · ↵ · g menu · C-x w hide · Esc"
+                       "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
+                       "↑↓ ↵ g C-x w Esc"]
                 hint (or (first (filter #(<= (p/display-width %) available) hints)) (last hints))]
 
             (p/set-colors! g t/dialog-hint t/dialog-bg)
@@ -290,15 +324,15 @@
               hit
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
-          (if (#{:project-rail :project-select :project-input :project-unread :project-add
-                 :project-hide}
+          (if (#{:project-rail :project-select :project-group :project-input :project-unread
+                 :project-add :project-hide}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
                   [:move (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
                   (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
                        (= 1 (.getButton mouse)))
                   (case (:kind hit)
-                    (:project-select :project-input :project-unread)
+                    (:project-select :project-group :project-input :project-unread)
                     (:action hit)
 
                     :project-add
@@ -320,5 +354,10 @@
         (= KeyType/Enter (.getKeyType key))
         (if (zero? index) [:add] (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]))
         (= \+ (.getCharacter key)) [:add]
+        (= \g (.getCharacter key))
+        ;; `g` opens the row's own menu: group actions on a group row, project
+        ;; actions on a project row. Nothing to act on above the first row.
+        (let [entry (when (pos? index) (nth (sidebar-entries db) (dec index) nil))]
+          (if (#{:project-select :project-group} (:kind entry)) [:menu entry] [:noop]))
         (= \r (.getCharacter key)) [:refresh]
         :else [:noop]))))

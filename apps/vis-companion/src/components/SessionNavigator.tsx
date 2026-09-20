@@ -512,12 +512,22 @@ export function HeaderMeta({ children }: { children: ReactNode }) {
  * rows says nothing about what was counted, and the phone is exactly where the
  * reader has the least context to supply it from — so the noun is never dropped to
  * win back width. What gives way instead is the project's own name, which
- * truncates with the full path on its `title`.
+ * truncates with the full path on its `title` — or, where a caller's own row is
+ * fuller than its column, the whole count: `className` positions this span, so a
+ * header may let the total ellipsise and keep an arrival beside it whole.
  */
-export function HeaderTally({ count, unit }: { count: number; unit: string }) {
+export function HeaderTally({
+  count,
+  unit,
+  className = '',
+}: {
+  count: number;
+  unit: string;
+  className?: string;
+}) {
   const noun = count === 1 ? unit : `${unit}s`;
   return (
-    <span className="whitespace-nowrap">
+    <span className={`whitespace-nowrap ${className}`}>
       {count} {noun}
     </span>
   );

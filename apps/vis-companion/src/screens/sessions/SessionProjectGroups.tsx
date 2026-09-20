@@ -9,14 +9,19 @@ import {
 } from '../../components/SessionList';
 import {
   HeaderActions,
+  HeaderMeta,
   HeaderTally,
+  LIST_MARK,
   NewSessionButton,
   Pager,
   ProjectCrumb,
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
-import { TextButton } from '../../components/ui';
+import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
+import { ChevronIcon, DotsIcon } from '../../components/icons';
+import { Button, IconButton, Input, TextButton } from '../../components/ui';
+import { menuPosition, type MenuPosition } from '../../lib/anchored-menu';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -30,11 +35,158 @@ import {
   type FleetMachine,
   type ProjectGroupView,
 } from '../../lib/fleet';
-import type { GatewayClient, ProjectWindows, SessionMatch } from '../../lib/gateway';
+import {
+  GatewayError,
+  type GatewayClient,
+  type ProjectWindows,
+  type SessionMatch,
+} from '../../lib/gateway';
+import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { holdOrder, type OrderEpoch } from '../../lib/order-epoch';
 import { compactProjectPath } from '../../lib/path';
-import { projectFoldKey, readProjectFold, writeProjectFold } from '../../lib/project-fold';
-import type { GatewayConn, Session } from '../../lib/types';
+import {
+  groupFoldKey,
+  projectFoldKey,
+  readProjectFold,
+  writeProjectFold,
+} from '../../lib/project-fold';
+import type { GatewayConn, Session, SessionGroup } from '../../lib/types';
+
+/** Where inside the group sheet the reader is standing (`ProjectGroup`). */
+type MenuStep =
+  | { kind: 'root' }
+  | { kind: 'new' }
+  | { kind: 'group'; id: string }
+  | { kind: 'rename'; id: string };
+
+/** One group as a band paints it: the gateway's row, or what a row itself said. */
+type GroupBandView = { id: string; name: string; color: string | null; count: number };
+
+/**
+ * The row to paint for one session: what the list holds, unless this band has just
+ * re-filed it and the list's own window has not caught up yet (`ProjectGroup`).
+ */
+function settled(
+  session: Session,
+  local: Map<string, Session>,
+  refiled: ReadonlyMap<string, Session>,
+): Session {
+  const current = local.get(session.id) ?? session;
+  const held = refiled.get(session.id);
+  return held && held.group_id !== current.group_id ? held : current;
+}
+
+/** What a session is called in a list of choices. */
+function rowTitle(session: Session): string {
+  const title = typeof session.title === 'string' ? session.title.trim() : '';
+  return title === '' ? 'Untitled session' : title;
+}
+
+/** A group's colour, as the one mark that carries it. */
+function Swatch({ color }: { color: string | null }) {
+  return <span aria-hidden className={`size-2.5 shrink-0 ${groupSwatch(color)}`} />;
+}
+
+/** The one field a group action needs, committed by Enter or by the cell beside it. */
+function NameForm({
+  label,
+  value,
+  commit,
+  isBusy,
+  onChange,
+  onCommit,
+}: {
+  /** What is being typed, for a reader who cannot see the field: `Group name`. */
+  label: string;
+  value: string;
+  /** The verb on the commit: `Create`, `Rename`. */
+  commit: string;
+  isBusy: boolean;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+}) {
+  return (
+    <form
+      className="flex items-center gap-2 border-b border-dialog-edge p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (value.trim() !== '') onCommit();
+      }}
+    >
+      <Input
+        autoFocus
+        aria-label={label}
+        placeholder={label}
+        value={value}
+        className="flex-1"
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <Button type="submit" variant="primary" disabled={isBusy || value.trim() === ''}>
+        {commit}
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * One group's own band, inside its project's list.
+ *
+ * A level quieter than the project header above it, and deliberately so: the project
+ * owns the boundary rule, the counts and the pager (a group is not paged — it is a
+ * place inside the page), while a group owns its name, its colour and its own fold.
+ */
+function GroupBand({
+  name,
+  color,
+  count,
+  shown,
+  isOpen,
+  onToggle,
+  onActions,
+}: {
+  name: string;
+  color: string | null;
+  /** The gateway's tally for the WHOLE group, not the part of it this page holds. */
+  count: number;
+  /** How many of its rows are on the page under it. */
+  shown: number;
+  isOpen: boolean;
+  onToggle: () => void;
+  onActions: (anchor: HTMLElement) => void;
+}) {
+  return (
+    <div className="flex items-stretch border-t border-edge">
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name}`}
+        onClick={onToggle}
+        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-4 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+      >
+        <span className={LIST_MARK}>
+          <ChevronIcon open={isOpen} className="size-3 text-dialog-hint" />
+        </span>
+        <Swatch color={color} />
+        <span className="min-w-0 truncate font-mono text-ui font-bold text-white">{name}</span>
+        <HeaderMeta>
+          <HeaderTally count={count} unit="session" />
+          {shown === 0 && count > 0 && <span>none on this page</span>}
+        </HeaderMeta>
+      </button>
+      <HeaderActions align="center">
+        <IconButton
+          label={`Actions for ${name}`}
+          variant="quiet"
+          density="band"
+          aria-haspopup="dialog"
+          onClick={(event) => onActions(event.currentTarget)}
+        >
+          <DotsIcon className="size-3.5" />
+        </IconButton>
+      </HeaderActions>
+    </div>
+  );
+}
 
 type SessionClient = (conn: GatewayConn) => GatewayClient;
 
@@ -306,6 +458,11 @@ export const ProjectGroup = memo(function ProjectGroup({
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
   );
+  // A ROW THIS BAND JUST RE-FILED IS PAINTED WHERE IT NOW BELONGS. The gateway's
+  // answer is the truth of it, and the machine's own window carries that truth on the
+  // next poll — 5.5s later. Until then the move is held here, or a row would sit in
+  // the band it just left for a whole cycle after the tap that moved it.
+  const [refiled, setRefiled] = useState<ReadonlyMap<string, Session>>(() => new Map());
   // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (`lib/order-epoch`). The list
   // of projects is held by the screen; a page read from the gateway is held HERE,
   // or a turn finishing on another machine would slide this page under the thumb on
@@ -315,7 +472,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const api = getClient(conn);
     const shown = painting
       .filter((session) => !api.isSessionDeleted(session.id))
-      .map((session) => local.get(session.id) ?? session);
+      .map((session) => settled(session, local, refiled));
     if (searching) return shown;
     const held = holdOrder(
       epoch,
@@ -332,9 +489,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     const onPage = new Set(held.map((session) => session.id));
     const parked = (paged?.awaiting ?? NO_ROWS)
       .filter((session) => !onPage.has(session.id) && !api.isSessionDeleted(session.id))
-      .map((session) => local.get(session.id) ?? session);
+      .map((session) => settled(session, local, refiled));
     return parked.length === 0 ? held : [...parked, ...held];
-  }, [searching, painting, local, epoch, admitted, paged, getClient, conn, list]);
+  }, [searching, painting, local, refiled, epoch, admitted, paged, getClient, conn, list]);
   useEffect(() => {
     // The project shrank under the pager (a deletion, a smaller step): the page that
     // no longer exists becomes the first one rather than the last one a reader never
@@ -406,6 +563,149 @@ export const ProjectGroup = memo(function ProjectGroup({
     });
   }, [rows]);
 
+  // THE GROUPS INSIDE THIS PROJECT, and they are the GATEWAY's rather than this
+  // device's: the TUI files a session under one with the same call, so a band that
+  // exists here is a band every client of the machine paints. Read while the project
+  // is FOLDED too — the ⋮ beside its name manages groups without opening the list.
+  const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const [groupsRead, setGroupsRead] = useState(0);
+  useEffect(() => {
+    if (!isVisible) return;
+    const control = new AbortController();
+    let live = true;
+    void (async () => {
+      try {
+        const answer = await getClient(conn).listSessionGroups(root, control.signal);
+        if (live) setGroups(answer?.groups ?? []);
+      } catch {
+        // A project whose groups cannot be read paints as an ungrouped one. Nothing
+        // else in this band depends on them, and an unreachable machine is said once,
+        // by its own band.
+      }
+    })();
+    return () => {
+      live = false;
+      control.abort();
+    };
+  }, [conn, root, isVisible, getClient, groupsRead]);
+  // WHERE EACH ROW IS FILED. A group's rows stay CONTIGUOUS under its own name, and
+  // whatever nobody filed keeps the project's own order below them — the shape the
+  // TUI's navigator paints (`tui/dialogs`), so one list is not two different pictures.
+  const filed = useMemo(() => {
+    const byGroup = new Map<string, Session[]>();
+    const loose: Session[] = [];
+    for (const session of rows) {
+      const gid = typeof session.group_id === 'string' ? session.group_id : '';
+      if (gid === '') {
+        loose.push(session);
+        continue;
+      }
+      const held = byGroup.get(gid);
+      if (held) held.push(session);
+      else byGroup.set(gid, [session]);
+    }
+    return { byGroup, loose };
+  }, [rows]);
+  // A band for every group the project HAS, plus one for any group a ROW names that
+  // this device has not read yet: a row is never dropped because the list arrived a
+  // beat ahead of the groups.
+  const bands = useMemo<GroupBandView[]>(() => {
+    const known = groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      color: group.color,
+      count: group.session_count,
+    }));
+    const unread = [...filed.byGroup.entries()]
+      .filter(([gid]) => !groups.some((group) => group.id === gid))
+      .map(([gid, held]) => ({
+        id: gid,
+        name: typeof held[0].group_name === 'string' ? held[0].group_name : 'Group',
+        color: typeof held[0].group_color === 'string' ? held[0].group_color : null,
+        count: held.length,
+      }));
+    return [...known, ...unread];
+  }, [groups, filed]);
+  // A GROUP FOLDS ON ITS OWN, out of the store the project's fold lives in, so a band
+  // this reader shut stays shut on the next screen. A group nobody shut is open: a
+  // name and a count with nothing under them say less than the rows do.
+  const [groupFolds, setGroupFolds] = useState<Record<string, boolean>>({});
+  const isGroupOpen = (gid: string) =>
+    groupFolds[gid] ?? readProjectFold(groupFoldKey(machineKey(conn), root, gid)) ?? true;
+  const foldGroup = (gid: string, open: boolean) => {
+    writeProjectFold(groupFoldKey(machineKey(conn), root, gid), open);
+    setGroupFolds((held) => ({ ...held, [gid]: open }));
+  };
+  // ONE SHEET, wherever it was opened from: the project's ⋮ lists its groups, a band's
+  // own ⋮ opens that group's verbs, and naming a group is a STEP inside it. A step is
+  // left the way it was entered (`MenuBack`), never out to blank paper.
+  const [menu, setMenu] = useState<{ at: MenuPosition; step: MenuStep } | null>(null);
+  const [typed, setTyped] = useState('');
+  const [failure, setFailure] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const openMenu = (anchor: HTMLElement, step: MenuStep) => {
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (!at) return;
+    setFailure(null);
+    setMenu({ at, step });
+  };
+  const goTo = (step: MenuStep) => {
+    setFailure(null);
+    setMenu((held) => (held ? { ...held, step } : held));
+  };
+  // A VERB THE GATEWAY REFUSED IS SAID IN THE SHEET THE READER IS STILL HOLDING. A
+  // name this project already uses is the one failure a group action has that is the
+  // reader's to fix, and it arrives as a 409 rather than as silence.
+  const attempt = async (act: () => Promise<unknown>, next: MenuStep | 'close') => {
+    setIsBusy(true);
+    setFailure(null);
+    try {
+      await act();
+      setGroupsRead((count) => count + 1);
+      if (next === 'close') setMenu(null);
+      else goTo(next);
+    } catch (failed) {
+      setFailure(
+        failed instanceof GatewayError && failed.status === 409
+          ? 'This project already has a group with that name.'
+          : 'That did not reach the machine. Try again.',
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  };
+  // FILING A SESSION IS THE GATEWAY'S ANSWER, held here until the list catches up.
+  const fileSession = (session: Session, gid: string | null, back: MenuStep) =>
+    void attempt(async () => {
+      const moved = await getClient(conn).assignSessionGroup(session.id, gid);
+      setRefiled((held) => new Map(held).set(moved.id, moved));
+    }, back);
+  // One session's row, wherever it stands: inside a group's band, or under the
+  // project itself with everything nobody filed.
+  const row = (session: Session) => {
+    const pending = pendingDeleteId === session.id;
+    const deletion: SessionRowDeletion = pending
+      ? {
+          isBusy: rowActions.deletion.isBusy,
+          error: rowActions.deletion.error,
+          confirm: rowActions.deletion.confirm,
+          cancel: rowActions.deletion.cancel,
+        }
+      : null;
+    return (
+      <SessionRow
+        key={session.id}
+        session={session}
+        draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
+        conn={conn}
+        match={matches?.get(session.id) ?? null}
+        needle={needle}
+        commands={rowActions.commands}
+        deletion={deletion}
+      />
+    );
+  };
+
   const pager =
     pageCount > 1 ? (
       <Pager
@@ -425,13 +725,16 @@ export const ProjectGroup = memo(function ProjectGroup({
           <span aria-hidden> ·</span>
         </span>
       )}
-      <span className="min-w-0 truncate">
-        <HeaderTally count={tally.count} unit="session" />
+      {/* THE COUNT GIVES WAY, NOT WHAT STANDS BESIDE IT. On the narrowest phone a
+        paged project's caption is fuller than its column, and a clipped `1 new` is an
+        arrival the reader cannot reach; the total ellipsises instead and keeps it whole. */}
+      <span className="flex min-w-0 items-center">
+        <HeaderTally count={tally.count} unit="session" className="min-w-0 truncate" />
         {hasPending && (
           <>
-            <span aria-hidden> | </span>
+            <span aria-hidden className="shrink-0 whitespace-pre"> | </span>
             <TextButton
-              className="pointer-events-auto relative whitespace-nowrap"
+              className="pointer-events-auto relative shrink-0 whitespace-nowrap"
               aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
               onClick={() => {
                 acceptUpdates(pendingIds);
@@ -475,6 +778,16 @@ export const ProjectGroup = memo(function ProjectGroup({
             }
           />
           <HeaderActions align="center">
+            <IconButton
+              label={`Groups in ${project}`}
+              variant="quiet"
+              density="band"
+              aria-haspopup="dialog"
+              aria-expanded={menu !== null}
+              onClick={(event) => openMenu(event.currentTarget, { kind: 'root' })}
+            >
+              <DotsIcon className="size-3.5" />
+            </IconButton>
             <NewSessionButton
               machine={machineLabel(conn)}
               where={project}
@@ -489,32 +802,176 @@ export const ProjectGroup = memo(function ProjectGroup({
             ref={rowsRef}
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
-            {rows.map((session) => {
-              const pending = pendingDeleteId === session.id;
-              const deletion: SessionRowDeletion = pending
-                ? {
-                    isBusy: rowActions.deletion.isBusy,
-                    error: rowActions.deletion.error,
-                    confirm: rowActions.deletion.confirm,
-                    cancel: rowActions.deletion.cancel,
-                  }
-                : null;
+            {bands.map((band) => {
+              const held = filed.byGroup.get(band.id) ?? NO_ROWS;
+              const isBandOpen = isGroupOpen(band.id);
               return (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
-                  conn={conn}
-                  match={matches?.get(session.id) ?? null}
-                  needle={needle}
-                  commands={rowActions.commands}
-                  deletion={deletion}
-                />
+                <div key={band.id}>
+                  <GroupBand
+                    name={band.name}
+                    color={band.color}
+                    count={band.count}
+                    shown={held.length}
+                    isOpen={isBandOpen}
+                    onToggle={() => foldGroup(band.id, !isBandOpen)}
+                    onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                  />
+                  {isBandOpen && held.map(row)}
+                </div>
               );
             })}
+            {filed.loose.map(row)}
           </div>
         )}
       </section>
+      {menu && (
+        <Menu label={`Groups in ${project}`} at={menu.at} onDismiss={() => setMenu(null)}>
+          {(() => {
+            const step = menu.step;
+            if (step.kind === 'root')
+              return (
+                <>
+                  <MenuHeading>Groups in {project}</MenuHeading>
+                  <MenuItem
+                    title="New group"
+                    hint="File some of this project's sessions under a name of your own."
+                    onSelect={() => {
+                      setTyped('');
+                      goTo({ kind: 'new' });
+                    }}
+                  />
+                  {bands.length === 0 ? (
+                    <MenuNote>Nothing in this project is grouped yet.</MenuNote>
+                  ) : (
+                    bands.map((band) => (
+                      <MenuItem
+                        key={band.id}
+                        title={band.name}
+                        meta={`${band.count}`}
+                        icon={<Swatch color={band.color} />}
+                        onSelect={() => goTo({ kind: 'group', id: band.id })}
+                      />
+                    ))
+                  )}
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            if (step.kind === 'new')
+              return (
+                <>
+                  <MenuBack
+                    label={`Back to groups in ${project}`}
+                    onBack={() => goTo({ kind: 'root' })}
+                  >
+                    New group
+                  </MenuBack>
+                  <NameForm
+                    label="Group name"
+                    value={typed}
+                    commit="Create"
+                    isBusy={isBusy}
+                    onChange={setTyped}
+                    onCommit={() =>
+                      void attempt(() => getClient(conn).createSessionGroup(root, typed.trim()), {
+                        kind: 'root',
+                      })
+                    }
+                  />
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            const band = bands.find((one) => one.id === step.id);
+            // The group was deleted under the sheet, or by another client of the
+            // machine: the step says so instead of offering verbs with nothing behind them.
+            if (!band) return <MenuNote>That group is gone.</MenuNote>;
+            const here: MenuStep = { kind: 'group', id: band.id };
+            if (step.kind === 'rename')
+              return (
+                <>
+                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
+                    Rename {band.name}
+                  </MenuBack>
+                  <NameForm
+                    label="New name"
+                    value={typed}
+                    commit="Rename"
+                    isBusy={isBusy}
+                    onChange={setTyped}
+                    onCommit={() =>
+                      void attempt(
+                        () => getClient(conn).updateSessionGroup(band.id, { name: typed.trim() }),
+                        here,
+                      )
+                    }
+                  />
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            const isFiled = (session: Session) => session.group_id === band.id;
+            return (
+              <>
+                <MenuBack
+                  label={`Back to groups in ${project}`}
+                  onBack={() => goTo({ kind: 'root' })}
+                >
+                  {band.name}
+                </MenuBack>
+                <MenuItem
+                  title="Rename group"
+                  onSelect={() => {
+                    setTyped(band.name);
+                    goTo({ kind: 'rename', id: band.id });
+                  }}
+                />
+                <MenuItem
+                  title="Delete group"
+                  tone="danger"
+                  hint="Its sessions stay in this project and go back to ungrouped."
+                  onSelect={() =>
+                    void attempt(async () => {
+                      const scattered = await getClient(conn).deleteSessionGroup(band.id);
+                      setRefiled((kept) => {
+                        const next = new Map(kept);
+                        for (const sid of scattered) next.delete(sid);
+                        return next;
+                      });
+                    }, { kind: 'root' })
+                  }
+                />
+                <MenuHeading tone="quiet">Colour</MenuHeading>
+                {GROUP_COLORS.map((color) => (
+                  <MenuItem
+                    key={color}
+                    title={`${color[0].toUpperCase()}${color.slice(1)}`}
+                    icon={<Swatch color={color} />}
+                    badge={color === groupColor(band.color) ? 'now' : undefined}
+                    onSelect={() =>
+                      void attempt(
+                        () => getClient(conn).updateSessionGroup(band.id, { color }),
+                        here,
+                      )
+                    }
+                  />
+                ))}
+                <MenuHeading tone="quiet">Sessions on this page</MenuHeading>
+                {rows.length === 0 ? (
+                  <MenuNote>This page has no sessions to file.</MenuNote>
+                ) : (
+                  rows.map((session) => (
+                    <MenuItem
+                      key={session.id}
+                      title={rowTitle(session)}
+                      badge={isFiled(session) ? 'filed' : undefined}
+                      onSelect={() => fileSession(session, isFiled(session) ? null : band.id, here)}
+                    />
+                  ))
+                )}
+                {failure && <MenuNote>{failure}</MenuNote>}
+              </>
+            );
+          })()}
+        </Menu>
+      )}
     </>
   );
 });

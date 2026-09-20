@@ -68,6 +68,21 @@
       incoming
       previous)))
 
+(def session-group-colors
+  "Closed palette tokens a session group may be painted with, in
+   the order a picker offers them. A channel maps a token to its own theme, so a
+   group reads the same in the TUI, the companion app and the web UI."
+  (vec (get-in @source ["$defs" "session_group_color" "enum"])))
+
+(def default-session-group-color
+  "Palette token a group takes when the client names none."
+  (first session-group-colors))
+
+(defn session-group-color?
+  "True when `color` is one of the closed group palette tokens."
+  [color]
+  (contains? (set session-group-colors) color))
+
 (def ^:private session-event-variants (get-in @source ["$defs" "session_event_type" "oneOf"]))
 
 (def session-event-types

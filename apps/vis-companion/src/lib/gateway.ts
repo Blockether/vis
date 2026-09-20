@@ -46,6 +46,8 @@ import type {
   SessionArtifactRow,
   Session,
   SessionGoal,
+  SessionGroup,
+  SessionGroupPage,
   SessionUsage,
   Subagent,
   SettingsResponse,
@@ -3493,6 +3495,67 @@ export class GatewayClient {
       sid,
       await this.request<Session>('PATCH', `/v1/sessions/${encodeURIComponent(sid)}`, {
         is_favorite: isFavorite,
+      }),
+    );
+  }
+
+  /**
+   * The GROUPS one project is divided into, addressed by workspace ROOT.
+   *
+   * This app groups its list by root and never holds a project id, so the gateway
+   * resolves one for it. A root nothing has been filed under yet simply has no
+   * groups: a READ never creates a project.
+   */
+  listSessionGroups(root: string, signal?: AbortSignal): Promise<SessionGroupPage> {
+    const query = new URLSearchParams({ root });
+    return this.request('GET', `/v1/session-groups?${query.toString()}`, undefined, signal);
+  }
+
+  /**
+   * Open a group in that project. The project is created if this root has none yet,
+   * so the first group a reader makes needs no separate step. A name already taken
+   * in the project is a 409 (`group-exists`), which is the caller's to report.
+   */
+  createSessionGroup(root: string, name: string, color?: string): Promise<SessionGroup> {
+    return this.request('POST', '/v1/session-groups', color ? { root, name, color } : { root, name });
+  }
+
+  /** Rename, recolour or reorder a group. `color` is a palette token, never a hex string. */
+  updateSessionGroup(
+    gid: string,
+    fields: { name?: string; color?: string; position?: number },
+  ): Promise<SessionGroup> {
+    return this.request('PATCH', `/v1/session-groups/${encodeURIComponent(gid)}`, fields);
+  }
+
+  /**
+   * Drop a group. Its sessions are NEVER deleted — they stay in the project and go
+   * back to ungrouped — and the gateway answers with their ids, so the rows this
+   * device holds lose the band they were filed under without racing a re-read.
+   */
+  async deleteSessionGroup(gid: string): Promise<string[]> {
+    const res = await this.request<{ scattered_session_ids?: string[] }>(
+      'DELETE',
+      `/v1/session-groups/${encodeURIComponent(gid)}`,
+    );
+    const ids = res?.scattered_session_ids ?? [];
+    for (const sid of ids) {
+      const row = this.cachedSession(sid);
+      if (row) this.absorbSessionRow(sid, { ...row, group_id: null, group_name: null, group_color: null });
+    }
+    return ids;
+  }
+
+  /**
+   * File a session under a group, or `null` to leave it ungrouped inside its project.
+   * The gateway echoes the refreshed row, so the band it moves to is painted from the
+   * gateway's own answer instead of a guess this device made.
+   */
+  async assignSessionGroup(sid: string, gid: string | null): Promise<Session> {
+    return this.absorbSessionRow(
+      sid,
+      await this.request<Session>('PUT', `/v1/sessions/${encodeURIComponent(sid)}/group`, {
+        group_id: gid,
       }),
     );
   }

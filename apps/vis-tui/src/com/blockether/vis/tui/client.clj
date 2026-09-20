@@ -775,6 +775,69 @@
   [pid session-ids]
   (send-json! "PATCH" (str "/v1/projects/" (enc pid) "/sessions") {:order (mapv str session-ids)}))
 
+;; --- Session groups: named, coloured divisions inside one project ---
+
+(defn list-session-groups
+  "GET /v1/session-groups - the groups of ONE project, in the order a human put
+   them in. `opts` names the project by :project-id, or by the workspace :root a
+   client already holds (a read never creates a project). Returns the :groups
+   vector; a project without groups simply has none."
+  [{:keys [project-id root owner]}]
+  (let [qs (->> [(when project-id (str "project=" (enc project-id)))
+                 (when (and (nil? project-id) root) (str "root=" (enc root)))
+                 (when owner (str "owner=" (enc owner)))]
+                (remove nil?)
+                (str/join "&"))]
+    (get (send-json! "GET"
+                     (cond-> "/v1/session-groups"
+                       (seq qs)
+                       (str "?" qs)))
+         "groups")))
+
+(defn create-session-group!
+  "POST /v1/session-groups - create a group inside a project named by :project-id
+   or :root. :name is required and unique within the project; :color is a palette
+   TOKEN, never a hex string. Returns the group."
+  [{:keys [name color project-id root]}]
+  (send-json! "POST"
+              "/v1/session-groups"
+              (cond-> {:name name}
+                color
+                (assoc :color color)
+
+                project-id
+                (assoc :project_id (str project-id))
+
+                (and (nil? project-id) root)
+                (assoc :root root))))
+
+(defn update-session-group!
+  "PATCH /v1/session-groups/:gid - rename, recolour or reorder one group."
+  [gid {:keys [name color position]}]
+  (send-json! "PATCH"
+              (str "/v1/session-groups/" (enc gid))
+              (cond-> {}
+                name
+                (assoc :name name)
+
+                color
+                (assoc :color color)
+
+                position
+                (assoc :position position))))
+
+(defn delete-session-group!
+  "DELETE /v1/session-groups/:gid - drop a group. Its sessions are never deleted:
+   they go back to the project's ungrouped rows."
+  [gid]
+  (send-json! "DELETE" (str "/v1/session-groups/" (enc gid))))
+
+(defn assign-session-group!
+  "PUT /v1/sessions/:sid/group - file a session under a group; a nil `gid` leaves
+   it ungrouped inside its project. Returns the refreshed soul."
+  [sid gid]
+  (send-json! "PUT" (str "/v1/sessions/" (enc sid) "/group") {:group_id (when gid (str gid))}))
+
 (defn release-session-runtime!
   "Best-effort release of one session runtime through the configured gateway."
   [sid]
@@ -2239,6 +2302,8 @@
 ;; Names consumed by the terminal application. The transport API itself keeps route-oriented names.
 (def gateway-assign-project! assign-project!)
 
+(def gateway-assign-session-group! assign-session-group!)
+
 (def gateway-attach-turn-sync! attach-turn-sync!)
 
 (def gateway-cancel-current-turn! cancel-current-turn!)
@@ -2251,6 +2316,8 @@
 
 (def gateway-create-project! create-project!)
 
+(def gateway-create-session-group! create-session-group!)
+
 (def gateway-create-session! create-session!)
 
 (def gateway-current-seq current-seq)
@@ -2260,6 +2327,8 @@
 (def gateway-settings settings)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
+
+(def gateway-delete-session-group! delete-session-group!)
 
 (def gateway-drain-idle! drain-idle!)
 
@@ -2272,6 +2341,8 @@
 (def gateway-iteration-attachment-bytes iteration-attachment-bytes)
 
 (def gateway-list-projects list-projects)
+
+(def gateway-list-session-groups list-session-groups)
 
 (def gateway-list-sessions list-sessions)
 
@@ -2374,6 +2445,8 @@
 (def gateway-transcript-page transcript-page)
 
 (def gateway-turn-trace turn-trace)
+
+(def gateway-update-session-group! update-session-group!)
 
 (def gateway-view-action! view-action!)
 

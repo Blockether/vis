@@ -405,6 +405,44 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/session-groups"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/session-groups/:gid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "put": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/group"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "json",
           "response": "json"
@@ -1535,6 +1573,20 @@
       "required": [
         "id",
         "goal"
+      ]
+    },
+    "session_group_color": {
+      "type": "string",
+      "description": "Closed palette token a session group is painted with. Every channel maps a token to its own theme, so a group keeps its identity across the TUI, the companion app and the web UI. Never a hex string.",
+      "enum": [
+        "slate",
+        "blue",
+        "green",
+        "amber",
+        "red",
+        "violet",
+        "cyan",
+        "pink"
       ]
     },
     "session_list": {

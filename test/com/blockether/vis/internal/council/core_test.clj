@@ -237,6 +237,42 @@
         (is (= (str (:id explicit)) (council 'default-group db draft)))
         (is (not= (council 'default-group db sid) (council 'default-group db owner)))))))
 
+(deftest group-narrows-the-council-boundary-test
+  ;; BLO-167: a project is the WIDEST boundary a session falls back to. The
+  ;; human's own group inside it is narrower, so the sessions filed under
+  ;; "Release apps" talk to each other instead of to the whole project.
+  (with-council
+    (let [db
+          (h/store)
+
+          project
+          (ps/db-create-project! db {:name "Vis" :workspace-root "/repo"})
+
+          group
+          (ps/db-create-session-group! db (:id project) {:name "Release apps" :color "amber"})
+
+          a
+          (str (h/store-session! db {:channel :api}))
+
+          b
+          (str (h/store-session! db {:channel :api}))
+
+          loose
+          (str (h/store-session! db {:channel :api}))]
+
+      (doseq [sid [a b loose]]
+        (ps/db-set-session-project! db sid (:id project)))
+      (is (= (str (:id project)) (council 'default-group db a)))
+      (ps/db-set-session-group! db a (:id group))
+      (ps/db-set-session-group! db b (:id group))
+      (is (= (str (:id group)) (council 'default-group db a)))
+      (is (= (council 'default-group db a) (council 'default-group db b)))
+      ;; an ungrouped sibling keeps the project boundary
+      (is (= (str (:id project)) (council 'default-group db loose)))
+      ;; and leaving the group puts the session back on it
+      (ps/db-set-session-group! db a nil)
+      (is (= (str (:id project)) (council 'default-group db a))))))
+
 (deftest projectless-runtime-conversation-test
   ;; Presence must use the same persisted workspace resolution as Council operations.
   (with-council

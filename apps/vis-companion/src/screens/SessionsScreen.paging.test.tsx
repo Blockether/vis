@@ -21,7 +21,8 @@ type View = ReturnType<typeof renderSessionsScreen>;
 const shown = (view: View) => view.queryAllByText(/^alpha \d\d$/).map((node) => node.textContent);
 const pageReads = (view: View) =>
   view.requests
-    .filter(({ path }) => path.includes('root='))
+    // Reads of a project's PAGE: a project's groups are asked for with `?root=` too.
+    .filter(({ path }) => path.startsWith('/v1/sessions?') && path.includes('root='))
     .map(({ path }) => decodeURIComponent(path));
 const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 

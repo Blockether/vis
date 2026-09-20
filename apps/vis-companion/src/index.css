@@ -280,6 +280,24 @@
   --color-machine-olive: #8e8b10;
 }
 
+/* Session-group hues (see `src/lib/group-colors.ts`). The gateway keeps the palette
+   closed, so these eight names are the whole set. Six of them ARE the machine ramp's
+   own hues above, at the same lightness; `slate` and `green` are the two that ramp
+   does not carry — it skips green because green is LIVE on a machine's rail, while a
+   group wears the colour a human picked for it on purpose. Like the machine hues,
+   these do not come from the shipped themes: a group's colour must not change when
+   the palette does. */
+@theme {
+  --color-group-slate: #7c8798;
+  --color-group-blue: #1b88e8;
+  --color-group-green: #109c56;
+  --color-group-amber: #ba7402;
+  --color-group-red: #d95445;
+  --color-group-violet: #886fe3;
+  --color-group-cyan: #1196aa;
+  --color-group-pink: #cd5395;
+}
+
 /* Transcript entry motion — keyframes, NOT `@starting-style` + transition.
    WebKit applies starting styles to dynamically inserted nodes late (partial
    support before Safari 18, still a frame behind on device), so the element

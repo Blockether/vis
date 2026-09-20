@@ -2610,35 +2610,30 @@
    way and refuse the same way."
   [sid requested]
   (let [root (get (state/session-workspace-info sid) "root")]
-
     (cond (or (not (string? requested)) (str/blank? requested))
           {:error (error-response 400 :invalid-request "path must be a non-blank string")}
           (str/blank? (str root))
           {:error (error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
           :else
-          (try (let [^java.io.File anchor (.getCanonicalFile (io/file root))
-                     ^java.io.File asked (io/file (expand-user requested))
-                     ^java.io.File target (.getCanonicalFile (if (.isAbsolute asked)
-                                                               asked
-                                                               (io/file anchor requested)))
-                     inside? (or (= anchor target)
-                                 (str/starts-with? (.getPath target)
-                                                   (str (.getPath anchor)
-                                                        java.io.File/separator)))]
+          (try
+            (let [^java.io.File anchor (.getCanonicalFile (io/file root))
+                  ^java.io.File asked (io/file (expand-user requested))
+                  ^java.io.File target (.getCanonicalFile
+                                         (if (.isAbsolute asked) asked (io/file anchor requested)))
+                  inside? (or (= anchor target)
+                              (str/starts-with? (.getPath target)
+                                                (str (.getPath anchor) java.io.File/separator)))]
 
-                 (cond (not inside?)
-                       {:error (error-response 403
-                                               :outside-workspace
-                                               "that file is outside this session's workspace"
-                                               :path (.getPath target))}
-                       (not (.isFile target))
-                       {:error (error-response 404
-                                               :not-a-file
-                                               "no such file"
-                                               :path (.getPath target))}
-                       :else {:file target}))
-               (catch java.io.IOException _
-                 {:error (error-response 400 :invalid-request "that path could not be resolved")})))))
+              (cond (not inside?) {:error (error-response
+                                            403
+                                            :outside-workspace
+                                            "that file is outside this session's workspace"
+                                            :path (.getPath target))}
+                    (not (.isFile target))
+                    {:error (error-response 404 :not-a-file "no such file" :path (.getPath target))}
+                    :else {:file target}))
+            (catch java.io.IOException _
+              {:error (error-response 400 :invalid-request "that path could not be resolved")})))))
 
 (defn- open-file-handler
   "POST /v1/sessions/:sid/fs/actions/open {path} — open ONE file this session
@@ -2656,21 +2651,15 @@
   (let [sid (path-sid request)]
     (if-not (and sid (state/soul sid))
       (session-404 (get-in request [:path-params :sid]))
-      (let [found
-            (workspace-file sid (get (body-json request) "path"))
-
-            ^java.io.File target
-            (:file found)]
+      (let [found (workspace-file sid (get (body-json request) "path"))
+            ^java.io.File target (:file found)]
 
         (or (:error found)
-            (let [{:keys [status error]}
-                  (external-opener/open-file-in-editor! (.getPath target))]
-
+            (let [{:keys [status error]} (external-opener/open-file-in-editor! (.getPath target))]
               (if (= :ok status)
                 (json-response {:path (.getPath target) :is-open true})
                 (error-response 400
-                                :open-failed
-                                (or error "that file could not be opened")
+                                :open-failed (or error "that file could not be opened")
                                 :path (.getPath target)))))))))
 
 (def ^:private preview-line-limit
@@ -2695,6 +2684,7 @@
   (with-open [in (java.io.FileInputStream. file)]
     (let [buffer (byte-array 4096)
           read (.read in buffer)]
+
       (boolean (some zero? (take (max read 0) (seq buffer)))))))
 
 (defn- file-window
@@ -2703,19 +2693,22 @@
   [^java.io.File file from]
   (let [last-line (+ from (dec preview-line-limit))]
     (with-open [^java.io.BufferedReader reader (io/reader file)]
-      (loop [number 1 bytes 0 taken (transient [])]
+      (loop [number 1
+             bytes 0
+             taken (transient [])]
+
         (let [line (when (and (<= number last-line) (< bytes preview-byte-limit))
                      (.readLine reader))]
-
           (if (nil? line)
             {:lines (persistent! taken)
              :is-truncated (and (<= number last-line) (>= bytes preview-byte-limit))}
             (recur (inc number)
                    (+ bytes (count line) 1)
                    (if (>= number from)
-                     (conj! taken (cond-> line
-                                    (> (count line) preview-line-length)
-                                    (subs 0 preview-line-length)))
+                     (conj! taken
+                            (cond-> line
+                              (> (count line) preview-line-length)
+                              (subs 0 preview-line-length)))
                      taken))))))))
 
 (defn- read-file-handler
@@ -2735,27 +2728,17 @@
   (let [sid (path-sid request)]
     (if-not (and sid (state/soul sid))
       (session-404 (get-in request [:path-params :sid]))
-      (let [asked-line
-            (not-empty (str (get-in request [:query-params "line"])))
-
-            line
-            (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
-
-            found
-            (workspace-file sid (get-in request [:query-params "path"]))
-
-            ^java.io.File target
-            (:file found)]
+      (let [asked-line (not-empty (str (get-in request [:query-params "line"])))
+            line (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
+            found (workspace-file sid (get-in request [:query-params "path"]))
+            ^java.io.File target (:file found)]
 
         (cond (:error found) (:error found)
               (and asked-line (not (pos? (long (or line 0)))))
               (error-response 400 :invalid-request "line must be a positive whole number")
               :else
               (try (if (binary-file? target)
-                     (error-response 415
-                                     :not-text
-                                     "that file is not text"
-                                     :path (.getPath target))
+                     (error-response 415 :not-text "that file is not text" :path (.getPath target))
                      (let [anchor (or line 1)
                            from (max 1 (- anchor (quot preview-line-limit 2)))
                            {:keys [lines is-truncated]} (file-window target from)]
@@ -2768,8 +2751,7 @@
                                        :size-bytes (.length target)})))
                    (catch java.io.IOException _
                      (error-response 400
-                                     :invalid-request
-                                     "that file could not be read"
+                                     :invalid-request "that file could not be read"
                                      :path (.getPath target)))))))))
 
 (defn- projects-overview-handler
@@ -2934,6 +2916,169 @@
           (error-response 400 :invalid-request "order must be a non-empty array of session ids")
           :else (let [count (state/reorder-project-sessions! pid order)]
                   (json-response {:project_id (str pid) :count count})))))
+
+;; --- Session groups: the human's own groups inside ONE project (V8) ---
+
+(defn- path-gid
+  [request]
+  (some-> (get-in request [:path-params :gid])
+          parse-uuid))
+
+(defn- group-404
+  [gid-str]
+  (error-response 404 :group-not-found "unknown session group" :group_id (str gid-str)))
+
+(defn- list-session-groups-handler
+  "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…] — the groups inside
+   ONE project, in the order the human put them in.
+
+   `root` is accepted because a client can group its list by WORKSPACE ROOT
+   without ever holding a project id (the companion does). A root with no project
+   yet simply has no groups — a READ never creates one."
+  [request]
+  (let [asked
+        (not-empty (get-in request [:query-params "project"]))
+
+        root
+        (not-empty (get-in request [:query-params "root"]))
+
+        owner
+        (or (not-empty (get-in request [:query-params "owner"])) "local")
+
+        pid
+        (or (some-> asked
+                    parse-uuid)
+            (some-> (when root (state/get-project-by-root owner root))
+                    (get "id")
+                    parse-uuid))]
+
+    (cond (and (nil? asked) (nil? root))
+          (error-response 400 :invalid-request "project or root is required")
+          (nil? pid) (json-response {:project_id nil :groups []})
+          :else (json-response {:project_id (str pid) :groups (state/list-session-groups pid)}))))
+
+(defn- create-session-group-handler
+  "POST /v1/session-groups {name, color?, position?, project_id?|root?, owner_id?}
+   — create a group inside one project. With `root` the project is get-or-created
+   first, so a client that groups by workspace root never resolves an id itself."
+  [request]
+  (let [{:strs [name color position project_id root owner_id]}
+        (body-json request)
+
+        owner
+        (or (not-empty (str owner_id)) "local")
+
+        project
+        (cond (not (str/blank? (str project_id))) (some-> (parse-uuid (str project_id))
+                                                          state/get-project)
+              (not (str/blank? (str root))) (state/ensure-project-for-root! owner root nil)
+              :else nil)
+
+        pid
+        (some-> (get project "id")
+                parse-uuid)]
+
+    (cond (str/blank? (str name))
+          (error-response 400 :invalid-request "name must be a non-blank string")
+          (and (some? color) (not (gateway-contract/session-group-color? color)))
+          (error-response 400
+                          :invalid-request "color must be one of the closed group palette tokens"
+                          :colors gateway-contract/session-group-colors)
+          (nil? pid) (error-response 400 :invalid-request "project_id or root must name a project")
+          :else (if-let [group (try (state/create-session-group! pid
+                                                                 (cond-> {:name name}
+                                                                   color
+                                                                   (assoc :color color)
+
+                                                                   position
+                                                                   (assoc :position position)))
+                                    ;; the UNIQUE(project_id, name) index is the whole
+                                    ;; check: a group is addressed by the name a human
+                                    ;; typed, so a second one is a conflict, not a 500.
+                                    (catch Exception _ nil))]
+                  (json-response 201 group)
+                  (error-response 409
+                                  :group-exists
+                                  "a group with that name already exists in this project"
+                                  :name (str name))))))
+
+(defn- patch-session-group-handler
+  "PATCH /v1/session-groups/:gid {name?, color?, position?} — rename, recolour or
+   reorder a group. `color` is a palette TOKEN, never a hex string."
+  [request]
+  (let [gid-str
+        (get-in request [:path-params :gid])
+
+        gid
+        (path-gid request)
+
+        body
+        (body-json request)
+
+        opts
+        (cond-> {}
+          (contains? body "name")
+          (assoc :name (get body "name"))
+
+          (contains? body "color")
+          (assoc :color (get body "color"))
+
+          (contains? body "position")
+          (assoc :position (get body "position")))]
+
+    (cond (or (not gid) (nil? (state/get-session-group gid))) (group-404 gid-str)
+          (and (contains? opts :name) (str/blank? (str (:name opts))))
+          (error-response 400 :invalid-request "name must be a non-blank string")
+          (and (contains? opts :color) (not (gateway-contract/session-group-color? (:color opts))))
+          (error-response 400
+                          :invalid-request "color must be one of the closed group palette tokens"
+                          :colors gateway-contract/session-group-colors)
+          (empty? opts) (error-response 400 :invalid-request "no group fields to update")
+          :else (if-let [group (try (state/update-session-group! gid opts) (catch Exception _ nil))]
+                  (json-response group)
+                  (error-response 409
+                                  :group-exists
+                                  "a group with that name already exists in this project")))))
+
+(defn- delete-session-group-handler
+  "DELETE /v1/session-groups/:gid — drop a group. Its sessions are NEVER deleted:
+   they stay in the project and go back to ungrouped. Answers `{group_id,
+   scattered_session_ids, session_count}` so a client can prune local state
+   without racing a re-read."
+  [request]
+  (let [gid-str
+        (get-in request [:path-params :gid])
+
+        gid
+        (path-gid request)]
+
+    (if (and gid (state/get-session-group gid))
+      (json-response (state/delete-session-group! gid))
+      (group-404 gid-str))))
+
+(defn- set-session-group-handler
+  "PUT /v1/sessions/:sid/group {group_id} — file a session under a group; a null
+   `group_id` leaves it ungrouped inside its project. Answers the refreshed soul,
+   so the caller repaints the row from the gateway's own answer."
+  [request]
+  (let [sid-str
+        (get-in request [:path-params :sid])
+
+        sid
+        (path-sid request)
+
+        raw
+        (get (body-json request) "group_id")
+
+        gid
+        (some-> (not-empty (str raw))
+                parse-uuid)]
+
+    (cond (or (nil? sid) (nil? (state/soul sid))) (session-404 sid-str)
+          (and (not (str/blank? (str raw))) (nil? gid))
+          (error-response 400 :invalid-request "group_id must be a session group id or null")
+          (and gid (nil? (state/get-session-group gid))) (group-404 (str raw))
+          :else (json-response (state/assign-session-group! sid gid)))))
 
 (defn- configured-reasoning-level
   "The shared `reasoning_level` toggle as a plain wire string (`quick` /
@@ -4851,8 +4996,15 @@
           :patch patch-project-handler
           :delete delete-project-handler}]
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
+        ;; Session groups: the human's own groups INSIDE one project. Flat paths,
+        ;; because a group is addressed by its own id once it exists, and a client
+        ;; that only knows a workspace root passes `root` instead.
+        ["/session-groups" {:get list-session-groups-handler :post create-session-group-handler}]
+        ["/session-groups/:gid"
+         {:patch patch-session-group-handler :delete delete-session-group-handler}]
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
+        [(sid-route "/group") {:put set-session-group-handler}]
         [(sid-route "/client-extensions")
          {:put (client-extension-handler :register) :delete (client-extension-handler :detach)}]
         [(sid-route "/client-calls") {:get (client-extension-handler :pending)}]

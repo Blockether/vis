@@ -443,17 +443,20 @@
 
       (let [select! #(state/dispatch [:select-project (get % "id") [] "unused"])
             add! #(swap! added inc)
-            refresh! (fn [_])]
+            refresh! (fn [_])
+            menu! (fn [_]
+                    (throw (ex-info "Wrong menu action" {})))]
 
-        (is (true? (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add! refresh!)))
-        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh!)
+        (is (true?
+              (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add! refresh! menu!)))
+        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu!)
         (is (= "b" (:active-project-id @state/app-db)))
         (is (= "background-turn" (:gateway-turn-id @state/app-db)))
-        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh!)
+        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh! menu!)
         (is (= 1 @added))
-        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh!)
+        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh! menu!)
         (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
-        (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh!)))
+        (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh! menu!)))
         (let [capture (cap/capture! {:keys [\w]
                                      :paint! (fn [{:keys [screen]}]
                                                (#'screen/resolve-prefix!
@@ -646,7 +649,9 @@
                          (fn []
                            (throw (ex-info "Wrong add action" {})))
                          (fn [notify?]
-                           (swap! refreshes conj notify?)))]
+                           (swap! refreshes conj notify?))
+                         (fn [_]
+                           (throw (ex-info "Wrong menu action" {}))))]
 
           (is (nil? (:error capture)))
           (is (re-find #"Companion +2 tabs · 1 running · 1 needs input" text))
@@ -837,7 +842,9 @@
                          (fn []
                            (throw (ex-info "Must not add a project" {})))
                          (fn [notify?]
-                           (swap! refreshes conj notify?)))]
+                           (swap! refreshes conj notify?))
+                         (fn [_]
+                           (throw (ex-info "Wrong menu action" {}))))]
 
           (is (nil? (:error capture)))
           (is (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
@@ -899,6 +906,7 @@
                           (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. (int %) (int %2)))
                           identity
                           (constantly nil)
+                          (constantly nil)
                           (constantly nil))]
 
             (is (nil? (:error initial)))
@@ -943,3 +951,61 @@
     (is (= 30 (:unread (first visible))))
     (is (= 31 (:index (last visible))))
     (is (= [:session "29"] (projects/key-action db (cap/key-stroke :enter))))))
+
+(def group-release {"id" "g1" "name" "Release apps" "color" "violet" "session_count" 3})
+
+(def group-gateway {"id" "g2" "name" "Gateway" "color" "cyan" "session_count" 1})
+
+(defn grouped-db
+  "Project rail with two groups filed under the first project (BLO-167)."
+  []
+  (-> (fixture-db)
+      (assoc-in [:project-sidebar :groups] {"a" [group-release group-gateway]})))
+
+(deftest project-groups-nest-under-their-project-test
+  ;; BLO-167: a group is the human's own division INSIDE one project, so its row
+  ;; sits under that project and above the attention rows, inked in the palette
+  ;; colour the group carries, and selecting it still opens the project.
+  (let [db
+        (grouped-db)
+
+        entries
+        (projects/sidebar-entries db)
+
+        groups
+        (filterv #(= :project-group (:kind %)) entries)
+
+        capture
+        (cap/capture! {:cols 144
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 144 24))})]
+
+    (is (= [:project-select :project-group :project-group :project-select] (mapv :kind entries)))
+    (is (= ["Release apps" "Gateway"] (mapv :label groups)))
+    (is (= ["violet" "cyan"] (mapv :color groups)))
+    (is (= [3 1] (mapv :group-count groups)))
+    (is (= [2 3] (mapv :index groups)))
+    (is (= [:select project-a] (:action (first groups))))
+    (is (= "3 sessions" (#'projects/row-status (first groups) nil 40)))
+    (is (= "1 session" (#'projects/row-status (second groups) nil 40)))
+    (is (nil? (:error capture)))
+    (is (str/includes? (cap/frame-text capture) "Release apps"))
+    (is (str/includes? (cap/frame-text capture) "3 sessions"))
+    (is (str/includes? (cap/frame-text capture) "g menu"))))
+
+(deftest project-rail-g-opens-the-row-menu-test
+  ;; `g` acts on the row under the cursor: group verbs on a group row, project
+  ;; verbs on a project row, and nothing above the first row.
+  (let [db
+        (grouped-db)
+
+        action
+        #(projects/key-action (assoc-in db [:project-sidebar :index] %) (cap/key-stroke \g))]
+
+    (is (= :project-select (:kind (second (action 1)))))
+    (is (= :menu (first (action 2))))
+    (is (= "Release apps" (:label (second (action 2)))))
+    (is (= "Gateway" (:label (second (action 3)))))
+    (is (= [:noop] (action 0)))
+    (is (= [:noop] (action 99)))))

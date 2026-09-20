@@ -93,6 +93,15 @@ export interface Session {
   project_name?: string | null;
   project_position?: number | null;
   /**
+   * The GROUP the human filed this session under, INSIDE that project — null or
+   * absent while it is ungrouped. The name and the palette token ride on the row,
+   * so a list paints a group band without a request per session.
+   */
+  group_id?: string | null;
+  group_name?: string | null;
+  /** A palette token out of the closed set, never a hex string — see `lib/group-colors`. */
+  group_color?: string | null;
+  /**
    * The human's STAR, owned by the GATEWAY: the order this session was starred in,
    * or null when it is not starred. A RANK — compare it, never show it — and the
    * ONE place the mark lives, so no two clients of a machine can disagree about it.
@@ -704,6 +713,33 @@ export interface ProjectOverview {
   live_count: number;
   awaiting_count: number;
   last_activity_ms: number;
+}
+
+/**
+ * One GROUP inside a project: the human's own division of a project's sessions,
+ * as `GET /v1/session-groups` answers it.
+ *
+ * `color` is a palette TOKEN out of a closed set the gateway keeps
+ * (`com.blockether.vis.contract.gateway/session-group-colors`), never a hex
+ * string: the TUI inks a terminal cell and this app fills a theme colour from the
+ * same value. `session_count` is the gateway's own tally for the whole group, not
+ * the part of it a page happens to show.
+ */
+export interface SessionGroup {
+  id: string;
+  project_id: string | null;
+  name: string;
+  color: string;
+  /** The manual order the human put the groups in, 0-based. */
+  position: number;
+  session_count: number;
+  created_at?: number;
+}
+
+/** `GET /v1/session-groups?root=` — one project's groups, in that manual order. */
+export interface SessionGroupPage {
+  project_id: string | null;
+  groups: SessionGroup[];
 }
 
 /** `GET /v1/projects/overview` — the projects plus the gateway's own totals. */

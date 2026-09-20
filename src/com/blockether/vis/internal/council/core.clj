@@ -79,10 +79,15 @@
   value)
 
 (defn session-group
-  "Resolve a persisted session's group without changing its UI project assignment.
-   Explicit ownership wins; otherwise use the owning repository, never a draft's root."
-  [db {:keys [id project-id owner-id]}]
-  (or (some-> project-id
+  "Resolve a persisted session's Council group without changing its UI project
+   assignment. The human's own GROUP wins when the session has one: a group
+   NARROWS the boundary, so the sessions filed under \"Release apps\" talk to
+   each other instead of to the whole project. Without a group, the project;
+   without a project, the owning repository, never a draft's root."
+  [db {:keys [id project-id group-id owner-id]}]
+  (or (some-> group-id
+              str)
+      (some-> project-id
               str)
       (when-let [workspace (some->> (ps/db-latest-session-state-id db id)
                                     (ps/db-workspace-for-session db))]

@@ -290,3 +290,41 @@ export const ScrolledNarrowDesktopPane: Story = {
   ...ScrolledNarrowPane,
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
+
+/** Groups nest INSIDE the project: named bands first, then whatever nobody filed. */
+const GROUPED = [
+  { ...fixture.rows[0], group_id: 'wallet', group_name: 'Wallet work', group_color: 'blue' },
+  { ...fixture.rows[1], group_id: 'wallet', group_name: 'Wallet work', group_color: 'blue' },
+  { ...fixture.rows[2], group_id: 'receipts', group_name: 'Receipts', group_color: 'amber' },
+  fixture.rows[3],
+];
+
+export const Groups: Story = {
+  args: {
+    group: { ...meta.args.group, sessions: GROUPED },
+    machine: { conn, sessions: GROUPED },
+    reading: { ...meta.args.reading, epoch: null, pendingByRoot: new Map() },
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const wallet = await page.findByRole('button', { name: /(Collapse|Expand) Wallet work/ });
+    const band = wallet.closest('div')!.parentElement!;
+    await expect(within(band).getByText('2 sessions')).toBeVisible();
+    await expect(band.querySelectorAll('[data-session-id]')).toHaveLength(2);
+    await expect(page.getByRole('button', { name: /(Collapse|Expand) Receipts/ })).toBeVisible();
+    // A group folds on its own, and the rest of the project stays where it was.
+    await userEvent.click(page.getByRole('button', { name: 'Collapse Wallet work' }));
+    await expect(band.querySelectorAll('[data-session-id]')).toHaveLength(0);
+    await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(2);
+    await userEvent.click(page.getByRole('button', { name: 'Expand Wallet work' }));
+    await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(4);
+    // The sheet on the project's own name lists every group inside it.
+    await userEvent.click(page.getByRole('button', { name: `Groups in ${fixture.name}` }));
+    const sheet = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: `Groups in ${fixture.name}`,
+    });
+    await expect(within(sheet).getByText('Wallet work')).toBeVisible();
+    await expect(within(sheet).getByText('Receipts')).toBeVisible();
+    await expect(within(sheet).getByText('New group')).toBeVisible();
+  },
+};

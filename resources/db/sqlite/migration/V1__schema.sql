@@ -60,6 +60,32 @@ CREATE UNIQUE INDEX idx_project_owner_workspace_root
   WHERE workspace_root IS NOT NULL;
 
 -- =============================================================================
+-- session_group — the human's own division of ONE project's sessions. A project
+-- is the directory the work happens in; a group is the division a person made
+-- inside it ("Release apps", "Gateway"), and it is also the Council boundary
+-- its members publish in. Dropping the project drops its groups; the
+-- conversations only lose the pointer (session_soul.group_id, SET NULL).
+-- =============================================================================
+CREATE TABLE session_group (
+  id          TEXT PRIMARY KEY NOT NULL,
+  project_id  TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL CHECK (trim(name) <> ''),
+  -- A palette TOKEN ('blue', 'amber', …), never a hex string: the TUI paints it
+  -- on a 16/256-colour terminal and the app out of a theme, and both surfaces
+  -- have to show the reader the SAME colour.
+  color       TEXT NOT NULL CHECK (trim(color) <> ''),
+  position    INTEGER NOT NULL DEFAULT 0,  -- manual order inside the project
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX idx_session_group_project
+  ON session_group(project_id, position, created_at);
+
+-- A group is addressed by the name a human typed, so one name per project.
+CREATE UNIQUE INDEX idx_session_group_project_name
+  ON session_group(project_id, name);
+
+-- =============================================================================
 -- session_soul — pure identity.
 -- =============================================================================
 CREATE TABLE session_soul (
@@ -95,6 +121,11 @@ CREATE TABLE session_soul (
   -- Manual order of this soul within its project (the movable TAB order, V7).
   -- Held gap-free & unique per project by idx_project_position.
   project_position  INTEGER NOT NULL DEFAULT 0,
+
+  -- Exclusive membership of ONE group inside this soul's project (0..1 groups).
+  -- Deleting the group SCATTERS its sessions back to ungrouped; deleting the
+  -- conversations with it is a caller's explicit choice, never this FK's.
+  group_id          TEXT REFERENCES session_group(id) ON DELETE SET NULL,
 
   -- The human's STAR, owned HERE and nowhere else: every client of this gateway
   -- reads one truth instead of each device keeping its own copy. A RANK, not a

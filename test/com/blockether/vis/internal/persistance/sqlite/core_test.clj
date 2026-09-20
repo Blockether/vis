@@ -3885,6 +3885,216 @@
       (expect (= "B" (first order)))
       (expect (= [0 1 2] positions)))))
 
+;; ─── session groups: the human's own groups inside ONE project (V8) ───
+
+(defdescribe
+  sqlite-session-group-test
+  (it
+    "creates groups inside a project, files sessions under them, and carries the group on every read"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "vis"})
+
+          release
+          (persistance/db-create-session-group! s (:id p) {:name "Release apps" :color "amber"})
+
+          gateway
+          (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+
+          ;; created shape: project-scoped, appended, palette TOKEN (never a hex)
+          _
+          (expect (= "Release apps" (:name release)))
+
+          _
+          (expect (= (:id p) (:project-id release)))
+
+          _
+          (expect (= "amber" (:color release)))
+
+          ;; an omitted colour still yields a token, so both surfaces can paint it
+          _
+          (expect (= "slate" (:color gateway)))
+
+          _
+          (expect (= 0 (:position release)))
+
+          _
+          (expect (= 1 (:position gateway)))
+
+          _
+          (expect (= ["Release apps" "Gateway"]
+                     (mapv :name (persistance/db-list-session-groups s (:id p)))))
+
+          ;; file a session under a group
+          sid
+          (h/store-session! s {:channel :tui :title "ios build"})
+
+          _
+          (persistance/db-set-session-group! s sid (:id release))
+
+          got
+          (persistance/db-get-session s sid)
+
+          _
+          (expect (= (:id release) (:group-id got)))
+
+          _
+          (expect (= "Release apps" (:group-name got)))
+
+          _
+          (expect (= "amber" (:group-color got)))
+
+          ;; joining a group ADOPTS the session into that group's project
+          _
+          (expect (= (:id p) (:project-id got)))
+
+          _
+          (expect (= 1 (:session-count (persistance/db-get-session-group s (:id release)))))
+
+          ;; the group rides the ONE list-sessions query - no per-row lookup
+          row
+          (first (filter #(= sid (:id %)) (persistance/db-list-sessions s :all)))
+
+          _
+          (expect (= "Release apps" (:group-name row)))
+
+          _
+          (expect (= "amber" (:group-color row)))
+
+          ;; rename + recolour
+          _
+          (persistance/db-update-session-group! s (:id release) {:name "Releases" :color "blue"})
+
+          renamed
+          (persistance/db-get-session-group s (:id release))
+
+          _
+          (expect (= "Releases" (:name renamed)))
+
+          _
+          (expect (= "blue" (:color renamed)))
+
+          ;; clearing leaves the conversation in its PROJECT, just ungrouped
+          _
+          (persistance/db-set-session-group! s sid nil)
+
+          cleared
+          (persistance/db-get-session s sid)]
+
+      (expect (nil? (:group-id cleared)))
+      (expect (nil? (:group-name cleared)))
+      (expect (= (:id p) (:project-id cleared)))))
+  (it "refuses a blank name and a duplicate name inside the same project"
+      (let [s
+            (h/store)
+
+            p
+            (persistance/db-create-project! s {:name "vis"})
+
+            other
+            (persistance/db-create-project! s {:name "spel"})
+
+            _
+            (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+
+            blank
+            (try (persistance/db-create-session-group! s (:id p) {:name "  "})
+                 ::created
+                 (catch Exception _ ::rejected))
+
+            dup
+            (try (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+                 ::created
+                 (catch Exception _ ::rejected))
+
+            ;; the SAME name in ANOTHER project is a different group, not a clash
+            twin
+            (persistance/db-create-session-group! s (:id other) {:name "Gateway"})]
+
+        (expect (= ::rejected blank))
+        (expect (= ::rejected dup))
+        (expect (= "Gateway" (:name twin)))
+        (expect (= 1 (count (persistance/db-list-session-groups s (:id p)))))))
+  (it "moving into another project's group adopts the session into that project too"
+      (let [s
+            (h/store)
+
+            home
+            (persistance/db-create-project! s {:name "vis"})
+
+            away
+            (persistance/db-create-project! s {:name "spel"})
+
+            group
+            (persistance/db-create-session-group! s (:id away) {:name "Browser"})
+
+            sid
+            (h/store-session! s {:channel :tui :title "cdp"})
+
+            _
+            (persistance/db-set-session-project! s sid (:id home))
+
+            _
+            (persistance/db-set-session-group! s sid (:id group))
+
+            got
+            (persistance/db-get-session s sid)]
+
+        (expect (= (:id group) (:group-id got)))
+        (expect (= (:id away) (:project-id got)))
+        (expect (= "spel" (:project-name got)))
+        ;; adopted as the newest member of its new project
+        (expect (= 0 (:project-position got)))))
+  (it
+    "deleting a group scatters its sessions back to ungrouped, and deleting the project takes the groups"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "vis"})
+
+          group
+          (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+
+          sid
+          (h/store-session! s {:channel :tui :title "routes"})
+
+          _
+          (persistance/db-set-session-group! s sid (:id group))
+
+          _
+          (persistance/db-delete-session-group! s (:id group))
+
+          scattered
+          (persistance/db-get-session s sid)
+
+          _
+          (expect (nil? (:group-id scattered)))
+
+          ;; the conversation survives its group, and keeps its project
+          _
+          (expect (= (:id p) (:project-id scattered)))
+
+          kept
+          (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+
+          _
+          (persistance/db-set-session-group! s sid (:id kept))
+
+          _
+          (persistance/db-delete-project! s (:id p))
+
+          orphan
+          (persistance/db-get-session s sid)]
+
+      ;; the project CASCADEs its groups away; the conversation is only scattered
+      (expect (= [] (persistance/db-list-session-groups s (:id p))))
+      (expect (nil? (:group-id orphan)))
+      (expect (nil? (:project-id orphan)))
+      (expect (= "routes" (:title (persistance/db-get-session s sid)))))))
+
 (defdescribe explicit-session-claim-test
              (it "explicitly claims a pooled session before its first turn"
                  (let [s

@@ -182,6 +182,38 @@
 
 (def confidence-fg (rgb :confidence-fg))
 
+;; Session groups
+(defn group-ink
+  "Ink for a session group's palette TOKEN — the gateway contract's closed
+   `session_group_color` vocabulary (slate, blue, green, amber, red, violet, cyan,
+   pink). The token travels between channels; the ink is this channel's reading of
+   it, taken from the active theme so a group keeps its contrast. An unknown token
+   reads as the neutral slate group."
+  [color]
+  (case (str color)
+    "blue"
+    result-path-fg
+
+    "green"
+    code-success-fg
+
+    "amber"
+    warning-fg
+
+    "red"
+    status-bad
+
+    "violet"
+    result-highlight-fg
+
+    "cyan"
+    header-hover-fg
+
+    "pink"
+    close-button-hover-fg
+
+    dialog-hint-key))
+
 (def md-summary-bg (rgb :md-summary-bg))
 
 (def md-summary-fg (rgb :md-summary-fg))

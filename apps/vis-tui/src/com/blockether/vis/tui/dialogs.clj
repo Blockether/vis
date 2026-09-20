@@ -5112,6 +5112,8 @@
      :title (session-title session)
      :session (short-session-id session)
      :group (not-empty (get session "project_name"))
+     :session-group (not-empty (get session "group_name"))
+     :session-group-color (not-empty (get session "group_color"))
      :position (get session "project_position")
      :dir work-dir
      :work-dir work-dir
@@ -5127,9 +5129,10 @@
      :target {:action :switch :id id}}))
 
 (defn- group-rows-by-dir
-  "Keep each working directory contiguous. The focused directory comes first
-   and its focused session leads that group; persisted order remains intact
-   for every other row."
+  "Keep each working directory contiguous, and each session GROUP inside it contiguous
+   under its own header. The focused directory comes first, the focused session's
+   group leads that directory and the session leads its group; persisted order
+   remains intact for every other row."
   [rows]
   (let [order
         (distinct (map :dir rows))
@@ -5138,16 +5141,19 @@
         (group-by :dir rows)]
 
     (vec (mapcat (fn [dir]
-                   (let [group-rows
+                   (let [dir-rows
                          (get by-dir dir)
 
-                         focused
-                         (filter :focused? group-rows)
+                         group-order
+                         (distinct (concat (map :session-group (filter :focused? dir-rows))
+                                           (map :session-group dir-rows)))]
 
-                         others
-                         (remove :focused? group-rows)]
-
-                     (concat focused (sort-by #(or (:position %) Long/MAX_VALUE) others))))
+                     (mapcat (fn [group]
+                               (let [group-rows (filter #(= group (:session-group %)) dir-rows)]
+                                 (concat (filter :focused? group-rows)
+                                         (sort-by #(or (:position %) Long/MAX_VALUE)
+                                                  (remove :focused? group-rows)))))
+                             group-order)))
                  order))))
 
 (defn- navigator-all-rows
@@ -5318,7 +5324,7 @@
                                       :group-start? (zero? (long idx))
                                       :group-count n))
                                   group)))
-                 (partition-by :dir matched)))))
+                 (partition-by (juxt :dir :session-group) matched)))))
 
 (defn- navigator-highlight-segments
   "Split `s` into `[text bold?]` segments, bolding case-insensitive occurrences
@@ -5489,7 +5495,7 @@
                      (conj acc {:idx i :entry entry :hits hits :spacer? spacer?})))))))))
 
 (defn- draw-navigator-group!
-  [g x row width {:keys [dir work-dir group-count]}]
+  [g x row width {:keys [dir work-dir group-count session-group session-group-color]}]
   (let [count-label
         (str group-count " " (if (= 1 group-count) "session" "sessions"))
 
@@ -5500,7 +5506,25 @@
         (str dir (when root-label (str "  ·  " root-label)) "  ·  " count-label)]
 
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label (max 1 (long width)))))))
+    (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label (max 1 (long width)))))
+    ;; A session group nests under its project directory: the same header row,
+    ;; in the group's own ink, so the reader sees which group the rows below
+    ;; belong to.
+    (when (seq session-group)
+      (let [used
+            (min (long width) (long (p/display-width label)))
+
+            group-label
+            (str "  ◆ " session-group)
+
+            room
+            (max 0 (- (long width) used))]
+
+        (when (pos? room)
+          (p/set-colors! g (t/group-ink session-group-color) t/dialog-bg)
+          (p/styled g
+                    [p/BOLD]
+                    (p/put-str! g (+ (long x) used) row (p/ellipsize group-label room))))))))
 
 (defn- draw-navigator-session!
   [g x row width entry selected?]
@@ -5944,6 +5968,12 @@
                        (= (lower-key-character key) \d))
                   (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                     {:action :delete :id id}
+                    (recur))
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \o))
+                  (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                    {:action :group :id id}
                     (recur))
                   (and (input/ctrl-modifier? key)
                        (= KeyType/Character (key-type key))

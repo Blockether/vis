@@ -1221,7 +1221,15 @@
               project (when (:project_id soul)
                         (query-one!
                           db-info
-                          {:select [:name] :from :project :where [:= :id (:project_id soul)]}))]
+                          {:select [:name] :from :project :where [:= :id (:project_id soul)]}))
+              ;; The group the human filed this conversation under, inside that
+              ;; project. Name AND palette token travel with the session so a
+              ;; list row can paint the group without a second round-trip.
+              group (when (:group_id soul)
+                      (query-one! db-info
+                                  {:select [:name :color]
+                                   :from :session_group
+                                   :where [:= :id (:group_id soul)]}))]
 
           (cond-> {:id (->uuid (:id soul))
                    :type :session
@@ -1237,6 +1245,7 @@
                    :owner-id (:owner_id soul)
                    :project-id (->uuid (:project_id soul))
                    :project-position (:project_position soul)
+                   :group-id (->uuid (:group_id soul))
                    ;; The human's STAR, off the `:*` soul row already read: every list
                    ;; row carries it without a second query per session (nil =
                    ;; unstarred). Backend-owned, so two clients cannot disagree.
@@ -1253,7 +1262,12 @@
             (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
 
             project
-            (assoc :project-name (:name project))))))))
+            (assoc :project-name (:name project))
+
+            group
+            (assoc :group-name
+              (:name group) :group-color
+              (:color group))))))))
 
 (defn db-get-session-prompt-cache-state
   "Return the latest exact provider-prefix checkpoint stored on one session state."
@@ -1325,18 +1339,23 @@
            :project-id (->uuid (:project_id row))
            :project-position (:project_position row)
            :project-name (:project_name row)
+           :group-id (->uuid (:group_id row))
+           :group-name (:group_name row)
+           :group-color (:group_color row)
            :favorite-rank (:favorite_rank row)})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
-                          :cs.project_id :cs.project_position :cs.favorite_rank :cs.goal
-                          [:p.name :project_name] [:s.title :state_title] :s.version
+                          :cs.project_id :cs.project_position :cs.group_id :cs.favorite_rank
+                          :cs.goal [:p.name :project_name] [:g.name :group_name]
+                          [:g.color :group_color] [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
                                     [:not= :child.parent_state_id nil]]} :fork_count]]
                  :from [[:session_soul :cs]]
                  :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                 :left-join [[:project :p] [:= :p.id :cs.project_id]]
+                 :left-join [[:project :p] [:= :p.id :cs.project_id] [:session_group :g]
+                             [:= :g.id :cs.group_id]]
                  :where (into [:and
                                ;; TOP-LEVEL only — child souls (parent_state_id set)
                                ;; hang off their parent's sub-tree, never the session list.
@@ -2560,6 +2579,175 @@
                                  :project_position (+ maxpos 1 (long offset))}
                            :where [:and [:= :id (->id sid)] [:= :project_id nil]]}))))
           (reorder-members-in-tx! tx-info pid session-ids))))))
+
+;; Session groups - the human's own groups INSIDE one project  (V8)
+
+(defn- row->session-group
+  "Project a `session_group` row (with an optional `session_count` aggregate)
+   into the canonical Clojure shape."
+  [row]
+  {:id (->uuid (:id row))
+   :project-id (->uuid (:project_id row))
+   :name (:name row)
+   :color (:color row)
+   :position (:position row)
+   :created-at (->date (:created_at row))
+   :session-count (or (:session_count row) 0)})
+
+(def ^:private session-group-select-cols
+  [:g.id :g.project_id :g.name :g.color :g.position :g.created_at
+   [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.group_id :g.id]}
+    :session_count]])
+
+(defn db-get-session-group
+  "Return one `session_group` (canonical shape, with live `:session-count`) or nil."
+  [db-info group-id]
+  (when (and (ds db-info) group-id)
+    (some-> (query-one! db-info
+                        {:select session-group-select-cols
+                         :from [[:session_group :g]]
+                         :where [:= :g.id (->id group-id)]})
+            row->session-group)))
+
+(defn db-list-session-groups
+  "List the `session_group`s of `project-id`, each with a live `:session-count`,
+   ordered by (position, created_at). Returns `[]` when there are none - a
+   project without groups is the normal case, not an error."
+  [db-info project-id]
+  (if (and (ds db-info) project-id)
+    (mapv row->session-group
+          (query! db-info
+                  {:select session-group-select-cols
+                   :from [[:session_group :g]]
+                   :where [:= :g.project_id (->id project-id)]
+                   :order-by [[:g.position :asc] [:g.created_at :asc]]}))
+    []))
+
+(defn db-create-session-group!
+  "Create a `session_group` inside `project-id`. `:name` is required (non-blank)
+   and is unique within the project - a group is addressed by the name a human
+   typed. `:color` is a palette TOKEN (\"blue\", \"amber\", ...), never a hex
+   string, and defaults to \"slate\". `:position`, when omitted, appends after
+   the project's current groups. Returns the created group (canonical shape)."
+  [db-info project-id {:keys [name color position]}]
+  (when (str/blank? (str name))
+    (throw (ex-info "db-create-session-group! requires a non-blank :name"
+                    {:type :persistance/invalid-group-name})))
+  (when (and (ds db-info) project-id)
+    (let [group-id (sqlite-write-tx!
+                     db-info
+                     (fn [tx-info]
+                       (let [gid (new-uuid)
+                             now (now-ms)
+                             pid (->id project-id)
+                             pos (or position
+                                     (inc (long (or (:maxpos (query-one!
+                                                               tx-info
+                                                               {:select [[[:max :position] :maxpos]]
+                                                                :from :session_group
+                                                                :where [:= :project_id pid]}))
+                                                    -1))))]
+
+                         (execute! tx-info
+                                   {:insert-into :session_group
+                                    :values [{:id (str gid)
+                                              :project_id (->ref project-id)
+                                              :name (str/trim (str name))
+                                              :color (or (not-empty (str/trim (str color))) "slate")
+                                              :position pos
+                                              :created_at now}]})
+                         gid)))]
+      (db-get-session-group db-info group-id))))
+
+(defn db-update-session-group!
+  "Patch a `session_group`: any of `:name` (non-blank), `:color` (palette token)
+   and `:position`. Returns the updated group (canonical shape) or nil when
+   there was nothing to change."
+  [db-info group-id {:keys [name color position] :as opts}]
+  (when (and (ds db-info) group-id (seq opts))
+    (when (and (contains? opts :name) (str/blank? (str name)))
+      (throw (ex-info "db-update-session-group! :name must be non-blank"
+                      {:type :persistance/invalid-group-name})))
+    (when (and (contains? opts :color) (str/blank? (str color)))
+      (throw (ex-info "db-update-session-group! :color must be a palette token"
+                      {:type :persistance/invalid-group-color})))
+    (let [set-map (cond-> {}
+                    (contains? opts :name)
+                    (assoc :name (str/trim (str name)))
+
+                    (contains? opts :color)
+                    (assoc :color (str/trim (str color)))
+
+                    (contains? opts :position)
+                    (assoc :position position))]
+      (when (seq set-map)
+        (sqlite-write-tx!
+          db-info
+          (fn [tx-info]
+            (execute! tx-info
+                      {:update :session_group :set set-map :where [:= :id (->id group-id)]})))
+        (db-get-session-group db-info group-id)))))
+
+(defn db-delete-session-group!
+  "Delete a `session_group`. Its members are scattered back to ungrouped inside
+   the same project by the `ON DELETE SET NULL` FK - conversations are NEVER
+   deleted, and they keep their project."
+  [db-info group-id]
+  (when (and (ds db-info) group-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:delete-from :session_group :where [:= :id (->id group-id)]})))))
+
+(defn db-set-session-group!
+  "Move the soul behind `session-id` into `group-id`; a nil `group-id` clears
+   membership and leaves the soul ungrouped inside its project. A group nests
+   under ONE project, so joining a group of another project ADOPTS the soul into
+   that project too (appending its `project_position`, exactly as
+   `db-set-session-project!` does). An unknown `group-id` changes nothing.
+   Returns the soul id."
+  [db-info session-id group-id]
+  (when (and (ds db-info) session-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [group
+              (when group-id
+                (query-one!
+                  tx-info
+                  {:select [:id :project_id] :from :session_group :where [:= :id (->id group-id)]}))
+
+              cur
+              (:project_id (query-one! tx-info
+                                       {:select [:project_id]
+                                        :from :session_soul
+                                        :where [:= :id (->id session-id)]}))
+
+              adopt?
+              (and group (not= (str cur) (str (:project_id group))))
+
+              set-map
+              (cond
+                ;; leaving every group -> only the pointer goes, the project stays
+                (nil? group-id) {:group_id (->ref nil)}
+                ;; unknown group -> nothing to join
+                (nil? group) nil
+                ;; joining a group of ANOTHER project -> adopt + append there
+                adopt? {:group_id (->ref group-id)
+                        :project_id (:project_id group)
+                        :project_position
+                        (inc (long (or (:maxpos (query-one!
+                                                  tx-info
+                                                  {:select [[[:max :project_position] :maxpos]]
+                                                   :from :session_soul
+                                                   :where [:= :project_id (:project_id group)]}))
+                                       -1)))}
+                :else {:group_id (->ref group-id)})]
+
+          (when set-map
+            (execute! tx-info
+                      {:update :session_soul :set set-map :where [:= :id (->id session-id)]})))))
+    session-id))
 
 ;; Fork - branch a session at a point
 

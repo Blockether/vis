@@ -30,7 +30,9 @@
                  (expect (= :cycle-reasoning (keymap/prefix-action-for \r)))
                  (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
-                 (expect (nil? (keymap/prefix-action-for \d)))
+                 ;; `d` files a session under one of its project's groups (BLO-167).
+                 (expect (= :session-group (keymap/prefix-action-for \d)))
+                 (expect (nil? (keymap/prefix-action-for \x)))
                  ;; `e` is the Improve register; it only ACTS when a mode is chosen.
                  (expect (= :improve (keymap/prefix-action-for \e)))
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
@@ -159,3 +161,10 @@
             (expect (not (contains? painted :toggle-voice-conversation))))))
     (it "every verb declares a heading the hydra knows"
         (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))
+
+(defdescribe session-group-chord-test
+             ;; BLO-167: a session can be filed under one of its project's groups.
+             (it "is a palette verb whose key is free — `g` can only ever be the abort"
+                 (expect (= :session-group (keymap/prefix-action-for \d)))
+                 (expect (nil? (keymap/prefix-action-for keymap/abort-key)))
+                 (expect (= "C-x d" (keymap/label-for :session-group)))))

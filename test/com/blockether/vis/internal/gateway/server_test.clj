@@ -3377,6 +3377,98 @@
             (is (= 404 (:status response)))
             (is (empty? @calls))))))))
 
+(deftest session-group-routes-divide-a-project-without-touching-its-sessions
+  ;; BLO-167: a group is the human's own division INSIDE one project. The routes
+  ;; accept a workspace `root` as well as a project id, because the companion
+  ;; groups its list by root and never holds a project id of its own.
+  (let [pid
+        (java.util.UUID/randomUUID)
+
+        gid
+        (java.util.UUID/randomUUID)
+
+        sid
+        (java.util.UUID/randomUUID)
+
+        group
+        {"id" (str gid) "project_id" (str pid) "name" "Release apps" "color" "amber"}
+
+        json-body
+        (fn [m]
+          {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
+
+        created
+        (atom [])
+
+        assigned
+        (atom [])]
+
+    (with-redefs-fn {#'state/get-project-by-root (fn [_owner root]
+                                                   (when (= "/repo" root) {"id" (str pid)}))
+                     #'state/ensure-project-for-root! (fn [_owner _root _name]
+                                                        {"id" (str pid)})
+                     #'state/list-session-groups (fn [p]
+                                                   (if (= pid p) [group] []))
+                     #'state/get-session-group (fn [g]
+                                                 (when (= gid g) group))
+                     #'state/create-session-group!
+                     (fn [p opts]
+                       (swap! created conj [p opts])
+                       (if (= "Gateway" (:name opts)) (throw (ex-info "duplicate name" {})) group))
+                     #'state/delete-session-group!
+                     (fn [g]
+                       {:group_id (str g) :scattered_session_ids [(str sid)] :session_count 1})
+                     #'state/soul (fn [s]
+                                    {"id" (str s)})
+                     #'state/assign-session-group! (fn [s g]
+                                                     (swap! assigned conj [s g])
+                                                     {"id" (str s) "group_id" (when g (str g))})}
+      (fn []
+        (let [list-groups
+              (rv 'list-session-groups-handler)
+
+              create-group
+              (rv 'create-session-group-handler)
+
+              delete-group
+              (rv 'delete-session-group-handler)
+
+              assign-group
+              (rv 'set-session-group-handler)]
+
+          (testing
+            "groups belong to ONE project: without a project or a root there is nothing to list"
+            (is (= 400 (:status (list-groups {:query-params {}})))))
+          (testing "a root with no project yet has no groups - a READ never creates a project"
+            (let [body (wire/parse-json (:body (list-groups {:query-params {"root"
+                                                                            "/elsewhere"}})))]
+              (is (nil? (get body "project_id")))
+              (is (= [] (get body "groups")))))
+          (testing "a known root answers with that project's groups"
+            (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"}})))]
+              (is (= (str pid) (get body "project_id")))
+              (is (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))))
+          (testing "creating by root get-or-creates the project first"
+            (let [response (create-group (json-body
+                                           {:name "Release apps" :color "amber" :root "/repo"}))]
+              (is (= 201 (:status response)))
+              (is (= [[pid {:name "Release apps" :color "amber"}]] @created))))
+          (testing "a second group with the same name is a 409 conflict, not a 500"
+            (is (= 409 (:status (create-group (json-body {:name "Gateway" :root "/repo"}))))))
+          (testing "deleting a group names the sessions it scattered - they are never deleted"
+            (let [body (wire/parse-json (:body (delete-group {:path-params {:gid (str gid)}})))]
+              (is (= [(str sid)] (get body "scattered_session_ids")))
+              (is (= 1 (get body "session_count")))))
+          (testing "an unknown group is a 404"
+            (is (= 404
+                   (:status (delete-group {:path-params {:gid (str
+                                                                (java.util.UUID/randomUUID))}})))))
+          (testing "a null group_id leaves the session ungrouped inside its project"
+            (let [response (assign-group (assoc (json-body {:group_id nil})
+                                           :path-params {:sid (str sid)}))]
+              (is (= 200 (:status response)))
+              (is (= [[sid nil]] @assigned)))))))))
+
 ;; Regression: the live `iteration.completed` descriptors DROP model-only
 ;; artifacts and then RE-NUMBER what survives, while the byte endpoint indexed
 ;; the UNFILTERED row list. On any iteration whose first artifact was
@@ -4499,7 +4591,7 @@
                                   {:status :failed :error "no editor is configured"})]
              (is (= 400 (:status response)))
              (is (str/includes? (:body response) "no editor is configured"))))
-           (finally (.delete inside) (.delete root) (.delete outside)))))
+         (finally (.delete inside) (.delete root) (.delete outside)))))
 
 (deftest a-previewed-file-is-one-bounded-window-of-text
   ;; The follow-up to BLO-172: a reader holding a phone gets nothing out of an editor
@@ -4539,7 +4631,8 @@
             #(handler {:path-params {:sid (str sid)} :query-params query})))
 
         window
-        (fn [query] (wire/parse-json (:body (answer query))))]
+        (fn [query]
+          (wire/parse-json (:body (answer query))))]
 
     (spit source (str/join "\n" (map #(str "line " %) (range 1 1001))))
     (spit wide (str/join (repeat 5000 "x")))
