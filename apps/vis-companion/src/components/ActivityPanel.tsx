@@ -20,6 +20,7 @@ import {
   type OperationGroup,
 } from '../lib/activity';
 import { workspaceRelativePath } from '../lib/path';
+import { useOpenPath } from '../lib/open-path';
 import { useWorkspaceRoots } from '../lib/workspace-roots';
 
 /** `2 more files`, `3 more steps` — what a rule holds back, counted and named. */
@@ -244,17 +245,52 @@ function activityStepDelta(row: ActivityRow): {
  * is on every row, is the same on every row, and is exactly the part `truncate`
  * keeps. The id underneath stays ABSOLUTE — it is what the engine called the file
  * and what a press opens — so only the reading is shortened, never the address.
+ *
+ * And a press DOES open it, on the machine that ran the step: this row is the only
+ * place the transcript says where the work happened, and a path you have to retype
+ * into an editor is the part the screen can simply do for you. The press stops at
+ * the path, so a row that also expands a diff keeps that for the rest of its width —
+ * the TUI resolves the same overlap the same way, path first. With no opener
+ * published the path stays plain words and the row keeps every press it had.
  */
 function ActivityPath({ id }: { id: string }) {
   const roots = useWorkspaceRoots();
+  const openPath = useOpenPath();
   const shown = workspaceRelativePath(id, roots) || id;
   const cut = shown.lastIndexOf('/');
   const directory = cut < 0 ? '' : shown.slice(0, cut + 1);
   const name = cut < 0 ? shown : shown.slice(cut + 1);
-  return (
-    <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
+  const words = (
+    <>
       {directory && <span className="truncate text-dialog-hint">{directory}</span>}
       <span className="max-w-full shrink-0 truncate">{name}</span>
+    </>
+  );
+  if (!openPath)
+    return (
+      <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
+        {words}
+      </span>
+    );
+  const press = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPath(id);
+  };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${id}`}
+      className="flex min-w-0 max-w-full cursor-pointer hover:underline"
+      data-path={id}
+      title={id}
+      onClick={press}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') press(event);
+      }}
+    >
+      {words}
     </span>
   );
 }

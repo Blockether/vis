@@ -9823,3 +9823,65 @@ print(paths)"
             (expect (not (str/includes? text "5 / 5")))
             (expect (not (str/includes? text "In progress")))
             (expect (not-any? #(= :running (get-in % [:meta :status-tone])) entries))))))))
+
+(defdescribe
+  activity-path-target-test
+  (let [row
+        {:id "patch-1"
+         :sequence 1
+         :operation "patch"
+         :state "succeeded"
+         :summary "patch"
+         :duration-ms 2
+         :resources [{:type "file" :id "src/example.clj"}]
+         :presentation {:headline "Patched" :summary "src/example.clj" :content []}
+         :evidence [{:kind "diff"
+                     :text "src/example.clj"
+                     :additions 1
+                     :deletions 1
+                     :modifications 0
+                     :is-truncated false
+                     :is-redacted false
+                     :lines [{:kind "hunk" :text "@@ -1 +1 @@"}
+                             {:kind "addition" :text "first-change"}]}]}
+
+        entries
+        (#'render/activity-detail-entries
+         {:node-id "patches"
+          :activity-rows [row]
+          :activity-expanded? (fn [_ _]
+                                true)}
+         100
+         "fixture")
+
+        painted
+        (fn []
+          (.reset interactions/hit-map)
+          (.beginFrame interactions/hit-map)
+          (let [captured (cap/capture! {:cols 100
+                                        :rows 40
+                                        :paint! (fn [{:keys [g]}]
+                                                  (render/draw-chat-bubble!
+                                                    g
+                                                    {:role :assistant
+                                                     :text ""
+                                                     :prewrapped-lines (mapv :line entries)
+                                                     :line-meta (mapv :meta entries)}
+                                                    0 0
+                                                    96 {:viewport-top 0 :viewport-h 40}))})]
+            (.commitFrame interactions/hit-map)
+            {:error (:error captured)
+             :targets (into #{}
+                            (for [row (range 40)
+                                  col (range 100)
+                                  :let [hit (.lookup interactions/hit-map col row)]
+                                  :when (= :file (:kind hit))]
+
+                              (select-keys hit [:kind :session-id :url])))}))]
+
+    ;; BLO-172: a path the activity axis printed is an address the reader then had to
+    ;; retype. The row still expands where it always did — the path itself opens the file.
+    (it "registers one file target for every path an activity row names"
+        (let [{:keys [error targets]} (painted)]
+          (expect (nil? error))
+          (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))

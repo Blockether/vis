@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
@@ -4433,3 +4434,69 @@
                (alert {"reason" "question"}))))
       (testing "a session this gateway does not have has no banner"
         (is (= 404 (:status (handler {:path-params {:sid (str (random-uuid))}}))))))))
+
+(deftest a-pressed-path-opens-only-inside-the-session-workspace
+  ;; BLO-172: a step reports the files it touched by path, and a reader who can only
+  ;; LOOK at that path has to find the file again by hand. The press hands it to the
+  ;; editor on the machine that ran the step — and only a file inside that session's
+  ;; own workspace, whatever the client asks for.
+  (let [sid
+        (random-uuid)
+
+        root
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-open-file"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        inside
+        (io/file root "notes.md")
+
+        outside
+        (java.io.File/createTempFile "vis-outside" ".md")
+
+        opened
+        (atom [])
+
+        handler
+        (rv 'open-file-handler)
+
+        answer
+        (fn [body outcome & {:keys [session workspace] :or {session sid workspace (.getPath root)}}]
+          (with-redefs-fn {(rv 'body-json) (constantly body)
+                           #'state/soul (fn [id]
+                                          (when (= session id) {"id" (str id)}))
+                           #'state/session-workspace-info (fn [id]
+                                                            (when (= session id)
+                                                              {"root" workspace}))
+                           #'external-opener/open-file-in-editor! (fn [path]
+                                                                    (swap! opened conj path)
+                                                                    outcome)}
+            #(handler {:path-params {:sid (str sid)}})))]
+
+    (spit inside "notes")
+    (try (testing "a path the session named opens on the machine that ran it"
+           (let [response (answer {"path" "notes.md"} {:status :ok})]
+             (is (= 200 (:status response)))
+             (is (str/includes? (:body response) "\"is_open\":true"))
+             (is (= [(.getPath (.getCanonicalFile inside))] @opened))))
+         (testing "an absolute path inside the workspace is the same file"
+           (is (= 200 (:status (answer {"path" (.getPath inside)} {:status :ok}))))
+           (is (= 2 (count @opened))))
+         (testing "nothing outside the session's workspace is opened, however it is asked for"
+           (reset! opened [])
+           (doseq [asked [(.getPath outside) "../escape.md"]]
+             (is (= 403 (:status (answer {"path" asked} {:status :ok})))))
+           (is (= 404 (:status (answer {"path" "absent.md"} {:status :ok}))))
+           (is (= [] @opened)))
+         (testing "an unusable request is refused before any editor is asked"
+           (doseq [body [{"path" "  "} {"path" 42} {}]]
+             (is (= 400 (:status (answer body {:status :ok})))))
+           (is (= 409 (:status (answer {"path" "notes.md"} {:status :ok} :workspace "  "))))
+           (is (= 404 (:status (answer {"path" "notes.md"} {:status :ok} :session (random-uuid)))))
+           (is (= [] @opened)))
+         (testing "an editor that refused says so, instead of reporting an open file"
+           (let [response (answer {"path" "notes.md"}
+                                  {:status :failed :error "no editor is configured"})]
+             (is (= 400 (:status response)))
+             (is (str/includes? (:body response) "no editor is configured"))))
+         (finally (.delete inside) (.delete root) (.delete outside)))))

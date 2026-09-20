@@ -803,6 +803,32 @@ describe('GatewayClient session slash palette', () => {
   });
 });
 
+// A path in a transcript names a file on the machine that RAN the step: this device
+// holds the words, that one holds the tree and the editor, so the press is posted back.
+describe('GatewayClient workspace file opening', () => {
+  it('asks the session machine to open one workspace path', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ path: '/Users/ana/vis/AGENTS.md', is_open: true })),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const opened = await client.openPath('session-1', '~/vis/AGENTS.md');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/fs/actions/open',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      path: '~/vis/AGENTS.md',
+    });
+    expect(opened).toEqual({ path: '/Users/ana/vis/AGENTS.md', is_open: true });
+  });
+});
+
 // Regression: the gateway scoped POST /v1/sessions/:sid/cancel-current to the
 // idempotency_key its submitter sent, and the app sent none — so every Stop in the
 // mobile app and the web answered 409 :not-owner and the turn kept running.

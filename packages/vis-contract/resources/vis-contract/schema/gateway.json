@@ -802,6 +802,16 @@
           "response": "json"
         }
       },
+      "path": "/v1/sessions/:sid/fs/actions/open"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
       "path": "/v1/sessions/:sid/iterations/:iid/attachments"
     },
     {

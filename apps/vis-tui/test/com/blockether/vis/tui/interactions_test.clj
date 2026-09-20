@@ -69,3 +69,24 @@
                                                 :session-id "s"
                                                 :history-id "a1"}])]
         (expect (= [:activity-page :activity-search] (mapv (comp :kind second) pairs))))))
+
+(defn- file-region
+  [row url]
+  {:bounds {:row row :col 4 :width (count url)} :kind :file :session-id "s" :url url})
+
+(defdescribe file-label-test
+             ;; BLO-172: a path in the chronology opens the file it names, so the vim overlay has
+             ;; to reach it like any other press — one label per FILE, not one per row that
+             ;; happened to print the same path.
+             (it "labels each file once, wherever its path was painted"
+                 (let [pairs (interactions/assign-labels [(file-region 3 "src/a.clj")
+                                                          (file-region 5 "src/a.clj")
+                                                          (file-region 7 "src/b.clj")])]
+                   (expect (= [["a" "src/a.clj"] ["s" "src/b.clj"]]
+                              (mapv (fn [[label region]]
+                                      [label (:url region)])
+                                    pairs)))))
+             (it "keeps a file apart from the disclosure it sits in"
+                 (let [pairs (interactions/assign-labels [(toggle-region 3 "s" "n1")
+                                                          (file-region 3 "src/a.clj")])]
+                   (expect (= [:toggle-details :file] (mapv (comp :kind second) pairs))))))

@@ -2509,6 +2509,17 @@
       (state/dispatch [:activity-page (:session-id hit) (:history-id hit) 0 nil (str/trim query)])
       (state/dispatch [:bump-render-version]))))
 
+(defn- open-file-target!
+  "Open ONE path a step reported, in the operator's own editor, and say so when
+   the machine refuses: a press that silently does nothing reads as a dead row.
+   Runs on the caller's thread — every call site is already off the input loop."
+  [path]
+  (let [{:keys [status error]} (opener/open-file-in-editor! path)]
+    (when-not (= :ok status)
+      (vis/notify! (or error "File could not be opened")
+                   :level :warn
+                   :ttl-ms status-error-ttl-ms))))
+
 (defn- activate-detail-label!
   "Resolve a frozen jump label against the current frame and activate its target.
    Live cards share the durable opener used by mouse input; other labels toggle folds,
@@ -2544,6 +2555,11 @@
       :activity-search
       (prompt-activity-search! screen target)
 
+      ;; A jump label reaches a path exactly as a click does.
+      :file
+      (vis/worker-future "vis-tui-open-file-label"
+                         #(try (open-file-target! (:url target)) (catch Throwable _ nil)))
+
       nil)
     (state/dispatch [:set-detail-labels false])
     (state/dispatch [:bump-render-version])))
@@ -2557,7 +2573,7 @@
      (vis/worker-future "vis-tui-open-click-target"
                         #(try (case kind
                                 :file
-                                (opener/open-file-in-editor! url)
+                                (open-file-target! url)
 
                                 ;; Inline transcript image: the PNG lives in the
                                 ;; system temp dir (outside the workspace), so the

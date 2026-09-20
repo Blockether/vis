@@ -291,6 +291,12 @@ Markdown summaries support inline formatting and HTTP(S) links, not images, raw
 HTML or block layouts. Links stay available with details collapsed or expanded.
 Omit `summary_format`, or use `"inline"`, to display the summary literally.
 
+The files a step reports — the resources it read and the files it patched — are
+pressable in both clients. Pressing one opens that file in the editor on the machine
+that runs the session, so a path in a transcript is an address the reader can act on
+instead of retyping. Report real paths in your file resources: a label that merely
+looks like a path opens nothing.
+
 Each headline and summary is one line of at most 512 UTF-8 bytes, including any
 Markdown source. Put the complete result in content blocks and non-nested
 sections: Vis does not cut their text,

@@ -1973,6 +1973,21 @@ therapy line 2"
             (open-click-target! {:kind :file :url "deps.edn#L42"})
             (expect (= "deps.edn#L42" (deref editor-opened 1000 ::timeout)))
             (expect (= ::timeout (deref url-opened 100 ::timeout)))))))
+  ;; BLO-172: a path in the chronology opens in the operator's own editor. A press
+  ;; that silently did nothing would read as a dead row, so a refusal is reported in
+  ;; the machine's own words.
+  (it "reports an editor that refused a pressed path, instead of pressing in silence"
+      (let [notified (promise)]
+        (with-redefs-fn {#'opener/open-file-in-editor! (fn [_]
+                                                         {:status :failed
+                                                          :error "no editor is configured"})
+                         #'vis/notify! (fn [text & kvs]
+                                         (deliver notified [text (apply hash-map kvs)]))}
+          (fn []
+            (open-click-target! {:kind :file :url "deps.edn"})
+            (let [[text options] (deref notified 1000 ::timeout)]
+              (expect (= "no editor is configured" text))
+              (expect (= :warn (:level options))))))))
   ;; A `vis-doc` card is a HANDLE: a PDF or an HTML page has nothing a terminal
   ;; can paint, so the click must reach the OS viewer. The file lives in the
   ;; display cache OUTSIDE the workspace, which the cwd-confined `open!` refuses

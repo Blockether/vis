@@ -30,7 +30,8 @@
   "Stable identity for keyboard-addressable transcript disclosures and live cards.
    A card's border, padding and content rows share one target, an Activity
    paging rule is addressed by the record and cursor it would fetch, and its
-   search rule by the record it would search. Other artifacts do not."
+   search rule by the record it would search, and a path by the file it opens.
+   Other artifacts do not."
   [region]
   (case (:kind region)
     :toggle-details
@@ -41,6 +42,11 @@
 
     :activity-search
     [:activity-search (:session-id region) (:history-id region)]
+
+    ;; A PATH IS ADDRESSED BY THE FILE IT OPENS, so the same file named twice in
+    ;; one frame — a head and its own file row — takes one label, not two.
+    :file
+    [:file (:session-id region) (:url region)]
 
     :artifact
     (when (:live-card? region)

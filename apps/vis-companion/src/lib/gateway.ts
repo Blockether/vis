@@ -2645,6 +2645,23 @@ export class GatewayClient {
     return rows ?? [];
   }
 
+  // POST /v1/sessions/:sid/fs/actions/open — open one workspace file in the
+  // editor ON THE MACHINE THAT RUNS THE SESSION. A path in a transcript names a
+  // file on that machine, so the press travels back instead of looking for a
+  // tree this device does not have.
+  async openPath(
+    sid: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<{ path: string; is_open: boolean }> {
+    return await this.request<{ path: string; is_open: boolean }>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(sid)}/fs/actions/open`,
+      { path },
+      signal,
+    );
+  }
+
   // ── Sessions ────────────────────────────────────────────────────
   //
   // The list, one session's meta, its transcript and its queued backlog are each

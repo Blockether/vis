@@ -31,6 +31,7 @@
     [com.blockether.vis.internal.docs.core :as docs]
     [com.blockether.vis.internal.extension.core :as extension]
     [com.blockether.vis.internal.extension.client :as client-extensions]
+    [com.blockether.vis.internal.external-opener :as external-opener]
     [com.blockether.vis.internal.channel.file-picker :as file-picker]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
@@ -2600,6 +2601,58 @@
                                     :mkdir-failed "could not create that folder"
                                     :path (.getAbsolutePath made)))))))
 
+(defn- open-file-handler
+  "POST /v1/sessions/:sid/fs/actions/open {path} — open ONE file this session
+   named, on the machine the session runs on.
+
+   A step reports the files it read or patched by their absolute path, and a
+   reader who can only look at that path has to find the file again by hand.
+   The machine already knows where it is, so it hands it to the operator's
+   editor — the same press the TUI gives a path on the transcript.
+
+   CONFINED to the session's own workspace, resolved through symlinks: a press
+   from a phone opens a file this session already works in, never an arbitrary
+   path on the host."
+  [request]
+  (let [sid (path-sid request)]
+    (if-not (and sid (state/soul sid))
+      (session-404 (get-in request [:path-params :sid]))
+      (let [requested (get (body-json request) "path")
+            root (get (state/session-workspace-info sid) "root")]
+
+        (cond (or (not (string? requested)) (str/blank? requested))
+              (error-response 400 :invalid-request "path must be a non-blank string")
+              (str/blank? (str root))
+              (error-response 409 :workspace-unavailable "Session workspace is unavailable.")
+              :else
+              (try (let [^java.io.File anchor (.getCanonicalFile (io/file root))
+                         ^java.io.File asked (io/file (expand-user requested))
+                         ^java.io.File target (.getCanonicalFile (if (.isAbsolute asked)
+                                                                   asked
+                                                                   (io/file anchor requested)))
+                         inside? (or (= anchor target)
+                                     (str/starts-with? (.getPath target)
+                                                       (str (.getPath anchor)
+                                                            java.io.File/separator)))]
+
+                     (cond (not inside?) (error-response
+                                           403
+                                           :outside-workspace
+                                           "that file is outside this session's workspace"
+                                           :path (.getPath target))
+                           (not (.isFile target))
+                           (error-response 404 :not-a-file "no such file" :path (.getPath target))
+                           :else (let [{:keys [status error]} (external-opener/open-file-in-editor!
+                                                                (.getPath target))]
+                                   (if (= :ok status)
+                                     (json-response {:path (.getPath target) :is-open true})
+                                     (error-response 400
+                                                     :open-failed
+                                                     (or error "that file could not be opened")
+                                                     :path (.getPath target))))))
+                   (catch java.io.IOException _
+                     (error-response 400 :invalid-request "that path could not be resolved"))))))))
+
 (defn- projects-overview-handler
   "GET /v1/projects/overview — every project this gateway holds with its own
    counts, and the gateway's totals beside them, in ONE answer.
@@ -4729,6 +4782,7 @@
         [(sid-route "/workspace/root") {:patch change-root-handler}]
         [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]
         [(sid-route "/suggest") {:get suggest-handler}]
+        [(sid-route "/fs/actions/open") {:post open-file-handler}]
         [(sid-route "/attachments") {:post upload-attachment-handler}]
         [(sid-route "/turns") {:get list-turns-handler :post submit-turn-handler}]
         [(sid-route "/turns/:tid")

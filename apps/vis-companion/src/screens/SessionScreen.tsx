@@ -161,6 +161,7 @@ import {
 import { markSessionRead, visibleAnsweredTurnCount } from '../lib/unread';
 import { App } from '@capacitor/app';
 
+import { OpenPathContext } from '../lib/open-path';
 import { workspaceRelativePath } from '../lib/path';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
 
@@ -4274,6 +4275,19 @@ export function SessionScreen({
     () => [session?.workspace?.root, session?.workspace?.repo_root],
     [session?.workspace?.root, session?.workspace?.repo_root],
   );
+  // A PATH IN THIS TRANSCRIPT OPENS ON THE MACHINE THAT RAN THE STEP. The device
+  // reading the session rarely holds the tree the row names, so the press goes back
+  // to the gateway, which opens the file in the editor there — and says so plainly
+  // when it cannot, because a press that silently did nothing is the worse answer.
+  const openPath = useCallback(
+    (path: string) => {
+      setError(null);
+      void client
+        .openPath(sid, path)
+        .catch((cause: unknown) => setError((cause as Error).message));
+    },
+    [client, sid],
+  );
   // Every live view is now a view. Protocol 7 gave Activity to the form that
   // produced it, so no picture below the transcript is a Python slot's twin and
   // nothing has to be held back from the rail to avoid painting it twice.
@@ -5059,7 +5073,7 @@ export function SessionScreen({
   );
   return (
     <ActivityHistoryContext.Provider value={activityHistorySource}>
-      {screen}
+      <OpenPathContext.Provider value={openPath}>{screen}</OpenPathContext.Provider>
     </ActivityHistoryContext.Provider>
   );
 }

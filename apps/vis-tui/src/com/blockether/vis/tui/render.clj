@@ -1792,6 +1792,35 @@
                          :text (:copy-text meta)
                          :history (:copy-history meta)})))))
 
+(defn- draw-path-target!
+  "THE PATH IS THE HANDLE. A row that names a file registers the span that
+   SPELLS it as its own click target, so pressing the path opens the file in
+   the operator's editor while the rest of the row still toggles its details.
+
+   Registered AFTER the row's own disclosure, which is the order
+   `draw-band-copy!` already relies on: the last region over a cell wins the
+   press. Under the pointer the span underlines in the link chrome, because a
+   target that looks exactly like static text is a target nobody presses."
+  [g meta x y iw viewport-top]
+  (when-let [path (not-empty (str (:path meta)))]
+    (let [col (+ (long x) (long (or (:path-col meta) 0)))
+          right (+ (long x) (min (long iw) (long (or (:summary-width meta) iw))))
+          width (min (long (or (:path-width meta) 0)) (max 0 (- right col)))
+          abs-row (+ (long viewport-top) (long y))
+          hovered (.hovered interactions/hit-map)]
+
+      (when (pos? width)
+        (.register interactions/hit-map
+                   {:bounds {:row abs-row :col col :width width}
+                    :kind :file
+                    :session-id (:session-id meta)
+                    :url path})
+        (when (and (= :file (:kind hovered))
+                   (= abs-row (:row (:bounds hovered)))
+                   (= col (:col (:bounds hovered))))
+          (dotimes [dc width]
+            (p/underline-cell! g (+ col (long dc)) y t/link-chrome-hover-fg)))))))
+
 (defn- draw-live-button!
   [g meta x y iw right-inset viewport-top]
   (let [label
@@ -2534,7 +2563,8 @@
                                           :session-id (:session-id meta)
                                           :node-id (:node-id meta)
                                           :collapsed? (:collapsed? meta)}))
-                            (draw-band-copy! g meta x y iw right-inset viewport-top))
+                            (draw-band-copy! g meta x y iw right-inset viewport-top)
+                            (draw-path-target! g meta x y iw viewport-top))
 
                         ;; A path keeps its name: the directory reads quiet because it is
                         ;; only where the file lives, the filename wears the darker ink
@@ -2560,7 +2590,8 @@
                                         :kind :toggle-details
                                         :session-id (:session-id meta)
                                         :node-id (:node-id meta)
-                                        :collapsed? (:collapsed? meta)})))
+                                        :collapsed? (:collapsed? meta)}))
+                          (draw-path-target! g meta x y iw viewport-top))
 
                         (:activity-more :activity-page :activity-search)
                         (do (p/set-colors! g t/dialog-hint band-bg)
@@ -6263,6 +6294,8 @@
                                                  :mark mark
                                                  :mark-col col
                                                  :path-col (+ col 2)
+                                                 :path id
+                                                 :path-width (p/display-width (:text cells))
                                                  :dir (:dir cells)
                                                  :file-name (:name cells)}
                                           diff
@@ -6466,6 +6499,31 @@
                                                                        2))))
                                                            text))
 
+                                                       path-subject
+                                                       ;; A cat/patch head NAMES the file it worked
+                                                       ;; on, so the span that spells it opens that
+                                                       ;; file — the same press the app gives its
+                                                       ;; caption.
+                                                       (when (and subject
+                                                                  (not (:markdown? summary-entry))
+                                                                  (#{"cat" "patch"}
+                                                                   (:operation row)))
+                                                         (str (or caption object)))
+
+                                                       path-col
+                                                       (if path-subject
+                                                         (p/display-width (str
+                                                                            (activity-lead col)
+                                                                            lead-word
+                                                                            mark
+                                                                            (if caption " · " " ")))
+                                                         0)
+
+                                                       path-width
+                                                       (if path-subject
+                                                         (p/display-width (str subject))
+                                                         0)
+
                                                        prefix
                                                        ;; The mark that opens a row belongs to the
                                                        ;; operation's NAME — `Ran ▸ …`, the way the
@@ -6503,6 +6561,9 @@
                                                         :meta
                                                         (merge meta-base
                                                                {:kind :activity-row
+                                                                :path path-subject
+                                                                :path-col path-col
+                                                                :path-width path-width
                                                                 :headline-prefix prefix
                                                                 :summary-prefix prefix
                                                                 :summary-width (- (long width)
