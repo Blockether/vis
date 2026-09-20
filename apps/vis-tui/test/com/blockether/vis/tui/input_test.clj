@@ -160,7 +160,7 @@
         (expect (= :pick-file (:action (input/handle-key (char-key (Character. \a)) armed))))
         (expect (= :toggle-voice-recording
                    (:action (input/handle-key (char-key (Character. \v)) armed))))
-        (expect (= :continue (:action (input/handle-key (char-key (Character. \d)) armed))))
+        (expect (= :session-group (:action (input/handle-key (char-key (Character. \d)) armed))))
         (expect (= :toggle-help (:action (input/handle-key (char-key (Character. \h)) armed))))
         ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \h)) state))))      ; C-h inert (help is C-x C-h)
