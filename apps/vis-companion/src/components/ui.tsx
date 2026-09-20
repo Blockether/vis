@@ -659,6 +659,15 @@ export const ListRow = forwardRef<
  * group in `err-edge` — a layout border made the confirmation taller than the
  * row it replaces — and the cost sentence is a PROP inside that box.
  *
+ * IT STANDS WHAT THE ROW STOOD. The two answers own a 48px floor, and a floor is
+ * not a row's height: a session row that stacks its metadata under the title
+ * measures 52px on a phone, so the question replacing it left the list four
+ * pixels shorter and everything below it jumped the moment it was asked. The row
+ * hands over what it MEASURED as it asked — `rowHeight` — and the block takes
+ * that as its own minimum, the answers splitting whatever height it leaves. A
+ * cost sentence can still make the block taller, because that sentence has to
+ * stand somewhere; nothing makes it shorter than the row it replaced.
+ *
  * The question is also the group's own LABEL, for a reader who cannot see the
  * box it is asked in.
  */
@@ -668,6 +677,7 @@ export function ConfirmRow({
   keepLabel = 'No, keep',
   confirmLabel,
   isBusy = false,
+  rowHeight,
   onKeep,
   onConfirm,
 }: {
@@ -680,6 +690,8 @@ export function ConfirmRow({
   /** The commitment, carrying its own progress while it runs: `Deleting...`. */
   confirmLabel: string;
   isBusy?: boolean;
+  /** What the row this replaces STOOD, in px, so the list keeps its own height. */
+  rowHeight?: number;
   onKeep: () => void;
   onConfirm: () => void;
 }) {
@@ -690,7 +702,8 @@ export function ConfirmRow({
     <div
       role="group"
       aria-label={question}
-      className="relative after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border after:border-err-edge"
+      className="relative flex flex-col after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border after:border-err-edge"
+      style={rowHeight === undefined ? undefined : { minHeight: rowHeight }}
     >
       {cost !== undefined && (
         // The rule that separates the cost from its two answers belongs to the
@@ -700,7 +713,7 @@ export function ConfirmRow({
           {cost}
         </p>
       )}
-      <div className="flex min-h-12 items-stretch mouse:min-h-8">
+      <div className="flex min-h-12 flex-1 items-stretch mouse:min-h-8">
         <button
           type="button"
           autoFocus

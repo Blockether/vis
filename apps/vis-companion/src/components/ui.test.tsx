@@ -422,6 +422,25 @@ describe('ConfirmRow', () => {
 
     expect(screen.getByText('Signs out on the gateway machine.')).toBeInTheDocument();
   });
+
+  // Regression, user report: the answers' own 48px floor is not the height of the row
+  // they replace, so a 52px session row left the list four pixels shorter the moment
+  // its question appeared. The row hands over what it stood.
+  it('stands what the row it replaces stood', () => {
+    render(
+      <ConfirmRow
+        question="Delete alpha?"
+        confirmLabel="Yes, delete"
+        rowHeight={52}
+        onKeep={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('group', { name: 'Delete alpha?' })).toHaveStyle({
+      minHeight: '52px',
+    });
+  });
 });
 
 describe('the second vocabulary: chips, rows, disclosures', () => {

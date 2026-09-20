@@ -226,9 +226,25 @@ export const SessionRow = memo(function SessionRow({
     () => commands.toggleStar(session, conn),
     [commands, session, conn],
   );
+  // WHAT THIS ROW STANDS, measured as the question is asked. The two answers carry
+  // a 48px floor of their own, and this row is TALLER than that floor whenever its
+  // metadata stacks under the title — 52px on a phone — so the list lost those
+  // pixels the moment the confirmation took the row's place. The trash verb is the
+  // only way into that confirmation, so the row is still on screen right here, and
+  // `clientHeight` is the height it stands inside the list's own rule.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [standingHeight, setStandingHeight] = useState<number | undefined>(undefined);
+  const requestDelete = useCallback(() => {
+    setStandingHeight(rowRef.current?.clientHeight);
+    commands.requestDelete(session, conn);
+  }, [commands, session, conn]);
 
   return (
-    <div className={`[&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}>
+    <div
+      ref={rowRef}
+      data-session-row={session.id}
+      className={`[&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
+    >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
       {deletion ? (
@@ -236,6 +252,7 @@ export const SessionRow = memo(function SessionRow({
           question={`Delete ${title}?`}
           confirmLabel={deletion.isBusy ? 'Deleting...' : 'Yes, delete'}
           isBusy={deletion.isBusy}
+          rowHeight={standingHeight}
           onKeep={deletion.cancel}
           onConfirm={deletion.confirm}
         />
@@ -265,7 +282,7 @@ export const SessionRow = memo(function SessionRow({
                     label: 'Delete',
                     icon: <TrashIcon className="size-4" />,
                     tone: 'danger',
-                    onSelect: () => commands.requestDelete(session, conn),
+                    onSelect: requestDelete,
                   },
                 ]
           }

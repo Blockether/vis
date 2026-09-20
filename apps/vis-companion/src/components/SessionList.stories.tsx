@@ -249,3 +249,53 @@ export const Stopped: Story = {
     await expect(dot).not.toHaveClass('animate-pulse');
   },
 };
+
+/**
+ * Regression, user report: the two answers stood their own 48px floor while the row
+ * they replace stands 52 on a phone — metadata stacks under the title there — so the
+ * list lost four pixels the moment the question appeared. The confirmation stands
+ * exactly what the row stood, under a finger and under a pointer.
+ */
+export const Deleting: Story = {
+  render: function DeletingRow(args) {
+    const [asking, setAsking] = useState(false);
+    return (
+      <SessionRow
+        {...args}
+        commands={{ ...args.commands, requestDelete: () => setAsking(true) }}
+        deletion={
+          asking
+            ? { isBusy: false, error: null, confirm: fn(), cancel: () => setAsking(false) }
+            : null
+        }
+      />
+    );
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const row = canvasElement.querySelector<HTMLElement>('[data-session-row]')!;
+    const stood = row.getBoundingClientRect().height;
+    const win = canvasElement.ownerDocument.defaultView!;
+    if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
+      await userEvent.click(
+        canvas.getByRole('button', { name: `Actions for ${STORY_SESSION_ROW.title}` }),
+      );
+      const menu = within(canvasElement.ownerDocument.body).getByRole('dialog');
+      await userEvent.click(within(menu).getByRole('button', { name: 'Delete' }));
+    } else {
+      const actions = canvas.getByRole('group', { name: `${STORY_SESSION_ROW.title} actions` });
+      within(actions).getByRole('button', { name: 'Delete' }).focus();
+      await userEvent.keyboard('{Enter}');
+    }
+    const question = await canvas.findByRole('group', {
+      name: `Delete ${STORY_SESSION_ROW.title}?`,
+    });
+    await expect(question).toBeVisible();
+    await expect(row.getBoundingClientRect().height).toBe(stood);
+  },
+};
+
+/** The same question under a pointer, where row and answers share a 32px floor. */
+export const DeletingPointer: Story = {
+  ...Deleting,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
