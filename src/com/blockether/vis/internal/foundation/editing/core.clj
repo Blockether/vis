@@ -830,10 +830,46 @@
                :owner owner
                :kind kind}})))
 
+(defn- unusable-path-failure
+  "Turn a path the OS itself cannot resolve — longer than `NAME_MAX`, carrying a
+   NUL byte — into this op's own failure envelope. The gate canonicalizes before
+   it decides, so without this the `IOException` escapes the `:before-fn` as an
+   unclassified hook exception and the model reads a bare OS sentence with no
+   pointer to which argument was wrong."
+  [op kind operation {:keys [cause path target]}]
+  (let [t
+        (util/now-ms)
+
+        shown
+        (cond-> (subs path 0 (min 120 (count path)))
+          (< 120 (count path))
+          (str "…"))
+
+        reason
+        (str "Unusable path ("
+             (count path)
+             " characters): "
+             cause
+             ". Pass the path itself; file CONTENT or a reused variable is the usual cause.")]
+
+    (extension/failure
+      {:result nil
+       :op op
+       :metadata
+       {:target target :started-at-ms t :finished-at-ms t :duration-ms 0 :operation operation}
+       :error {:message (str (name op) " failed: " shown " — " cause)
+               :type :ext.foundation.editing/unusable-path
+               :reason :unusable-path
+               :operation operation
+               :hint reason
+               :loop-hint reason
+               :kind kind}})))
+
 (defn- fs-access-refusal
   "First configured-deny, draft-policy or extension-owned `:fs/access` refusal, or
    nil when all paths are allowed. Host readers and writers use `file-read` and
-   `file-write`."
+   `file-write`. A path the OS cannot canonicalize refuses as `:unusable?` so the
+   op fails with its own envelope instead of throwing out of the gate."
   [env kind operation paths]
   (some (fn [path]
           (let [target
@@ -842,15 +878,20 @@
                 absolute
                 (or (:absolute target) (str path))]
 
-            (or (when-let [reason (process-jail/deny-refusal env operation absolute)]
-                  {:reason reason :owner :policy :target target})
-                (when (= "file-write" operation)
-                  (when-let [reason (process-jail/draft-write-refusal env absolute)]
-                    {:reason reason :owner :draft :target target}))
-                (when (extension/gate-hooked? :fs/access)
-                  (some->
-                    (extension/run-gate-hooks :fs/access env {:operation operation :path absolute})
-                    (assoc :target target))))))
+            (try (or (when-let [reason (process-jail/deny-refusal env operation absolute)]
+                       {:reason reason :owner :policy :target target})
+                     (when (= "file-write" operation)
+                       (when-let [reason (process-jail/draft-write-refusal env absolute)]
+                         {:reason reason :owner :draft :target target}))
+                     (when (extension/gate-hooked? :fs/access)
+                       (some-> (extension/run-gate-hooks :fs/access
+                                                         env
+                                                         {:operation operation :path absolute})
+                               (assoc :target target))))
+                 (catch java.io.IOException e
+                   {:unusable? true :cause (ex-message e) :path absolute :target target})
+                 (catch java.nio.file.InvalidPathException e
+                   {:unusable? true :cause (ex-message e) :path absolute :target target}))))
         paths))
 
 (defn- fs-access-before-fn
@@ -860,7 +901,9 @@
   [op kind operation path-extractor]
   (fn [env f args]
     (if-let [refusal (fs-access-refusal env kind operation (extracted-paths path-extractor args))]
-      {:result (gate-refusal-failure op kind operation refusal)}
+      {:result (if (:unusable? refusal)
+                 (unusable-path-failure op kind operation refusal)
+                 (gate-refusal-failure op kind operation refusal))}
       {:env env :fn f :args args})))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension.core`:

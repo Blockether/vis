@@ -581,6 +581,28 @@
 
         (expect (not (contains? out :result)))
         (expect (= args (:args out)))))
+  ;; A junk path — file text reused as a filename, a name past NAME_MAX — fails the op
+  ;; instead of throwing out of the `:before-fn` as an unclassified hook exception.
+  (it "a path the OS cannot canonicalize fails the op with its own envelope"
+      (let [before
+            (:ext.symbol/before-fn (private-fn "cat-symbol"))
+
+            junk
+            (clojure.string/join (repeat 4096 "x"))
+
+            failure
+            (:result (before {:extensions (atom [])} (constantly :ok) [junk]))]
+
+        (expect (some? failure))
+        (expect (false? (:success? failure)))
+        (expect (= :ext.foundation.editing/unusable-path
+                   (-> failure
+                       :error
+                       :type)))
+        (expect (clojure.string/includes? (-> failure
+                                              :error
+                                              :hint)
+                                          "4096"))))
   (it "a gate that reads a file does not recurse: the nested ask is skipped"
       (let [depth (atom 0)]
         (with-fs-gate! (fn [env op ctx]
