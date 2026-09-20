@@ -142,14 +142,14 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.172` | Apache-2.0 | 619 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:7ad9c2b9673ed4a5864ea21440b008d3001cfa0b` | MIT | source checkout | Blockether (in-house) |
-| `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
-| `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.1` | Apache-2.0 | 72 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.1` | Apache-2.0 | 95 KB | 3rd-party |
+| `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
+| `com.fasterxml.jackson.core/jackson-core` | `2.22.2` | Apache-2.0 | 580 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.2` | Apache-2.0 | 72 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.2` | Apache-2.0 | 95 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
-| `com.github.seancorfield/honeysql` | `2.7.1425` | EPL-2.0 | 43 KB | 3rd-party |
+| `com.github.seancorfield/honeysql` | `2.7.1437` | EPL-2.0 | 43 KB | 3rd-party |
 | `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
 | `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
@@ -157,7 +157,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
 | `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
-| `info.sunng/ring-jetty9-adapter` | `0.40.3` | EPL-1.0 | 163 KB | 3rd-party |
+| `info.sunng/ring-jetty9-adapter` | `0.40.4` | EPL-1.0 | 163 KB | 3rd-party |
 | `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
@@ -165,22 +165,22 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
-| `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
+| `org.babashka/http-client` | `0.4.25` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | Bouncy Castle Licence | 9.8 MB | 3rd-party |
-| `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
+| `org.clojure/clojure` | `1.12.6` | EPL-1.0 | 4.0 MB | 3rd-party |
 | `org.clojure/core.memoize` | `1.2.281` | EPL-1.0 | 8 KB | 3rd-party |
-| `org.clojure/tools.deps` | `0.31.1638` | EPL-1.0 | 49 KB | 3rd-party |
+| `org.clojure/tools.deps` | `0.31.1646` | EPL-1.0 | 49 KB | 3rd-party |
 | `org.commonmark/commonmark` | `0.29.0` | BSD-2-Clause | 211 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-strikethrough` | `0.29.0` | BSD-2-Clause | 13 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
 | `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
 | `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
-| `org.xerial/sqlite-jdbc` | `3.53.2.1` | Apache-2.0 | 11.4 MB | 3rd-party |
+| `org.xerial/sqlite-jdbc` | `3.53.4.0` | Apache-2.0 | 11.4 MB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.21` | MIT | 28 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
-| `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
+| `tools.jackson.core/jackson-databind` | `3.2.2` | Apache-2.0 | 1.9 MB | 3rd-party |
 
 ### `vis-tui` module
 
@@ -289,11 +289,11 @@ Direct artifacts of at least 1 MB:
 
 | Dependency | Version | Jar size |
 |---|---|---|
-| `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
+| `org.xerial/sqlite-jdbc` | `3.53.4.0` | 11.4 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
-| `org.clojure/clojure` | `1.12.5` | 4.0 MB |
+| `org.clojure/clojure` | `1.12.6` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
-| `tools.jackson.core/jackson-databind` | `3.2.1` | 1.9 MB |
+| `tools.jackson.core/jackson-databind` | `3.2.2` | 1.9 MB |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | 1.3 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |
 

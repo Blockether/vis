@@ -22,16 +22,16 @@
         com.blockether/vis-python-runtime {:git/sha "7ad9c2b9673ed4a5864ea21440b008d3001cfa0b"
                                            :git/url
                                            "https://github.com/Blockether/vis-python-runtime.git"}
-        com.cnuernber/charred {:mvn/version "1.041"}
+        com.cnuernber/charred {:mvn/version "1.042"}
         ;; Jackson 2.x arrives only through clj-kondo -> cheshire; core/smile/cbor must stay on
         ;; one version. databind stays excluded: cheshire never binds, and it is the CVE surface.
-        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.1"}
+        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.2"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-smile
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
         com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
-        com.github.seancorfield/honeysql {:mvn/version "2.7.1425"}
+        com.github.seancorfield/honeysql {:mvn/version "2.7.1437"}
         com.github.seancorfield/next.jdbc {:mvn/version "1.3.1118"}
         com.google.zxing/core {:mvn/version "3.5.4"}
         com.taoensso/nippy {:mvn/version "3.8.0"}
@@ -45,24 +45,24 @@
         com.zaxxer/HikariCP {:mvn/version "7.1.0"}
         ;; Jetty 12 core adapter, not ring/ring-jetty-adapter: no ee9 servlet layer on the SSE hot
         ;; path, and it tracks Jetty's own releases, which is why no Jetty CVE pins live here.
-        info.sunng/ring-jetty9-adapter {:mvn/version "0.40.3"}
+        info.sunng/ring-jetty9-adapter {:mvn/version "0.40.4"}
         io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
         metosin/reitit-ring {:mvn/version "0.10.1"}
         org.apache.commons/commons-compress {:mvn/version "1.28.0"}
-        org.babashka/http-client {:mvn/version "0.4.24"}
+        org.babashka/http-client {:mvn/version "0.4.25"}
         ;; X.509 minting for the egress proxy's per-session MITM CA. No provider is registered;
         ;; bcpkix uses the default JCA signer, which the native image can build.
         org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}
         org.bouncycastle/bcprov-jdk18on {:mvn/version "1.85"}
         ;; Must stay pinned: `clojure -M:vis` inherits the user's CLI, whose own deps.edn makes
         ;; Clojure a top-level dep, so an older CLI's 1.11 beat the 1.12 syntax the engine needs.
-        org.clojure/clojure {:mvn/version "1.12.5"}
+        org.clojure/clojure {:mvn/version "1.12.6"}
         org.clojure/core.memoize {:mvn/version "1.2.281"}
         ;; Downloads the per-platform FFM native jars on the plain-JVM path only. Excluding the
         ;; S3 transporter (no `s3://` repos here) keeps cognitect.aws out of cold native builds.
         org.clojure/tools.deps {:exclusions [org.clojure/tools.deps.maven-s3-transporter]
-                                :mvn/version "0.31.1638"}
+                                :mvn/version "0.31.1646"}
         org.commonmark/commonmark {:mvn/version "0.29.0"}
         org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
         org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
@@ -70,11 +70,11 @@
         ;; flyway-core; without it Flyway does not recognize a `jdbc:sqlite:` URL.
         org.flywaydb/flyway-core {:mvn/version "12.11.0"}
         org.flywaydb/flyway-database-nc-sqlite {:mvn/version "12.11.0"}
-        org.xerial/sqlite-jdbc {:mvn/version "3.53.2.1"}
+        org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}
         org.yamlstar/yamlstar {:mvn/version "0.1.21"}
         ring/ring-core {:mvn/version "1.15.5"}
         ;; CVE pin over Flyway's tools.jackson jackson-databind 3.1.4 (CVE-2026-59889).
-        tools.jackson.core/jackson-databind {:mvn/version "3.2.1"}}
+        tools.jackson.core/jackson-databind {:mvn/version "3.2.2"}}
  :aliases
  {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
