@@ -143,6 +143,13 @@
   --color-warn-strong: var(--warning-border);
   --color-warn-surface: var(--warning-bg);
   --color-warn-edge: var(--warning-border);
+  /* BROWN, the unsent-composer mark. It stands where LIVE and IDLE stand, so it
+     cannot wear a colour already spoken for: green is running, amber is waiting
+     on a human, red is cut off. No shipped palette carries a brown, so the hue
+     is fixed here and then bent toward the theme's own ink the way
+     --color-err-ink is — brown on a light page, tan on a dark one, and a 10px
+     bold label that clears 4.5:1 in every shipped theme. */
+  --color-dirty: color-mix(in oklab, #a9703f 62%, var(--fg));
   --color-err: var(--err);
   /* A destructive answer that lives INSIDE the list cannot wear raw --err.
      Poured full-bleed across half a row, that slab is the heaviest mass on the

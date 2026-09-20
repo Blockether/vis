@@ -143,7 +143,15 @@ describe('typing in the composer', () => {
     // Leaving persists the message, and that is when the list is told: the row
     // of a session with no title of its own is named by what is waiting in it.
     expect(await screen.findByText('half a thought')).toBeVisible();
-    expect(screen.getByText('dirty')).toBeVisible();
+    // ONE mark, in the column that already says LIVE or IDLE: a session holding
+    // words you never sent is not idle, and it never wore two labels for it.
+    const status = screen.getByText('DIRTY');
+    expect(status).toBeVisible();
+    expect(status.closest('[data-session-status]')?.className).toContain('text-dirty');
+    expect(
+      status.closest('[data-session-status]')?.querySelector('[data-session-status-dot]')?.className,
+    ).toContain('bg-dirty');
+    expect(screen.queryByText('dirty')).not.toBeInTheDocument();
     view.unmount();
   });
 });

@@ -251,6 +251,45 @@ export const Stopped: Story = {
 };
 
 /**
+ * Words typed on this device and never sent. It is the one thing about the row the
+ * gateway cannot know, and it is a STATE, not a decoration: the mark that would read
+ * IDLE reads a brown DIRTY instead, in the column that already says LIVE or STOPPED.
+ */
+const UNSENT_SESSION: Session = {
+  ...STORY_SESSION_ROW,
+  id: '2f6a0f71-4c3e-4a0b-9d51-8c6f2f0d5a13',
+  title: 'Rewrite the pager without the whole-store scan',
+  status: 'idle',
+  live: false,
+  current_turn_id: null,
+  is_awaiting_input: false,
+  favorite_rank: null,
+  was_interrupted: false,
+};
+
+export const Unsent: Story = {
+  beforeEach: () => {
+    markSessionRead(UNSENT_SESSION.id, UNSENT_SESSION.turn_count ?? 0);
+  },
+  args: {
+    session: UNSENT_SESSION,
+    draft: { ...EMPTY_DRAFT_MESSAGE, text: 'the part I could not finish' },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText(UNSENT_SESSION.title!)).toBeVisible();
+    await expect(canvas.getByText('DIRTY')).toBeVisible();
+    // One mark, in the status column: it REPLACES IDLE, and the chip that used to
+    // sit beside the title is gone.
+    await expect(canvas.queryByText('IDLE')).not.toBeInTheDocument();
+    await expect(canvas.queryByText('dirty')).not.toBeInTheDocument();
+    const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
+    await expect(dot).toHaveClass('bg-dirty');
+    // Nothing is running: the brown mark is solid, like STOPPED and unlike LIVE.
+    await expect(dot).not.toHaveClass('animate-pulse');
+  },
+};
+
+/**
  * Regression, user report: the two answers stood their own 48px floor while the row
  * they replace stands 52 on a phone — metadata stacks under the title there — so the
  * list lost four pixels the moment the question appeared. The confirmation stands

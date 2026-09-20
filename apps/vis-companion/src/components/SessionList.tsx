@@ -126,7 +126,9 @@ export const SessionRow = memo(function SessionRow({
   // DIRTY: this device is holding composer content nobody has sent — words, a
   // picture, a file. When the session has no title of its own, that content names
   // the row, which otherwise reads "Untitled session" with nothing on screen to
-  // say why it is worth opening.
+  // say why it is worth opening. It is also the row's STATUS: the mark on the
+  // right reads DIRTY where it would otherwise read IDLE, because a session
+  // holding words you have not sent is not idle.
   const hasUnsent = draftMessageHasUnsent(draft);
   const title =
     session.title?.trim() ||
@@ -149,7 +151,7 @@ export const SessionRow = memo(function SessionRow({
   // abandoned session never comes. The row wears it ONCE, in the status mark on the
   // right; the flags column stays quiet so a cut-off row never carries two STOPPED labels.
   const stopped = !live && sessionWasInterrupted(session) && unread > 0;
-  const status = statusLabel(session, stopped);
+  const status = statusLabel(session, stopped, hasUnsent);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
@@ -377,19 +379,11 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* Unread and unsent-message flags share one aligned column. */}
+                {/* The unread flag keeps this aligned column of its own. */}
                 <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip @3xl:col-start-auto @3xl:row-start-auto">
                   {!stopped && unread > 0 && (
                     <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                       {unread > 1 ? `${unread} new` : 'new'}
-                    </span>
-                  )}
-                  {hasUnsent && (
-                    <span
-                      className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn"
-                      title="Unsent message waiting in this session's composer"
-                    >
-                      dirty
                     </span>
                   )}
                 </span>
@@ -429,15 +423,20 @@ export const SessionRow = memo(function SessionRow({
                   <span
                     data-session-status
                     role={renameBusy ? 'status' : undefined}
+                    title={
+                      status === 'DIRTY'
+                        ? "Unsent message waiting in this session's composer"
+                        : undefined
+                    }
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
                       status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${statusTone(session, stopped)}`}
+                    } ${statusTone(session, stopped, hasUnsent)}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
-                      className={`size-1.5 shrink-0 ${statusDot(session, stopped)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
                     <span className="sr-only @sm:not-sr-only">
                       {renameBusy ? 'Saving' : status}
@@ -758,7 +757,7 @@ export function NavigatorSkeleton() {
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
                     </span>
-                    {/* The flag column a real row keeps for `NEW` / `dirty`.
+                    {/* The flag column a real row keeps for `NEW`.
                         Nothing is loading in it, but the track has to exist or the
                         columns shift the moment the rows arrive. */}
                     <span className="col-start-2 row-start-1 @3xl:col-start-auto @3xl:row-start-auto" />
@@ -786,7 +785,7 @@ export function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
 }
 
-function statusLabel(session: Session, stopped: boolean): string {
+function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
   if (sessionNeedsInput(session)) {
@@ -798,23 +797,30 @@ function statusLabel(session: Session, stopped: boolean): string {
   if (sessionIsLive(session)) return 'LIVE';
   if (stopped) return 'STOPPED';
   if (session.status === 'suspended') return 'WAITING';
+  // Unsent words outrank IDLE and nothing else. What the session is doing is
+  // news about the session; this is news about you, and it waits its turn.
+  if (hasUnsent) return 'DIRTY';
   return 'IDLE';
 }
 
-function statusTone(session: Session, stopped: boolean): string {
+function statusTone(session: Session, stopped: boolean, hasUnsent: boolean): string {
   if (sessionNeedsInput(session)) return 'text-warn';
   if (sessionIsLive(session)) return 'text-ok';
   if (stopped) return 'text-err';
   if (session.status === 'suspended') return 'text-warn';
+  if (hasUnsent) return 'text-dirty';
   return 'text-dialog-hint';
 }
 
-function statusDot(session: Session, stopped: boolean): string {
+function statusDot(session: Session, stopped: boolean, hasUnsent: boolean): string {
   if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   // Solid, never pulsing: an interrupted session is the opposite of live.
   if (stopped) return 'bg-err';
   if (session.status === 'suspended') return 'bg-warn-strong';
+  // Filled like every mark that means something is waiting. The hollow square
+  // is IDLE's alone, because it is the one that means nothing is.
+  if (hasUnsent) return 'bg-dirty';
   return 'border border-dialog-hint';
 }
 
