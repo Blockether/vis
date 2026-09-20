@@ -1,7 +1,4 @@
-{:deps {;; Pinned below 0.3.1: that release caps `explain` at five errors, which drops the
-        ;; `enum` error `config.validation` needs to collapse the oneOf/const noise an
-        ;; mcp `transport` typo produces. Bump once the report keeps the specific error.
-        com.blockether/skjema {:mvn/version "0.3.0"}
+{:deps {com.blockether/skjema {:mvn/version "0.3.2"}
         com.cnuernber/charred {:mvn/version "1.042"}
         org.clojure/clojure {:mvn/version "1.12.6"}}
  :paths ["src" "resources"]}
