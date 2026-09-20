@@ -1371,6 +1371,25 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_session_fs_actions_open(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/fs/actions/open — open one file in the editor."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/:sid/fs/actions/open",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_session_iteration_attachments(
         self,
         sid: str,
