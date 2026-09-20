@@ -2634,7 +2634,7 @@
           (or (sequential? v) (instance? java.util.Collection v))
           (into []
                 (map (fn [x]
-                       (if (and (string? x) (not (str/blank? x)))
+                       (if (util/non-blank-string? x)
                          x
                          (throw (ex-info (str what " takes path strings, got " (pr-str x) ".")
                                          {:type ::bad-option :option what :value x})))))

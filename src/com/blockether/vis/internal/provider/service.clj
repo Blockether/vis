@@ -231,8 +231,8 @@
    derived from it — and `cancel/worker-future` starts a bare thread that conveys
    no bindings (unlike `clojure.core/future`). Without conveyance, bounding the
    probe silently unbound the session: a callback invoked from inside a live
-   session had `vis.jailed_shell_session` and `vis.ask` refuse it as \"available
-   only while handling a session\", `vis.state` fall back to the process-wide DB,
+   session had `vis.ask` refuse it as \"available only while handling a
+   session\", `vis.state` fall back to the process-wide DB,
    and a `vis.jailed_shell` spawn scoped to the process cwd instead of the
    caller's workspace.
 

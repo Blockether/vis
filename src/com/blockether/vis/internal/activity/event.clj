@@ -685,7 +685,7 @@
              (filter map?)
              (keep (fn [failure]
                      (let [file (or (get failure "file") (get failure :file))]
-                       (when (and (string? file) (not (str/blank? file))) (runner-file dir file)))))
+                       (when (util/non-blank-string? file) (runner-file dir file)))))
              distinct
              (map (fn [path]
                     {:type :file :id (bounded-text path max-summary-bytes)})))))))

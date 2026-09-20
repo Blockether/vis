@@ -103,8 +103,7 @@ are rejected at declaration. Passive callback errors are logged and return no
 result; authentication errors are returned to the caller.
 
 Startup, status probes and limits polling run without a session. `vis.shell`
-and `vis.jailed_shell` work there; `vis.ask` and `vis.jailed_shell_session` do
-not.
+and `vis.jailed_shell` work there; `vis.ask` does not.
 
 Report usage with the limits contract:
 

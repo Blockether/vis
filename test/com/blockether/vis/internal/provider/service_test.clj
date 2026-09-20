@@ -759,8 +759,8 @@
 
 ;; Regression, issue #113: bounding the probe moved the callback onto a bare
 ;; worker thread with no binding conveyance, so a provider callback invoked from
-;; inside a LIVE session saw no session at all — `vis.jailed_shell_session` and
-;; `vis.ask` refused with "available only while handling a session", `vis.state`
+;; inside a LIVE session saw no session at all — `vis.ask` refused with "available
+;; only while handling a session", `vis.state`
 ;; fell back to the process-wide DB, and a jailed spawn was scoped to the process
 ;; cwd instead of the caller's workspace.
 (deftest provider-probe-keeps-the-callers-session-context-test

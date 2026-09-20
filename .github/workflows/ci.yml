@@ -69,8 +69,8 @@ jobs:
             - id: anthropic-coding-plan
               models:
                 - name: claude-opus-4-8
-              base-url: https://api.anthropic.com/v1
-              api-key: ci-dummy-key
+              base_url: https://api.anthropic.com/v1
+              api_key: ci-dummy-key
           YAML
           # Harness discovery scans ~/.claude/{agents,skills}; the dev machine
           # always has some. Seed the fixtures the harness tests expect.
