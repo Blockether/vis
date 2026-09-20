@@ -1456,12 +1456,6 @@
   [session]
   (boolean (when session (py-interrupt! session))))
 
-(def ^:dynamic *auto-repair-brackets?*
-  "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
-   single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
-   auto-fix stays gated behind this flag until proven safe in the wild."
-  false)
-
 (defn- render-source-context
   "Babashka-style source excerpt for an eval failure: a numbered ±2-line window of
    `code` around the 1-based `line`, with a caret run under the offending span

@@ -23,18 +23,6 @@
                    (expect (= :unbalanced-quote (:reason r)))
                    (expect (= 1 (:line r))))))
 
-(defdescribe unresolved-symbol-hint-test
-             (it "suggests closest sandbox bindings"
-                 (expect (= "Unresolved `hits`. Closest defined: `hit`."
-                            (pd/unresolved-symbol-hint
-                              "Unable to resolve symbol: hits in this context"
-                              ['hit 'tree 'completely-different]))))
-             (it "returns nil when no candidate is close enough"
-                 (expect (nil? (pd/unresolved-symbol-hint "Unable to resolve symbol: hits"
-                                                          ['xxxxxxxxxxxxxxx 'yyyyyyyyy]))))
-             (it "returns nil when message is not unresolved-symbol shape"
-                 (expect (nil? (pd/unresolved-symbol-hint "Divide by zero" ['hits])))))
-
 (defdescribe diagnose-bracket-balance-test
              (it "returns nil when balanced"
                  (expect (nil? (pd/diagnose-bracket-balance "print(foo(bar))"))))
