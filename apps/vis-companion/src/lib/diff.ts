@@ -73,3 +73,34 @@ export function diffSourceLabel(source: DiffEnvelope['source']): string {
     .filter(Boolean)
     .join(' · ');
 }
+
+/**
+ * THE FILE A DIFF HEADER NAMES.
+ *
+ * A patch says, above every hunk, which file the hunk belongs to — and that name
+ * is the one thing in a snapshot you may want to open. `+++ b/src/app.ts` and
+ * `diff --git a/… b/…` name the file after the change; `--- a/…` names it for a
+ * deletion, where the `+++` side is `/dev/null`.
+ *
+ * The path comes back relative to the repository the patch was taken in, which is
+ * what the machine resolves against the session workspace. `start` and `end` are
+ * the slice of the line that IS the path, so the `+++ ` in front of it stays plain
+ * words. Git quotes a name with spaces or control characters (`"a/odd name.txt"`);
+ * those are left alone rather than guessed at.
+ */
+export function diffHeaderPath(
+  line: string,
+): { path: string; start: number; end: number } | null {
+  const git = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line);
+  if (git) return { path: git[2], start: line.length - git[2].length, end: line.length };
+  const side = /^(\+\+\+|---) (.+)$/.exec(line);
+  if (!side) return null;
+  const tab = side[2].indexOf('\t');
+  const named = tab < 0 ? side[2] : side[2].slice(0, tab);
+  if (!named || named === '/dev/null' || /\s/.test(named)) return null;
+  const marker = /^[ab]\//.test(named) ? 2 : 0;
+  const path = named.slice(marker);
+  if (!path) return null;
+  const start = side[1].length + 1 + marker;
+  return { path, start, end: start + path.length };
+}

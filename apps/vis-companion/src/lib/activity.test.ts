@@ -372,6 +372,9 @@ describe('complete Activity presentation content', () => {
     for (const content of [
       [{ type: 'code', text: 1 }],
       [{ type: 'table', columns: ['Name', 'Result'], rows: [['missing result']] }],
+      // BLO-172: one path per row, or the press opens the wrong file.
+      [{ type: 'table', columns: ['Name'], rows: [['a.clj'], ['b.clj']], paths: ['/w/a.clj'] }],
+      [{ type: 'table', columns: ['Name'], rows: [['a.clj']], paths: [7] }],
       [{ type: 'progress', label: 'Builds', value: 3, total: 2 }],
     ]) {
       expect(
@@ -381,6 +384,17 @@ describe('complete Activity presentation content', () => {
         }),
       ).toBeNull();
     }
+  });
+
+  it('keeps the path a listed row names, so the client can open that file', () => {
+    const content = [
+      { type: 'table', columns: ['Name'], rows: [['a.clj'], ['util/']], paths: ['/w/a.clj', ''] },
+    ];
+    const parsed = activityProjectionFromWire({
+      ...page,
+      rows: [{ ...row, presentation: { ...presentation, content } }],
+    });
+    expect(parsed!.rows[0]!.presentation?.content).toEqual(content);
   });
 });
 

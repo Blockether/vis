@@ -252,15 +252,21 @@ function activityStepDelta(row: ActivityRow): {
  * the path, so a row that also expands a diff keeps that for the rest of its width —
  * the TUI resolves the same overlap the same way, path first. With no opener
  * published the path stays plain words and the row keeps every press it had.
+ *
+ * A caller that already shows its own words for the file — a table cell naming it
+ * inside a listed directory — passes `label`; the press, the hover title and the
+ * opener still carry the whole path.
  */
-function ActivityPath({ id }: { id: string }) {
+function ActivityPath({ id, label }: { id: string; label?: string }) {
   const roots = useWorkspaceRoots();
   const openPath = useOpenPath();
   const shown = workspaceRelativePath(id, roots) || id;
   const cut = shown.lastIndexOf('/');
   const directory = cut < 0 ? '' : shown.slice(0, cut + 1);
   const name = cut < 0 ? shown : shown.slice(cut + 1);
-  const words = (
+  const words = label ? (
+    <span className="max-w-full shrink-0 truncate">{label}</span>
+  ) : (
     <>
       {directory && <span className="truncate text-dialog-hint">{directory}</span>}
       <span className="max-w-full shrink-0 truncate">{name}</span>
@@ -601,7 +607,11 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
                                   key={col}
                                   className="px-2 py-1 align-top whitespace-pre-wrap [overflow-wrap:anywhere]"
                                 >
-                                  {cell}
+                                  {col === 0 && table.paths?.[at] ? (
+                                    <ActivityPath id={table.paths[at]} label={cell} />
+                                  ) : (
+                                    cell
+                                  )}
                                 </td>
                               ))}
                             </tr>

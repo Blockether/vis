@@ -708,6 +708,12 @@
                     "type": "string"
                   }
                 }
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [

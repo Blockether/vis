@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.external-opener :as opener]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.theme :as theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
@@ -562,3 +563,69 @@
     (is (= :revise (get-in (key! with-comments \r) [::dlg/done :action])))
     (is (= with-comments (key! with-comments \a)))
     (is (= with-comments (key! with-comments \s)))))
+
+;; BLO-172 follow-up: a patch header is the only place a snapshot says which file
+;; its hunks belong to, so it is the address the reader presses to reach the file.
+(deftest patch-headers-open-the-file-they-name
+  (let [state
+        (annotator/artifact-state diff-row (diff/render diff-envelope) nil)
+
+        component
+        (annotator/modal-component "DIFF-search.json" true false state)
+
+        key!
+        #(get-in ((:on-key component) (assoc state :selected %) (cap/key-stroke \o) {:doc-h 10})
+                 [::dlg/done :action])]
+
+    ;; `diff --git`, `---` and `+++` name the file; the hunk, the removal and the
+    ;; addition under them do not.
+    (is (= [:open :open :open nil nil nil] (mapv key! (range 6))))
+    (is (= (assoc state :selected 4)
+           ((:on-key component) (assoc state :selected 4) (cap/key-stroke \o) {:doc-h 10})))))
+
+(deftest opening-a-patch-header-resolves-it-in-the-session-workspace
+  (let [directory
+        (.toFile (Files/createTempDirectory "annotator-open"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        file
+        (io/file directory "search.clj")
+
+        opened
+        (atom [])
+
+        open!
+        (fn [state]
+          (with-redefs [vis/session-workspace-info
+                        (fn [_]
+                          {"root" (str directory)})
+
+                        opener/open-file-in-editor!
+                        (fn [path]
+                          (swap! opened conj path)
+                          {:status :ok})]
+
+            (#'annotator/open-named-file! "session-1" state true)))
+
+        state
+        (annotator/artifact-state diff-row (diff/render diff-envelope) nil)
+
+        escaping
+        (annotator/artifact-state diff-row
+                                  (diff/render (assoc diff-envelope
+                                                 "patch" "+++ b/../escape.clj\n"))
+                                  nil)]
+
+    (try (spit file "(search title)\n")
+         ;; The header names a path in the tree the patch was taken in; the session's
+         ;; own workspace root is what it is relative to.
+         (is (= "Opening search.clj" (:note (open! (assoc state :selected 2)))))
+         (is (= [(.getPath file)] @opened))
+         ;; A file this workspace does not have says so instead of opening something else.
+         (.delete file)
+         (is (= "No such file: search.clj" (:note (open! (assoc state :selected 2)))))
+         ;; A line naming no file, and a path climbing out of the workspace, open nothing.
+         (is (= (assoc state :selected 4) (open! (assoc state :selected 4))))
+         (is (= (assoc escaping :selected 0) (open! (assoc escaping :selected 0))))
+         (is (= 1 (count @opened)))
+         (finally (.delete file) (.delete directory)))))

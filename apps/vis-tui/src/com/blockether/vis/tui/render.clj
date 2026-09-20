@@ -3388,6 +3388,26 @@
                                   (p/underline-cell! g (+ abs-col dc) y t/link-chrome-hover-fg))
                                 table-row? (dotimes [dc (long width)]
                                              (p/underline-cell! g (+ abs-col dc) y)))))))
+                  ;; A cell that NAMES A FILE presses like a file row does: the span
+                  ;; its words occupy opens that file, and the rest of the row keeps
+                  ;; whatever press it already had.
+                  (doseq [{:keys [col width path]} (:paths meta)
+                          :let [abs-row (+ (long viewport-top) (long y))
+                                abs-col (+ (long x) (long col))
+                                span (min (long width) (long (max 0 (- (long iw) (long col)))))
+                                hovered (.hovered interactions/hit-map)]
+                          :when (pos? span)]
+
+                    (.register interactions/hit-map
+                               {:bounds {:row abs-row :col abs-col :width span}
+                                :kind :file
+                                :session-id (:session-id meta)
+                                :url path})
+                    (when (and (= :file (:kind hovered))
+                               (= abs-row (:row (:bounds hovered)))
+                               (= abs-col (:col (:bounds hovered))))
+                      (dotimes [dc span]
+                        (p/underline-cell! g (+ abs-col (long dc)) y t/link-chrome-hover-fg))))
                   ;; Left edge bar, painted in the inner padding column so it
                   ;; steals no text width: the user block's own rule, and the
                   ;; error card's `border-warn-edge` equivalent.
@@ -5861,12 +5881,21 @@
                 [:ast {}
                  (into [:table {}]
                        (mapcat (fn [[_ table]]
-                                 (cons (into [:tr {}]
-                                             (map #(vector :th {} %)
-                                                  (activity-content-field table :columns)))
-                                       (map (fn [row]
-                                              (into [:tr {}] (map #(vector :td {} %) row)))
-                                            (activity-content-field table :rows))))
+                                 (let [paths (vec (activity-content-field table :paths))]
+                                   (cons (into [:tr {}]
+                                               (map #(vector :th {} %)
+                                                    (activity-content-field table :columns)))
+                                         (map-indexed
+                                           (fn [at row]
+                                             (let [path (not-empty (str (nth paths at "")))]
+                                               (into [:tr {}]
+                                                     (map-indexed (fn [col cell]
+                                                                    (if (and path
+                                                                             (zero? (long col)))
+                                                                      [:td {:path path} cell]
+                                                                      [:td {} cell]))
+                                                                  row))))
+                                           (activity-content-field table :rows)))))
                                group))]
 
                 "progress"

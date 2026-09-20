@@ -297,6 +297,16 @@ that runs the session, so a path in a transcript is an address the reader can ac
 instead of retyping. Report real paths in your file resources: a label that merely
 looks like a path opens nothing.
 
+A table row can name a file of its own. Pass `ActivityTable(headers, rows, paths=[...])`
+with one entry per row: the first cell of that row becomes the press target and keeps
+the words you gave it, while the press and its hover title carry the whole path. Use an
+empty string for a row that names no file, such as a directory or a total. The list must
+be exactly as long as `rows`, or the block is rejected.
+
+Vis presses the same way for the files it finds itself: the file a failing test reports
+in a `run_tests` result, and the file a patch header names when you read a diff
+artifact.
+
 Each headline and summary is one line of at most 512 UTF-8 bytes, including any
 Markdown source. Put the complete result in content blocks and non-nested
 sections: Vis does not cut their text,

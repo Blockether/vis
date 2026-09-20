@@ -58,7 +58,14 @@
                                           (when (> (count name) 64) "…")
                                           (when dir? "/")) (if dir? "Directory" "File")
                                      (if dir? "—" (str (get entry "size" 0)))]))
-                                rows)}]
+                                rows)
+                   "paths" (mapv (fn [entry]
+                                   (let [entry-path (str (get entry "path" ""))]
+                                     (if (or (= "dir" (get entry "type"))
+                                             (not (str/starts-with? entry-path "/")))
+                                       ""
+                                       entry-path)))
+                                 rows)}]
                  [])}))
 
 (defn- listing-presentation

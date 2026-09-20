@@ -174,7 +174,7 @@ export type ActivityEvidence = ActivityTextEvidence | ActivityDiffEvidence;
 export type ActivityContent =
   | { type: 'heading' | 'text' | 'markdown'; text: string }
   | { type: 'code' | 'diff'; text: string; language?: string }
-  | { type: 'table'; columns: string[]; rows: string[][] }
+  | { type: 'table'; columns: string[]; rows: string[][]; paths?: string[] }
   | {
       type: 'image' | 'video' | 'audio' | 'file';
       attachment_id: string;
@@ -207,7 +207,7 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
         break;
       case 'table':
         if (
-          !hasExactKeys(b, ['type', 'columns', 'rows']) ||
+          !hasExactKeys(b, ['type', 'columns', 'rows'], ['paths']) ||
           !Array.isArray(b.columns) ||
           !b.columns.length ||
           !b.columns.every((c) => typeof c === 'string') ||
@@ -223,6 +223,13 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
                 row.length === width &&
                 row.every((c) => typeof c === 'string'),
             )
+          )
+            return null;
+          if (
+            b.paths !== undefined &&
+            (!Array.isArray(b.paths) ||
+              b.paths.length !== b.rows.length ||
+              !b.paths.every((p) => typeof p === 'string'))
           )
             return null;
         }

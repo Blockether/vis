@@ -421,6 +421,26 @@ def test_large_typed_presentation_publishes_all_content(monkeypatch):
     assert _contracts.validate("activity", "presentation", updates[0]) == updates[0]
 
 
+def test_activity_table_rows_carry_the_paths_that_open_them():
+    # BLO-172: a listing printed file names nobody could open. One path per row
+    # lets a client open that row's file; a row without one keeps plain words.
+    table = vis.ActivityTable(
+        ["Name", "Kind"],
+        [["core.clj", "File"], ["util", "Directory"]],
+        ["/w/src/core.clj", ""],
+    )
+    view = vis.ActivityPresentation("Listed directory", "1 file", [table])
+    wire = view.to_wire()
+    assert wire["content"][0]["paths"] == ["/w/src/core.clj", ""]
+    assert _contracts.validate("activity", "presentation", wire) == wire
+    assert "paths" not in vis.ActivityTable(["Name"], [["core.clj"]]).to_wire()
+
+    with pytest.raises(ValueError):
+        vis.ActivityTable(["Name"], [["a"], ["b"]], ["/w/a"])
+    with pytest.raises(ValueError):
+        vis.ActivityTable(["Name"], [["a"]], [7])
+
+
 def test_single_large_activity_invocation_roundtrips_as_one_page():
     # Regression #218: a page budget cannot discard an indivisible invocation.
     from blockether.vis.activity import ActivityProjection

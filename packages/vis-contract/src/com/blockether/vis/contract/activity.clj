@@ -39,18 +39,20 @@
 
            (and (every? #(<= (long (bytes %)) (long summary-byte-limit))
                         (mapcat #(map % ["headline" "summary"]) sections))
-                (every?
-                  (fn [block]
-                    (case (get block "type")
-                      "progress"
-                      (or (nil? (get block "value"))
-                          (<= (double (get block "value")) (double (get block "total"))))
+                (every? (fn [block]
+                          (case (get block "type")
+                            "progress"
+                            (or (nil? (get block "value"))
+                                (<= (double (get block "value")) (double (get block "total"))))
 
-                      "table"
-                      (every? #(= (count %) (count (get block "columns"))) (get block "rows"))
+                            "table"
+                            (and (every? #(= (count %) (count (get block "columns")))
+                                         (get block "rows"))
+                                 (let [paths (get block "paths")]
+                                   (or (nil? paths) (= (count paths) (count (get block "rows"))))))
 
-                      true))
-                  blocks))))))
+                            true))
+                        blocks))))))
 
 (defn valid-projection?
   "Admit lossless projections; one indivisible invocation may exceed the page byte target."

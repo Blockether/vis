@@ -8,7 +8,9 @@ import {
   useState,
 } from 'react';
 
+import { diffHeaderPath } from '../lib/diff';
 import type { GatewayClient } from '../lib/gateway';
+import { useOpenPath } from '../lib/open-path';
 import {
   GENERAL_LABEL,
   parseAnnotated,
@@ -257,7 +259,7 @@ export const PlainText = memo(function PlainText({
           key={at}
           className={`min-h-[18px] break-words whitespace-pre-wrap ${diff ? lineTone(line) : ''}`}
         >
-          {line}
+          {diff ? diffLine(line) : line}
         </p>
       ))}
     </div>
@@ -269,6 +271,53 @@ function lineTone(line: string): string {
   if (line.startsWith('-')) return 'text-error';
   if (line.startsWith('@@') || line.startsWith('diff --git')) return 'text-link-fg';
   return '';
+}
+
+/**
+ * THE FILE A PATCH NAMES, PRESSED.
+ *
+ * A diff header is the only place a snapshot says which file its hunks belong to,
+ * and reading the change is usually the moment you want the file itself. The press
+ * stops at the path, so the rest of the line still quotes as a block; with no
+ * opener published the path stays plain words, exactly as an activity row does.
+ */
+function DiffPath({ path, words }: { path: string; words: string }) {
+  const openPath = useOpenPath();
+  if (!openPath) return <>{words}</>;
+  const press = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPath(path);
+  };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${path}`}
+      title={path}
+      className="cursor-pointer underline-offset-2 hover:underline"
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onClick={press}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') press(event);
+      }}
+    >
+      {words}
+    </span>
+  );
+}
+
+function diffLine(line: string): ReactNode {
+  const named = diffHeaderPath(line);
+  if (!named) return line;
+  return (
+    <>
+      {line.slice(0, named.start)}
+      <DiffPath path={named.path} words={line.slice(named.start, named.end)} />
+      {line.slice(named.end)}
+    </>
+  );
 }
 
 const PLAN_LABELS: Record<PlanAction, string> = {

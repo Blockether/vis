@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
-import { parseDiff, diffReviewRequest } from './diff';
+import { parseDiff, diffReviewRequest, diffHeaderPath } from './diff';
 import { artifactKind, docKindLabel, DIFF_MEDIA, collectArtifacts } from './artifacts';
 
 describe('portable diff attachment', () => {
@@ -82,5 +82,33 @@ describe('portable diff attachment', () => {
       'Do not treat this review as approval of new scope',
     );
     expect(() => diffReviewRequest('DIFF-search.json', 0)).toThrow();
+  });
+});
+
+describe('the file a diff header names', () => {
+  it.each([
+    ['+++ b/src/app.ts', 'src/app.ts'],
+    ['--- a/src/app.ts', 'src/app.ts'],
+    ['diff --git a/src/app.ts b/src/app.ts', 'src/app.ts'],
+    ['diff --git a/old.ts b/new.ts', 'new.ts'],
+    ['+++ b/src/app.ts\t2024-01-01 12:00:00', 'src/app.ts'],
+    ['+++ src/app.ts', 'src/app.ts'],
+  ])('reads %s', (line, path) => {
+    const named = diffHeaderPath(line);
+    expect(named?.path).toBe(path);
+    expect(line.slice(named?.start, named?.end)).toBe(path);
+  });
+
+  it.each([
+    '+++ /dev/null',
+    '--- /dev/null',
+    '@@ -1,2 +1,3 @@',
+    '+const value = 1;',
+    '-const value = 0;',
+    ' unchanged',
+    '+++ "b/odd name.ts"',
+    '',
+  ])('leaves %s alone', (line) => {
+    expect(diffHeaderPath(line)).toBeNull();
   });
 });

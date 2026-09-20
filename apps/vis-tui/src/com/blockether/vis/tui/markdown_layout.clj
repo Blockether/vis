@@ -431,9 +431,7 @@
                    str/lower-case))
 
         ansi?
-        (and (not fold?)
-             (not diff?)
-             (str/includes? content "\u001b["))
+        (and (not fold?) (not diff?) (str/includes? content "\u001b["))
 
         ansi-lines
         (when ansi? (folded-code-lines content budget))
@@ -508,18 +506,18 @@
                 wrap? (mapcat wrap-line (str/split-lines content))
                 ;; Unified patches stay compact: one row per patch line.
                 diff? (mapcat diff-line (str/split-lines content))
-                 ;; Source a producer already colored (zprint evidence, ANSI tool
-                 ;; output) ANSI-CHAR-FOLDS any over-wide row to the bubble width,
-                 ;; re-opening the SGR active at each cut so token color survives
-                 ;; the fold. Rows that already fit are one segment, untouched.
-                 ;; Without this a pathologically wide colorized line (a long JSON
-                 ;; row, a `javascript:` bookmarklet) overflowed off the right edge
-                 ;; with no wrap and no horizontal scroll, hiding its tail.
-                 ansi? (mapv (fn [line]
-                               {:runs (runs-of line)})
-                             ansi-lines)
-                 ;; A plain fence has no alignment contract, so CHAR-FOLD any
-                 ;; over-wide row too.
+                ;; Source a producer already colored (zprint evidence, ANSI tool
+                ;; output) ANSI-CHAR-FOLDS any over-wide row to the bubble width,
+                ;; re-opening the SGR active at each cut so token color survives
+                ;; the fold. Rows that already fit are one segment, untouched.
+                ;; Without this a pathologically wide colorized line (a long JSON
+                ;; row, a `javascript:` bookmarklet) overflowed off the right edge
+                ;; with no wrap and no horizontal scroll, hiding its tail.
+                ansi? (mapv (fn [line]
+                              {:runs (runs-of line)})
+                            ansi-lines)
+                ;; A plain fence has no alignment contract, so CHAR-FOLD any
+                ;; over-wide row too.
                 :else (mapcat fold-line (str/split-lines content))))
 
         body
@@ -959,7 +957,16 @@
         norm-rows
         (mapv (fn [row]
                 (mapv #(or (nth row % nil) []) (range cols)))
-              raw-rows)]
+              raw-rows)
+
+        ;; A cell may NAME A FILE: `[:td {:path "/abs/name"} "name"]`. The words
+        ;; stay the cell's own; the span they occupy becomes the press that opens
+        ;; that file, the way a link span becomes the press that opens a URL.
+        norm-paths
+        (mapv (fn [tr]
+                (let [cells (vec (node-children tr))]
+                  (mapv #(str (:path (node-attrs (nth cells % nil)))) (range cols))))
+              rows)]
 
     (if (or (zero? (long cols)) (empty? norm-rows))
       []
@@ -994,40 +1001,69 @@
             ;; its column width, the row's height is its tallest cell, and
             ;; shorter cells pad with blank continuation lines.
             data-lines
-            (fn [row tag]
+            (fn [row tag paths]
               (let [cell-lines
                     (mapv wrap-cell-lines row widths)
 
                     height
                     (long (apply max 1 (map count cell-lines)))]
 
-                (mapv (fn [j]
-                        (let [texts
-                              (mapv (fn [lines]
-                                      (or (:text (nth lines j nil)) ""))
-                                    cell-lines)
+                (mapv
+                  (fn [j]
+                    (let [texts
+                          (mapv (fn [lines]
+                                  (or (:text (nth lines j nil)) ""))
+                                cell-lines)
 
-                              links
-                              (into []
-                                    (comp (map-indexed
-                                            (fn [i lines]
-                                              (keep (fn [{:keys [col width url]}]
-                                                      (let [c (+ (long (nth offsets i)) (long col))]
-                                                        (when (< c cap)
-                                                          {:col c
-                                                           :width (min (long width) (- cap c))
-                                                           :url url})))
-                                                    (:links (nth lines j nil)))))
-                                          cat)
-                                    cell-lines)]
+                          links
+                          (into []
+                                (comp (map-indexed
+                                        (fn [i lines]
+                                          (keep (fn [{:keys [col width url]}]
+                                                  (let [c (+ (long (nth offsets i)) (long col))]
+                                                    (when (< c cap)
+                                                      {:col c
+                                                       :width (min (long width) (- cap c))
+                                                       :url url})))
+                                                (:links (nth lines j nil)))))
+                                      cat)
+                                cell-lines)
 
-                          (cond-> {:runs [{:text (fit (table-data-line texts widths))
-                                           :style #{:table}
-                                           :node node}]
-                                   :block-tag tag}
+                          ;; The FIRST physical line of a row carries the press: a
+                          ;; wrapped cell keeps its continuation lines plain, so one
+                          ;; row opens one file instead of two.
+                          file-spans
+                          (if (zero? (long j))
+                            (into []
+                                  (keep (fn [i]
+                                          (let [path
+                                                (str (nth paths i ""))
+
+                                                c
+                                                (long (nth offsets i))
+
+                                                w
+                                                (min (long (p/display-width (nth texts i "")))
+                                                     (long (max 0 (- (long cap) c))))]
+
+                                            (when (and (seq path) (pos? w) (< c (long cap)))
+                                              {:col c :width w :path path}))))
+                                  (range (count texts)))
+                            [])]
+
+                      (cond-> {:runs [{:text (fit (table-data-line texts widths))
+                                       :style #{:table}
+                                       :node node}]
+                               :block-tag tag}
+                        (or (seq links) (seq file-spans))
+                        (assoc :meta
+                          (cond-> {}
                             (seq links)
-                            (assoc :meta {:links links}))))
-                      (range height))))
+                            (assoc :links links)
+
+                            (seq file-spans)
+                            (assoc :paths file-spans))))))
+                  (range height))))
 
             top
             (sep-line (table-border-line "┌" "┬" "┐" widths) :table-sep)
@@ -1039,17 +1075,18 @@
             (sep-line (table-border-line "└" "┴" "┘" widths) :table-sep)]
 
         (vec (concat [top]
-                     (mapcat (fn [index row cells]
+                     (mapcat (fn [index row cells paths]
                                (if (header? row)
                                  (concat (when (and (pos? index)
                                                     (not (header? (nth rows (dec index)))))
                                            [mid])
-                                         (data-lines cells :table-head)
+                                         (data-lines cells :table-head paths)
                                          [mid])
-                                 (data-lines cells :table-row)))
+                                 (data-lines cells :table-row paths)))
                              (range)
                              rows
-                             norm-rows)
+                             norm-rows
+                             norm-paths)
                      [bottom]))))))
 
 (defn- tag-lines

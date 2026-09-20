@@ -4,13 +4,15 @@
    Events are presentation input, never operation control. Construction redacts
    before measuring, collectors reject broken lifecycle order, and a sink failure
    must never change the value or exception the Python caller observes."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.io File]
+           [java.nio.charset StandardCharsets]
            [java.util UUID]
            [java.util.concurrent.atomic AtomicLong]
            [java.util.regex Pattern]))
@@ -636,8 +638,60 @@
 
       (when (some? id) (bounded-text id max-summary-bytes)))))
 
+(def ^:private runner-source-roots
+  "Where a REPORTED test file sits when it is not next to the working directory:
+   the directory itself first, then the conventional source trees a JVM or
+   interpreter runner reports a classpath-relative or rootdir-relative file from."
+  ["" "test" "tests" "src" "src/test/clojure" "src/main/clojure"])
+
+(defn- runner-file
+  "The absolute path of a file a runner reported, or nil when nothing is there.
+
+   A reported location is worth carrying only when it can be OPENED, so a path
+   that resolves to no readable file is dropped instead of becoming a handle
+   that answers a press with an error."
+  [dir file]
+  (let [^File reported
+        (File. (str file))
+
+        candidates
+        (if (.isAbsolute reported)
+          [reported]
+          (when-not (str/blank? (str dir))
+            (map
+              #(if (str/blank? %) (io/file (str dir) (str file)) (io/file (str dir) % (str file)))
+              runner-source-roots)))]
+
+    (some (fn [^File candidate]
+            (when (and (.isFile candidate) (.canRead candidate)) (.getAbsolutePath candidate)))
+          candidates)))
+
+(defn- test-failure-refs
+  "FAILING TESTS NAME FILES. A runner reports where each failure lives, and that
+   file is the one the reader opens next, so every failure location that resolves
+   joins the row's resources — pressable exactly like a file a tool edited.
+
+   Locations that resolve to nothing stay out: the failure text still names them."
+  [{:keys [operation presenter result workspace-root]}]
+  (when (and (map? result) (= :tests (presenter/presenter-for operation presenter)))
+    (let [failures
+          (or (get result "failures") (get result :failures))
+
+          dir
+          (or (not-empty (str (or (get result "cwd") (get result :cwd) ""))) workspace-root)]
+
+      (when (sequential? failures)
+        (->> failures
+             (filter map?)
+             (keep (fn [failure]
+                     (let [file (or (get failure "file") (get failure :file))]
+                       (when (and (string? file) (not (str/blank? file))) (runner-file dir file)))))
+             distinct
+             (map (fn [path]
+                    {:type :file :id (bounded-text path max-summary-bytes)})))))))
+
 (defn- resource-refs
-  [{:keys [operation presenter args result result-envelope]}]
+  [{:keys [operation presenter args result result-envelope] :as details}]
   (let [shell-id
         (when (shell-presenter? operation presenter)
           (or (when (map? result) (map-value result :id)) (shell-id-from-args operation args)))
@@ -645,6 +699,7 @@
         refs
         (concat (declared-resources result)
                 (declared-resources result-envelope)
+                (test-failure-refs details)
                 (when shell-id
                   [{:type :shell-handle :id (bounded-text shell-id max-summary-bytes)}]))]
 

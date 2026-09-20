@@ -437,6 +437,21 @@
         (expect (= "Listed directory" (get view "headline")))
         (expect (= "empty · 0 directories · 0 files" (get view "summary")))
         (expect (= [] (get view "content")))))
+  (it "a listed FILE carries the path that opens it, a directory carries none"
+      ;; BLO-172: the listing printed names the reader could not press. Every file
+      ;; row now ships its absolute path; directories and relative entries ship "".
+      (let [view
+            (#'shim-ls/listing-presentation
+              [{"path" "/w/src"
+                "entries" [{"name" "core.clj" "path" "/w/src/core.clj" "type" "file" "size" 12}
+                           {"name" "util" "path" "/w/src/util" "type" "dir"}
+                           {"name" "loose.clj" "path" "loose.clj" "type" "file" "size" 3}]}])
+
+            table
+            (get-in view ["content" 0])]
+
+        (expect (= ["core.clj" "util/" "loose.clj"] (mapv first (get table "rows"))))
+        (expect (= ["/w/src/core.clj" "" ""] (get table "paths")))))
   (it "keeps failure truthful and catchable when Activity is enabled"
       (let [ctx
             (sandbox)

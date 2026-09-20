@@ -430,6 +430,53 @@
       (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
         (expect (empty? (link-spans entries))))))
 
+;; table paths (BLO-172)
+
+(defn- path-spans
+  "Body text + file spans of every entry whose cells name files, as
+   `[body [{:col :width :path} ...]]` — the shape `link-spans` reads for URLs."
+  [entries]
+  (keep (fn [e]
+          (when-let [paths (:paths (:meta e))]
+            [(subs (:line e) 1) paths]))
+        entries))
+
+(defdescribe
+  table-path-test
+  (it "a cell that names a file turns the words it spells into a file span"
+      ;; BLO-172: a listing printed file names it would not let you open. The
+      ;; cell keeps its own words; `{:path …}` makes the span they occupy the press.
+      (let [entries
+            (layout/ast->entries [:ast
+                                  [:table [:tr [:th "Name"] [:th "Kind"]]
+                                   [:tr [:td {:path "/w/src/core.clj"} "core.clj"] [:td "File"]]]]
+                                 60)
+
+            spans
+            (vec (path-spans entries))]
+
+        (expect (= 1 (count spans)))
+        (let [[body paths] (first spans)
+              {:keys [col width path]} (first paths)]
+          (expect (= "/w/src/core.clj" path))
+          (expect (= "core.clj" (subs body col (+ (long col) (long width))))))))
+  (it "a wrapped row presses on its FIRST physical line only"
+      (let [entries
+            (layout/ast->entries [:ast
+                                  [:table [:tr [:th "Name"] [:th "Note"]]
+                                   [:tr [:td {:path "/w/src/core.clj"} "core.clj"]
+                                    [:td "a note long enough to wrap this row over several lines"]]]]
+                                 26)
+
+            spans
+            (vec (path-spans entries))]
+
+        (expect (= 1 (count spans)))
+        (expect (str/includes? (first (first spans)) "core.clj"))))
+  (it "cells without a path carry no file meta"
+      (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
+        (expect (empty? (path-spans entries))))))
+
 ;; bdc79ae9 fixture — end-to-end regression
 
 (defn- fixture-ir

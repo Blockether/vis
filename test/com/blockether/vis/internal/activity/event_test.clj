@@ -1086,3 +1086,70 @@
         (expect (not (contains? start :argument-summary)))
         (expect (not (contains? terminal :result-summary)))
         (expect (= [{:type :file :id "/w/one.txt"}] (:resources terminal))))))
+
+(defdescribe
+  test-failure-resources-test
+  (let [root
+        (str (java.nio.file.Files/createTempDirectory
+               "vis-activity-tests"
+               (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        reported
+        "com/blockether/vis/tui/screen_test.clj"
+
+        source
+        (java.io.File. (str root "/test/" reported))
+
+        _
+        (.mkdirs (.getParentFile source))
+
+        _
+        (spit source "(ns com.blockether.vis.tui.screen-test)")
+
+        ctx
+        (event/context)
+
+        invocation
+        (event/invocation ctx nil)
+
+        details
+        {:operation :run_tests
+         :presenter :tests
+         :workspace-root root
+         :started-at-ms (System/currentTimeMillis)
+         :outcome :succeeded}
+
+        terminal-for
+        (fn [result] (event/terminal-event ctx invocation (assoc details :result result)))]
+
+    (it "carries the file a failing test named, resolved under the runner's directory"
+        ;; the runner reports a classpath-relative location; the row carries the
+        ;; file itself, which is what a reader presses to open it
+        (let [terminal
+              (terminal-for {"cwd" root
+                             "failures" [{"file" reported
+                                          "line" 2372
+                                          "test" "renderer-router-refresh-test"}]})]
+
+          (expect (= [{:type :file :id (.getAbsolutePath source)}] (:resources terminal)))))
+    (it "names a file once however many of its tests failed"
+        (let [terminal
+              (terminal-for {"cwd" root
+                             "failures" [{"file" reported "line" 12}
+                                         {"file" reported "line" 44}]})]
+
+          (expect (= [{:type :file :id (.getAbsolutePath source)}] (:resources terminal)))))
+    (it "leaves a location that resolves to no readable file out of the row"
+        (let [terminal
+              (terminal-for {"cwd" root "failures" [{"file" "com/absent/missing_test.clj"}]})]
+
+          (expect (nil? (:resources terminal)))))
+    (it "reads failures only from a test run"
+        (let [terminal
+              (event/terminal-event ctx
+                                    invocation
+                                    (assoc details
+                                      :presenter :generic
+                                      :result {"cwd" root "failures" [{"file" reported}]}))]
+
+          (expect (nil? (:resources terminal)))))))

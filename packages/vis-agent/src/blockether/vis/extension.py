@@ -257,10 +257,15 @@ class ActivityDiff(ActivityCode):
 
 @dataclass(frozen=True, slots=True)
 class ActivityTable(_ActivityBlock):
-    """A rectangular table; input lists are snapshotted as tuples."""
+    """A rectangular table; input lists are snapshotted as tuples.
+
+    ``paths`` is optional and, when given, holds one workspace path per row so
+    clients can open that row's file. Use an empty string for a row without one.
+    """
 
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    paths: tuple[str, ...] | None = None
     type: ClassVar[str] = "table"
 
     def __post_init__(self):
@@ -275,8 +280,17 @@ class ActivityTable(_ActivityBlock):
                 raise ValueError("Activity table row width must match its columns")
             if any(not isinstance(cell, str) for cell in row):
                 raise ValueError("Activity cells must be text")
+        if self.paths is not None:
+            if not isinstance(self.paths, (tuple, list)):
+                raise ValueError("Activity table paths must be a list or tuple")
+            if any(not isinstance(path, str) for path in self.paths):
+                raise ValueError("Activity paths must be text")
+            if len(self.paths) != len(self.rows):
+                raise ValueError("Activity table paths must match its rows")
         object.__setattr__(self, "columns", tuple(self.columns))
         object.__setattr__(self, "rows", tuple(tuple(row) for row in self.rows))
+        if self.paths is not None:
+            object.__setattr__(self, "paths", tuple(self.paths))
 
 
 @dataclass(frozen=True, slots=True)

@@ -94,7 +94,36 @@
                    (expect (= 5 (count (re-seq #"┌" text))))
                    (expect (= 6 (count (re-seq #"Result" text))))
                    (doseq [literal ["Next result" "Still separate" "<tag>" "**ready**"]]
-                     (expect (str/includes? text literal))))))
+                      (expect (str/includes? text literal))))))
+
+(defdescribe activity-table-path-test
+             (it "a row that names a file presses on the words that spell it"
+                 ;; BLO-172: a listing printed names nobody could open. A row's entry in
+                 ;; `paths` turns its FIRST cell into the press that opens that file, and
+                 ;; a row without one stays plain words.
+                 (let [entries
+                       (#'render/activity-content-entries
+                        [{:type "table"
+                          :columns ["Name" "Kind"]
+                          :rows [["core.clj" "File"] ["util" "Directory"]]
+                          :paths ["/w/src/core.clj" ""]}]
+                        60
+                        2
+                        nil
+                        {}
+                        false)
+
+                       pressed
+                       (filter #(seq (get-in % [:meta :paths])) entries)
+
+                       spans
+                       (mapcat #(get-in % [:meta :paths]) pressed)]
+
+                   (expect (= 1 (count pressed)))
+                   (expect (= ["/w/src/core.clj"] (mapv :path spans)))
+                   (let [{:keys [col width]} (first spans)
+                         body (subs (:line (first pressed)) 1)]
+                     (expect (= "core.clj" (subs body col (+ (long col) (long width)))))))))
 
 (defdescribe
   execution-activity-result-test

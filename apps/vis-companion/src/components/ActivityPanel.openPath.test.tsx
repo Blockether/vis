@@ -103,3 +103,64 @@ it('leaves paths as plain words when no opener is published', () => {
   fireEvent.click(shown.at(-1)!);
   expect(screen.getByText('after-1')).toBeVisible();
 });
+
+// BLO-172: a listing printed file names nobody could press. Each listed file
+// now carries the path that opens it; a directory keeps plain words.
+const LISTED = '/w/src/core.clj';
+
+function listingProjection(): ActivityProjection {
+  return {
+    state: 'succeeded',
+    rows: [
+      {
+        id: 'ls-1',
+        sequence: 1,
+        operation: 'ls',
+        presenter: 'observation',
+        signal: 'observation',
+        state: 'succeeded',
+        summary: '/w/src · 1 directory · 1 file',
+        argument_key: '2'.repeat(64),
+        duration_ms: 1,
+        resources: [],
+        presentation: {
+          headline: 'Listed directory',
+          summary: '/w/src · 1 directory · 1 file',
+          content: [
+            {
+              type: 'table',
+              columns: ['Name', 'Kind'],
+              rows: [
+                ['core.clj', 'File'],
+                ['util/', 'Directory'],
+              ],
+              paths: [LISTED, ''],
+            },
+          ],
+        },
+        evidence: [],
+      },
+    ],
+    counts: { succeeded: 1, running: 0, failed: 0, cancelled: 0 },
+    omitted: { rows: 0, by_classification: {} },
+  };
+}
+
+it('opens the file a listed row names, and leaves a directory plain', () => {
+  const openPath = vi.fn();
+  render(
+    <OpenPathContext.Provider value={openPath}>
+      <ActivityPanel activity={listingProjection()} />
+    </OpenPathContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  const group = screen.queryByRole('button', { name: /List ×/ });
+  if (group) fireEvent.click(group);
+  fireEvent.click(screen.getByRole('button', { name: /Listed directory/ }));
+
+  const cell = screen.getByText('core.clj');
+  expect(cell.closest('[data-path]')).toHaveAttribute('data-path', LISTED);
+  fireEvent.click(cell);
+  expect(openPath).toHaveBeenCalledWith(LISTED);
+  expect(screen.getByText('util/').closest('[data-path]')).toBeNull();
+});

@@ -101,6 +101,23 @@
                (assoc presentation
                  "content" [{"type" "table" "columns" ["A"] "rows" [["A" "B"]]}]))))))
 
+(deftest table-row-paths-test
+  ;; BLO-172: a table row may NAME the file it lists, so a reader can open it from
+  ;; the row. One path per row or none at all — a shorter list presses the wrong row.
+  (let [table
+        {"type" "table" "columns" ["Name"] "rows" [["a.clj"] ["b.clj"]]}
+
+        presentation
+        {"headline" "Listed directory"
+         "summary" "2 files"
+         "content" [(assoc table "paths" ["/w/a.clj" ""])]}]
+
+    (is (activity/valid-presentation? presentation))
+    (is (activity/valid-presentation? (assoc presentation "content" [table])))
+    (is (not (activity/valid-presentation? (assoc presentation
+                                             "content"
+                                             [(assoc table "paths" ["/w/a.clj"])]))))))
+
 (deftest presentation-summary-format-test
   ;; Regression #254: only explicitly marked summaries opt into inline Markdown.
   (let [summary
