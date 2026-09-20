@@ -232,8 +232,13 @@ export const IconButton = forwardRef<
     /** Icon-only, so the name is not optional. */
     label: string;
     variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'remove';
-    /** Passed through: a control over a thumbnail is not on a header's rhythm. */
-    density?: 'default' | 'compact';
+    /**
+     * Passed through: a control over a thumbnail is not on a header's rhythm.
+     * `band` is the mark that stands BESIDE a header's facts instead of on its
+     * trailing rail — a pager's steps — so under a pointer it takes the band's
+     * 24px step and reads as chrome rather than as a box. Touch is unchanged.
+     */
+    density?: 'default' | 'compact' | 'band';
   }
 >(function IconButton(
   {
@@ -256,9 +261,12 @@ export const IconButton = forwardRef<
   // and then this same 32px/28px box, so a header mark that keeps the box centers
   // on that rail at every width and pointer. A glyph pinned to the paper's edge
   // instead stood half a box inside it — the settings headers' add marks, reported
-  // over that dialog as a cross that did not sit on the dots below it.
-  const box =
-    'size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:size-7 mouse:after:content-none';
+  // over that dialog as a cross that did not sit on the dots below it. `band` is the
+  // one step off that rail: navigation that stands beside a header's facts, never a
+  // row's own mark, so nothing lines up under it to be missed.
+  const box = `size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:after:content-none ${
+    density === 'band' ? 'mouse:size-6' : 'mouse:size-7'
+  }`;
   const ink = {
     primary: 'bg-transparent text-accent-ink enabled:hover:text-white',
     secondary: 'bg-transparent text-white enabled:hover:text-accent-ink',
@@ -273,7 +281,7 @@ export const IconButton = forwardRef<
       type="button"
       aria-label={label}
       disabled={disabled}
-      className={`${iconControlClass} grid shrink-0 items-center font-bold transition-colors duration-150 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none ${density === 'compact' ? 'text-ui mouse:text-meta' : 'text-ui'} ${box} ${ink} ${className}`}
+      className={`${iconControlClass} grid shrink-0 items-center font-bold transition-colors duration-150 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none ${density === 'default' ? 'text-ui' : 'text-ui mouse:text-meta'} ${box} ${ink} ${className}`}
       {...tapPress}
       {...props}
     >

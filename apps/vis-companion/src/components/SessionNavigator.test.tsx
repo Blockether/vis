@@ -96,6 +96,27 @@ describe('project pages', () => {
     expect(screen.getByText(`Page ${page} of 80`)).toHaveAttribute('aria-live', 'polite');
   });
 
+  // The pager is a header's NAVIGATION, not a row's mark: under a pointer it steps
+  // onto the band's 24px rhythm in metadata type so it reads as chrome beside the
+  // project's facts, while touch keeps the 44px reach the same cluster needs.
+  it('steps onto the band rhythm under a pointer without losing touch reach', () => {
+    render(<Pager page={2} pageCount={147} label="vis sessions" onPage={vi.fn()} />);
+    for (const name of ['Previous page', 'Next page']) {
+      const step = screen.getByRole('button', { name });
+      expect(step).toHaveClass('size-8', 'after:-inset-1.5', 'mouse:size-6', 'mouse:text-meta');
+      expect(step).not.toHaveClass('mouse:size-7');
+    }
+    const counter = screen.getByRole('textbox', { name: 'Current page' }).closest('label');
+    expect(counter).toHaveClass(
+      'min-h-11',
+      'min-w-11',
+      'mouse:min-h-6',
+      'mouse:min-w-6',
+      'mouse:text-meta',
+    );
+    expect(screen.getByRole('navigation')).toHaveClass('gap-2', 'mouse:gap-1');
+  });
+
   it('keeps the same step controls while traversing a long history', () => {
     const onPage = vi.fn();
     const { rerender } = render(

@@ -168,8 +168,11 @@ export const Fleet: Story = {
     await expect(current).toHaveValue('1');
     for (const control of [previous, next]) {
       await expect(centerY(control)).toBe(centerY(pager));
+      // Under a pointer the steps take the band's 24px step: they are navigation
+      // beside the project's facts, not the row's own mark, so they read as chrome
+      // while staying centred on the same line as `+`. Touch shares the mark's face.
       await expect(control.getBoundingClientRect().height).toBe(
-        create.getBoundingClientRect().height,
+        pointer ? 24 : create.getBoundingClientRect().height,
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
@@ -187,10 +190,15 @@ export const Fleet: Story = {
         height: box.height - top - bottom,
       };
     });
-    for (const target of targets) {
-      expect(target.width).toBeGreaterThanOrEqual(pointer ? 28 : 44);
-      expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
-    }
+    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the
+    // navigation between them takes the band's 24px step. Touch reaches 44px for all five.
+    const railFace = pointer ? 28 : 44;
+    const bandStep = pointer ? 24 : 44;
+    const minimums = [railFace, bandStep, bandStep, bandStep, railFace];
+    targets.forEach((target, index) => {
+      expect(target.width).toBeGreaterThanOrEqual(minimums[index]);
+      expect(target.height).toBeGreaterThanOrEqual(minimums[index]);
+    });
     // Paging stands above the disclosure that reaches under it, so neighbouring targets
     // may meet: what matters is their order and that each still takes its own press.
     for (let index = 1; index < targets.length; index += 1) {

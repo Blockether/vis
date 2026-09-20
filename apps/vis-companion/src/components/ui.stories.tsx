@@ -997,9 +997,12 @@ export const ProjectPages: Story = {
     });
     const win = pager.ownerDocument.defaultView!;
     const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    // Navigation beside a header's facts takes the band's pointer step (24px), not the
+    // 28px face of a control on the trailing rail. Touch is untouched: the same cluster
+    // keeps its 44px reach through invisible slop.
     for (const target of targets) {
-      expect(target.width).toBeGreaterThanOrEqual(pointer ? 28 : 44);
-      expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+      expect(target.width).toBeGreaterThanOrEqual(pointer ? 24 : 44);
+      expect(target.height).toBeGreaterThanOrEqual(pointer ? 24 : 44);
     }
     expect(targets[1].left - targets[0].right).toBeGreaterThanOrEqual(0);
     expect(targets[2].left - targets[1].right).toBeGreaterThanOrEqual(0);

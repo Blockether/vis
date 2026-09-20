@@ -342,6 +342,8 @@ export function ProjectCrumb({
 /**
  * Compact project navigation in every layout: previous, current / total, next.
  * Edit the current number to jump; Enter or blur commits, Escape restores it.
+ * Under a pointer the whole cluster steps onto the band's 24px rhythm and its
+ * metadata type, so it reads as header chrome; touch keeps its 44px targets.
  * The counter reserves its final width and centers its ink so neither arrow moves.
  * Disabled navigation keeps its place while its project is collapsed.
  */
@@ -367,6 +369,7 @@ export function Pager({
   const step = (target: number, isBack: boolean) => (
     <IconButton
       variant="quiet"
+      density="band"
       label={isBack ? 'Previous page' : 'Next page'}
       onClick={() => onPage(target)}
       disabled={disabled || target < 1 || target > pageCount}
@@ -381,14 +384,14 @@ export function Pager({
     <nav
       aria-label={`Pages of ${label}`}
       aria-disabled={disabled || undefined}
-      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap"
+      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap mouse:gap-1"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
       {step(page - 1, true)}
       <label
-        className={`group grid min-h-11 min-w-11 items-center font-mono text-ui tabular-nums mouse:min-h-7 mouse:min-w-7 ${disabled ? 'cursor-not-allowed text-muted' : 'cursor-text text-white'}`}
+        className={`group grid min-h-11 min-w-11 items-center font-mono text-ui tabular-nums mouse:min-h-6 mouse:min-w-6 mouse:text-meta ${disabled ? 'cursor-not-allowed text-muted' : 'cursor-text text-white'}`}
       >
         <span aria-hidden="true" className="invisible col-start-1 row-start-1">
           {pageCount}/{pageCount}
