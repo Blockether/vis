@@ -1128,6 +1128,65 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_groups(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/session-groups — the groups of one project, in the human's order."""
+        response = self._request(
+            "GET", "/v1/session-groups", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_session_groups(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/session-groups — create one group inside a project."""
+        response = self._request(
+            "POST",
+            "/v1/session-groups",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def delete_session_group(
+        self, gid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """DELETE /v1/session-groups/:gid — drop a group and say what becomes of it."""
+        response = self._request(
+            "DELETE",
+            "/v1/session-groups/:gid",
+            path={"gid": gid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def patch_session_group(
+        self,
+        gid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/session-groups/:gid — rename, recolour or reorder a group."""
+        response = self._request(
+            "PATCH",
+            "/v1/session-groups/:gid",
+            path={"gid": gid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_sessions(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:
@@ -1402,6 +1461,26 @@ class ExecutionLayer(ABC):
             timeout=timeout,
         )
         return response.json()
+
+    def put_session_group(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PUT /v1/sessions/:sid/group — file this session under a group."""
+        response = self._request(
+            "PUT",
+            "/v1/sessions/:sid/group",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_session_iteration_attachments(
         self,
         sid: str,
