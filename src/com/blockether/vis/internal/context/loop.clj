@@ -239,7 +239,7 @@
     ;; not through mutable context.
     (renderer-fn {:ctx (enrich-ctx env ctx) :warnings []})))
 
-;; rewind / lens / find — model-facing recovery bindings
+;; lens / find — model-facing recovery bindings
 ;;
 ;; Scope grammar (matches the engine cursor):
 ;;   t<N>/i<M>       — iteration M of turn N

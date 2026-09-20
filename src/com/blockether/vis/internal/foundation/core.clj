@@ -12,7 +12,6 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
-            [com.blockether.vis.internal.foundation.rewind :as rewind]
             [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
@@ -95,7 +94,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; rewind; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
+     "Foundation kernel: file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -115,11 +114,7 @@
                                                    shell/shell-symbols
                                                    drafts/symbols))}
      :ext/kind "foundation"
-     :ext/slash-commands
-     (vec (concat workspace-slashes/specs session-slashes/specs rewind/slash-specs))
-     :ext/op-hooks rewind/op-hooks
-     :ext/channel-contributions {:gateway.slot/http-routes [{:id :rewind/http
-                                                             :fn rewind/routes-contribution}]}
+     :ext/slash-commands (vec (concat workspace-slashes/specs session-slashes/specs))
      :ext/cli shell/shell-cli
      :ext/ctx-fn combined-ctx
      :ext/prompt-fn combined-prompt

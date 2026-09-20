@@ -3,9 +3,9 @@
    directories `sweep-stale!` deletes on its own.
 
    Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*` and — for every sweep test, ALL FIVE at once via
-   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*rewind-home*`,
-   `*python-home*` and `*events-home*`; no test may read, let alone delete,
+   `workspace/*drafts-home*` and — for every sweep test, ALL FOUR at once via
+   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*python-home*`
+   and `*events-home*`; no test may read, let alone delete,
    anything under the real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
@@ -329,18 +329,15 @@
     (.getPath d)))
 
 (defn- with-homes
-  "Call `f` with ALL FIVE sweep seams pointed at throwaway directories. A test
+  "Call `f` with ALL FOUR sweep seams pointed at throwaway directories. A test
    that bound only the seam it cares about would leave the other targets
    resolving to the operator's real `~/.vis` — and this sweep deletes."
-  [{:keys [logs cache rewind events python]} f]
+  [{:keys [logs cache events python]} f]
   (binding [housekeeping/*logs-home*
             (seam-path logs "vis-hk-idle-logs")
 
             housekeeping/*cache-home*
             (seam-path cache "vis-hk-idle-cache")
-
-            housekeeping/*rewind-home*
-            (seam-path rewind "vis-hk-idle-rewind")
 
             housekeeping/*python-home*
             (seam-path python "vis-hk-idle-python")
@@ -487,36 +484,12 @@
           (expect (= 5 (:bytes report)))
           (expect (= #{"fig-2.png" "fig-3.png"}
                      (set (map #(.getName ^File %) (.listFiles (io/file cache "display")))))))))
-  (it "deletes a whole rewind store once its newest file has aged out, and leaves a live one whole"
-      (let [rewind
-            (tmp-dir "vis-hk-rewind")
-
-            dead
-            (touch! rewind (str "dead-session" File/separator "journal.ndjson") 30 "{}")
-
-            live
-            (touch! rewind (str "live-session" File/separator "journal.ndjson") 30 "{}")
-
-            blob
-            (touch! rewind
-                    (str "live-session" File/separator "objects" File/separator "blob")
-                    1
-                    "fresh")
-
-            report
-            (target (with-homes {:rewind rewind} #(housekeeping/sweep-stale! nil)) :rewind)]
-
-        (expect (= 2 (:file-count report)))
-        (expect (= 1 (:deleted report)))
-        (expect (not (.exists (.getParentFile dead))))
-        (expect (.exists live))
-        (expect (.exists blob))))
   (it "degrades to zero work when none of the directories exist"
       (let [report (with-homes {:logs (io/file (tmp-dir "vis-hk-none") "nope")}
                                #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :gateway-events :display :tui-attachments :rewind :python-archives]
+        (expect (= [:logs :gateway-events :display :tui-attachments :python-archives]
                    (mapv :id (:targets report))))))
   (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
       ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
@@ -528,9 +501,6 @@
 
             cache
             (tmp-dir "vis-hk-cache-async")
-
-            rewind
-            (tmp-dir "vis-hk-rewind-async")
 
             python
             (tmp-dir "vis-hk-python-async")
@@ -559,16 +529,14 @@
                              report))}
           (fn []
             ;; Without bound-fn*, these seams would resolve to the real ~/.vis.
-            (let [^Thread thread
-                  (with-homes {:logs logs :events events :cache cache :rewind rewind :python python}
-                              #(housekeeping/sweep-stale-async! {:interval-ms 20}))]
+            (let [^Thread thread (with-homes {:logs logs :events events :cache cache :python python}
+                                             #(housekeeping/sweep-stale-async! {:interval-ms 20}))]
               (try (expect (map? (deref started 5000 nil)))
                    (expect (.isDaemon thread))
                    (expect (= Thread/MIN_PRIORITY (.getPriority thread)))
                    (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs))))
                    (let [journal (touch! events "keep.ndjson" 60 "session replay")
                          picture (touch! cache "display/keep.png" 60 "picture")
-                         preimage (touch! rewind "session/keep.txt" 60 "preimage")
                          runtime-file (touch! python "runtime/old/keep.py" 60 "runtime")
                          stale (touch! logs "2026-08-01/pyext-worker/worker.log" 60 "old worker")]
 
@@ -576,7 +544,7 @@
                      (expect (map? (deref repeated 5000 nil)))
                      (expect (not (.exists stale)))
                      (expect (.exists (io/file logs "new.log")))
-                     (expect (every? #(.exists ^File %) [journal picture preimage runtime-file])))
+                     (expect (every? #(.exists ^File %) [journal picture runtime-file])))
                    (finally (.interrupt thread) (.join thread 5000)))
               (expect (not (.isAlive thread))))))))
   (it "retries failed startup and periodic passes without keeping the process alive"

@@ -10,7 +10,6 @@
             [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.test-python-context :as tpc]
-            [com.blockether.vis.internal.foundation.rewind :as rewind]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -229,7 +228,7 @@
       ;; DSL names creep back into the descriptor copy.
       (let [doc (:ext/description foundation/vis-extension)]
         (expect (str/includes? doc "toggle-gated shell and session introspection"))
-        (expect (str/includes? doc "rewind"))
+        (expect (not (str/includes? doc "rewind")))
         (expect (str/includes? doc "file editing"))
         (expect (str/includes? doc "session workspace/VCS"))
         (expect (not (str/includes? doc "ext repro")))
@@ -239,21 +238,20 @@
       (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
         (doseq [removed ['com.blockether.vis.internal.foundation.introspection/register!
-                         'com.blockether.vis.internal.foundation.shell/register!
-                         'com.blockether.vis.internal.foundation.rewind/register!]]
+                         'com.blockether.vis.internal.foundation.shell/register!]]
           (expect (not (contains? initialization removed)))))
       (foundation/register!)
       (expect (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))))
-  (it "owns rewind, shell CLI, and the toggle-gated symbol groups"
-      (expect (= rewind/op-hooks (:ext/op-hooks foundation/vis-extension)))
-      (expect (some #(= "rewind" (:slash/name %)) (:ext/slash-commands foundation/vis-extension)))
+  (it "owns the shell CLI and the toggle-gated symbol groups"
+      ;; Regression: `/rewind`, its op-hooks and its gateway routes were removed;
+      ;; foundation-core contributes no op-hooks and no channel routes at all.
+      (expect (empty? (:ext/op-hooks foundation/vis-extension)))
+      (expect (empty? (:ext/channel-contributions foundation/vis-extension)))
+      (expect (not-any? #(= "rewind" (:slash/name %))
+                        (:ext/slash-commands foundation/vis-extension)))
       (expect (= ["shell"] (mapv :cmd/name (:ext/cli foundation/vis-extension))))
       (expect (every? (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))
                       (concat introspection/all-symbols shell/shell-symbols)))
-      (let [routes (get-in foundation/vis-extension
-                           [:ext/channel-contributions :gateway.slot/http-routes])]
-        (expect (= [:rewind/http] (mapv :id routes)))
-        (expect (= rewind/routes-contribution (:fn (first routes)))))
       (let [checks ((:ext/doctor-fn foundation/vis-extension) {})]
         (expect (sequential? checks))
         (expect (every? :level checks)))))

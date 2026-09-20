@@ -11,11 +11,11 @@
    because an operator asking what is reclaimable today should see them.
 
    SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
-   the gateway journals, the display caches, the rewind stores and old downloaded
+   the gateway journals, the display caches and old downloaded
    Python archives. Those are DERIVED — a log of a process that exited, the wire
-   replay of a turn the DB already owns, a picture whose bytes are already DB-owned,
-   the pre-image of an edit nobody will rewind a fortnight later — so they carry
-   a window instead of a report. `sweep-targets` is the one list of them. Diagnostic
+   replay of a turn the DB already owns, a picture whose bytes are already DB-owned
+   — so they carry a window instead of a report. `sweep-targets` is the one list
+   of them. Diagnostic
    logs also sweep hourly while the process runs; the other targets remain startup-only.
    Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
@@ -137,9 +137,8 @@
 ;;
 ;; UNLIKE drafts and journals, everything below is DERIVED and nothing anyone
 ;; can recover from: a diagnostic log of a process that exited, a picture whose
-;; bytes are already DB-owned, the pre-image of an edit nobody will rewind a
-;; month later. Each of these directories gains an entry per shell command, per
-;; rendered figure, per edited file — forever — so each one needs a window, and
+;; bytes are already DB-owned. Each of these directories gains an entry per shell
+;; command, per rendered figure — forever — so each one needs a window, and
 ;; `sweep-targets` is the ONE place that lists them.
 ;;
 ;; `~/.vis/logs` used to be swept at its TOP LEVEL only, which is precisely
@@ -149,8 +148,8 @@
 
 (def default-retention-days
   "Age past which any self-deleting derived artifact is deleted automatically —
-   diagnostic logs, gateway journals, the display caches, the rewind stores. Two
-   weeks: longer than any plausible debugging or rewind window (a bug reported on
+   diagnostic logs, gateway journals, the display caches. Two weeks: longer than
+   any plausible debugging window (a bug reported on
    Friday is still readable the Monday after next), short enough that a machine
    which never restarts does not carry a quarter of dead sessions. ONE number for
    every kind on purpose — a per-kind window is a promise nobody audits, and each
@@ -188,14 +187,6 @@
 (def
   ^:dynamic
   ^{:doc
-    "Test seam for the rewind store root. `nil` (production) resolves to
-                 `~/.vis/rewind`, mirroring `foundation.rewind/*store-root*`."}
-  *rewind-home*
-  nil)
-
-(def
-  ^:dynamic
-  ^{:doc
     "Test seam for the embedded Python state root. `nil` (production) resolves to
                  `~/.vis/python`, mirroring `com.blockether.vispython.Locations` — the
                  runtime unpacks each pinned version under `runtime/<version>/<platform>`
@@ -211,8 +202,6 @@
 (defn- logs-dir ^File [] (home-dir *logs-home* ["logs"]))
 
 (defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
-
-(defn- rewind-dir ^File [] (home-dir *rewind-home* ["rewind"]))
 
 (defn- python-dir ^File [^String sub] (io/file (home-dir *python-home* ["python"]) sub))
 
@@ -303,29 +292,6 @@
                      {:held total :report {:deleted 0 :bytes 0}}
                      entries))))
 
-(defn- sweep-stores!
-  "Delete every immediate child DIRECTORY of `root` whose newest file predates
-   `cutoff` — a whole per-session store at a time, judged the way `scan` judges
-   an orphan draft, because a live session touches its journal constantly.
-   Returns `{:file-count :deleted :bytes :dirs-removed}`."
-  [^File root ^String canon ^long cutoff]
-  (let [stores (->> (or (.listFiles root) (make-array File 0))
-                    (filter (fn [^File f]
-                              (and (.isDirectory f) (not (.startsWith (.getName f) ".")))))
-                    vec)]
-    (reduce (fn [acc ^File d]
-              (let [{:keys [bytes newest-ms]} (tree-stats d)]
-                (if (and (< (long newest-ms) cutoff)
-                         (under? canon (canonical d))
-                         (pos? (delete-tree! d)))
-                  (-> acc
-                      (update :deleted inc)
-                      (update :dirs-removed inc)
-                      (update :bytes + (long bytes)))
-                  acc)))
-            {:file-count (count stores) :deleted 0 :bytes 0 :dirs-removed 0}
-            stores)))
-
 (defn runtime-retention-plan
   "Preview keeping the newest installed release and this binary's pinned runtime.
 
@@ -387,27 +353,21 @@
    a second sweep somewhere else.
 
    `:mode` `:files` deletes stale FILES anywhere below the root and then the
-   directories they emptied; `:stores` deletes a whole per-session subtree at a
-   time. `:budget-bytes` additionally caps what survives the age pass."
-  [{:id :logs :mode :files :dir logs-dir :retention-days default-retention-days}
-   {:id :gateway-events :mode :files :dir events-dir :retention-days default-retention-days}
+   directories they emptied. `:budget-bytes` additionally caps what survives the
+   age pass."
+  [{:id :logs :dir logs-dir :retention-days default-retention-days}
+   {:id :gateway-events :dir events-dir :retention-days default-retention-days}
    {:id :display
-    :mode :files
     :dir #(cache-dir "display")
     :retention-days default-retention-days
     :budget-bytes default-cache-budget-bytes}
    {:id :tui-attachments
-    :mode :files
     :dir #(cache-dir "tui-attachments")
     :retention-days default-retention-days
     :budget-bytes default-cache-budget-bytes}
-   {:id :rewind :mode :stores :dir rewind-dir :retention-days default-retention-days}
    ;; Releases before 0.4 kept the downloaded platform archive beside the tree
    ;; it was unpacked into; today's fetch deletes its archive once unpacked.
-   {:id :python-archives
-    :mode :files
-    :dir #(python-dir "archives")
-    :retention-days default-retention-days}])
+   {:id :python-archives :dir #(python-dir "archives") :retention-days default-retention-days}])
 
 (defn sweep-stale!
   "Delete the aged-out derived state of every `sweep-targets` entry. Returns
@@ -426,41 +386,38 @@
          (long (or now-ms (util/now-ms)))
 
          reports
-         (mapv
-           (fn [{:keys [id mode dir retention-days budget-bytes]}]
-             (let [^File d
-                   (dir)
+         (mapv (fn [{:keys [id dir retention-days budget-bytes]}]
+                 (let [^File d
+                       (dir)
 
-                   window
-                   (long (or days retention-days))
+                       window
+                       (long (or days retention-days))
 
-                   cutoff
-                   (- now (* window (long day-ms)))
+                       cutoff
+                       (- now (* window (long day-ms)))
 
-                   base
-                   {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
+                       base
+                       {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
 
-               (if-not (.isDirectory d)
-                 (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
-                 (let [canon
-                       (canonical d)
+                   (if-not (.isDirectory d)
+                     (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
+                     (let [canon
+                           (canonical d)
 
-                       swept
-                       (if (= :stores mode)
-                         (sweep-stores! d canon cutoff)
-                         (sweep-files! d canon cutoff))
+                           swept
+                           (sweep-files! d canon cutoff)
 
-                       trimmed
-                       (when budget-bytes
-                         (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
+                           trimmed
+                           (when budget-bytes
+                             (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
 
-                   (merge base
-                          swept
-                          (when trimmed
-                            {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
-                             :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
-                             :over-budget-deleted (:deleted trimmed)}))))))
-           sweep-targets)]
+                       (merge base
+                              swept
+                              (when trimmed
+                                {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
+                                 :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
+                                 :over-budget-deleted (:deleted trimmed)}))))))
+               sweep-targets)]
 
      {:targets reports
       :deleted (reduce + 0 (map :deleted reports))
