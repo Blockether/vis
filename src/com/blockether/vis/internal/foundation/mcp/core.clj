@@ -987,6 +987,15 @@
            "input_schema" (get t "inputSchema")})
         (mcp/list-tools conn)))
 
+(def ^:private sandbox-verb
+  "What the MODEL actually types. The wire/native tool NAME is `mcp__call`
+   (DOUBLE underscore - see the note above `mcp-symbols`), but the Python
+   sandbox folds `alias/symbol` to ONE underscore, so every model-facing string
+   - doc-corpus entry, error hint, prompt fragment - has to say `mcp_call`.
+   Printing the wire name at a model that only has the sandbox sends it into a
+   NameError, which is exactly what it did."
+  "mcp_call")
+
 (defn- doc-corpus-entries
   "Every tool of every VISIBLE MCP server as a `doc-corpus` entry, so
    `apropos(\"jira\")` reaches a server-supplied description — the only place
@@ -1001,21 +1010,29 @@
             (let [cached (or (some-> (:tools (conn-of server))
                                      deref)
                              [])]
-              (keep (fn [t]
-                      (when-let [nm (not-empty (str (get t "name")))]
-                        {:name (str server "/" nm)
-                         :kind "tool"
-                         :call (str "mcp__call(" (pr-str (str server)) ", " (pr-str nm) ", {})")
-                         :text (str "MCP tool `"
-                                    nm
-                                    "` on server `"
-                                    server
-                                    "`."
-                                    (when-let [d (not-empty (str (get t "description")))]
-                                      (str "\n\n" d))
-                                    (when-let [sch (get t "inputSchema")]
-                                      (str "\n\nInput schema: " (pr-str sch))))}))
-                    cached))))
+              (keep
+                (fn [t]
+                  (when-let [nm (not-empty (str (get t "name")))]
+                    {:name (str server "/" nm)
+                     :kind "tool"
+                     :call
+                     (str "await " sandbox-verb "(" (pr-str (str server)) ", " (pr-str nm) ", {})")
+                     :text (str "MCP tool `"
+                                nm
+                                "` on server `"
+                                server
+                                "` - call `await "
+                                sandbox-verb
+                                "("
+                                (pr-str (str server))
+                                ", "
+                                (pr-str nm)
+                                ", {})`."
+                                (when-let [d (not-empty (str (get t "description")))]
+                                  (str "\n\n" d))
+                                (when-let [sch (get t "inputSchema")]
+                                  (str "\n\nInput schema: " (pr-str sch))))}))
+                cached))))
         (visible-servers nil)))
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
@@ -1038,7 +1055,9 @@
                         " failed: " (or (ex-message t) (str t)))
          :server server
          :tool (when (string? tool) tool)
-         :hint (str "Call mcp__call with `server` alone to re-read the tool's input schema"
+         :hint (str "Call `await "
+                    sandbox-verb
+                    "(server)` to re-read the tool's input schema"
                     (when-not (needs-auth? (:session-id env) server)
                       ", or check the server's status in session env.mcp")
                     "."))))
@@ -1069,8 +1088,9 @@
            (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
                 :server server
                 :tools (mapv #(get % "name") rows)
-                :hint
-                "Call mcp__call with `server` alone for every tool's description and input schema.")
+                :hint (str "Call `await "
+                           sandbox-verb
+                           "(server)` for every tool's description and input schema."))
            :else
            (let [r (mcp/call-tool conn tool (if (map? args) args {}))
                  is-error (boolean (get r "isError"))]
@@ -1191,6 +1211,22 @@
                                      (ensure-supervisor!)
                                      (reconcile!))))
 
+(def ^:private mcp-prompt
+  "The one thing the ctx inventory cannot say: what to TYPE.
+
+   `env.mcp` lists servers and tool names, so a model that has never called MCP
+   reads `session[\"env\"][\"mcp\"][\"servers\"][\"linear\"][\"tools\"]` and then guesses
+   at `linear.save_issue(...)` - a NameError, because a server is not a module
+   and a tool name is not an attribute. Naming the verb here costs one line per
+   request and saves the iterations that guessing burns."
+  (str "MCP servers are reachable through ONE sandbox verb: `await "
+       sandbox-verb
+       "(server, tool, args)`, where `server` and `tool` are STRINGS from"
+       " `session[\"env\"][\"mcp\"][\"servers\"]` - never attributes, modules or a per-server"
+       " namespace. With `server` alone it answers that server's tools with their input"
+       " schemas; result text is `content[i][\"text\"]`. `doc(\"<server>/<tool>\")` reads one"
+       " tool's description without a call."))
+
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-mcp"
@@ -1203,6 +1239,7 @@
      :ext/activation-fn activation-fn
      :ext/engine {:ext.engine/alias 'mcp :ext.engine/symbols mcp-symbols}
      :ext/ctx-fn contribute
+     :ext/prompt-fn mcp-prompt
      :ext/kind "foundation"}))
 
 (defn register! [] (vis/register-extension! vis-extension))

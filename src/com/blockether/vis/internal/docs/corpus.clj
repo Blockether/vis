@@ -313,7 +313,7 @@
    from, not a corpus dump. Everything else remains addressable through
    `apropos(pattern)` and `doc(name)`."
   ["apropos" "doc" "read_session" "fold_session" "ls" "grep" "cat" "patch" "shell" "attach"
-   "mcp__call"])
+   "mcp_call"])
 
 ;; The three things the two verbs PRINT
 

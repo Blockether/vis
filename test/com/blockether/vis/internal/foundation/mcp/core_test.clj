@@ -43,6 +43,43 @@
                  (expect (not (contains? names "mcp__disconnect"))))))
 
 (defdescribe
+  mcp-sandbox-name-test
+  "Regression: every string the MODEL reads has to name the binding it can type.
+   The wire tool is `mcp__call`; the Python global is `mcp_call`. A session that
+   copied the wire name out of `doc(\"linear/save_issue\")` spent four iterations
+   on NameErrors before `apropos(\"mcp\")` finally revealed the real name."
+  (it "advertises exactly the name the Python binding gets"
+      (expect (= (ep/sym->py-name 'mcp/call) @#'mcp/sandbox-verb)))
+  (it "puts a callable form, not the wire name, on every tool entry"
+      (with-redefs-fn {#'mcp/visible-servers (constantly {"linear" {}})
+                       #'mcp/conn-of (fn [& _]
+                                       {:tools (atom [{"name" "save_issue"
+                                                       "description" "File one."}])})}
+        (fn []
+          (let [entry (first (#'mcp/doc-corpus-entries))]
+            (expect (= "linear/save_issue" (:name entry)))
+            (expect (= "await mcp_call(\"linear\", \"save_issue\", {})" (:call entry)))
+            ;; The FIRST line is what `apropos` prints as the row's body, so the
+            ;; call form has to live there and not below the description.
+            (expect (str/includes? (first (str/split-lines (:text entry)))
+                                   "await mcp_call(\"linear\", \"save_issue\", {})"))
+            (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call")))))))
+  (it "sends a refused call back to the sandbox verb"
+      (with-redefs-fn {#'mcp/ensure-connected! (constantly ::connection)
+                       #'client/list-tools (constantly [{"name" "read"}])}
+        (fn []
+          (let [dumped (pr-str (#'mcp/mcp-call-impl {:session-id "caller"} "alpha" "nope" {}))]
+            (expect (str/includes? dumped "await mcp_call(server)"))
+            (expect (not (str/includes? dumped "mcp__call")))))))
+  (it "names the verb in the prompt, because ctx only lists servers and tools"
+      ;; `env.mcp` answers WHICH server and WHICH tool; nothing else told the
+      ;; model HOW to reach them, so it guessed `linear.save_issue(...)`.
+      (let [text ((:ext/prompt-fn mcp/vis-extension) {:session-id "caller"})]
+        (expect (str/includes? text "await mcp_call(server, tool, args)"))
+        (expect (str/includes? text "session[\"env\"][\"mcp\"][\"servers\"]"))
+        (expect (not (str/includes? text "mcp__call"))))))
+
+(defdescribe
   mcp-call-env-injection-test
   (it
     "injects the live caller session through the Python boundary for every call shape"

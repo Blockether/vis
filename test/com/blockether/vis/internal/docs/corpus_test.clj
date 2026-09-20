@@ -125,7 +125,15 @@ Whole skill body."}
 
                    (expect (str/includes? out "grep — Search file content."))
                    (expect (not (str/includes? out "zzz")))
-                   (expect (str/includes? out "`apropos(pattern)`")))))
+                   (expect (str/includes? out "`apropos(pattern)`"))))
+             (it "names verbs the way the sandbox binds them"
+                 ;; Regression: the index listed the MCP verb by its WIRE name,
+                 ;; `mcp__call`. `index-text` keeps only curated names that exist
+                 ;; and sandbox entries are keyed by the Python binding, so the
+                 ;; whole MCP surface silently vanished from `doc()`.
+                 (expect (contains? (set dc/curated) "mcp_call"))
+                 (doseq [nm dc/curated]
+                   (expect (not (str/includes? nm "__")) nm))))
 
 (def ^:private refused-call-shapes
   "Call shapes the live handlers REFUSE, each one cross-validated against the
