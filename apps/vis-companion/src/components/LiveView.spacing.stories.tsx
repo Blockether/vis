@@ -49,6 +49,7 @@ export const Table: Story = {
           order: 'insertion',
           is_selectable: false,
           selected_ids: [],
+          groups: [],
         },
       ],
     },
@@ -105,6 +106,7 @@ const releaseJobs: Story = {
           order: 'insertion',
           is_selectable: true,
           selected_ids: ['macos', 'linux-x64', 'linux-arm64'],
+          groups: [],
         },
         {
           id: 'timeline',

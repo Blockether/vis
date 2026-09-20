@@ -1109,6 +1109,11 @@ def _live_apply(view, op):
             node[key] = list(node.get(key) or []) + payload
         else:
             node[key] = _live_upsert(node.get(key), payload)
+        if "groups" in op:
+            # A table upserts its group DECLARATIONS in the same append that
+            # carries the rows hanging under them, and a second declaration
+            # merges onto the first: re-toning a head keeps its label.
+            node["groups"] = _live_upsert(node.get("groups"), op["groups"])
     elif name == "clear":
         node[_live_items_key(node, "clear")] = []
         if node.get("type") == "log":
@@ -1133,7 +1138,12 @@ def _live_line(name, op, node):
         return "\n".join(str(line) for line in (op.get("lines") or []))
     if name == "append":
         key = _LIVE_ITEMS[kind]
-        return f"{label}: +{len(op.get(key) or [])} {key}"
+        counted = [
+            f"+{len(op[held] or [])} {held}"
+            for held in (key, "groups")
+            if op.get(held)
+        ]
+        return "{}: {}".format(label, ", ".join(counted) or f"+0 {key}")
     if kind in ("paragraph", "heading", "code", "spinner"):
         return str(node.get("text") or "")
     if kind == "button":

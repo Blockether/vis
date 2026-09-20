@@ -673,6 +673,42 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
     assert "completed" in transcript
 
 
+def test_a_live_table_declares_the_groups_its_rows_hang_under():
+    # A group has an id of its own, so the label a surface paints over it can
+    # change mid-run without moving the rows under it, and a head can carry a
+    # tone the rows never had.
+    with vis.live(
+        "Checks",
+        [
+            vis.table(
+                "checks",
+                columns=[vis.table_column("job", "Job")],
+                groups=[vis.table_group("build", label="Build", order=0)],
+                rows=[vis.table_row("compile", ["compile"], parent="build")],
+            )
+        ],
+    ) as view:
+        view.group("tests", label="Tests", order=1, is_open=True)
+        view.row("unit", ["unit"], tone="error", parent="tests")
+        # Re-toning a head keeps the label it was declared with.
+        view.group("tests", tone="error")
+        table = view.state()["nodes"][0]
+        assert table["groups"] == [
+            {"id": "build", "label": "Build", "order": 0},
+            {
+                "id": "tests",
+                "label": "Tests",
+                "order": 1,
+                "is_open": True,
+                "tone": "error",
+            },
+        ]
+        assert [row.get("parent") for row in table["rows"]] == ["build", "tests"]
+        # An undeclared parent is still a group: nothing has to declare one.
+        view.row("lint", ["lint"], parent="lint")
+        assert len(view.state()["nodes"][0]["groups"]) == 2
+
+
 @pytest.mark.parametrize(
     "view",
     [

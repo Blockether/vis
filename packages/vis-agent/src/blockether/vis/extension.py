@@ -3105,6 +3105,27 @@ class Table(_KeyedNode):
             ],
         )
 
+    def group(self, group_id, label=None, tone=None, order=None, is_open=None):
+        # A declared HEAD: the id a row's `parent` names, plus the state no row
+        # carries — the label a surface paints instead of that id, a tone for the
+        # head itself, where it sorts, and whether it arrives open. Declaring is
+        # optional and idempotent: an undeclared parent is still a group, and a
+        # second call re-tones one without renaming it.
+        return self._op(
+            "append",
+            groups=[
+                _live_item(
+                    group_id,
+                    {
+                        "label": label,
+                        "tone": tone,
+                        "order": order,
+                        "is_open": is_open,
+                    },
+                )
+            ],
+        )
+
     def select(self, *item_ids):
         # Selection is shared engine state. A surface writes it and the extension can
         # observe it through `LiveView.state()` on its next update.
@@ -3476,6 +3497,11 @@ class LiveView:
             row_id, cells, tone=tone, parent=parent
         )
 
+    def group(self, group_id, label=None, tone=None, order=None, is_open=None):
+        return self._only("table", "group").group(
+            group_id, label=label, tone=tone, order=order, is_open=is_open
+        )
+
     def link(self, link_id, label, target, target_kind=None, tone=None):
         return self._only("link", "link").add(
             link_id, label, target, target_kind=target_kind, tone=tone
@@ -3783,6 +3809,18 @@ class _LiveRecorder:
                 for item in incoming:
                     item.setdefault("target_kind", "url")
             node[key] = self._upsert(node[key], incoming)
+            if "groups" in op:
+                # `live/apply-append`: a group already declared KEEPS the keys the
+                # new declaration leaves out, so re-toning a head does not drop
+                # the label it was named with.
+                known = {group["id"]: group for group in node.get("groups", [])}
+                node["groups"] = self._upsert(
+                    node.get("groups", []),
+                    [
+                        {**known.get(group["id"], {}), **group}
+                        for group in self._copy(op["groups"])
+                    ],
+                )
         else:
             raise AssertionError(f"unsupported test live op: {op!r}")
 
@@ -4137,6 +4175,8 @@ def table(node_id, columns=None, **spec):
     # Rows keyed by id. `order` declares how they paint — 'insertion' (the
     # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
     # `is_selectable=True` makes rows controls; `selected_ids` is shared state.
+    # `groups` declares the heads rows hang under — see `table_group`; a row
+    # whose `parent` names no declared group still gets one, labelled with the id.
     return _live_node("table", node_id, dict(spec, columns=columns))
 
 
@@ -4148,6 +4188,14 @@ def table_column(column_id, label=None, **spec):
 def table_row(row_id, cells, **spec):
     # One declared row: the id every later upsert addresses, and its cells.
     return _live_item(row_id, dict(spec, cells=[_cell(c) for c in cells]))
+
+
+def table_group(group_id, label=None, **spec):
+    # One declared group of a table: the id a row's `parent` names, the `label`
+    # painted over it instead of that id, and optionally `tone`, `order` and
+    # `is_open`. Renaming the label never moves the group, because rows point at
+    # the id.
+    return _live_item(group_id, dict(spec, label=label))
 
 
 def link(node_id, links=None, **spec):

@@ -322,7 +322,10 @@
   "Rows upserted and removed by row id, painted in the `:order` the view
    DECLARES — `columns` are [[table-column]]s, `:rows` seeds it and `:max-rows`
    bounds it by refusal. `:is-selectable true` turns rows into controls;
-   `:selected-ids` is the shared current selection extensions read from state."
+   `:selected-ids` is the shared current selection extensions read from state.
+
+   `:groups` declares the heads rows hang under — see [[table-group]]; a row
+   naming a group nobody declared still gets one, labelled with the id."
   ([id columns] (table id columns nil))
   ([id columns opts] (live-node "table" id (assoc opts :columns (vec columns)))))
 
@@ -345,7 +348,7 @@
 
 (defn table-row
   "One row of a [[table]], keyed by `id`: `cells` in column order, optionally
-   `:tone`d or placed below a collapsible `:parent` label shared by sibling rows.
+   `:tone`d or hung under the `:parent` group id its sibling rows share.
    Built rather than typed because it is the one POSITIONAL thing here — a cell
    means whatever column stands over it.
 
@@ -355,6 +358,18 @@
    (assoc opts
      :id id
      :cells (vec cells))))
+
+(defn table-group
+  "One declared group of a [[table]]: the `id` a row's `:parent` names, and the
+   state no row carries — `:label` a surface paints instead of the id (so
+   renaming a group does not move it), a `:tone` that marks the head when a
+   member failed, an `:order` among its siblings, and `:is-open true` when the
+   producer wants it unfolded on arrival.
+
+   A group is not a node, so it is checked by the table, or the patch, carrying
+   it. Declaring one is optional: an undeclared `:parent` is still a group."
+  ([id] {:id id})
+  ([id opts] (assoc opts :id id)))
 
 (defn- checked-op
   "`op` itself, once the engine has agreed it is a patch operation."

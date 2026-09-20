@@ -93,6 +93,12 @@
    rather than a silent no-op."
   {:stat :stats :steps :steps :log :lines :table :rows :link :links})
 
+(def ^:private append-extra-keys
+  "Keys an `append` may carry BESIDE the node's own collection. A table upserts
+   its group DECLARATIONS here, so the head and the rows that hang under it
+   arrive in one patch instead of racing each other."
+  {:table #{:groups}})
+
 (def ^:private patch-item-caps
   "How many items ONE patch may carry into a node. Not a cap on the node: it
    keeps a single operation from parking the publishing thread on the journal
@@ -165,6 +171,18 @@
                            "whose record keeps every line.")))
     items))
 
+(defn- checked-groups
+  "`groups` once a table still declares no more of them than the contract allows.
+   Groups are heads, not volume: a producer minting one per row has confused the
+   two, and the refusal says so where it was written."
+  [node groups]
+  (let [bound (long (:max-groups spec/table-defaults))]
+    (when (> (count groups) bound)
+      (invalid-patch! (:id node)
+                      (str "a table declares at most " bound
+                           " groups and this would declare " (count groups))))
+    groups))
+
 (defn- upsert
   "`incoming` merged into `existing` BY ID: an id already present is REPLACED IN
    PLACE — the row keeps the slot the eye left it in — and an unseen id is
@@ -181,6 +199,18 @@
                        [(conj acc item) (assoc idx (:id item) (count acc))]))
                    [existing start]
                    incoming))))
+
+(defn- merge-by-id
+  "`incoming` merged into `existing` by id like [[upsert]], except that keys the
+   new item leaves out are KEPT: re-toning a group mid-run must not drop the
+   label it was declared with, because the producer that knows the tone changed
+   may not be the call that named the group."
+  [existing incoming]
+  (let [known (into {} (map (juxt :id identity)) existing)]
+    (upsert existing
+            (mapv (fn [item]
+                    (merge (get known (:id item)) item))
+                  incoming))))
 
 (defn- without-ids
   "`existing` without the named items. Removing an id that is not there is a
@@ -293,11 +323,16 @@
   (let [k
         (get appendable-key (:type node))
 
+        extra
+        (get append-extra-keys (:type node) #{})
+
         given
         (disj (set (keys op)) :op :node-id)
 
         wrong
-        (sort (map name (if (= :log (:type node)) (disj given k :tone) (disj given k))))]
+        (sort
+          (map name
+               (reduce disj (if (= :log (:type node)) (disj given k :tone) (disj given k)) extra)))]
 
     (when (nil? k)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node has nothing to append to")))
@@ -328,7 +363,13 @@
                                      :total-lines (+ (long (:total-lines node)) (count items)))
                              styled?
                              (assoc :line-tones tones))))
-        (update node k #(checked-count! node (upsert % items)))))))
+        (cond-> node
+          (contains? given k)
+          (update k #(checked-count! node (upsert % items)))
+
+          (contains? given :groups)
+          (assoc :groups
+            (checked-groups node (merge-by-id (or (:groups node) []) (:groups op)))))))))
 
 (defn- prune-selected
   "Drop selected ids whose rows no longer exist, without adding selection metadata to a
@@ -722,6 +763,22 @@
    is written and read back by the two table forms alone."
   "/")
 
+(defn- group-note
+  "One DECLARED group, as the note a table trails its rows with: the marker, the
+   id rows point at, then the state no row carries — tone, place in the order and
+   whether it opens by itself. The label comes LAST, so free text can never be
+   read back as one of those flags."
+  [{:keys [id label tone order is-open]}]
+  (str "_"
+       parent-marker
+       " "
+       id
+       (when tone (str " !" (name tone)))
+       (when order (str " #" order))
+       (when is-open " +open")
+       (when label (str " = " label))
+       "_"))
+
 (defmethod node->markdown :table
   [{:keys [columns] :as node} {:keys [table-rows]}]
   (let [rows
@@ -774,6 +831,9 @@
           (str "| " (str/join " | " cells) " |"))]
 
     (cond-> (into [(line header) (line rule)] (map (comp line row->cells)) shown)
+      (seq (:groups node))
+      (into (map group-note) (:groups node))
+
       (empty? rows)
       (conj (empty-line :table))
 
@@ -1008,6 +1068,46 @@
            (re-matches pattern)
            second
            parse-long))
+
+(defn- trailing-notes
+  "A block's PAINTED lines and the `_…_` notes trailing them. A table writes its
+   group declarations and its budget note there, so both are read back without
+   either being mistaken for a row."
+  [lines]
+  (let [painted
+        (vec lines)
+
+        cut
+        (- (count painted) (count (take-while (comp some? italicized) (rseq painted))))]
+
+    [(subvec painted 0 cut) (subvec painted cut)]))
+
+(defn- note->group
+  "A `_/ …_` note back into the group it declares, or nil when the note says
+   something else — the budget line lives in the same place."
+  [line]
+  (when-let [[_ id flags label] (some->> (italicized line)
+                                         (re-matches
+                                           #"/ (\S+)((?: ![a-z-]+| #-?\d+| \+open)*)(?: = (.*))?"))]
+    (let [tone (some-> (re-find #" !([a-z-]+)" flags)
+                       second
+                       keyword)
+          order (some-> (re-find #" #(-?\d+)" flags)
+                        second
+                        parse-long)]
+
+      (cond-> {:id id}
+        (tone? tone)
+        (assoc :tone tone)
+
+        order
+        (assoc :order order)
+
+        (str/includes? flags "+open")
+        (assoc :is-open true)
+
+        (not (str/blank? label))
+        (assoc :label label)))))
 
 (def ^:private presentation-marker
   #"<!-- vis:(paragraph|heading|divider|code|spinner|button) ([0-9]+) -->")
@@ -1275,21 +1375,17 @@
 
 (defmethod markdown->node :table
   [_ {:keys [at lines]}]
-  (let [noted
-        (italicized (last lines))
+  (let [[body notes]
+        (trailing-notes lines)
 
         behind
-        (long (or (some->> noted
-                           (re-matches #"… (\d+) more rows.*")
-                           second
-                           parse-long)
-                  0))
+        (long (or (some #(counted-behind #"… (\d+) more rows.*" %) notes) 0))
+
+        groups
+        (into [] (keep note->group) notes)
 
         painted
-        (mapv table-cells
-              (cond-> lines
-                noted
-                (subvec 0 (dec (count lines)))))
+        (mapv table-cells body)
 
         [header rule]
         painted
@@ -1352,11 +1448,13 @@
                       (assoc :parent parent))))
                 (drop 2 painted)))]
 
-    (with-meta {:type :table
-                :columns columns
-                :rows rows
-                :max-rows (long (:max-rows spec/table-defaults))
-                :order :insertion}
+    (with-meta (cond-> {:type :table
+                        :columns columns
+                        :rows rows
+                        :max-rows (long (:max-rows spec/table-defaults))
+                        :order :insertion}
+                 (seq groups)
+                 (assoc :groups groups))
       {:elided behind})))
 
 (defmethod markdown->node :link

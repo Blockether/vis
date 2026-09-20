@@ -1112,6 +1112,66 @@
       (is (some #(and (= :live-expand (:kind %)) (= ["jobs" "tests"] (:node-id %)))
                 (lv/controls [(parented)]))))))
 
+;; A DECLARED group is that same fold given an identity: the producer owns the
+;; order the heads paint in, the label each head wears and the tone that says a
+;; leg failed — and renaming one no longer shuts it under the reader's hand.
+(deftest live-view-table-group-test
+  (let [grouped
+        (fn [groups]
+          (lv/opened (mounted {}
+                              (fixture/table
+                                "jobs"
+                                [(fixture/table-column "job" "Job")]
+                                {:label "Jobs"
+                                 :groups groups
+                                 :rows [(fixture/table-row "t-1" ["ubuntu"] {:parent "tests"})
+                                        (fixture/table-row "b-1" ["image"] {:parent "build"})]}))))
+
+        heads-of
+        (fn [p]
+          (mapv :text (kinds-of p :tparent)))]
+
+    (testing "the heads paint in the order the table DECLARED, not the order the rows arrived"
+      (let [heads (heads-of (grouped [(fixture/table-group "tests" {:label "Tests" :order 1})
+                                      (fixture/table-group "build" {:label "Build" :order 0})]))]
+        (is (= 2 (count heads)))
+        (is (str/includes? (nth heads 0) "▸ Build · 1 row"))
+        (is (str/includes? (nth heads 1) "▸ Tests · 1 row")
+            "and a head wears the group's LABEL, not the id its rows point at")))
+    (testing "a group nobody declared is still a group, painted after the declared ones"
+      (let [heads (heads-of (grouped [(fixture/table-group "build" {:label "Build"})]))]
+        (is (str/includes? (nth heads 0) "▸ Build · 1 row"))
+        (is (str/includes? (nth heads 1) "▸ tests · 1 row")
+            "an undeclared parent keeps working and wears its own id")))
+    (testing "a head says a leg failed before anybody opens it"
+      (let [head (first (kinds-of (grouped [(fixture/table-group "build"
+                                                                 {:label "Build" :tone :error})])
+                                  :tparent))]
+        (is (= :error (:tone head)))
+        (is (some #(= t/footer-error-fg (:fg %)) (:segments head))
+            "the tone is ink on the head, not a word hidden inside the fold")))
+    (testing "a group declared open starts open, and the reader's own hand still wins"
+      (let [p (grouped [(fixture/table-group "build" {:label "Build" :is-open true})])]
+        (is (str/includes? (nth (heads-of p) 0) "▾ Build")
+            "the producer said which fold is the interesting one")
+        (is (str/includes? (nth (heads-of (lv/expanded p ["jobs" "build"])) 0) "▸ Build")
+            "and the reader shuts it again")))
+    (testing "renaming a group does not shut it under the reader"
+      (let [p
+            (lv/expanded (grouped [(fixture/table-group "build" {:label "Build"})])
+                         ["jobs" "build"])
+
+            renamed
+            (update-in p
+                       [:view :nodes]
+                       (partial mapv
+                                #(cond-> % (= :table (:type %)) (assoc :groups
+                                                                  [{:id "build"
+                                                                    :label "Compile"}]))))]
+
+        (is (str/includes? (nth (heads-of renamed) 0) "▾ Compile · 1 row")
+            "expansion is keyed by [table-id group-id], so a new label is the same fold")))))
+
 ;; Every string a human reads in this program is markdown already — the
 ;; transcript, the form and the view's own document all speak it — so a live view
 ;; that painted its strings flat would be the ONE surface where `code` is not code.

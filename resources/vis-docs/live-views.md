@@ -290,7 +290,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, parent=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)], groups=[vis.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
@@ -427,10 +427,21 @@ option keys; `disclosure` takes a vector of children and optional options, and
 `log` is the Clojure name of Python's `output`.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
-`{"by": "duration", "dir": "desc"}`. Rows sharing a `parent="Release apps"`
-appear under one collapsible parent, closed until the reader opens it. Every
-surface renders that group the same way: the parent shows its own name and
-how many rows it holds, so keep the name stable and let Vis do the counting.
+`{"by": "duration", "dir": "desc"}`. Rows sharing a `parent="tests"` appear
+under one collapsible group, closed until the reader opens it. Every surface
+renders that group the same way: the group shows its name and how many rows it
+holds, so keep the name stable and let Vis do the counting. A group you never
+declare is named by its id and sorts after the declared ones, by the arrival of
+its first row.
+
+Declare a group when you want to name, ink or order it:
+`vis.table_group("tests", label="Tests", tone="error", order=0)` when you build
+the table, or `view["jobs"].group("tests", tone="error")` while the run moves.
+Declarations merge by id, so a later call changes only the keys it passes, and
+renaming a group keeps the reader's fold. `is_open=True` opens the group when it
+first arrives; after that the reader's own choice stands. A declared group that
+holds no rows is not painted.
+
 With `is_selectable=True`, users can select rows; read the selection with
 `view.state()`.
 

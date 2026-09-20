@@ -151,6 +151,22 @@ describe('a patch frame', () => {
     expect(view.seq).toBe(1);
   });
 
+  // A group is a DECLARATION, not a row: a second one MERGES into the first, so
+  // re-toning a group mid-run cannot drop the label it was declared with.
+  it('merges a group declaration instead of replacing it', () => {
+    const view = patched(opened(), 1, [
+      {
+        op: 'append',
+        node_id: 'hosts',
+        groups: [{ id: 'db', label: 'Databases', order: 2, is_open: true }],
+      },
+      { op: 'append', node_id: 'hosts', groups: [{ id: 'db', tone: 'error' }] },
+    ]);
+    expect(nodeOfType(view, 'hosts', 'table').groups).toEqual([
+      { id: 'db', label: 'Databases', order: 2, is_open: true, tone: 'error' },
+    ]);
+  });
+
   it('slides the log window and keeps the count the record holds', () => {
     const arriving = Array.from({ length: LIVE_LOG_WINDOW }, (_, at) => `line ${at}`);
     const view = patched(opened(), 1, [{ op: 'append', node_id: 'tail', lines: arriving }]);

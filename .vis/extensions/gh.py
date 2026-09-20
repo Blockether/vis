@@ -291,6 +291,25 @@ def _job_groups(jobs):
     return groups
 
 
+def _group_heads(groups, tones):
+    """One DECLARED head per matrix parent: where it sorts, and whether a leg failed.
+
+    The head's id is the parent name GitHub already gives every leg, so a row's
+    `parent` keeps naming the same group poll after poll. `order` is the order the
+    run listed the groups in, declared rather than rediscovered from whichever leg
+    happened to arrive first, and a head that holds a failed job says so in its own
+    tone — the reader sees the failure without opening the fold.
+    """
+    heads = {}
+    for group, tone in zip(groups, tones, strict=True):
+        if not group:
+            continue
+        head = heads.setdefault(group, {"id": group, "order": len(heads)})
+        if tone == "error":
+            head["tone"] = "error"
+    return list(heads.values())
+
+
 def default_selected_ids(jobs):
     """All running jobs, else the last failed job, else the last job."""
     running = [
@@ -621,6 +640,7 @@ def run_shape(payload, selected_ids=None, now=None):
                 "tone": "idle",
             },
         ],
+        "groups": _group_heads(groups, tones),
         "rows": [
             {
                 "id": _job_id(job, index),
@@ -679,6 +699,10 @@ def declared_nodes(shape):
                 vis.table_column("state", "Now"),
                 vis.table_column("took", "Took"),
             ],
+            groups=[
+                vis.table_group(one["id"], tone=one.get("tone"), order=one["order"])
+                for one in shape["groups"]
+            ],
             rows=[
                 vis.table_row(
                     row["id"], row["cells"], tone=row["tone"], parent=row.get("parent")
@@ -716,6 +740,12 @@ def push_changes(view, before, after):
             view["score"].set(
                 one["id"], one["value_text"], label=one["label"], tone=one["tone"]
             )
+    # A group is DECLARED before its legs land: the head owns its order and the tone
+    # that says a leg failed, and a declaration merges, so re-toning keeps the rest.
+    heads = {one["id"]: one for one in before.get("groups") or []}
+    for one in after["groups"]:
+        if heads.get(one["id"]) != one:
+            view["jobs"].group(one["id"], tone=one.get("tone"), order=one["order"])
     rows = {one["id"]: one for one in before.get("rows") or []}
     # A terminal poll must not archive active rows absent from GitHub's final jobs.
     if after["is_over"] and set(rows) - {row["id"] for row in after["rows"]}:

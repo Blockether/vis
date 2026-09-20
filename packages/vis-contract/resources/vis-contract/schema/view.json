@@ -1349,6 +1349,31 @@
         "label"
       ]
     },
+    "table_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "is_open": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
     "row": {
       "type": "object",
       "additionalProperties": false,
@@ -1670,6 +1695,14 @@
               },
               "minItems": 0,
               "maxItems": 5000
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/table_group"
+              },
+              "minItems": 0,
+              "maxItems": 200
             },
             "max_rows": {
               "type": "integer",
@@ -2152,6 +2185,14 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/row"
+              },
+              "minItems": 0,
+              "maxItems": 200
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/table_group"
               },
               "minItems": 0,
               "maxItems": 200

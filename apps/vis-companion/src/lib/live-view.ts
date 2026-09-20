@@ -152,8 +152,21 @@ export interface LiveRow {
   id: string;
   cells: string[];
   tone: LiveTone;
-  /** Shared parent label; equal labels become one collapsible table parent. */
+  /** The id of the GROUP this row hangs under; an id nobody declared is a group of its own. */
   parent?: string;
+}
+
+/**
+ * A group the table DECLARED: the fold its rows hang under, the order it paints
+ * in, the label its head wears and the tone that says a leg failed before anybody
+ * opens it. `is_open` is an initial hint — the reader's own hand wins after that.
+ */
+export interface LiveGroup {
+  id: string;
+  label?: string;
+  tone?: LiveTone;
+  order?: number;
+  is_open?: boolean;
 }
 
 /** Rows keyed by id: an update lands in the slot the eye left it in. */
@@ -165,6 +178,7 @@ export interface LiveTableNode extends LiveNodeBase {
   order: LiveOrder;
   is_selectable: boolean;
   selected_ids: string[];
+  groups: LiveGroup[];
 }
 
 export interface LiveLink {
@@ -413,6 +427,22 @@ function rowFromWire(raw: Record<string, unknown>): LiveRow | null {
   };
 }
 
+function groupFromWire(raw: Record<string, unknown>): LiveGroup | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  const label = optionalText(raw.label);
+  const given = optionalNumber(raw.order);
+  // Only what was DECLARED is written down: an absent key must stay absent, so a
+  // later declaration can merge into this one instead of erasing it.
+  return {
+    id,
+    ...(label === undefined ? {} : { label }),
+    ...(raw.tone === undefined ? {} : { tone: tone(raw.tone) }),
+    ...(given === undefined ? {} : { order: Math.trunc(given) }),
+    ...(raw.is_open === undefined ? {} : { is_open: raw.is_open === true }),
+  };
+}
+
 function linkFromWire(raw: Record<string, unknown>): LiveLink | null {
   const id = text(raw.id);
   const target = text(raw.target);
@@ -544,6 +574,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         type: 'table',
         columns: keyed(node.columns, columnFromWire),
         rows: tableRows,
+        groups: keyed(node.groups, groupFromWire),
         max_rows: count(node.max_rows, LIVE_TABLE_MAX_ROWS),
         order: order(node.order),
         is_selectable: isSelectable,
@@ -612,6 +643,27 @@ function upsert<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
       merged.push(item);
     } else {
       merged[index] = item;
+    }
+  }
+  return merged;
+}
+
+/**
+ * A group is a DECLARATION, so a second one MERGES into the first: re-toning a
+ * group mid-run must not drop the label it was declared with. Rows replace in
+ * place (`upsert`); declarations accumulate.
+ */
+function mergedGroups(existing: LiveGroup[], incoming: LiveGroup[]): LiveGroup[] {
+  if (incoming.length === 0) return existing;
+  const merged = existing.slice();
+  const at = new Map(existing.map((group, index) => [group.id, index]));
+  for (const group of incoming) {
+    const index = at.get(group.id);
+    if (index === undefined) {
+      at.set(group.id, merged.length);
+      merged.push(group);
+    } else {
+      merged[index] = { ...merged[index], ...group };
     }
   }
   return merged;
@@ -730,7 +782,13 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
   }
   switch (node.type) {
     case 'table':
-      return { ...node, rows: upsert(node.rows, keyed(op.rows, rowFromWire)) };
+      return {
+        ...node,
+        rows: upsert(node.rows, keyed(op.rows, rowFromWire)),
+        ...('groups' in op
+          ? { groups: mergedGroups(node.groups, keyed(op.groups, groupFromWire)) }
+          : {}),
+      };
     case 'stat':
       return {
         ...node,

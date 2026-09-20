@@ -857,12 +857,13 @@
    :rows (wire-keys view-spec/live-row-keys)
    :stats (wire-keys view-spec/live-stat-keys)
    :steps (wire-keys view-spec/live-step-keys)
-   :links (wire-keys view-spec/live-link-keys)})
+   :links (wire-keys view-spec/live-link-keys)
+   :groups (wire-keys view-spec/live-table-group-keys)})
 
 (def ^:private live-item-name
   "What one item of each keyed collection is CALLED, so a refusal names the thing
    the author wrote rather than the key it arrived under."
-  {:columns "column" :rows "row" :stats "stat" :steps "step" :links "link"})
+  {:columns "column" :rows "row" :stats "stat" :steps "step" :links "link" :groups "table group"})
 
 (defn- pick*
   "The value of canonical key `k` written either legal way: `\"window_lines\"`
@@ -959,6 +960,24 @@
 
           (trimmed (pick* item :parent))
           (assoc :parent (trimmed (pick* item :parent))))
+
+        ;; A DECLARED group: the id `:parent` points at, plus what the surfaces
+        ;; need to paint a head the rows never carry — a label that may change
+        ;; without moving the group, a tone, a place in the order, and whether
+        ;; the producer wants it open on arrival.
+        :groups
+        (cond-> {:id id}
+          label
+          (assoc :label label)
+
+          tone
+          (assoc :tone tone)
+
+          (some? (pick* item :order))
+          (assoc :order (live-long item-fail! ":order" (pick* item :order)))
+
+          (some? (pick* item :is-open))
+          (assoc :is-open (bool-value item-fail! ":is-open" (pick* item :is-open) false)))
 
         :stats
         (cond-> {:id id
@@ -1146,6 +1165,9 @@
                                   (live-long node-fail! ":max-rows" bound)
                                   (long (:max-rows view-spec/table-defaults)))
                       :order (normalize-live-order node-fail! (pick* node :order)))
+              (seq (pick* node :groups))
+              (assoc :groups (items :groups))
+
               (some? (pick* node :is-selectable))
               (assoc :is-selectable
                 (bool-value node-fail! ":is-selectable" (pick* node :is-selectable) false))
@@ -1292,6 +1314,8 @@
                    (text-items fail! ":selected-ids" value))
    :rows (fn [fail! value]
            (normalize-live-items fail! :rows value))
+   :groups (fn [fail! value]
+             (normalize-live-items fail! :groups value))
    :stats (fn [fail! value]
             (normalize-live-items fail! :stats value))
    :steps (fn [fail! value]
@@ -1681,10 +1705,11 @@
         (reduce into
                 #{}
                 [view-spec/live-view-keys view-spec/live-node-keys view-spec/live-group-keys
-                 view-spec/live-column-keys view-spec/live-row-keys view-spec/live-stat-keys
-                 view-spec/live-step-keys view-spec/live-link-keys view-spec/live-sorted-keys
-                 view-spec/live-patch-keys view-spec/live-op-keys view-spec/live-result-keys
-                 view-spec/live-picture-keys view-spec/live-elided-keys])))
+                 view-spec/live-column-keys view-spec/live-table-group-keys view-spec/live-row-keys
+                 view-spec/live-stat-keys view-spec/live-step-keys view-spec/live-link-keys
+                 view-spec/live-sorted-keys view-spec/live-patch-keys view-spec/live-op-keys
+                 view-spec/live-result-keys view-spec/live-picture-keys
+                 view-spec/live-elided-keys])))
 
 (def ^:private live-wire-terms
   "The CLOSED table each keyword-valued key takes its value from. A term outside its

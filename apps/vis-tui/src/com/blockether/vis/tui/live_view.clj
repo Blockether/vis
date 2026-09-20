@@ -849,51 +849,85 @@
                          shown)))
     [{:kind :empty :node-id id :text (empty-text :log)}]))
 
+(defn- painted-groups
+  "Every group ONE table paints, in the order it paints them: the groups the
+   producer DECLARED first — by `order`, ties broken by the order they were
+   declared — and then the ones a row invented by naming a parent nobody
+   declared, in the order those rows first appeared.
+
+   A declaration only ever adds: an undeclared `parent` is still a group, and it
+   wears its own id as its label."
+  [groups rows]
+  (let [declared (into {}
+                       (map-indexed (fn [index group]
+                                      [(:id group)
+                                       (assoc group :rank [(long (or (:order group) 0)) index])]))
+                       groups)]
+    (-> (vec (sort-by :rank (vals declared)))
+        (into (comp (keep :parent)
+                    (distinct)
+                    (remove declared)
+                    (map (fn [id]
+                           {:id id})))
+              rows))))
+
 (defn- parent-items
   "The rows ONE table paints, in order. A row that names a `parent` stands under
-   that parent's HEAD, with every leg of the parent gathered at the head's own
+   that group's HEAD, with every leg of the group gathered at the head's own
    place — a producer lists a matrix interleaved with the rest of its work, and
-   legs stranded under whichever head came next read as somebody else's. A parent
-   stays SHUT until `open?` says the reader opened it; a row that names no parent
-   is simply itself.
+   legs stranded under whichever head came next read as somebody else's. The
+   heads stand together where the FIRST grouped row was listed, in the order the
+   table declared them; a row that names no parent is simply itself.
+
+   A group stays SHUT unless it was declared open, and `toggled?` — the reader's
+   own hand on the fold — always flips whatever the producer asked for.
 
    The grouping belongs to the LIVE INTERFACE and not to one surface's reading of
    one producer: the Companion folds the same field into the same shape."
-  [rows open?]
-  (let [legs (reduce (fn [acc row]
-                       (if-let [parent (:parent row)]
-                         (update acc parent (fnil conj []) row)
-                         acc))
-                     {}
-                     rows)]
-    (:items
-      (reduce (fn [acc row]
-                (let [parent (:parent row)]
-                  (cond (nil? parent) (update acc :items conj {:row row})
-                        (contains? (:seen acc) parent) acc
-                        :else (let [held (get legs parent)
-                                    is-open (boolean (open? parent))]
+  [groups rows toggled?]
+  (let [legs
+        (reduce (fn [acc row]
+                  (if-let [parent (:parent row)]
+                    (update acc parent (fnil conj []) row)
+                    acc))
+                {}
+                rows)
 
-                                (cond-> (-> acc
-                                            (update :seen conj parent)
-                                            (update
-                                              :items
-                                              conj
-                                              {:parent parent :held (count held) :is-open is-open}))
+        heads
+        (into []
+              (comp (filter #(seq (get legs (:id %))))
+                    (mapcat (fn [{:keys [id label tone is-open]}]
+                              (let [held
+                                    (get legs id)
+
+                                    is-open
+                                    (if (toggled? id) (not (true? is-open)) (true? is-open))]
+
+                                (cond-> [{:parent id
+                                          :label (or label id)
+                                          :tone tone
+                                          :held (count held)
+                                          :is-open is-open}]
                                   is-open
-                                  (update :items
-                                          into
-                                          (map (fn [leg]
-                                                 {:row leg :is-leg true}))
-                                          held))))))
-              {:items [] :seen #{}}
-              rows))))
+                                  (into (map (fn [leg]
+                                               {:row leg :is-leg true}))
+                                        held))))))
+              (painted-groups groups rows))]
+
+    (:items (reduce (fn [acc row]
+                      (cond (nil? (:parent row)) (update acc :items conj {:row row})
+                            (:is-spliced acc) acc
+                            :else (-> acc
+                                      (assoc :is-spliced true)
+                                      (update :items into heads))))
+                    {:items [] :is-spliced false}
+                    rows))))
 
 (defmethod node-rows :table
-  [{:keys [id columns is-selectable selected-ids] :as node}
+  [{:keys [id columns groups is-selectable selected-ids] :as node}
    {:keys [text-w widths fresh is-expanded is-interactive expanded]}]
   (let [items
-        (parent-items (live/ordered-rows node) #(contains? (set expanded) [id %]))
+        (parent-items groups (live/ordered-rows node) #(contains? (set expanded) [id %]))
 
         {:keys [shown behind]}
         (windowed items is-expanded false)
@@ -936,24 +970,23 @@
         (fn [edge]
           {:kind :trule :node-id id :text (rule-line ws edge)})
 
-        ;; A parent head NAMES itself and then says how much its fold holds, and the
-        ;; whole line is the control that opens it. The count is counted HERE, from
-        ;; the rows themselves, so no producer has to smuggle it into the name.
+        ;; A parent head wears the group's LABEL and then says how much its fold
+        ;; holds, and the whole line is the control that opens it. The count is
+        ;; counted HERE, from the rows themselves, so no producer has to smuggle
+        ;; it into the name.
         head
-        (fn [{:keys [parent held is-open]}]
+        (fn [{:keys [parent label tone held is-open]}]
           (let [text
-                (str (if is-open "▾ " "▸ ")
-                     parent
-                     " · " held
-                     " row" (when (not= 1 (long held)) "s"))
+                (str (if is-open "▾ " "▸ ") label " · " held " row" (when (not= 1 (long held)) "s"))
 
                 segments
-                (span-segments ws text t/dialog-hint-key [p/BOLD])]
+                (span-segments ws text (tone-fg tone t/dialog-hint-key) [p/BOLD])]
 
             {:kind :tparent
              :node-id [id parent]
              :table-id id
              :parent parent
+             :tone tone
              :is-open is-open
              :segments segments
              :text (segment-line segments)}))

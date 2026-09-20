@@ -143,7 +143,8 @@
 (def table-defaults
   "Live table collection and patch bounds."
   {:max-rows (get-in live-nodes ["table" "properties" "max_rows" "maximum"])
-   :max-patch-rows (get-in patches ["append" "properties" "rows" "maxItems"])})
+   :max-patch-rows (get-in patches ["append" "properties" "rows" "maxItems"])
+   :max-groups (get-in live-nodes ["table" "properties" "groups" "maxItems"])})
 
 (def stat-defaults
   "Live stat collection bound."
@@ -219,6 +220,12 @@
   (read-only-keys (definition "live_view")))
 
 (def live-column-keys "Every key one declared table column may carry." (schema-keys "table_column"))
+
+(def live-table-group-keys
+  "Every key one declared table group may carry: the id rows point at, the label
+   a surface paints instead of that id, a tone for the head, where the group
+   sorts, and whether it starts open."
+  (schema-keys "table_group"))
 
 (def live-row-keys "Every key one table row may carry." (schema-keys "row"))
 

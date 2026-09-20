@@ -148,6 +148,7 @@ describe('a live view on the phone', () => {
         order: 'insertion',
         is_selectable: false,
         selected_ids: [],
+        groups: [],
       }),
     });
     expect(html).toContain('no rows yet');
@@ -195,6 +196,7 @@ describe('a live view on the phone', () => {
           order: 'insertion',
           is_selectable: false,
           selected_ids: [],
+          groups: [],
         },
         { id: 'written', type: 'paragraph', text: 'Report written.' },
       ],
@@ -353,6 +355,64 @@ describe('selecting a table row', () => {
     expect(at('Release apps')).toBeLessThan(at('iOS'));
     expect(at('iOS')).toBeLessThan(at('Android'));
     expect(at('Android')).toBeLessThan(at('Publish docs'));
+  });
+  // A DECLARED group is that same fold given an identity: the producer owns the order
+  // the heads paint in, the label each head wears and the tone that says a leg failed
+  // before anybody opens the fold.
+  it('paints declared groups in the declared order, wearing the label and tone they declared', () => {
+    const view = matrixView([]);
+    const hosts = hostsTable(view);
+    hosts.rows = [
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent: 'release' },
+      { id: 'docs', cells: ['Publish docs', 'failed'], tone: 'error', parent: 'publish' },
+    ];
+    hosts.groups = [
+      { id: 'release', label: 'Release apps', order: 1 },
+      { id: 'publish', label: 'Publish', order: 0, tone: 'error' },
+    ];
+    paint({ view, onSelect: vi.fn() });
+
+    const order = screen.getAllByRole('row').map((row) => row.textContent ?? '');
+    const at = (text: string) => order.findIndex((line) => line.includes(text));
+    expect(at('Publish')).toBeLessThan(at('Release apps'));
+    // The head wears the LABEL; the id its rows point at never reaches the screen.
+    expect(screen.queryByText('release')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Publish' }).innerHTML).toContain('text-err');
+    expect(screen.getByRole('button', { name: 'Release apps' }).innerHTML).not.toContain('text-err');
+  });
+  it('opens a group the producer declared open, and lets the reader shut it again', () => {
+    const view = matrixView([]);
+    const hosts = hostsTable(view);
+    hosts.rows = [{ id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent: 'release' }];
+    hosts.groups = [{ id: 'release', label: 'Release apps', is_open: true }];
+    paint({ view, onSelect: vi.fn() });
+
+    const head = screen.getByRole('button', { name: 'Release apps' });
+    expect(head.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(head);
+    expect(
+      screen.getByRole('button', { name: 'Release apps' }).getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+  // Expansion used to be keyed on the label, so renaming a group shut the fold under
+  // the reader. It is keyed on the group id, which a rename does not touch.
+  it('keeps a group open when the producer renames it mid-run', () => {
+    const grouped = (label: string): LiveView => {
+      const view = matrixView([]);
+      const hosts = hostsTable(view);
+      hosts.rows = [{ id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent: 'release' }];
+      hosts.groups = [{ id: 'release', label }];
+      return view;
+    };
+    const { rerender } = render(<LiveViewPanel view={grouped('Release apps')} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Release apps' }));
+    rerender(<LiveViewPanel view={grouped('Ship it')} onSelect={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Ship it' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
   // tinted its first cell, so the table looked like a cell picker instead of a row picker.

@@ -50,6 +50,21 @@
           "id": "score"
         },
         {
+          "groups": [
+            {
+              "id": "tests",
+              "tone": "error",
+              "order": 0
+            },
+            {
+              "id": "lint",
+              "order": 1
+            },
+            {
+              "id": "classpath",
+              "order": 2
+            }
+          ],
           "rows": [
             {
               "id": "95742028721",

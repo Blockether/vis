@@ -54,6 +54,7 @@ import {
   type LiveStatNode,
   type LiveStatusNode,
   type LiveStepsNode,
+  type LiveGroup,
   type LiveRow,
   type LiveTableNode,
   type LiveTone,
@@ -677,12 +678,18 @@ function TableRows({
   const { valueAt, detailAt } = tableShape(node);
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   /**
-   * A parent stays SHUT until the reader opens it. Opening the parents that held
-   * the live selection sounded helpful and was not: `watch` selects every running
-   * job, so a matrix in flight stood open on the first paint and sprang back open
-   * on the next poll, seconds after the reader had closed it.
+   * A parent stays SHUT until the reader opens it, unless the producer DECLARED it
+   * open: only they know which group is the interesting one. Opening the parents
+   * that held the live selection sounded helpful and was not: `watch` selects every
+   * running job, so a matrix in flight stood open on the first paint and sprang back
+   * open on the next poll, seconds after the reader had closed it. This set holds the
+   * folds the reader TOUCHED, so their own hand always wins over the declaration.
    */
-  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
+  const [toggledGroups, setToggledGroups] = useState<Set<string>>(() => new Set());
+
+  type LiveTableItem =
+    | { kind: 'group'; id: string; label: string; tone?: LiveTone; count: number; isOpen: boolean }
+    | { kind: 'row'; row: LiveRow };
 
   // A parent OWNS its legs wherever the producer listed them. GitHub returns a matrix
   // interleaved with the rest of the run, so walking the rows in order put the head
@@ -696,23 +703,46 @@ function TableRows({
     else legs.set(row.parent, [row]);
   }
 
-  const visible: Array<
-    { kind: 'group'; label: string; count: number } | { kind: 'row'; row: LiveRow }
-  > = [];
-  const seen = new Set<string>();
+  // The heads paint in the order the table DECLARED them — by `order`, then by the
+  // order they were declared — and a group nobody declared comes after them, keeping
+  // the place its first row gave it. Order is declared rather than discovered.
+  const declared = new Map(node.groups.map((group) => [group.id, group]));
+  const ordered: LiveGroup[] = [
+    ...node.groups
+      .map((group, index) => ({ group, index }))
+      .sort((a, b) => (a.group.order ?? 0) - (b.group.order ?? 0) || a.index - b.index)
+      .map(({ group }) => group),
+    ...[...legs.keys()].filter((id) => !declared.has(id)).map((id) => ({ id })),
+  ];
+
+  const heads: LiveTableItem[] = [];
+  for (const group of ordered) {
+    const held = legs.get(group.id) ?? [];
+    if (held.length === 0) continue;
+    const isOpen = toggledGroups.has(group.id) ? group.is_open !== true : group.is_open === true;
+    heads.push({
+      kind: 'group',
+      id: group.id,
+      label: group.label || group.id,
+      tone: group.tone,
+      count: held.length,
+      isOpen,
+    });
+    if (isOpen) for (const leg of held) heads.push({ kind: 'row', row: leg });
+  }
+
+  // The heads stand TOGETHER, where the first grouped row was listed; a row that names
+  // no parent is simply itself, in the place the producer gave it.
+  const visible: LiveTableItem[] = [];
+  let isSpliced = false;
   for (const row of rows) {
-    // A declared parent is the producer's own grouping: one leg folds like five, so a
-    // table never mixes folded parents with flat rows that still repeat their parent.
-    const group = row.parent || undefined;
-    if (!group) {
+    if (!row.parent) {
       visible.push({ kind: 'row', row });
       continue;
     }
-    if (seen.has(group)) continue;
-    seen.add(group);
-    visible.push({ kind: 'group', label: group, count: legs.get(group)?.length ?? 0 });
-    if (openGroups.has(group))
-      for (const leg of legs.get(group) ?? []) visible.push({ kind: 'row', row: leg });
+    if (isSpliced) continue;
+    isSpliced = true;
+    visible.push(...heads);
   }
 
   const span = Math.max(1, node.columns.length);
@@ -744,29 +774,32 @@ function TableRows({
           )}
           {visible.map((item) => {
             if (item.kind === 'group') {
-              const isOpen = openGroups.has(item.label);
-              // The parent NAMES itself and then says how much its fold holds. The count
-              // is COUNTED from the rows right here: a producer names a group through the
-              // live interface and every surface renders that name the same way, instead
-              // of a label smuggled through the field that IDENTIFIES the group.
+              // The head NAMES itself and then says how much its fold holds. The count is
+              // COUNTED from the rows right here: a producer DECLARES a group through the
+              // live interface and every surface renders that declaration the same way,
+              // instead of a label smuggled through the field that IDENTIFIES the group.
+              // The mark is how a head says a leg failed without being opened at all.
               const held = `${item.count} row${item.count === 1 ? '' : 's'}`;
               return (
-                <tr key={`group:${item.label}`}>
+                <tr key={`group:${item.id}`}>
                   <td className="px-(--live-view-inset) py-1" colSpan={span}>
                     <Disclosure
-                      isOpen={isOpen}
+                      isOpen={item.isOpen}
                       tone="branch"
                       aria-label={item.label}
                       onClick={() =>
-                        setOpenGroups((was) => {
+                        setToggledGroups((was) => {
                           const next = new Set(was);
-                          if (isOpen) next.delete(item.label);
-                          else next.add(item.label);
+                          if (next.has(item.id)) next.delete(item.id);
+                          else next.add(item.id);
                           return next;
                         })
                       }
                     >
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {item.tone ? <ToneMark tone={item.tone} /> : null}
+                      <span className={`min-w-0 flex-1 truncate ${rowInk(item.tone ?? 'idle')}`}>
+                        {item.label}
+                      </span>
                       <span className="shrink-0 font-normal text-meta text-dialog-hint">
                         {held}
                       </span>

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   under it from the project menu in the app or the project sidebar in the terminal. A
   group also narrows Council, so its sessions talk to each other instead of to the whole
   project.
+- Name the groups a live table folds by: declare them with `vis.table_group(...)` when you build
+  the table, or with `view["jobs"].group(...)` while the work runs, to give a group a label, a
+  tone and its place in the order, and to say whether it starts open. A group you never declare
+  still works and follows the declared ones.
 
 ### Changed
 - `vis.jailed_shell_session` is gone. Call `vis.jailed_shell(...)`, which reads the merged

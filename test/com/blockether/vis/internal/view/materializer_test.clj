@@ -20,6 +20,7 @@
                     :selected-ids [id]
                     :order :keyed
                     :columns [{:id id :label "password=fixture-column"}]
+                    :groups [{:id id :label "token=fixture-group"}]
                     :rows [{:id id
                             :parent "token=fixture-parent"
                             :cells ["private_key=fixture-cell" "unchanged"]}]}
@@ -38,7 +39,8 @@
       (expect (= [id] (get-in public [:nodes 0 :selected-ids])))
       (expect (= :keyed (get-in public [:nodes 0 :order])))
       (expect (= "unchanged" (get-in public [:nodes 0 :rows 0 :cells 1])))
-      (doseq [secret ["fixture-column" "fixture-parent" "fixture-cell" "fixture-stat"]]
+      (doseq [secret ["fixture-column" "fixture-group" "fixture-parent" "fixture-cell"
+                      "fixture-stat"]]
         (expect (not (str/includes? (pr-str public) secret))))
       (expect (= "secret=fixture-stat" (get-in raw [:nodes 1 :stats 0 :value-text])))
       (expect (= public (live/redact-presentation public))))))
@@ -542,6 +544,37 @@
         (expect (str/includes? md "| / |"))
         (expect (= ["python-package" "python-package" nil] (mapv :parent (:rows t))))
         (expect (= md (live/->markdown back)) "so a grouped table read back renders identically")))
+  (it "carries a declared group's label, tone, order and open state into the document and back"
+      (let [v
+            (patched
+              (view (table-node :insertion))
+              {:op :append
+               :node-id "t"
+               :groups
+               [{:id "python-package" :label "Python package" :order 0 :tone :ok :is-open true}]
+               :rows [(assoc (row "a" "3.13" "1") :parent "python-package") (row "c" "Lint" "3")]})
+
+            md
+            (live/->markdown v)
+
+            back
+            (:view (live/parse-markdown md))
+
+            t
+            (first (filter #(= :table (:type %)) (:nodes back)))]
+
+        (expect (str/includes? md "_/ python-package !ok #0 +open = Python package_"))
+        (expect (= [{:id "python-package" :label "Python package" :order 0 :tone :ok :is-open true}]
+                   (:groups t)))
+        (expect (= md (live/->markdown back)) "so a declared group read back renders identically")))
+  (it "re-tones a declared group without dropping the label it was declared with"
+      (let [v (-> (view (table-node :insertion))
+                  (patched {:op :append
+                            :node-id "t"
+                            :groups [{:id "tests" :label "Tests"}]
+                            :rows [(assoc (row "a" "unit" "1") :parent "tests")]})
+                  (patched {:op :append :node-id "t" :groups [{:id "tests" :tone :error}]}))]
+        (expect (= [{:id "tests" :label "Tests" :tone :error}] (:groups (node v "t"))))))
   (it
     "applies the order the table declared and then says `insertion`, so mounting the picture again cannot sort it twice"
     (let [v

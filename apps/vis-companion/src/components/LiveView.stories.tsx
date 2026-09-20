@@ -105,6 +105,7 @@ export const FinishedJobs: Story = {
           order: 'insertion',
           is_selectable: true,
           selected_ids: [],
+          groups: [],
         },
       ],
     },

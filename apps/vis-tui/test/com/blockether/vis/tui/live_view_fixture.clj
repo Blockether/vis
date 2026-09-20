@@ -42,6 +42,8 @@
      :id id
      :cells (vec cells))))
 
+(defn table-group ([id] {:id id}) ([id opts] (assoc opts :id id)))
+
 (defn table
   ([id columns] (table id columns nil))
   ([id columns opts]

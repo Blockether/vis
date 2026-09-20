@@ -1548,7 +1548,32 @@
                          [:rows 0 :parent]))))
   (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
       (expect (some? (hs/live-view-error
-                       (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}]))))))
+                       (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}])))))
+  (it "accepts declared table groups and refuses one without an id"
+      (expect (nil? (hs/live-view-error
+                      (assoc-in (live-view)
+                        [:nodes 5 :groups]
+                        [{:id "tests" :label "Tests" :tone :error :order 1 :is-open true}]))))
+      (expect (some? (hs/live-view-error
+                       (assoc-in (live-view) [:nodes 5 :groups] [{:label "Tests"}]))))
+      (expect (some? (hs/live-view-error
+                       (assoc-in (live-view) [:nodes 5 :groups] [{:id "tests" :open true}])))))
+  (it "keeps a declared group's label, tone, order and open state through normalization"
+      (expect (= [{:id "tests" :label "Tests" :tone :error :order 1 :is-open true}]
+                 (:groups (hi/normalize-live-node
+                            {:id "jobs"
+                             :type "table"
+                             :columns [{:id "job" :label "Job"}]
+                             :groups
+                             [{:id "tests" :label "Tests" :tone "error" :order 1 :is-open true}]
+                             :rows [{:id "linux" :cells ["linux"] :parent "tests"}]})))))
+  (it "leaves a row pointing at an undeclared group alone — an undeclared parent is still a group"
+      (let [node (hi/normalize-live-node {:id "jobs"
+                                          :type "table"
+                                          :columns [{:id "job" :label "Job"}]
+                                          :rows [{:id "linux" :cells ["linux"] :parent "tests"}]})]
+        (expect (= "tests" (get-in node [:rows 0 :parent])))
+        (expect (not (contains? node :groups))))))
 
 (defdescribe
   live-patch-spec-test
