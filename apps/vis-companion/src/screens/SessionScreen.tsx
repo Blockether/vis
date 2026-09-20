@@ -114,6 +114,7 @@ import { readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
 import {
   arrivedAtEnd,
   bottomOf,
+  endCameUpToReader,
   followEnd,
   heightSettler,
   isAtBottom,
@@ -1028,6 +1029,11 @@ export function SessionScreen({
   // A cold open stays covered until its first transcript page has been placed. A
   // cached re-entry still runs the same positioning pass, but paints immediately.
   const initialScrollPendingRef = useRef(!fresh);
+  // WHICH VISIT this screen has already placed. The reset effect below runs for
+  // the mounted session too, one phase AFTER the opening layout effect has
+  // already pinned it, so its own first run must not re-arm that pin — see
+  // there.
+  const placedVisitRef = useRef(`${sid}\u0000${String(fresh)}\u0000${draftMessageId}`);
   // Mirror the latest render values for async callbacks. Written in an effect so
   // render itself stays pure.
   useEffect(() => {
@@ -1054,6 +1060,9 @@ export function SessionScreen({
   // alternative is remounting via `key`, which would also tear down the live SSE
   // subscription mid-stream, so the reset stays explicit here.
   useEffect(() => {
+    const visit = `${sid}\u0000${String(fresh)}\u0000${draftMessageId}`;
+    const isNewVisit = placedVisitRef.current !== visit;
+    placedVisitRef.current = visit;
     // A gesture belongs to the scroller it moved, never the session replacing it.
     releaseReaderScroll();
     // An artifact overlay only hands itself over to the row that replaces it as a
@@ -1109,12 +1118,23 @@ export function SessionScreen({
     setVoiceModeHolding(false);
     const needsColdLoad = !fresh && cachedTranscript === null;
     setLoading(needsColdLoad);
-    setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
-    setHydratedTurnCount(FIRST_PAINT_TURNS);
-    followingRef.current = true;
-    initialScrollPendingRef.current = !fresh;
-    showJumpRef.current = false;
-    setShowJump(false);
+    // THE READING POSITION BELONGS TO THE VISIT, AND NOT TO EVERY RUN OF THIS
+    // EFFECT. This component mounts already holding it: `initialScrollPendingRef`
+    // is armed in its own initializer and the opening layout effect consumes it
+    // in the MOUNT COMMIT — one phase before this passive effect first runs.
+    // Re-arming it there left a SECOND opening pin loaded for whatever changed
+    // the transcript next, which on a session anyone is reading is the finished
+    // turn's persisted row: BLO-170, where the end of a turn threw the reader off
+    // the line they were on and re-asserted follow under them. Only a genuine
+    // session/visit change resets where the reader is.
+    if (isNewVisit) {
+      setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+      setHydratedTurnCount(FIRST_PAINT_TURNS);
+      followingRef.current = true;
+      initialScrollPendingRef.current = !fresh;
+      showJumpRef.current = false;
+      setShowJump(false);
+    }
     setHandedOverRowId('');
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
@@ -1404,12 +1424,12 @@ export function SessionScreen({
     // landed above the reader in the same frame — React commits the next chunk
     // from a task, before the frame this would run in, so that push is never
     // billed. Measured, it leaked 14 477 px of a 33 425 px "↑ Load earlier".
-    if (
-      scrollAnchorRef.current?.el.isConnected &&
-      isCorrectionEcho(viewport, correctedTopRef.current)
-    ) {
-      return;
-    }
+    // An anchor whose element was UNMOUNTED still holds the pixel the reader
+    // chose, and the corrector above stands on that pixel while the replacement
+    // row mounts: re-reading the fold there is how the reader's line was lost at
+    // the end of a turn (BLO-170). Connected or not, a scroller sitting where the
+    // corrector left it has not been touched by the reader.
+    if (scrollAnchorRef.current && isCorrectionEcho(viewport, correctedTopRef.current)) return;
     // Following the running turn needs no anchor: the bottom IS the anchor.
     scrollAnchorRef.current = followingRef.current ? null : scrollAnchorFor(viewport, transcript);
   }, []);
@@ -1470,7 +1490,22 @@ export function SessionScreen({
       // anchor survives the whole growth window and every pixel that lands
       // above it is billed exactly once: measured, a 33 417 px "↑ Load earlier"
       // moved the scroller 33 416 px and the reader's turn 1 px.
-      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) captureScrollAnchor();
+      // The element can also be GONE: a finished turn hands its place to the
+      // persisted row, which mounts in stages, so for a frame or two the
+      // transcript is SHORTER than either of them and the browser clamps the
+      // reader towards an end that came up to meet them. Re-reading the fold
+      // there froze that clamp as the line they had chosen, and the turn they
+      // were reading ended by moving under them (BLO-170). The pixel they chose
+      // outlives the element they chose it by: put them back on it, and re-read
+      // the fold only once the transcript is tall enough to honour it again.
+      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) {
+        const chosenTop = scrollAnchorRef.current?.top;
+        if (chosenTop === undefined) captureScrollAnchor();
+        else {
+          viewport.scrollTop = chosenTop;
+          if (Math.abs(viewport.scrollTop - chosenTop) < 1) captureScrollAnchor();
+        }
+      }
       correctedTopRef.current = viewport.scrollTop;
     });
     observer.observe(transcript);
@@ -3804,6 +3839,13 @@ export function SessionScreen({
       // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
       // upward move still proves retreat; the end-aware reading excludes a clamp.
       const readerRetreated = readerRetreatedFrom(viewport, previousTop, previousBottom);
+      // The same clamp read from the other side. Content that LEAVES can only
+      // carry the reader TOWARDS the end, and arriving there is something a
+      // reader DOES: a position handed to them by a transcript shrinking under
+      // their eyes is not an arrival. Counting it as one re-armed the follow on
+      // someone reading the middle of the turn that had just finished, and the
+      // next catch-up took them to its last line — BLO-170, once per turn.
+      const endCameUp = endCameUpToReader(viewport, previousTop, previousBottom);
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this
@@ -3817,8 +3859,12 @@ export function SessionScreen({
       )
         aimedEndRef.current = viewport.scrollHeight;
       if (readerRetreated) followingRef.current = false;
-      else if (arrivedAtEnd(viewport, aimedEndRef.current)) followingRef.current = true;
-      else if (readerOwns) followingRef.current = false;
+      // An arrival the reader did not make decides NOTHING: a clamp carries no
+      // intent either way, so a follow that was already on survives it and one
+      // that was off is not switched on under someone reading further up.
+      else if (arrivedAtEnd(viewport, aimedEndRef.current)) {
+        if (!endCameUp) followingRef.current = true;
+      } else if (readerOwns) followingRef.current = false;
       syncJump();
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
       // AFTER the reflow, and by then the top-most turn is already unreadable.

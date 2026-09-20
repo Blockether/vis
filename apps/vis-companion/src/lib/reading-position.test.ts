@@ -6,6 +6,7 @@ import {
   isAtBottom,
   heightSettler,
   isCorrectionEcho,
+  endCameUpToReader,
   readerRetreatedFrom,
   shouldOfferLatest,
   type ScrollBox,
@@ -220,6 +221,21 @@ describe('a clamp is not a retreat', () => {
 
   it('never calls moving down a retreat', () => {
     expect(readerRetreatedFrom(box(45_200, TRANSCRIPT, 800), 44_000, 45_200)).toBe(false);
+  });
+
+  // BLO-170: the end of a turn swaps a running bubble for its shorter persisted
+  // row, and the clamp that follows put the reader "at the end" without a gesture.
+  it('reads a shrinking transcript pulling the reader down as the end coming up', () => {
+    expect(endCameUpToReader(box(1_784, 2_584, 800), 2_386, 2_650)).toBe(true);
+  });
+
+  it('never calls the reader\'s own upward move the end coming up', () => {
+    expect(endCameUpToReader(box(45_190, TRANSCRIPT, 800), 45_200, 45_200)).toBe(false);
+  });
+
+  it('never calls standing still or moving down the end coming up', () => {
+    expect(endCameUpToReader(box(45_200, TRANSCRIPT, 800), 45_200, 45_200)).toBe(false);
+    expect(endCameUpToReader(box(45_200, TRANSCRIPT, 800), 44_000, 45_200)).toBe(false);
   });
 
   it('reads the end off the box itself', () => {

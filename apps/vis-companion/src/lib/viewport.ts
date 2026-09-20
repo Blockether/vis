@@ -316,7 +316,14 @@ type AnchorElement = {
   dataset?: { anchor?: string };
 };
 type AnchorScroller = { scrollTop: number; getBoundingClientRect(): AnchorRect };
-export type ScrollAnchor = { el: AnchorElement; offset: number };
+/**
+ * What the reader is looking at: the element crossing the fold and how far its
+ * top sits below that fold — plus `top`, the `scrollTop` the reading was taken
+ * at. That pixel is the part of the reading that OUTLIVES the element, and the
+ * only thing left to put the reader back on when the turn they were reading is
+ * unmounted and replaced.
+ */
+export type ScrollAnchor = { el: AnchorElement; offset: number; top: number };
 
 /** Deepest descendants win, but a transcript is deep: bound the walk. */
 const ANCHOR_MAX_DEPTH = 24;
@@ -346,7 +353,7 @@ function crossingChild(host: AnchorElement, target: number): AnchorElement | nul
   return null;
 }
 
-/** What the reader is looking at, as an element plus its offset from the fold. */
+/** What the reader is looking at, as an element, its offset from the fold and their own pixel. */
 export function scrollAnchorFor(
   viewport: AnchorScroller,
   container: AnchorElement,
@@ -359,7 +366,11 @@ export function scrollAnchorFor(
     if (!deeper) break;
     node = deeper;
   }
-  return { el: node, offset: node.getBoundingClientRect().top - target };
+  return {
+    el: node,
+    offset: node.getBoundingClientRect().top - target,
+    top: viewport.scrollTop,
+  };
 }
 
 /**

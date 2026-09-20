@@ -54,6 +54,24 @@ export function readerRetreatedFrom(
 }
 
 /**
+ * Whether the scroller's own END came UP to the reader, carrying them with it.
+ *
+ * The other side of the same clamp: the reader did not move, content LEFT — the
+ * running-turn bubble giving its place to the shorter persisted row — and the
+ * browser pulled `scrollTop` down to an end that is now above where they stood.
+ * Their position reads as "at the end" without a gesture, and counting that as
+ * an ARRIVAL re-arms the follow under someone who is reading further up: the end
+ * of every turn then dragged them down to the newest line (BLO-170).
+ */
+export function endCameUpToReader(
+  box: ScrollBox,
+  previousTop: number,
+  previousBottom: number,
+): boolean {
+  return box.scrollTop < previousTop && !readerRetreatedFrom(box, previousTop, previousBottom);
+}
+
+/**
  * Whether the reader ARRIVED at the end — with `aimed` as the end they were
  * reaching for, not the one the transcript has now.
  *
