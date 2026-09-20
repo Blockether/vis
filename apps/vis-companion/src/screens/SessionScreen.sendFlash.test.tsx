@@ -107,3 +107,70 @@ describe('the transcript while the turn you just sent starts', () => {
     expect(screen.getAllByText('run the tests')).toHaveLength(1);
   });
 });
+
+const linger = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+// Regression BLO-170, reported from the desktop app: at the end of a turn the
+// scroll went back to the previous turn. The finished turn's durable row joins the
+// render window in the same commit that retires its bubble, and the window counts
+// back from the NEWEST turn — so the oldest turn on screen was unmounted in that
+// very commit. The transcript lost its height for a frame, the scroller clamped the
+// reader into the shorter page, and the anchor could only bring them back once the
+// content was tall again.
+describe('the transcript while the turn you are reading ends', () => {
+  it('keeps every painted turn when the finished row takes the bubble', async () => {
+    const events = subscriptionHub();
+    const rows = completedRows();
+    const bubble = {
+      id: 'gw-1',
+      request: 'run the tests',
+      answer: '',
+      iterations: [{ position: 0, thinking: 'weighing it up' }],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+    const settledRow = {
+      turn_id: 'gw-1',
+      request: 'run the tests',
+      status: 'completed',
+      created_at: Date.now(),
+      content: [{ id: 'b-final', type: 'prose', markdown: 'THE FINAL ANSWER' }],
+      iterations: [{ position: 0, thinking: 'weighing it up' }],
+    };
+    let finished = false;
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedTranscript: () => rows,
+        transcript: () => Promise.resolve(finished ? [...rows, settledRow] : rows),
+      },
+      subscriptions: {
+        subscribeSession: events.subscribeSession,
+      },
+    });
+
+    expect(await screen.findByText('older question 8')).toBeInTheDocument();
+    // Let the hydration ramp fill the window it opened with.
+    await linger(300);
+    const painted = paintedQuestions();
+    expect(painted.length).toBeGreaterThan(1);
+    const oldest = screen.getByText(painted[0]);
+
+    finished = true;
+    events.emit({
+      type: 'turn.completed',
+      turn_id: 'gw-1',
+      seq: 11,
+      status: 'completed',
+      content: [{ id: 'b-final', type: 'prose', markdown: 'THE FINAL ANSWER' }],
+    } as unknown as SseEvent);
+    expect(await screen.findByText('THE FINAL ANSWER')).toBeInTheDocument();
+    await linger(600);
+
+    // Not one row fewer, and the same nodes: a turn that unmounts here re-parses its
+    // markdown and takes its pixels out from under the reader.
+    expect(paintedQuestions()).toEqual(painted);
+    expect(screen.getByText(painted[0])).toBe(oldest);
+  });
+});

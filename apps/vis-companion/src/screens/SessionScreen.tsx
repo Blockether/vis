@@ -709,6 +709,19 @@ export function SessionScreen({
   // `visibleTurnCount` off the critical path; never shrinks the window itself,
   // so the "load earlier" affordance and its counts stay stable while it fills.
   const [hydratedTurnCount, setHydratedTurnCount] = useState(FIRST_PAINT_TURNS);
+  // BLO-170: the window counts back from the NEWEST turn, so admitting the finished
+  // turn's durable row pushes the oldest mounted row out of it in the very commit
+  // the new row arrives. The transcript loses that row's height for one frame, the
+  // scroller clamps the reader into the shorter page, and the anchor cannot put
+  // them back while the content is too short to hold their position — the jump at
+  // the end of a turn. A row on screen stays on screen: widen the window by the row
+  // that landed, in the SAME batch as the swap, so the short frame never exists.
+  // The window keeps it for the rest of the visit, the way "load earlier" keeps
+  // what it revealed; reopening the session starts from `INITIAL_VISIBLE_TURNS`.
+  const widenWindowForHandover = useCallback(() => {
+    setVisibleTurnCount((count) => count + 1);
+    setHydratedTurnCount((count) => count + 1);
+  }, []);
   // Finished turns visible on this screen count as read, including a terminal bubble
   // awaiting persistence. Never pre-read the running turn.
   const readTurns = useMemo(
@@ -1804,6 +1817,7 @@ export function SessionScreen({
         // Same batch as the rows themselves: the row that takes the bubble's
         // place must MOUNT knowing it inherits a painted trace.
         setHandedOverRowId(rowId(landedRow));
+        widenWindowForHandover();
         setRunningTurn(null);
         runningTurnRef.current = null;
       }
@@ -2428,6 +2442,7 @@ export function SessionScreen({
           // the reader is looking at, or its own mount ramp empties the
           // transcript for a frame and grows it back (see `IterationTrace`).
           setHandedOverRowId(rowId(landed));
+          widenWindowForHandover();
           setRunningTurn(null);
           runningTurnRef.current = null;
         }

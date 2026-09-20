@@ -150,8 +150,8 @@ export const ReaderAtTheEnd: Story = {
         content: [{ id: 'final-answer', type: 'prose', markdown: finalAnswer }],
       } as unknown as SseEvent);
 
-    // The height dips while the persisted row takes the bubble's place: someone
-    // reading the end stays at the end through all of it.
+    // Someone reading the end stays at the end through the whole handover: no
+    // frame of it is allowed to move the transcript under them.
     let worst = 0;
     const started = Date.now();
     while (Date.now() - started < 1500) {
@@ -202,14 +202,19 @@ export const ReaderInTheNewestTurn: Story = {
       } as unknown as SseEvent);
 
     // BLO-170: the end of the turn used to re-run the opening pin and throw the
-    // reader down to the end. Their line, and the invitation back to the end,
-    // both stay where they are.
-    // The transcript dips while the persisted row mounts, so the reader can be
-    // clamped for a frame or two. What must never happen is the turn ENDING
-    // somewhere else: keep painting until the live bubble is gone, then read the
-    // line they were on.
+    // reader down to the end. Their line, and the invitation back to the end, both
+    // stay where they are — and not only once it is over. The swap used to unmount
+    // the oldest mounted turn in the very commit that mounted the settled row,
+    // taking ~940 px out of the transcript; the scroller clamped the reader half a
+    // screen up for the frame that painted next, and the anchor could only put them
+    // back once the content was tall again. Their line holds on EVERY frame now.
+    let worst = 0;
     const started = Date.now();
-    while (Date.now() - started < 1500) await paint();
+    while (Date.now() - started < 1500) {
+      worst = Math.max(worst, Math.abs(offset() - chosen));
+      await paint();
+    }
+    await expect(worst).toBeLessThan(2);
     await waitFor(() => expect(canvasElement.querySelector('[data-live="true"]')).toBeNull());
     await paint();
     await expect(Math.abs(offset() - chosen)).toBeLessThan(2);
