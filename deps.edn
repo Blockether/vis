@@ -92,7 +92,7 @@
   ;; The static-analysis gate CI runs. :replace-deps keeps the project's classpath out; clj-kondo
   ;; reads sources and `.clj-kondo` from disk. Command-line paths append to the defaults.
   :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"]
-         :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.07.24"}}}
+         :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.08.04"}}}
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
   ;; The whole-repo suite. :extra-paths is the classpath, the bare paths after `lazytest.main` are
   ;; what Lazytest walks (`dev` is classpath-only); keep them in step. --hook bans remote HTTP.
