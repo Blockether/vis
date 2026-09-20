@@ -6,6 +6,13 @@
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
+(defn- harness-skills
+  "Skills discovered through harness source rows. A skill bundled with an
+   installed extension package is discovered too and carries `:vis-package`;
+   these fixtures pin their own directories, not the machine's packages."
+  [skills]
+  (remove #(= :vis-package (:tool %)) skills))
+
 (def ^:private agent-md
   (str "---\n" "name: code-reviewer\n"
        "description: Elite reviewer. Masters static analysis\n"
@@ -116,7 +123,9 @@
         (expect (= [:pi] (map first pairs)))))
   (it "every discovered entry is tagged with a known harness tool"
       (let [tools (set (map :tool (concat (d/discover-agents) (d/discover-skills))))]
-        (expect (every? d/known-tools tools)))))
+        ;; A skill an installed extension package ships is tagged `:vis-package`
+        ;; rather than by a harness source row.
+        (expect (every? (conj d/known-tools :vis-package) tools)))))
 
 (defdescribe
   skill-resources-test
@@ -243,7 +252,7 @@
            (spit app-shadow "---\nname: layered\ndescription: app\n---\nAPP-SHADOW")
            (binding [workspace/*workspace-root* (.getCanonicalPath app)]
              (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
-               (let [skills (d/discover-skills)
+               (let [skills (harness-skills (d/discover-skills))
                      by-name (into {} (map (juxt :name identity)) skills)]
 
                  (expect (= #{"inherited" "layered"} (set (keys by-name))))
@@ -305,33 +314,34 @@
 ;; Regression: a skill dropped into `.agents/skills` while a session was running
 ;; stayed unknown until the process restarted — the cache kept answering the set it
 ;; had read when the session started.
-(defdescribe
-  skills-cache-revalidates-test
-  (it "sees a SKILL.md that appeared after the cache was warm, with no explicit reload"
-      (let [root
-            (.toFile (Files/createTempDirectory "vis-skill-midsession"
-                                                (make-array FileAttribute 0)))
+(defdescribe skills-cache-revalidates-test
+             (it "sees a SKILL.md that appeared after the cache was warm, with no explicit reload"
+                 (let [root
+                       (.toFile (Files/createTempDirectory "vis-skill-midsession"
+                                                           (make-array FileAttribute 0)))
 
-            early
-            (io/file root ".agents" "skills" "already-here" "SKILL.md")
+                       early
+                       (io/file root ".agents" "skills" "already-here" "SKILL.md")
 
-            late
-            (io/file root ".agents" "skills" "arrived-later" "SKILL.md")]
+                       late
+                       (io/file root ".agents" "skills" "arrived-later" "SKILL.md")]
 
-        (try (.mkdirs (io/file root ".git"))
-             (io/make-parents early)
-             (spit early "---\nname: already-here\ndescription: First\n---\nFIRST")
-             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
-                 (let [warm (set (map :name (d/skills)))
-                       generation (d/generation)]
+                   (try (.mkdirs (io/file root ".git"))
+                        (io/make-parents early)
+                        (spit early "---\nname: already-here\ndescription: First\n---\nFIRST")
+                        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                          (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                            (let [warm (set (map :name (harness-skills (d/skills))))
+                                  generation (d/generation)]
 
-                   (expect (= #{"already-here"} warm))
-                   (io/make-parents late)
-                   (spit late "---\nname: arrived-later\ndescription: Second\n---\nSECOND")
-                   (expect (= #{"already-here" "arrived-later"} (set (map :name (d/skills)))))
-                   (expect (< (long generation) (long (d/generation)))))))
-             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+                              (expect (= #{"already-here"} warm))
+                              (io/make-parents late)
+                              (spit late
+                                    "---\nname: arrived-later\ndescription: Second\n---\nSECOND")
+                              (expect (= #{"already-here" "arrived-later"}
+                                         (set (map :name (harness-skills (d/skills))))))
+                              (expect (< (long generation) (long (d/generation)))))))
+                        (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe
   package-skill-conflicts-test

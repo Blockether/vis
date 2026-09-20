@@ -6,6 +6,8 @@
             [com.blockether.vis.internal.config.improve :as improve-settings]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
+            ;; Registers the `draft_backend` experimental toggle this test pins.
+            [com.blockether.vis.internal.foundation.drafts]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.gateway.agents-test :as agent-http]
@@ -38,8 +40,10 @@
         rows
         (get (first (filter #(= "experimental" (get % "id")) groups)) "toggles")]
 
-    (is (= #{"subagents" "improve" "plans"} (set (map #(get % "id") rows))))
-    (is (every? #(and (true? (get % "is_experimental")) (false? (get % "enabled"))) rows)))
+    (is (= #{"subagents" "improve" "plans" "draft_backend"} (set (map #(get % "id") rows))))
+    (is (every? #(true? (get % "is_experimental")) rows))
+    (is (every? #(false? (get % "enabled")) (filter #(= "boolean" (get % "type")) rows)))
+    (is (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value"))))
   (toggles/hydrate-from-config! {"toggles" {"subagents" true "improve" "on" "plans" true}})
   (is (every? toggles/enabled? ["subagents" "improve" "plans"]))
   (is (some #(= "improve_mode" (:id %)) (toggles/visible-toggles)))

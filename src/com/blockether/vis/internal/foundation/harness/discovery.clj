@@ -192,7 +192,8 @@
    [:opencode :home ".config" "opencode" "commands"]])
 
 (def known-tools
-  "Every harness tag a source row can carry — the closed set discovery emits."
+  "Every harness tag a source row can carry. A skill an installed extension
+   package ships is tagged `:vis-package` instead, outside this set."
   #{:vis :claude :pi :agents :opencode})
 
 (defn- resolve-source
