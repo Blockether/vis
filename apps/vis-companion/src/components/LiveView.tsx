@@ -643,10 +643,7 @@ function RowFace({
     .map((index) => row.cells[index] ?? '')
     .filter((cell) => cell !== '')
     .join(' · ');
-  const name =
-    row.branch && row.cells[0]?.startsWith(`${row.branch} / `)
-      ? row.cells[0].slice(row.branch.length + 3)
-      : (row.cells[0] ?? '');
+  const name = row.cells[0] ?? '';
   return (
     <span className={`block min-w-0 ${isIndented ? 'pl-3' : ''}`}>
       <span className="flex min-w-0 items-baseline gap-2">
@@ -699,7 +696,9 @@ function TableRows({
     else legs.set(row.branch, [row]);
   }
 
-  const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
+  const visible: Array<
+    { kind: 'group'; label: string; count: number } | { kind: 'row'; row: LiveRow }
+  > = [];
   const seen = new Set<string>();
   for (const row of rows) {
     // A declared branch is the producer's own grouping: one leg folds like five, so a
@@ -711,7 +710,7 @@ function TableRows({
     }
     if (seen.has(group)) continue;
     seen.add(group);
-    visible.push({ kind: 'group', label: group });
+    visible.push({ kind: 'group', label: group, count: legs.get(group)?.length ?? 0 });
     if (openGroups.has(group))
       for (const leg of legs.get(group) ?? []) visible.push({ kind: 'row', row: leg });
   }
@@ -746,17 +745,18 @@ function TableRows({
           {visible.map((item) => {
             if (item.kind === 'group') {
               const isOpen = openGroups.has(item.label);
-              // The branch NAMES itself and then qualifies itself, the way every
-              // label in this panel does: `Build native image · 3 variants`. The
-              // name leads the row; the qualifier steps back to the right edge.
-              const [name, ...rest] = item.label.split(' · ');
+              // The branch NAMES itself and then says how much its fold holds. The count
+              // is COUNTED from the rows right here: a producer names a group through the
+              // live interface and every surface renders that name the same way, instead
+              // of a label smuggled through the field that IDENTIFIES the group.
+              const held = `${item.count} row${item.count === 1 ? '' : 's'}`;
               return (
                 <tr key={`group:${item.label}`}>
                   <td className="px-(--live-view-inset) py-1" colSpan={span}>
                     <Disclosure
                       isOpen={isOpen}
                       tone="branch"
-                      aria-label={name}
+                      aria-label={item.label}
                       onClick={() =>
                         setOpenGroups((was) => {
                           const next = new Set(was);
@@ -766,12 +766,10 @@ function TableRows({
                         })
                       }
                     >
-                      <span className="min-w-0 flex-1 truncate">{name}</span>
-                      {rest.length > 0 && (
-                        <span className="shrink-0 font-normal text-meta text-dialog-hint">
-                          {rest.join(' · ')}
-                        </span>
-                      )}
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      <span className="shrink-0 font-normal text-meta text-dialog-hint">
+                        {held}
+                      </span>
                     </Disclosure>
                   </td>
                 </tr>

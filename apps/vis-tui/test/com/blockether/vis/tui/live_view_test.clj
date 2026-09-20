@@ -1042,6 +1042,76 @@
       (is (= [:trule :thead :trule :trow :trule :trow] (subvec (mapv :kind rows) 0 6))
           "a rule under the head AND between the rows, not only where the box ends"))))
 
+;; A BRANCH is how a producer says which rows belong to which parent, and every
+;; surface owes that one field the same shape: one head, shut, standing where the
+;; legs were listed — the fold the Companion paints, painted here.
+(deftest live-view-table-branch-test
+  (let [branched
+        (fn []
+          (lv/opened (mounted
+                       {}
+                       (fixture/table
+                         "jobs"
+                         [(fixture/table-column "job" "Job") (fixture/table-column "state" "State")]
+                         {:label "Jobs"
+                          :rows
+                          [(fixture/table-row "build" ["build" "success"])
+                           (fixture/table-row "t-1" ["ubuntu" "success"] {:branch "tests"})
+                           (fixture/table-row "lint" ["lint" "success"])
+                           (fixture/table-row "t-2" ["macos" "running"] {:branch "tests"})
+                           (fixture/table-row "t-3" ["windows" "queued"] {:branch "tests"})]}))))
+
+        text-of
+        (fn [p]
+          (str/join "\n" (map :text (rows-of p))))]
+
+    (testing "the legs fold under one head that names the branch and counts them"
+      (let [p
+            (branched)
+
+            heads
+            (kinds-of p :tbranch)
+
+            text
+            (text-of p)]
+
+        (is (= 1 (count heads)) "one head, however many legs the branch holds")
+        (is (str/includes? (:text (first heads)) "▸ tests · 3 rows"))
+        (is (= ["jobs" "tests"] (:node-id (first heads)))
+            "keyed by the table AND the branch, so two tables never share one fold")
+        (is (= 2 (count (kinds-of p :trow))) "a shut branch paints no legs")
+        (is (< (.indexOf ^String text "build")
+               (.indexOf ^String text "tests")
+               (.indexOf ^String text "lint"))
+            "the head stands where its FIRST leg was listed")))
+    (testing "opening it is the toggle every other fold in the view already uses"
+      (let [p
+            (lv/expanded (branched) ["jobs" "tests"])
+
+            text
+            (text-of p)
+
+            legs
+            (filterv #(str/includes? (:text %) "ubuntu") (kinds-of p :trow))]
+
+        (is (str/includes? (:text (first (kinds-of p :tbranch))) "▾ tests · 3 rows"))
+        (is (= 5 (count (kinds-of p :trow))))
+        (is (str/includes? (:text (first legs)) "  ubuntu") "a leg is indented under its head")
+        (is (< (.indexOf ^String text "windows") (.indexOf ^String text "lint"))
+            "every leg is gathered at its head, not stranded under the row that follows")))
+    (testing "one leg is one row, and the head says so"
+      (let [p (lv/opened (mounted {}
+                                  (fixture/table "jobs"
+                                                 [(fixture/table-column "job" "Job")]
+                                                 {:label "Jobs"
+                                                  :rows [(fixture/table-row "t-1"
+                                                                            ["ubuntu"]
+                                                                            {:branch "tests"})]})))]
+        (is (str/includes? (:text (first (kinds-of p :tbranch))) "▸ tests · 1 row"))))
+    (testing "the head is a keyboard control, like any other disclosure"
+      (is (some #(and (= :live-expand (:kind %)) (= ["jobs" "tests"] (:node-id %)))
+                (lv/controls [(branched)]))))))
+
 ;; Every string a human reads in this program is markdown already — the
 ;; transcript, the form and the view's own document all speak it — so a live view
 ;; that painted its strings flat would be the ONE surface where `code` is not code.

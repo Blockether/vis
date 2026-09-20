@@ -66,7 +66,7 @@
         {
           "id": "95742028721",
           "tone": "ok",
-          "branch": "tests · 3 variants",
+          "branch": "tests",
           "cells": [
             "macos-latest",
             "success",
@@ -76,7 +76,7 @@
         {
           "id": "95742028770",
           "tone": "error",
-          "branch": "tests · 3 variants",
+          "branch": "tests",
           "cells": [
             "vis-agent + vis-contract (PyPI packages)",
             "failure",
@@ -86,7 +86,7 @@
         {
           "id": "95742028781",
           "tone": "ok",
-          "branch": "tests · 3 variants",
+          "branch": "tests",
           "cells": [
             "ubuntu-latest",
             "success",
@@ -96,7 +96,7 @@
         {
           "id": "95742028809",
           "tone": "ok",
-          "branch": "lint · 1 variant",
+          "branch": "lint",
           "cells": [
             "clj-kondo",
             "success",
@@ -106,7 +106,7 @@
         {
           "id": "95742028943",
           "tone": "ok",
-          "branch": "classpath · 2 variants",
+          "branch": "classpath",
           "cells": [
             ".",
             "success",
@@ -116,7 +116,7 @@
         {
           "id": "95742029230",
           "tone": "ok",
-          "branch": "classpath · 2 variants",
+          "branch": "classpath",
           "cells": [
             "extensions/channels/vis-channel-tui",
             "success",

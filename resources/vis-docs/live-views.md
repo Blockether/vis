@@ -428,8 +428,11 @@ option keys; `disclosure` takes a vector of children and optional options, and
 
 Tables support `order="insertion"` (default), `"newest-first"` or
 `{"by": "duration", "dir": "desc"}`. Rows sharing a `branch="Release apps"`
-appear under one collapsible parent. With `is_selectable=True`, users can
-select rows; read the selection with `view.state()`.
+appear under one collapsible parent, closed until the reader opens it. Every
+surface renders that group the same way: the parent shows the branch name and
+how many rows it holds, so keep the name stable and let Vis do the counting.
+With `is_selectable=True`, users can select rows; read the selection with
+`view.state()`.
 
 When a view has exactly one node of a type, its verb is available on the view
 itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,

@@ -265,18 +265,8 @@ describe('selecting a table row', () => {
     const view = selectableView();
     const hosts = hostsTable(view);
     hosts.rows = [
-      {
-        id: 'ios',
-        cells: ['Release apps / iOS', 'queued'],
-        tone: 'running',
-        branch: 'Release apps',
-      },
-      {
-        id: 'android',
-        cells: ['Release apps / Android', 'running'],
-        tone: 'running',
-        branch: 'Release apps',
-      },
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', branch: 'Release apps' },
+      { id: 'android', cells: ['Android', 'running'], tone: 'running', branch: 'Release apps' },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
     ];
     hosts.selected_ids = selectedIds;
@@ -290,12 +280,14 @@ describe('selecting a table row', () => {
 
     const parent = screen.getByRole('button', { name: 'Release apps' });
     expect(parent.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
+    // The head counts its own legs; the producer names the branch and nothing else.
+    expect(screen.getByText('2 rows')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Select iOS' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
 
     fireEvent.click(parent);
     expect(parent.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
     expect(screen.getByText('Android')).toBeVisible();
   });
   // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
@@ -306,13 +298,13 @@ describe('selecting a table row', () => {
     const hosts = hostsTable(view);
     hosts.rows = [
       ...hosts.rows.slice(0, 2),
-      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', branch: 'Lint · 1 variant' },
+      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', branch: 'Lint' },
     ];
     paint({ view, onSelect: vi.fn() });
 
     const parent = screen.getByRole('button', { name: 'Lint' });
     expect(parent.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByText('1 variant')).toBeVisible();
+    expect(screen.getByText('1 row')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Select Publish docs' })).toBeNull();
 
     fireEvent.click(parent);
@@ -335,7 +327,7 @@ describe('selecting a table row', () => {
     expect(screen.getByRole('button', { name: 'Release apps' }).getAttribute('aria-expanded')).toBe(
       'false',
     );
-    expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select iOS' })).toBeNull();
   });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: GitHub lists a matrix
   // interleaved with the rest of the run, so a branch head showed the first leg it met
@@ -344,27 +336,17 @@ describe('selecting a table row', () => {
     const view = matrixView([]);
     const hosts = hostsTable(view);
     hosts.rows = [
-      {
-        id: 'ios',
-        cells: ['Release apps / iOS', 'queued'],
-        tone: 'running',
-        branch: 'Release apps',
-      },
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', branch: 'Release apps' },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
-      {
-        id: 'android',
-        cells: ['Release apps / Android', 'running'],
-        tone: 'running',
-        branch: 'Release apps',
-      },
+      { id: 'android', cells: ['Android', 'running'], tone: 'running', branch: 'Release apps' },
     ];
     paint({ view, onSelect: vi.fn() });
 
-    expect(screen.queryByRole('button', { name: 'Select Release apps / Android' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Android' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Release apps' }));
-    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Select Release apps / Android' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Select Android' })).toBeVisible();
 
     const order = screen.getAllByRole('row').map((row) => row.textContent ?? '');
     const at = (text: string) => order.findIndex((line) => line.includes(text));

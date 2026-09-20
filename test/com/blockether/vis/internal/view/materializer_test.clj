@@ -518,6 +518,30 @@
         (expect (not (str/includes? md "reading")))
         (expect (= md (live/->markdown (:view (live/parse-markdown md))))
                 "so the document read back renders identically, flat")))
+  ;; Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: a row's BRANCH — the group
+  ;; the producer declared it into, and the one thing the surfaces fold by — never reached
+  ;; the document, so a view reopened from markdown lost the grouping the panes paint.
+  (it "carries a row's branch into the document and back out of it"
+      (let [v
+            (patched (view (table-node :insertion))
+                     {:op :append
+                      :node-id "t"
+                      :rows [(assoc (row "a" "3.13" "1") :branch "python-package")
+                             (assoc (row "b" "3.14" "2") :branch "python-package")
+                             (row "c" "Lint" "3")]})
+
+            md
+            (live/->markdown v)
+
+            back
+            (:view (live/parse-markdown md))
+
+            t
+            (first (filter #(= :table (:type %)) (:nodes back)))]
+
+        (expect (str/includes? md "| / |"))
+        (expect (= ["python-package" "python-package" nil] (mapv :branch (:rows t))))
+        (expect (= md (live/->markdown back)) "so a grouped table read back renders identically")))
   (it
     "applies the order the table declared and then says `insertion`, so mounting the picture again cannot sort it twice"
     (let [v

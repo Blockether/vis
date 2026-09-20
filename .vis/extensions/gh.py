@@ -45,7 +45,6 @@ import re
 import shlex
 import tempfile
 import time
-from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -292,11 +291,6 @@ def _job_groups(jobs):
     return groups
 
 
-def _branch_label(group, size):
-    """The branch's own line: the parent, then how many legs its fold hides."""
-    return f"{group} · {size} variant{'' if size == 1 else 's'}"
-
-
 def default_selected_ids(jobs):
     """All running jobs, else the last failed job, else the last job."""
     running = [
@@ -530,11 +524,6 @@ def run_shape(payload, selected_ids=None, now=None):
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     tones = [tone_of(job.get("status"), job.get("conclusion")) for job in jobs]
     groups = _job_groups(jobs)
-    # A branch NAMES itself and then qualifies itself, the way every label in this
-    # panel does: `Build native image · 3 variants`. The count belongs to the
-    # branch and not to a row, so it is added here and nowhere near `_job_display`,
-    # which still has to strip the bare parent name off each variant.
-    group_sizes = Counter(group for group in groups if group)
     indexed = [(_job_id(job, index), job) for index, job in enumerate(jobs)]
     by_id = dict(indexed)
     groups_by_id = {
@@ -642,7 +631,7 @@ def run_shape(payload, selected_ids=None, now=None):
                 ],
                 "tone": job_tone,
                 **(
-                    {"branch": _branch_label(group, group_sizes[group])}
+                    {"branch": group}
                     if group
                     else {}
                 ),

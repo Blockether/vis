@@ -849,21 +849,67 @@
                          shown)))
     [{:kind :empty :node-id id :text (empty-text :log)}]))
 
+(defn- branch-items
+  "The rows ONE table paints, in order. A row that names a `branch` stands under
+   that branch's HEAD, with every leg of the branch gathered at the head's own
+   place — a producer lists a matrix interleaved with the rest of its work, and
+   legs stranded under whichever head came next read as somebody else's. A branch
+   stays SHUT until `open?` says the reader opened it; a row that names no branch
+   is simply itself.
+
+   The grouping belongs to the LIVE INTERFACE and not to one surface's reading of
+   one producer: the Companion folds the same field into the same shape."
+  [rows open?]
+  (let [legs (reduce (fn [acc row]
+                       (if-let [branch (:branch row)]
+                         (update acc branch (fnil conj []) row)
+                         acc))
+                     {}
+                     rows)]
+    (:items
+      (reduce (fn [acc row]
+                (let [branch (:branch row)]
+                  (cond (nil? branch) (update acc :items conj {:row row})
+                        (contains? (:seen acc) branch) acc
+                        :else (let [held (get legs branch)
+                                    is-open (boolean (open? branch))]
+
+                                (cond-> (-> acc
+                                            (update :seen conj branch)
+                                            (update
+                                              :items
+                                              conj
+                                              {:branch branch :held (count held) :is-open is-open}))
+                                  is-open
+                                  (update :items
+                                          into
+                                          (map (fn [leg]
+                                                 {:row leg :is-leg true}))
+                                          held))))))
+              {:items [] :seen #{}}
+              rows))))
+
 (defmethod node-rows :table
   [{:keys [id columns is-selectable selected-ids] :as node}
-   {:keys [text-w widths fresh is-expanded is-interactive]}]
-  (let [ordered
-        (live/ordered-rows node)
+   {:keys [text-w widths fresh is-expanded is-interactive expanded]}]
+  (let [items
+        (branch-items (live/ordered-rows node) #(contains? (set expanded) [id %]))
 
         {:keys [shown behind]}
-        (windowed ordered is-expanded false)
+        (windowed items is-expanded false)
+
+        painted
+        (into [] (keep :row) shown)
 
         ;; Measured from the painted window and never narrower than last time; the
         ;; FIT is what a cramped terminal does to the paint, and it is deliberately
         ;; not what the pane remembers. A selectable first cell also carries the same
-        ;; two-column ●/○ state mark as the Companion.
+        ;; two-column ●/○ state mark as the Companion, and a branch's leg its indent.
         desired
-        (cond-> (desired-widths columns shown)
+        (cond-> (desired-widths columns painted)
+          (and (seq columns) (some :is-leg shown))
+          (update 0 + 2)
+
           (and is-selectable (seq columns))
           (update 0 + 2))
 
@@ -890,42 +936,75 @@
         (fn [edge]
           {:kind :trule :node-id id :text (rule-line ws edge)})
 
+        ;; A branch head NAMES itself and then says how much its fold holds, and the
+        ;; whole line is the control that opens it. The count is counted HERE, from
+        ;; the rows themselves, so no producer has to smuggle it into the name.
+        head
+        (fn [{:keys [branch held is-open]}]
+          (let [text
+                (str (if is-open "▾ " "▸ ")
+                     branch
+                     " · " held
+                     " row" (when (not= 1 (long held)) "s"))
+
+                segments
+                (span-segments ws text t/dialog-hint-key [p/BOLD])]
+
+            {:kind :tbranch
+             :node-id [id branch]
+             :table-id id
+             :branch branch
+             :is-open is-open
+             :segments segments
+             :text (segment-line segments)}))
+
         ;; A rail between EVERY pair of rows: a live table is read while it fills,
         ;; and the eye needs the line that says where one row's answer ends and the
         ;; next one begins — especially when a cell wears a tone of its own.
         body
         (if (seq shown)
           (into []
-                (comp (map-indexed
-                        (fn [idx row]
-                          (let [is-fresh
-                                (contains? fresh (:id row))
+                (comp
+                  (map-indexed
+                    (fn [idx item]
+                      (let [row
+                            (:row item)
 
-                                is-selected
-                                (contains? selected (:id row))
+                            entry
+                            (if (nil? row)
+                              (head item)
+                              (let [is-fresh
+                                    (contains? fresh (:id row))
 
-                                cells
-                                (cond-> (mapv (fn [col-idx]
-                                                (md-runs (cell-of row col-idx)))
-                                              (range (count columns)))
-                                  (and is-selectable (seq columns))
-                                  (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
+                                    is-selected
+                                    (contains? selected (:id row))
 
-                            [(when (pos? (long idx)) (rule :mid))
-                             (merge {:kind :trow
-                                     :node-id id
-                                     :item-id (:id row)
-                                     :tone (:tone row)
-                                     :is-fresh is-fresh
-                                     :is-selectable (boolean (and is-selectable is-interactive))
-                                     :is-selected is-selected}
-                                    (line cells
-                                          (if is-selected
-                                            t/header-active-tab-accent
-                                            (tone-fg (:tone row)))
-                                          (if (or is-fresh is-selected) [p/BOLD] [])))])))
-                      cat
-                      (remove nil?))
+                                    cells
+                                    (cond-> (mapv (fn [col-idx]
+                                                    (md-runs (cell-of row col-idx)))
+                                                  (range (count columns)))
+                                      (and (:is-leg item) (seq columns))
+                                      (update 0 #(into [{:text "  "}] %))
+
+                                      (and is-selectable (seq columns))
+                                      (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
+
+                                (merge {:kind :trow
+                                        :node-id id
+                                        :item-id (:id row)
+                                        :tone (:tone row)
+                                        :is-fresh is-fresh
+                                        :is-selectable (boolean (and is-selectable is-interactive))
+                                        :is-selected is-selected}
+                                       (line cells
+                                             (if is-selected
+                                               t/header-active-tab-accent
+                                               (tone-fg (:tone row)))
+                                             (if (or is-fresh is-selected) [p/BOLD] [])))))]
+
+                        [(when (pos? (long idx)) (rule :mid)) entry])))
+                  cat
+                  (remove nil?))
                 shown)
           (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
             [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))]
@@ -1127,6 +1206,7 @@
            :widths widths
            :fresh (get-in fresh [:items (:id node)] #{})
            :is-expanded (or (= :log (:type node)) (contains? (set expanded) (:id node)))
+           :expanded (set expanded)
            :is-open (get (:disclosures pane)
                          (:id node)
                          (and (not (settled? pane)) (true? (:default-expanded node))))
@@ -1158,7 +1238,7 @@
             (mapcat
               (fn [entry]
                 (let [kind (case (:kind entry)
-                             (:disclosure :more)
+                             (:disclosure :more :tbranch)
                              :live-expand
 
                              :button
@@ -1837,6 +1917,19 @@
 
     :trule
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))
+
+    ;; A branch is a FOLD, so its head is a control: the whole line opens and shuts
+    ;; the rows gathered under it, the way the Companion's disclosure does.
+    :tbranch
+    (do (paint-segments! g left row inner-w (:segments entry))
+        (.register interactions/hit-map
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                             :col (+ (long left) 2)
+                             :width (max 0 (- (long inner-w) 3))}
+                    :kind :live-expand
+                    :view-id view-id
+                    :node-id (:node-id entry)
+                    :enabled? true}))
 
     :trow
     (do (paint-segments! g left row inner-w (:segments entry))
