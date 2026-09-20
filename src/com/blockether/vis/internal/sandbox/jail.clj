@@ -349,14 +349,18 @@
     (let [jail-env {}]
       (if-let [port (:proxy-port policy)]
         (let [token (:proxy-token policy)
-              url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
+              ;; The empty password is load-bearing: `user@host` userinfo without a
+              ;; `:` makes uv (reqwest) drop the proxy and resolve the index host
+              ;; itself, which a jail has no DNS for — `uv pip install` then dies
+              ;; with "Temporary failure in name resolution". `user:@host` proxies.
+              credentials (when token (str token ":@"))
+              url (str "http://" credentials "127.0.0.1:" port)
               ;; Generic children use SOCKS5 on the multiplexed loopback port for
               ;; non-HTTP schemes. Python package and HTTP stacks inconsistently
               ;; prioritize `ALL_PROXY`; workers keep it on the HTTP lane so every
               ;; request retains verb/path policy enforcement.
-              socks-url (if (:all-proxy-http? policy)
-                          url
-                          (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port))
+              socks-url
+              (if (:all-proxy-http? policy) url (str "socks5h://" credentials "127.0.0.1:" port))
               ca (:ca-file policy)
               java-opts (java-proxy-options policy)]
 

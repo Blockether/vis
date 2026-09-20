@@ -10,7 +10,7 @@
    that session's live policy fn.
 
    How a connection is attributed to a session: the jailed child's proxy env carries
-   its unguessable token in the proxy URL userinfo (`http://<token>@127.0.0.1:<port>`);
+   its unguessable token in the proxy URL userinfo (`http://<token>:@127.0.0.1:<port>`);
    curl/git/requests/… send it back as `Proxy-Authorization: Basic base64(<token>:)`;
    the proxy hands the token to `resolve-policy`, which looks up the registry.
 
