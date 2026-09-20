@@ -1,11 +1,14 @@
 name: Publish reviewed extension
 
 on:
+  schedule:
+    # First-party extension releases reach the center without anyone dispatching this.
+    - cron: '23 5 * * *'
   workflow_dispatch:
     inputs:
       repository_url:
-        description: Public GitHub repository whose source has been reviewed
-        required: true
+        description: Reviewed public GitHub repository; empty publishes the first-party releases
+        default: ''
         type: string
       subdirectory:
         description: Extension project folder (empty for repository root)
@@ -13,11 +16,11 @@ on:
         type: string
       release_tag:
         description: Published GitHub Release tag
-        required: true
+        default: ''
         type: string
       revision:
         description: Full lowercase SHA reviewed for this release
-        required: true
+        default: ''
         type: string
 
 permissions:
@@ -64,13 +67,48 @@ jobs:
           DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
           DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
         run: node deploy.mjs
-      - name: Recheck the reviewed release and publish through authenticated moderation
+      - name: Resolve the releases to publish
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY_URL: ${{ inputs.repository_url }}
           SUBDIRECTORY: ${{ inputs.subdirectory }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           REVISION: ${{ inputs.revision }}
-        run: node moderate.mjs publish "$REPOSITORY_URL" "$SUBDIRECTORY" "$RELEASE_TAG" "$REVISION" --remote --config .deployment.json
+        run: |
+          set -euo pipefail
+          if [ -n "${REPOSITORY_URL:-}" ]; then
+            if [ -z "${RELEASE_TAG:-}" ] || [ -z "${REVISION:-}" ]; then
+              echo "A dispatched repository needs its release tag and the reviewed revision." >&2
+              exit 1
+            fi
+            printf '%s %s %s %s\n' \
+              "$REPOSITORY_URL" "${SUBDIRECTORY:--}" "$RELEASE_TAG" "$REVISION" > "$RUNNER_TEMP/targets"
+          else
+            : > "$RUNNER_TEMP/targets"
+            while read -r repository folder; do
+              tag=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
+              if [ -z "$tag" ]; then
+                echo "$repository has no published release yet; skipping it." >&2
+                continue
+              fi
+              revision=$(gh api "repos/$repository/commits/$tag" --jq .sha)
+              printf '%s %s %s %s\n' \
+                "https://github.com/$repository" "$folder" "$tag" "$revision" >> "$RUNNER_TEMP/targets"
+            done <<'FIRST_PARTY'
+          Blockether/vis-lang-interface -
+          Blockether/vis-lang-python -
+          Blockether/vis-lang-clojure extension
+          FIRST_PARTY
+          fi
+          cat "$RUNNER_TEMP/targets"
+      - name: Recheck the reviewed releases and publish through authenticated moderation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          while read -r repository folder tag revision; do
+            if [ "$folder" = "-" ]; then folder=""; fi
+            node moderate.mjs publish "$repository" "$folder" "$tag" "$revision" --remote --config .deployment.json
+          done < "$RUNNER_TEMP/targets"
