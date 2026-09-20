@@ -702,6 +702,16 @@
         "get": {
           "request": "none",
           "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/alert"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
         },
         "post": {
           "request": "json",
