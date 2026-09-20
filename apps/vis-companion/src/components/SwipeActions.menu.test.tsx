@@ -1,33 +1,34 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SwipeActions } from './SwipeActions';
 import { PencilIcon, TrashIcon } from './icons';
 
+/** One row with a Rename and a danger-toned Delete, and a title that opens the session. */
+function setup() {
+  const rename = vi.fn();
+  const remove = vi.fn();
+  const open = vi.fn();
+  const view = render(
+    <SwipeActions
+      label="Review gateway reconnect behavior"
+      actions={[
+        { key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: rename },
+        { key: 'delete', label: 'Delete', icon: <TrashIcon />, tone: 'danger', onSelect: remove },
+      ]}
+    >
+      <button onClick={open}>Open session</button>
+    </SwipeActions>,
+  );
+  const trigger = screen.getByRole('button', {
+    name: 'Actions for Review gateway reconnect behavior',
+  });
+  return { ...view, trigger, rename, remove, open };
+}
+
 // Regression: invisible desktop action slots consumed the session title's width.
 describe('desktop row action menu', () => {
-  function setup() {
-    const rename = vi.fn();
-    const remove = vi.fn();
-    const open = vi.fn();
-    const view = render(
-      <SwipeActions
-        label="Review gateway reconnect behavior"
-        actions={[
-          { key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: rename },
-          { key: 'delete', label: 'Delete', icon: <TrashIcon />, tone: 'danger', onSelect: remove },
-        ]}
-      >
-        <button onClick={open}>Open session</button>
-      </SwipeActions>,
-    );
-    const trigger = screen.getByRole('button', {
-      name: 'Actions for Review gateway reconnect behavior',
-    });
-    return { ...view, trigger, rename, remove, open };
-  }
-
   it('opens named actions without opening the row and returns focus on Escape', () => {
     const { trigger, open } = setup();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -65,6 +66,69 @@ describe('desktop row action menu', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(trigger);
     fireEvent(window, new Event('resize'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+// The desktop window drops the webview's own right-click menu (`lib/desktop.ts`), so a
+// right-click on a row answers with the row's own verbs — the ones behind its `⋯` — at
+// the cursor that asked for them.
+describe('a right-click on the row', () => {
+  /** A desk with a mouse, or a bare touch screen. */
+  function pointing(kind: 'fine' | 'coarse') {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('pointer: fine') ? kind === 'fine' : false,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+  }
+
+  function rightClick() {
+    const track = screen
+      .getByRole('button', { name: 'Open session' })
+      .closest<HTMLElement>('[data-swipe-track]')!;
+    return fireEvent.contextMenu(track, { clientX: 220, clientY: 140 });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('opens the row menu at the cursor instead of the system one', () => {
+    pointing('fine');
+    const { open } = setup();
+
+    const systemMenu = rightClick();
+
+    expect(systemMenu).toBe(false);
+    const menu = screen.getByRole('dialog', { name: 'Review gateway reconnect behavior actions' });
+    expect(within(menu).getByRole('button', { name: 'Rename' })).toHaveFocus();
+    expect(menu.style.getPropertyValue('--menu-left')).toBe('220px');
+    expect(menu.style.getPropertyValue('--menu-top')).toBe('146px');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('runs a verb picked there against the persistent row trigger', () => {
+    pointing('fine');
+    const { trigger, rename } = setup();
+    rightClick();
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Rename' }));
+
+    expect(rename).toHaveBeenCalledExactlyOnceWith(trigger);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('leaves a long press to the platform under a finger', () => {
+    pointing('coarse');
+    setup();
+
+    expect(rightClick()).toBe(true);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

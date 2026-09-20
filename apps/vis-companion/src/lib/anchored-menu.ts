@@ -89,3 +89,24 @@ export function menuPosition(
     left,
   };
 }
+
+/**
+ * The box a CURSOR stands in, for a menu asked for by right-clicking a row rather
+ * than by pressing its `⋯`.
+ *
+ * `menuPosition` right-aligns a panel to its anchor, which is what a trigger wants:
+ * the menu hangs back under the button that dropped it. A pointer wants the opposite
+ * — every desktop menu opens away from the click, down and to the right — so the
+ * point is handed over as the anchor's RIGHT edge plus one panel width. Close to the
+ * right edge of the window that would push the panel off the screen, and there the
+ * cursor becomes the right edge instead and the menu opens leftward from it.
+ */
+export function pointerAnchor(
+  point: { x: number; y: number },
+  width: number,
+  viewport: Viewport = currentViewport(),
+): AnchorBox {
+  const rightward = point.x + width;
+  const fits = viewport.width <= 0 || rightward <= viewport.width - EDGE_MARGIN;
+  return { top: point.y, bottom: point.y, right: fits ? rightward : point.x };
+}

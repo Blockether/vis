@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { menuPosition } from './anchored-menu';
+import { menuPosition, pointerAnchor } from './anchored-menu';
 
 /** A desktop window with room to drop a 70vh panel under a header. */
 const DESKTOP = { width: 1440, height: 900 };
@@ -91,6 +91,31 @@ describe('menuPosition', () => {
         top: 94,
         left: 948,
       });
+    });
+  });
+});
+
+// A right-click on a session row drops that row's `⋯` menu at the cursor (BLO-169),
+// so the point itself is the anchor the placement above is asked about.
+describe('pointerAnchor', () => {
+  it('opens the menu down and to the right of the cursor', () => {
+    const anchor = pointerAnchor({ x: 400, y: 300 }, 320, DESKTOP);
+    expect(anchor).toEqual({ top: 300, bottom: 300, right: 720 });
+    // A measured panel: the menu starts at the cursor and drops away from it.
+    expect(menuPosition(anchor, 320, DESKTOP, 150)).toEqual({ top: 306, left: 400 });
+  });
+
+  it('opens leftward from a cursor that has no room on its right', () => {
+    const anchor = pointerAnchor({ x: 1300, y: 300 }, 320, DESKTOP);
+    expect(anchor).toEqual({ top: 300, bottom: 300, right: 1300 });
+    expect(menuPosition(anchor, 320, DESKTOP, 150)).toEqual({ top: 306, left: 980 });
+  });
+
+  it('keeps the natural direction where there is no viewport to measure', () => {
+    expect(pointerAnchor({ x: 400, y: 300 }, 320, HEADLESS)).toEqual({
+      top: 300,
+      bottom: 300,
+      right: 720,
     });
   });
 });

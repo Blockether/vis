@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { captureLinkClicks, openExternalUrl } from './desktop';
+import { captureContextMenu, captureLinkClicks, openExternalUrl } from './desktop';
 
 // The desktop app is this bundle inside a Pake (Tauri) window, and Pake reads every click
 // through its own capture listener: a sign-in URL replaces Vis in the current window, and an
@@ -50,6 +50,7 @@ function click(anchor: HTMLAnchorElement) {
 beforeEach(() => {
   vi.spyOn(window, 'open').mockReturnValue(null);
   captureLinkClicks();
+  captureContextMenu();
 });
 
 afterEach(() => {
@@ -124,4 +125,37 @@ it('opens a URL through the shell channel, or a browser tab without one', () => 
   const invoke = stubDesktopShell();
   openExternalUrl('https://example.com/docs');
   expect(invoke).toHaveBeenCalledWith('plugin:shell|open', { path: 'https://example.com/docs' });
+});
+
+/** The right button, as a mouse sends it. */
+function rightClick(target: Element) {
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function appendTo(body: HTMLElement, tag: string) {
+  const element = document.createElement(tag);
+  body.append(element);
+  return element;
+}
+
+// The webview's menu offers a browser's verbs — reload, go back, view source — inside an
+// app that is not a browser. The row under the cursor answers with its own menu instead
+// (`SwipeActions`), so the system one is refused first.
+it('drops the browser menu inside the desktop window', () => {
+  stubDesktopShell();
+
+  expect(rightClick(appendTo(document.body, 'div')).defaultPrevented).toBe(true);
+});
+
+it('keeps the editing menu a text field needs for the clipboard', () => {
+  stubDesktopShell();
+
+  expect(rightClick(appendTo(document.body, 'textarea')).defaultPrevented).toBe(false);
+  expect(rightClick(appendTo(document.body, 'input')).defaultPrevented).toBe(false);
+});
+
+it('leaves the right button to a browser, where the window is a browser window', () => {
+  expect(rightClick(appendTo(document.body, 'div')).defaultPrevented).toBe(false);
 });

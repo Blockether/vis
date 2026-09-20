@@ -1,9 +1,24 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { LIST_EDGE_END } from './SessionNavigator';
 import { DotsIcon } from './icons';
 import { IconButton } from './ui';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
-import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
+import {
+  menuPosition,
+  pointerAnchor,
+  type AnchorBox,
+  type MenuPosition,
+} from '../lib/anchored-menu';
+import { hasHardwarePointer } from '../lib/pointer';
 
 export interface SwipeAction {
   key: string;
@@ -57,12 +72,42 @@ let openDrawer: (() => void) | null = null;
  */
 const OPEN_PAST_PX = 8;
 
+/** The row's menu asked for from somewhere other than its own trigger. */
+export interface RowMenuHandle {
+  /** Drop the menu at a point in the viewport — the cursor that asked for it. */
+  openAt: (point: { x: number; y: number }) => void;
+}
+
 /** A pointer uses one persistent trigger; touch keeps the swipe drawer below. */
-function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: string }) {
+function RowActionMenu({
+  actions,
+  label,
+  handle,
+}: {
+  actions: SwipeAction[];
+  label?: string;
+  handle: RefObject<RowMenuHandle | null>;
+}) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<MenuPosition | null>(null);
+  // WHAT THE PANEL HANGS FROM, remembered. The re-place below asks the same question
+  // again once the panel has a measured height, and a menu the cursor opened must not
+  // walk back under the `⋯` it merely shares its actions with.
+  const anchorRef = useRef<AnchorBox | null>(null);
+  const openFrom = useCallback((anchor: AnchorBox) => {
+    anchorRef.current = anchor;
+    setAt(menuPosition(anchor, MENU_WIDTH));
+  }, []);
+  useImperativeHandle(
+    handle,
+    () => ({
+      openAt: (point) => openFrom(pointerAnchor(point, MENU_WIDTH)),
+    }),
+    [openFrom],
+  );
   const dismiss = useCallback(() => {
+    anchorRef.current = null;
     setAt(null);
     triggerRef.current?.focus({ preventScroll: true });
   }, []);
@@ -70,7 +115,7 @@ function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: str
   useLayoutEffect(() => {
     if (!at) return;
     const panel = panelRef.current?.closest('[role="dialog"]');
-    const anchor = triggerRef.current?.getBoundingClientRect();
+    const anchor = anchorRef.current ?? triggerRef.current?.getBoundingClientRect();
     const height = panel?.getBoundingClientRect().height;
     if (!height) return;
     const placed = menuPosition(anchor, MENU_WIDTH, undefined, height);
@@ -104,9 +149,7 @@ function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: str
         variant="quiet"
         aria-haspopup="dialog"
         aria-expanded={at !== null}
-        onClick={(event) =>
-          setAt(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))
-        }
+        onClick={(event) => openFrom(event.currentTarget.getBoundingClientRect())}
       >
         <DotsIcon className="size-3.5 rotate-90" />
       </IconButton>
@@ -171,6 +214,7 @@ export function SwipeActions({
   trailing?: ReactNode;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<RowMenuHandle | null>(null);
   const [open, setOpen] = useState(false);
   /** True while this drawer is settling home; see `close`. */
   const isClosing = useRef(false);
@@ -272,6 +316,16 @@ export function SwipeActions({
       onPointerDown={() => {
         isClosing.current = false;
       }}
+      // THE ROW'S OWN MENU, WHERE THE SYSTEM ONE WOULD HAVE BEEN. Under a pointer every
+      // verb this row has already lives behind its `⋯`; a right-click is the second way
+      // to ask for that same menu, and it opens at the cursor instead of back under the
+      // trigger. A finger never reaches here: the drawer below is the row's answer to a
+      // swipe, and a long press stays the platform's.
+      onContextMenu={(event) => {
+        if (!hasHardwarePointer()) return;
+        event.preventDefault();
+        menuRef.current?.openAt({ x: event.clientX, y: event.clientY });
+      }}
       onScroll={(event) => {
         const next = event.currentTarget.scrollLeft > OPEN_PAST_PX;
         // A drawer animating home still reports itself OPEN for every frame of the
@@ -305,7 +359,7 @@ export function SwipeActions({
       <div
         className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2' : LIST_EDGE_END}`}
       >
-        <RowActionMenu actions={actions} label={label} />
+        <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
       <div
         className={`flex shrink-0 snap-end mouse:hidden ${LIST_EDGE_END}`}

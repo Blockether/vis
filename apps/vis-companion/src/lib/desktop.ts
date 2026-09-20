@@ -65,3 +65,36 @@ export function captureLinkClicks(): void {
   claimed = true;
   document.addEventListener('click', claimExternalLink, true);
 }
+
+let claimedContextMenu = false;
+
+/** The fields whose own menu is the only route a mouse has to Cut, Copy and Paste. */
+const EDITABLE = 'input, textarea, [contenteditable=""], [contenteditable="true"]';
+
+function claimContextMenu(event: MouseEvent): void {
+  // Read per event rather than at install: in a browser the right button is the
+  // browser's, and this listener stays inert there.
+  if (!desktopInvoke()) return;
+  if (event.defaultPrevented) return;
+  if (event.target instanceof Element && event.target.closest(EDITABLE)) return;
+  event.preventDefault();
+}
+
+/**
+ * Take the right button away from the webview inside the desktop window.
+ *
+ * The menu Pake's webview drops is the one a BROWSER owns — reload, go back, look at
+ * the page source — and none of those verbs mean anything in an app the reader paired
+ * to a gateway. The app draws its own menus instead: a right-click on a session row
+ * opens the very menu its `⋯` holds (`SwipeActions`). Text fields keep the system's
+ * editing menu, because it is the only way a mouse reaches the clipboard there.
+ *
+ * Pake's own injected listener is not what this refuses: it draws a small menu of its
+ * own for a link or an image and hands every other element back to the browser's
+ * default — and that default is the menu the reader was seeing over a session row.
+ */
+export function captureContextMenu(): void {
+  if (claimedContextMenu || typeof document === 'undefined') return;
+  claimedContextMenu = true;
+  document.addEventListener('contextmenu', claimContextMenu);
+}
