@@ -1871,6 +1871,115 @@
           (expect (= valid? (zero? exit)) output)
           (when valid? (expect (= value (str/trim output)))))))))
 
+;; `switch` names the build that runs; `update` only follows a track forward.
+;; Both install through the same bundle installer, so the launcher's own
+;; mapping - identifier to track and target - is what has to hold.
+(defn- launcher-function
+  "The text of one shell function in bin/vis-agent, for running it in isolation."
+  [launcher fn-name]
+  (or (re-find (re-pattern (str "(?ms)^" fn-name "\\(\\) \\{.*?^\\}\\n")) launcher)
+      (throw (ex-info (str "bin/vis-agent defines " fn-name) {:function fn-name}))))
+
+(def ^:private switch-prelude
+  (str
+    "set -u\n" "say() { printf 'vis-agent: %s\\n' \"$*\"; }\n"
+    "die() { printf '%s\\n' \"$1\" >&2; shift; for line in \"$@\"; do printf '  %s\\n' \"$line\" >&2; done; exit 1; }\n"
+    "read_state() { [ -f \"$1\" ] || return 0; head -n1 \"$1\" | tr -d '[:space:]'; }\n"
+    "vis_repo_slug=Blockether/vis\n" "vis_install_dir=\"$TEST_DIR\"\n"
+    "bundled_native=\"$TEST_DIR/vis-agent-native\"\n" "vis_track_file=\"$TEST_DIR/track\"\n"
+    "managed_ref_file=\"$TEST_DIR/ref\"\n" "curl() { case \"$*\" in\n"
+    "  *installer/native-beta) printf '%s' \"$TEST_BETA\" ;;\n"
+    "  *per_page*) cat \"$TEST_DIR/releases.json\" ;;\n"
+    "  *) printf '[]' ;;\n" "esac; }\n"))
+
+(defdescribe
+  switch-command-test
+  (it
+    "lists the installed build, the tracks and every published version"
+    (let [launcher
+          (slurp "bin/vis-agent")
+
+          commit
+          (apply str (repeat 40 "a"))
+
+          beta
+          (str "beta-" commit)
+
+          dir
+          (.toFile (Files/createTempDirectory "vis-switch" (make-array FileAttribute 0)))]
+
+      (try (spit (io/file dir "vis-agent-native.build") (str "0.2.10 " commit " dev\n"))
+           (spit (io/file dir "track") "release\n")
+           (spit (io/file dir "releases.json")
+                 (str "[{\"tag_name\": \"v0.2.10\"},{\"tag_name\": \""
+                      beta
+                      "\"},{\"tag_name\": \"v0.2.8\"}]"))
+           (spit (io/file dir "list.sh")
+                 (str switch-prelude
+                      (launcher-function launcher "vis_installed_build")
+                      (launcher-function launcher "vis_release_tags")
+                      (launcher-function launcher "vis_switch_list")
+                      (launcher-function launcher "vis_switch_mark")
+                      "vis_switch_list\n"))
+           (let [{:keys [exit output]} (run-bash ["bash" (.getPath (io/file dir "list.sh"))]
+                                                 {"TEST_DIR" (.getPath dir) "TEST_BETA" beta})]
+             (expect (zero? exit) output)
+             (expect (str/includes? output "installed native 0.2.10") output)
+             (expect (str/includes? output "track release") output)
+             (doseq [row ["TRACKS" "release" "beta" "dev" "RELEASES" "v0.2.10" "v0.2.8" "BETAS" beta
+                          (str "beta is " beta " today")]]
+               (expect (str/includes? output row) (str row "\n" output)))
+             ;; The version the installed stamp came from is marked, and only that one.
+             (expect (str/includes? output "v0.2.10  (installed)") output)
+             (expect (not (str/includes? output "v0.2.8  (installed)")) output))
+           (finally (delete-tree! dir)))))
+  (it
+    "installs exactly the identifier it was given, and refuses anything else"
+    (let [launcher
+          (slurp "bin/vis-agent")
+
+          beta
+          (str "beta-" (apply str (repeat 40 "b")))
+
+          dir
+          (.toFile (Files/createTempDirectory "vis-switch" (make-array FileAttribute 0)))
+
+          script
+          (str switch-prelude
+               "vis_do_update() { printf 'update %s\\n' \"$*\"; }\n"
+               "vis_switch_list() { printf 'listed\\n'; }\n"
+               "vis_switch_usage() { printf 'usage\\n' >&2; }\n"
+               (launcher-function launcher "vis_do_switch")
+               "vis_do_switch \"$@\"\n")]
+
+      (try (spit (io/file dir "switch.sh") script)
+           (doseq [[args expected] [[["list"] "listed"] [["release"] "update --track release"]
+                                    [["beta"] "update --track beta"] [["dev"] "update --track dev"]
+                                    [["v0.2.9"] "update --track release v0.2.9"]
+                                    [[beta] (str "update --track beta " beta)]
+                                    [["v0.2.9" "--keep-gateway"]
+                                     "update --track release v0.2.9 --keep-gateway"]]]
+             (let [{:keys [exit output]} (run-bash
+                                           (into ["bash" (.getPath (io/file dir "switch.sh"))] args)
+                                           {"TEST_DIR" (.getPath dir) "TEST_BETA" beta})]
+               (expect (zero? exit) output)
+               (expect (= expected (str/trim output)) (str args "\n" output))))
+           (doseq [args [["0.2.9"] ["main"] ["--track"] ["v0.2.9" "v0.2.8"] []]]
+             (let [{:keys [exit output]} (run-bash
+                                           (into ["bash" (.getPath (io/file dir "switch.sh"))] args)
+                                           {"TEST_DIR" (.getPath dir) "TEST_BETA" beta})]
+               (expect (not (zero? exit)) (str args "\n" output))
+               (expect (not (str/includes? output "update --track")) (str args "\n" output))))
+           (finally (delete-tree! dir)))))
+  (it "keeps a named beta build instead of resolving the published selection"
+      (let [body (launcher-function (slurp "bin/vis-agent") "update_native")]
+        ;; A pinned `beta-<commit>` is installed as named; only an unpinned beta
+        ;; asks the installer index which beta is current.
+        (expect (str/includes?
+                  body
+                  "if [[ \"$track\" == beta && ( -z \"$target\" || \"$target\" == latest ) ]]")
+                body))))
+
 ;; Regression: a source run from any directory other than the checkout
 ;; died with "Could not locate com/blockether/vis/core". tools.deps caches the
 ;; project roots RELATIVELY and the JVM resolves them against `user.dir`, which

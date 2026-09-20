@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # vis-agent — the one public Vis command.
 #
-# It does two things and nothing else:
+# It does three things and nothing else:
 #   1. run Vis,
-#   2. update Vis — and this command with it — (`vis-agent update`).
+#   2. update Vis — and this command with it — (`vis-agent update`),
+#   3. select which published Vis runs (`vis-agent switch`).
 #
 # Desktop follows the selected track: release downloads; dev builds from source.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
 # on the JVM. `update` defaults to release; only --track selects beta or dev.
+# `switch` names a build instead of following a track: `switch list` shows what
+# is installed and selectable, `switch <identifier>` installs exactly that one.
 # --jvm selects source for one launch without changing the installed track.
 #
 # Managed source and installation state live under ~/.vis:
@@ -803,7 +806,11 @@ update_native() {
   local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack
   local native_version native_commit _native_metadata
   asset="$(vis_platform_asset)"
-  if [[ "$track" == beta ]]; then target="$(vis_beta_tag)" || exit 1; fi
+  # A named beta build is installed as named; only an unpinned beta resolves the
+  # published selection.
+  if [[ "$track" == beta && ( -z "$target" || "$target" == latest ) ]]; then
+    target="$(vis_beta_tag)" || exit 1
+  fi
   if [[ "$target" != latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
   else
@@ -980,7 +987,7 @@ vis_do_update() {
       --track=*) track="${arg#*=}" ;;
       -h|--help) vis_update_usage; exit 0 ;;
       -*) die "update: unknown option $arg" "Run: vis-agent update --help" ;;
-      latest|v[0-9]*)
+      latest|v[0-9]*|beta-*)
         [[ -z "$target" ]] || die "update: one version at a time"
         target="$arg"
         ;;
@@ -992,8 +999,17 @@ vis_do_update() {
     release|beta|dev) ;;
     *) die "update: unknown track '$track'" "Tracks are release, beta and dev" ;;
   esac
-  [[ -z "$target" || "$target" == latest || "$track" == release ]] || \
-    die "update: versions are available only on the release track"
+  case "$target" in
+    ""|latest) ;;
+    beta-*)
+      [[ "$track" == beta ]] || die "update: '$target' is a beta build, not a release" \
+        "Use: vis-agent switch $target"
+      ;;
+    *)
+      [[ "$track" == release ]] || \
+        die "update: versions are available only on the release track"
+      ;;
+  esac
   mkdir -p "$vis_install_dir"
 
   # Use the OLD selection and executable to talk to its own gateway protocol.
@@ -1016,6 +1032,119 @@ vis_do_update() {
   say "installed the $track track"
   vis_update_desktop "$track"
   exit 0
+}
+
+# ── switch: choose which published build runs ────────────────────────────────
+# `update` follows a track forward; `switch` names the build you want. Both
+# install the same bundle through the same installer, so a switch is an install
+# of exactly what you named: a stable release, a published beta, or main source.
+# Configuration, sessions and extensions are shared, so switching back costs
+# only the download.
+vis_switch_usage() {
+  cat >&2 <<'EOF'
+Usage: vis-agent switch list
+       vis-agent switch <identifier> [--keep-gateway]
+
+  list           Show the installed build and every identifier you can select.
+  release        Newest complete stable native release.
+  beta           Newest published native beta from green main CI.
+  dev            Newest main source, always run on the JVM.
+  vX.Y.Z         That stable release.
+  beta-<commit>  That published beta build.
+
+  A switch downloads the bundle it names and records the selection, so later
+  launches use it. Use --keep-gateway to leave a running gateway alone.
+EOF
+}
+
+# The `<version> <commit> <metadata>` stamp that travels with a native bundle.
+vis_installed_build() {
+  local stamp
+  for stamp in "$bundled_native.build" "$vis_install_dir/vis-agent-native.build"; do
+    [[ -f "$stamp" ]] || continue
+    head -n1 "$stamp"
+    return 0
+  done
+  return 1
+}
+
+# Published release tags, newest first. Silence when GitHub cannot be reached:
+# `list` reports what is installed instead of failing on a network it does not need.
+vis_release_tags() {
+  local json
+  json="$(curl -fsSL "https://api.github.com/repos/$vis_repo_slug/releases?per_page=20" 2>/dev/null)" || return 0
+  printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\(.*\)"$/\1/'
+}
+
+vis_switch_list() {
+  local track build beta tags tag
+  track="$(read_state "$vis_track_file")"
+  build="$(vis_installed_build || true)"
+  if [[ -n "$build" ]]; then
+    say "installed native ${build% *} (track ${track:-unset})"
+  else
+    say "no native runtime is installed (track ${track:-unset})"
+  fi
+  [[ ! -f "$managed_ref_file" ]] || say "managed source pinned at $(read_state "$managed_ref_file")"
+  printf '\nTRACKS\n'
+  printf '  %-18s %s\n' release "newest complete stable native release"
+  printf '  %-18s %s\n' beta "newest published native beta from green main CI"
+  printf '  %-18s %s\n' dev "newest main source, always run on the JVM"
+  beta="$(curl -fsSL "https://github.com/$vis_repo_slug/releases/download/installer/native-beta" 2>/dev/null || true)"
+  beta="${beta//[[:space:]]/}"
+  [[ -z "$beta" ]] || printf '\n  beta is %s today\n' "$beta"
+  tags="$(vis_release_tags)"
+  if [[ -z "$tags" ]]; then
+    printf '\nVERSIONS\n  unavailable from GitHub right now; naming a version still works.\n'
+    return 0
+  fi
+  printf '\nRELEASES\n'
+  while read -r tag; do
+    case "$tag" in v[0-9]*) printf '  %s%s\n' "$tag" "$(vis_switch_mark "$tag" "$build")" ;; esac
+  done <<< "$tags"
+  printf '\nBETAS\n'
+  while read -r tag; do
+    case "$tag" in beta-*) printf '  %s%s\n' "$tag" "$(vis_switch_mark "$tag" "$build")" ;; esac
+  done <<< "$tags"
+}
+
+# Mark the identifier the installed build came from: a release tag carries the
+# version, a beta tag the source commit.
+vis_switch_mark() {
+  local tag="$1" build="${2:-}" version commit
+  [[ -n "$build" ]] || return 0
+  read -r version commit _ <<< "$build"
+  case "$tag" in
+    "v$version"|"beta-$commit") printf '  (installed)' ;;
+  esac
+}
+
+# One public selector; `update` installs and records the selection.
+vis_do_switch() {
+  local identifier="" arg rest=()
+  while (( $# )); do
+    arg="$1"
+    case "$arg" in
+      -h|--help) vis_switch_usage; exit 0 ;;
+      --keep-gateway) rest+=("$arg") ;;
+      -*) die "switch: unknown option $arg" "Run: vis-agent switch --help" ;;
+      *)
+        [[ -z "$identifier" ]] || die "switch: one identifier at a time" \
+          "Run: vis-agent switch list"
+        identifier="$arg"
+        ;;
+    esac
+    shift
+  done
+  [[ -n "$identifier" ]] || { vis_switch_usage; exit 1; }
+  case "$identifier" in
+    list)          vis_switch_list; exit 0 ;;
+    release|beta|dev) vis_do_update --track "$identifier" ${rest[@]+"${rest[@]}"} ;;
+    v[0-9]*)       vis_do_update --track release "$identifier" ${rest[@]+"${rest[@]}"} ;;
+    beta-*)        vis_do_update --track beta "$identifier" ${rest[@]+"${rest[@]}"} ;;
+    *) die "switch: '$identifier' is not a version or a track" \
+           "Run: vis-agent switch list" ;;
+  esac
 }
 
 # ── Desktop companion ────────────────────────────────────────────────────────
@@ -1321,6 +1450,13 @@ case "${1:-}" in
     # Git and curl need the same corporate roots as the runtime they update.
     configure_system_trust "$(runtime_effective)" 1
     vis_do_update "$@"
+    ;;
+  switch)
+    shift
+    (( ! jvm_requested )) || die "switch: --jvm selects a launch runtime, not a version" \
+      "Use: vis-agent switch dev"
+    configure_system_trust "$(runtime_effective)" 1
+    vis_do_switch "$@"
     ;;
 esac
 

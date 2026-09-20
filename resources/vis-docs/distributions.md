@@ -71,6 +71,30 @@ Version pins are not accepted with beta or dev. Native updates acquire the engin
 Python worker and TUI from the same immutable release before replacing installed files.
 A missing native TUI fails rather than starting a JVM client.
 
+## Switching between versions
+
+`update` follows a track forward. `switch` names the build you want to run, so you can
+move to a published beta to try a fix and back to the stable release afterwards.
+
+```bash
+vis-agent switch list                     # installed build, tracks and published versions
+vis-agent switch release                  # newest stable release
+vis-agent switch beta                     # the beta the installer index selects today
+vis-agent switch v0.2.8                   # that stable release
+vis-agent switch beta-<commit>            # that published beta build
+vis-agent switch dev                      # newest main source, always JVM
+```
+
+`switch list` prints the installed version and track first, marks the entry the installed
+build came from, and then lists the tracks, the published releases and the published betas.
+It needs GitHub only for the published lists; when they cannot be read, naming a version
+still works.
+
+A switch installs the bundle it names through the same installer `update` uses, and records
+the selection, so later launches use it. Configuration, sessions and extensions are shared by
+every version, so switching back costs only the download. `--keep-gateway` leaves a running
+gateway alone, exactly as it does for `update`.
+
 If managed source already exists in `~/.vis/install/src`, a native update also pins
 it to the selected native build's exact commit. This requires Git; native-only
 installations do not download source. For native and dev updates, staged, unstaged

@@ -4319,8 +4319,11 @@
      (help-row "vis-agent desktop --track dev"
                "Build from source once; leave the engine track unchanged.") "" "UPDATES"
      (help-row "vis-agent update" "Install the latest complete native release (default).")
-     (help-row "--track release|beta|dev" "Release, green-CI native beta, or main on JVM.") ""
-     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+     (help-row "--track release|beta|dev" "Release, green-CI native beta, or main on JVM.")
+     (help-row "vis-agent switch list" "Show the installed build and every version you can select.")
+     (help-row "vis-agent switch <identifier>"
+               "Install and run that release, beta or dev build from now on.") "" "CONFIGURATION"
+     (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"

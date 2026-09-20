@@ -75,7 +75,8 @@
   (it "documents the per-launch JVM override separately from update tracks"
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "UPDATES"))
-        (doseq [row ["vis-agent update" "--track release|beta|dev" "default" "--jvm" "RUNTIME"]]
+        (doseq [row ["vis-agent update" "--track release|beta|dev" "default" "--jvm" "RUNTIME"
+                     "vis-agent switch list" "vis-agent switch <identifier>"]]
           (expect (.contains help row)))
         (doseq [gone ["--native" "--dev" "VIS_RUNTIME" "vis-agent runtime" "--rebuild"]]
           (expect (not (str/includes? help gone)) gone))))
