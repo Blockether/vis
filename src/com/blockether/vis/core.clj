@@ -731,6 +731,7 @@
              ;; DIFFERENT REPL in every language, never a silent replacement.
              [env-difference process-jail/env-difference]
              [env-mismatch-refusal process-jail/env-mismatch-refusal]
+             [register-session-jail! process-jail/register-session-jail!]
              [unregister-session-jail! process-jail/unregister-session-jail!])
 
 ;; Turn runtime / iteration loop / environment / sessions
@@ -805,11 +806,14 @@
              [parse-repair parse/repair]
              [python-project-layout python-project/project-layout]
              [render-test-report python-test-runner/render-test-report]
+             [python-build-context python-extensions/build-context]
+             [python-close-context! python-extensions/close-context!]
              [expand-home paths/expand-home]
              [ensure-log-date-dir! paths/ensure-log-date-dir!]
              [sha256 util/sha256]
              [non-blank-string? util/non-blank-string?]
-             [RUN_TESTS_TIMEOUT_MS runtime-settings/RUN_TESTS_TIMEOUT_MS])
+             [RUN_TESTS_TIMEOUT_MS runtime-settings/RUN_TESTS_TIMEOUT_MS]
+             [MAX_EVAL_TIMEOUT_MS runtime-settings/MAX_EVAL_TIMEOUT_MS])
 
 ;; Activity presentation toolkit
 ;;
@@ -838,6 +842,21 @@
   "Kill a process and every process it started."
   [process]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/kill-tree!) process))
+
+(defn shell-sh
+  "Run one command synchronously: `(shell-sh \"npm\" \"install\" :dir root)`."
+  [& args]
+  (apply (requiring-resolve 'com.blockether.vis.internal.foundation.shell/sh) args))
+
+(defn python-shared-key
+  "The pooled Python worker key every shared sandbox call uses."
+  []
+  @(requiring-resolve 'com.blockether.vis.internal.python.worker/shared-key))
+
+(defn python-exec!
+  "Evaluate `code` in the Python worker `k` for `session`."
+  [k session code]
+  ((requiring-resolve 'com.blockether.vis.internal.python.worker/exec!) k session code))
 
 ;; Channel event bus
 (def add-channel-event-listener!
