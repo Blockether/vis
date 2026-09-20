@@ -827,6 +827,32 @@ describe('GatewayClient workspace file opening', () => {
     });
     expect(opened).toEqual({ path: '/Users/ana/vis/AGENTS.md', is_open: true });
   });
+
+  it('reads a bounded window of one workspace file, around a line', async () => {
+    const answer = JSON.stringify({
+      path: '/Users/ana/vis/AGENTS.md',
+      line: 40,
+      first_line: 1,
+      lines: ['first'],
+      is_truncated: false,
+      size_bytes: 12,
+    });
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(answer)));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const read = await client.readPath('session-1', 'src/app.ts', 40);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/fs/file?path=src%2Fapp.ts&line=40',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' });
+    expect(read.lines).toEqual(['first']);
+
+    await client.readPath('session-1', 'src/app.ts');
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain('line=');
+  });
 });
 
 // Regression: the gateway scoped POST /v1/sessions/:sid/cancel-current to the

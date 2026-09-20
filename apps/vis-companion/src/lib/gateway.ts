@@ -40,6 +40,7 @@ import type {
   GatewayOverview,
   GatewayConn,
   FileSuggestion,
+  FileWindow,
   GatewayStatus,
   IterationAttachment,
   SessionArtifactRow,
@@ -2658,6 +2659,25 @@ export class GatewayClient {
       'POST',
       `/v1/sessions/${encodeURIComponent(sid)}/fs/actions/open`,
       { path },
+      signal,
+    );
+  }
+
+  // GET /v1/sessions/:sid/fs/file — the LINES of one workspace file, around the
+  // line a pressed path named. The editor opens where the files are; this is what
+  // the device doing the reading can show for itself, phone included. The gateway
+  // answers one bounded window: clipped lines, a byte cap, and no binary file.
+  async readPath(
+    sid: string,
+    path: string,
+    line?: number,
+    signal?: AbortSignal,
+  ): Promise<FileWindow> {
+    const at = line === undefined ? '' : `&line=${encodeURIComponent(String(line))}`;
+    return await this.request<FileWindow>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/fs/file?path=${encodeURIComponent(path)}${at}`,
+      undefined,
       signal,
     );
   }

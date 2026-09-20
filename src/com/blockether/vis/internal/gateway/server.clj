@@ -2601,6 +2601,45 @@
                                     :mkdir-failed "could not create that folder"
                                     :path (.getAbsolutePath made)))))))
 
+(defn- workspace-file
+  "The file `requested` names inside the session's own workspace, resolved through
+   symlinks — or the error response that refuses it.
+
+   A press from a phone reaches a file this session already works in, never an
+   arbitrary path on the host, so opening a file and reading one confine the same
+   way and refuse the same way."
+  [sid requested]
+  (let [root (get (state/session-workspace-info sid) "root")]
+
+    (cond (or (not (string? requested)) (str/blank? requested))
+          {:error (error-response 400 :invalid-request "path must be a non-blank string")}
+          (str/blank? (str root))
+          {:error (error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
+          :else
+          (try (let [^java.io.File anchor (.getCanonicalFile (io/file root))
+                     ^java.io.File asked (io/file (expand-user requested))
+                     ^java.io.File target (.getCanonicalFile (if (.isAbsolute asked)
+                                                               asked
+                                                               (io/file anchor requested)))
+                     inside? (or (= anchor target)
+                                 (str/starts-with? (.getPath target)
+                                                   (str (.getPath anchor)
+                                                        java.io.File/separator)))]
+
+                 (cond (not inside?)
+                       {:error (error-response 403
+                                               :outside-workspace
+                                               "that file is outside this session's workspace"
+                                               :path (.getPath target))}
+                       (not (.isFile target))
+                       {:error (error-response 404
+                                               :not-a-file
+                                               "no such file"
+                                               :path (.getPath target))}
+                       :else {:file target}))
+               (catch java.io.IOException _
+                 {:error (error-response 400 :invalid-request "that path could not be resolved")})))))
+
 (defn- open-file-handler
   "POST /v1/sessions/:sid/fs/actions/open {path} — open ONE file this session
    named, on the machine the session runs on.
@@ -2617,41 +2656,121 @@
   (let [sid (path-sid request)]
     (if-not (and sid (state/soul sid))
       (session-404 (get-in request [:path-params :sid]))
-      (let [requested (get (body-json request) "path")
-            root (get (state/session-workspace-info sid) "root")]
+      (let [found
+            (workspace-file sid (get (body-json request) "path"))
 
-        (cond (or (not (string? requested)) (str/blank? requested))
-              (error-response 400 :invalid-request "path must be a non-blank string")
-              (str/blank? (str root))
-              (error-response 409 :workspace-unavailable "Session workspace is unavailable.")
+            ^java.io.File target
+            (:file found)]
+
+        (or (:error found)
+            (let [{:keys [status error]}
+                  (external-opener/open-file-in-editor! (.getPath target))]
+
+              (if (= :ok status)
+                (json-response {:path (.getPath target) :is-open true})
+                (error-response 400
+                                :open-failed
+                                (or error "that file could not be opened")
+                                :path (.getPath target)))))))))
+
+(def ^:private preview-line-limit
+  "Lines one preview answers with. A reader is looking AT a place in a file, not
+   downloading the file; this covers a screen and the context around it."
+  400)
+
+(def ^:private preview-line-length
+  "Characters one previewed line keeps. A minified bundle is one line of several
+   megabytes, and no screen shows it."
+  2000)
+
+(def ^:private preview-byte-limit
+  "Bytes a preview reads off disk before it stops, however deep the anchor sits.
+   A file that big is a log or a bundle; the window says it was cut short."
+  (* 2 1024 1024))
+
+(defn- binary-file?
+  "Text has no NUL byte in it. Sniffing the head is what `git` and `grep` do, and
+   it keeps an image, an archive or a class file out of a text window."
+  [^java.io.File file]
+  (with-open [in (java.io.FileInputStream. file)]
+    (let [buffer (byte-array 4096)
+          read (.read in buffer)]
+      (boolean (some zero? (take (max read 0) (seq buffer)))))))
+
+(defn- file-window
+  "The previewed lines of `file` from line `from`, each clipped, under the byte
+   cap — with `is-truncated` when the cap stopped the read before the window ended."
+  [^java.io.File file from]
+  (let [last-line (+ from (dec preview-line-limit))]
+    (with-open [^java.io.BufferedReader reader (io/reader file)]
+      (loop [number 1 bytes 0 taken (transient [])]
+        (let [line (when (and (<= number last-line) (< bytes preview-byte-limit))
+                     (.readLine reader))]
+
+          (if (nil? line)
+            {:lines (persistent! taken)
+             :is-truncated (and (<= number last-line) (>= bytes preview-byte-limit))}
+            (recur (inc number)
+                   (+ bytes (count line) 1)
+                   (if (>= number from)
+                     (conj! taken (cond-> line
+                                    (> (count line) preview-line-length)
+                                    (subs 0 preview-line-length)))
+                     taken))))))))
+
+(defn- read-file-handler
+  "GET /v1/sessions/:sid/fs/file?path=…&line=… — the LINES of one workspace file
+   around the line a press named.
+
+   A path in a transcript names a file on the machine that ran the step. Opening
+   an editor there is the right answer for whoever sits at that machine, and no
+   answer at all for a reader holding a phone: the file is on the other side of
+   the room. This hands back the text itself, so the place a step touched can be
+   read where the session is being read.
+
+   A PREVIEW, NOT A DOWNLOAD. One window of lines, each clipped, under a byte cap,
+   and never a binary file — the route cannot become a way to pull a repository
+   through the gateway one file at a time. Confinement is `workspace-file`'s."
+  [request]
+  (let [sid (path-sid request)]
+    (if-not (and sid (state/soul sid))
+      (session-404 (get-in request [:path-params :sid]))
+      (let [asked-line
+            (not-empty (str (get-in request [:query-params "line"])))
+
+            line
+            (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
+
+            found
+            (workspace-file sid (get-in request [:query-params "path"]))
+
+            ^java.io.File target
+            (:file found)]
+
+        (cond (:error found) (:error found)
+              (and asked-line (not (pos? (long (or line 0)))))
+              (error-response 400 :invalid-request "line must be a positive whole number")
               :else
-              (try (let [^java.io.File anchor (.getCanonicalFile (io/file root))
-                         ^java.io.File asked (io/file (expand-user requested))
-                         ^java.io.File target (.getCanonicalFile (if (.isAbsolute asked)
-                                                                   asked
-                                                                   (io/file anchor requested)))
-                         inside? (or (= anchor target)
-                                     (str/starts-with? (.getPath target)
-                                                       (str (.getPath anchor)
-                                                            java.io.File/separator)))]
+              (try (if (binary-file? target)
+                     (error-response 415
+                                     :not-text
+                                     "that file is not text"
+                                     :path (.getPath target))
+                     (let [anchor (or line 1)
+                           from (max 1 (- anchor (quot preview-line-limit 2)))
+                           {:keys [lines is-truncated]} (file-window target from)]
 
-                     (cond (not inside?) (error-response
-                                           403
-                                           :outside-workspace
-                                           "that file is outside this session's workspace"
-                                           :path (.getPath target))
-                           (not (.isFile target))
-                           (error-response 404 :not-a-file "no such file" :path (.getPath target))
-                           :else (let [{:keys [status error]} (external-opener/open-file-in-editor!
-                                                                (.getPath target))]
-                                   (if (= :ok status)
-                                     (json-response {:path (.getPath target) :is-open true})
-                                     (error-response 400
-                                                     :open-failed
-                                                     (or error "that file could not be opened")
-                                                     :path (.getPath target))))))
+                       (json-response {:path (.getPath target)
+                                       :line anchor
+                                       :first-line from
+                                       :lines lines
+                                       :is-truncated is-truncated
+                                       :size-bytes (.length target)})))
                    (catch java.io.IOException _
-                     (error-response 400 :invalid-request "that path could not be resolved"))))))))
+                     (error-response 400
+                                     :invalid-request
+                                     "that file could not be read"
+                                     :path (.getPath target)))))))))
 
 (defn- projects-overview-handler
   "GET /v1/projects/overview — every project this gateway holds with its own
@@ -4783,6 +4902,7 @@
         [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]
         [(sid-route "/suggest") {:get suggest-handler}]
         [(sid-route "/fs/actions/open") {:post open-file-handler}]
+        [(sid-route "/fs/file") {:get read-file-handler}]
         [(sid-route "/attachments") {:post upload-attachment-handler}]
         [(sid-route "/turns") {:get list-turns-handler :post submit-turn-handler}]
         [(sid-route "/turns/:tid")

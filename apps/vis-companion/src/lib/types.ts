@@ -286,6 +286,21 @@ export interface FileSuggestion {
   status: string;
 }
 
+// One window of a workspace file from GET /v1/sessions/:sid/fs/file — the lines
+// themselves, around the line a pressed path named. The gateway bounds it: a
+// preview of a text file, never a download and never a binary one.
+export interface FileWindow {
+  path: string;
+  /** The file line the window stands at, 1-based. */
+  line: number;
+  /** The file line `lines[0]` is, 1-based. */
+  first_line: number;
+  lines: string[];
+  /** The read stopped at the gateway's byte cap before the window ended. */
+  is_truncated: boolean;
+  size_bytes: number;
+}
+
 export interface Project {
   id: string;
   name: string;

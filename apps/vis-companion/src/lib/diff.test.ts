@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
-import { parseDiff, diffReviewRequest, diffHeaderPath } from './diff';
+import { parseDiff, diffReviewRequest, diffHeaderAnchors, diffHeaderPath } from './diff';
 import { artifactKind, docKindLabel, DIFF_MEDIA, collectArtifacts } from './artifacts';
 
 describe('portable diff attachment', () => {
@@ -110,5 +110,29 @@ describe('the file a diff header names', () => {
     '',
   ])('leaves %s alone', (line) => {
     expect(diffHeaderPath(line)).toBeNull();
+  });
+});
+
+describe('where a diff header points', () => {
+  const PATCH = [
+    'diff --git a/src/app.ts b/src/app.ts',
+    '--- a/src/app.ts',
+    '+++ b/src/app.ts',
+    '@@ -12,3 +14,4 @@ function main() {',
+    '-const value = 0;',
+    '+const value = 1;',
+    'diff --git a/src/late.ts b/src/late.ts',
+    '+++ b/src/late.ts',
+    '@@ -0,0 +1,2 @@',
+    '+first',
+  ];
+
+  it('gives every header the first hunk below it', () => {
+    expect(diffHeaderAnchors(PATCH)).toEqual([14, 14, 14, 14, 1, 1, 1, 1, 1, undefined]);
+  });
+
+  it('answers nothing for a header with no hunk under it', () => {
+    expect(diffHeaderAnchors(['+++ b/src/app.ts'])).toEqual([undefined]);
+    expect(diffHeaderAnchors([])).toEqual([]);
   });
 });

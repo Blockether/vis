@@ -4499,4 +4499,86 @@
                                   {:status :failed :error "no editor is configured"})]
              (is (= 400 (:status response)))
              (is (str/includes? (:body response) "no editor is configured"))))
-         (finally (.delete inside) (.delete root) (.delete outside)))))
+           (finally (.delete inside) (.delete root) (.delete outside)))))
+
+(deftest a-previewed-file-is-one-bounded-window-of-text
+  ;; The follow-up to BLO-172: a reader holding a phone gets nothing out of an editor
+  ;; opening on the machine across the room, so the gateway answers with the lines
+  ;; themselves, around the line the press named. Bounded on purpose — one window,
+  ;; every line clipped, and never a binary file.
+  (let [sid
+        (random-uuid)
+
+        root
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-read-file"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        source
+        (io/file root "long.txt")
+
+        wide
+        (io/file root "wide.txt")
+
+        picture
+        (io/file root "logo.png")
+
+        outside
+        (java.io.File/createTempFile "vis-outside" ".md")
+
+        handler
+        (rv 'read-file-handler)
+
+        answer
+        (fn [query & {:keys [session workspace] :or {session sid workspace (.getPath root)}}]
+          (with-redefs-fn {#'state/soul (fn [id]
+                                          (when (= session id) {"id" (str id)}))
+                           #'state/session-workspace-info (fn [id]
+                                                            (when (= session id)
+                                                              {"root" workspace}))}
+            #(handler {:path-params {:sid (str sid)} :query-params query})))
+
+        window
+        (fn [query] (wire/parse-json (:body (answer query))))]
+
+    (spit source (str/join "\n" (map #(str "line " %) (range 1 1001))))
+    (spit wide (str/join (repeat 5000 "x")))
+    (with-open [out (java.io.FileOutputStream. picture)]
+      (.write out (byte-array [(byte 80) (byte 78) (byte 71) (byte 0) (byte 13)])))
+    (try (testing "a preview stands at the line the press named, with what is around it"
+           (let [answered (window {"path" "long.txt" "line" "600"})]
+             (is (= 600 (get answered "line")))
+             (is (= 400 (get answered "first_line")))
+             (is (= 400 (count (get answered "lines"))))
+             (is (= "line 400" (first (get answered "lines"))))
+             (is (= "line 799" (last (get answered "lines"))))
+             (is (false? (get answered "is_truncated")))
+             (is (= (.length source) (get answered "size_bytes")))))
+         (testing "with no line named the window starts at the top of the file"
+           (let [answered (window {"path" "long.txt"})]
+             (is (= 1 (get answered "first_line")))
+             (is (= "line 1" (first (get answered "lines"))))
+             (is (= 400 (count (get answered "lines"))))))
+         (testing "a file shorter than the window is all of it"
+           (let [answered (window {"path" "long.txt" "line" "998"})]
+             (is (= 798 (get answered "first_line")))
+             (is (= 203 (count (get answered "lines"))))))
+         (testing "one enormous line is clipped, because no screen shows it whole"
+           (is (= [2000] (mapv count (get (window {"path" "wide.txt"}) "lines")))))
+         (testing "a binary file is refused instead of answered as text"
+           (is (= 415 (:status (answer {"path" "logo.png"})))))
+         (testing "nothing outside the session's workspace is read, however it is asked for"
+           (doseq [asked [(.getPath outside) "../escape.md"]]
+             (is (= 403 (:status (answer {"path" asked})))))
+           (is (= 404 (:status (answer {"path" "absent.md"}))))
+           (is (= 400 (:status (answer {"path" "  "}))))
+           (is (= 409 (:status (answer {"path" "long.txt"} :workspace "  "))))
+           (is (= 404 (:status (answer {"path" "long.txt"} :session (random-uuid))))))
+         (testing "a line that is not a line is refused before the file is opened"
+           (doseq [asked ["0" "-3" "here"]]
+             (is (= 400 (:status (answer {"path" "long.txt" "line" asked}))))))
+         (finally (.delete source)
+                  (.delete wide)
+                  (.delete picture)
+                  (.delete root)
+                  (.delete outside)))))

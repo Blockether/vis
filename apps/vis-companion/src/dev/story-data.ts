@@ -41,6 +41,7 @@ import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
   ContentBlock,
   FileSuggestion,
+  FileWindow,
   GatewayConn,
   QueuedTurn,
   QueuePausedInfo,
@@ -1108,6 +1109,35 @@ export const STORY_QUEUE_CLIENT = {
   deleteQueuedTurn: async () => undefined,
   resumeQueue: async () => undefined,
 } as unknown as GatewayClient;
+
+/** One bounded window of a workspace file, standing where a pressed path pointed. */
+export const STORY_FILE_WINDOW: FileWindow = {
+  path: 'src/com/blockether/vis/internal/gateway/server.clj',
+  line: 4902,
+  first_line: 4897,
+  lines: [
+    '(defn- read-file-handler',
+    '  "One bounded window of a workspace text file, around the line a press named."',
+    '  [request]',
+    '  (let [line (some-> request :query-params (get "line") parse-long)]',
+    '    (if-let [file (workspace-file request)]',
+    '      (json-response (file-window file line))',
+    '      (problem :not-a-file))))',
+  ],
+  is_truncated: false,
+  size_bytes: 214118,
+};
+
+/** A preview reads one window and hands the editor a path; a story picks what it reads. */
+export function storyPreviewClient(answer: FileWindow | Error) {
+  return {
+    readPath: async () => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+    openPath: async () => undefined,
+  } as unknown as GatewayClient;
+}
 
 export const STORY_QUEUED_TURNS: QueuedTurn[] = [
   {

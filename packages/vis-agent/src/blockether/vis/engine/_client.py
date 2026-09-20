@@ -1390,6 +1390,18 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_fs_file(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/fs/file — read one workspace file as text."""
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/fs/file",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
     def post_session_iteration_attachments(
         self,
         sid: str,

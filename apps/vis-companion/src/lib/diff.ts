@@ -104,3 +104,25 @@ export function diffHeaderPath(
   const start = side[1].length + 1 + marker;
   return { path, start, end: start + path.length };
 }
+
+/**
+ * WHERE A PATCH HEADER POINTS.
+ *
+ * The header names the file; the hunk under it says WHERE in that file the change
+ * sits. Pressing the name asks to look at that place, so every header line carries
+ * the new-side start of the first hunk below it — `@@ -12,3 +14,4 @@` is line 14.
+ * A header with no hunk under it points nowhere in particular and answers nothing.
+ *
+ * Answered per line, because a patch is painted one line at a time and each line
+ * has to know its own anchor.
+ */
+export function diffHeaderAnchors(lines: string[]): (number | undefined)[] {
+  const anchors = new Array<number | undefined>(lines.length);
+  let below: number | undefined;
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(lines[at]);
+    if (hunk) below = Number(hunk[1]);
+    anchors[at] = below;
+  }
+  return anchors;
+}

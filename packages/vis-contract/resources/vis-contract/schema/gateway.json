@@ -807,6 +807,16 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/fs/file"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "json",
           "response": "json"

@@ -33,7 +33,8 @@ it('opens the file a patch header names, and nothing else in the patch', () => {
   for (const target of targets) expect(target.textContent).toBe('src/app.ts');
 
   fireEvent.click(targets[2]);
-  expect(openPath).toHaveBeenCalledWith('src/app.ts');
+  // …and at the line its first hunk changes, so the preview opens where the change is.
+  expect(openPath).toHaveBeenCalledWith('src/app.ts', 1);
 
   fireEvent.keyDown(targets[2], { key: 'Enter' });
   fireEvent.keyDown(targets[2], { key: ' ' });

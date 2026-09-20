@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 
-import { diffHeaderPath } from '../lib/diff';
+import { diffHeaderAnchors, diffHeaderPath } from '../lib/diff';
 import type { GatewayClient } from '../lib/gateway';
 import { useOpenPath } from '../lib/open-path';
 import {
@@ -251,15 +251,19 @@ export const PlainText = memo(function PlainText({
   text: string;
   diff?: boolean;
 }) {
+  // A header points into the file the hunk under it changes, so the whole patch is
+  // measured once here rather than line by line as it is painted.
+  const lines = text.split('\n');
+  const anchors = diff ? diffHeaderAnchors(lines) : [];
   return (
     <div className="font-mono text-body text-foreground">
       {diff && !text ? <p>No changes in this snapshot.</p> : null}
-      {text.split('\n').map((line, at) => (
+      {lines.map((line, at) => (
         <p
           key={at}
           className={`min-h-[18px] break-words whitespace-pre-wrap ${diff ? lineTone(line) : ''}`}
         >
-          {diff ? diffLine(line) : line}
+          {diff ? diffLine(line, anchors[at]) : line}
         </p>
       ))}
     </div>
@@ -281,13 +285,13 @@ function lineTone(line: string): string {
  * stops at the path, so the rest of the line still quotes as a block; with no
  * opener published the path stays plain words, exactly as an activity row does.
  */
-function DiffPath({ path, words }: { path: string; words: string }) {
+function DiffPath({ path, line, words }: { path: string; line?: number; words: string }) {
   const openPath = useOpenPath();
   if (!openPath) return <>{words}</>;
   const press = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
     event.preventDefault();
     event.stopPropagation();
-    openPath(path);
+    openPath(path, line);
   };
   return (
     <span
@@ -308,13 +312,13 @@ function DiffPath({ path, words }: { path: string; words: string }) {
   );
 }
 
-function diffLine(line: string): ReactNode {
+function diffLine(line: string, anchor?: number): ReactNode {
   const named = diffHeaderPath(line);
   if (!named) return line;
   return (
     <>
       {line.slice(0, named.start)}
-      <DiffPath path={named.path} words={line.slice(named.start, named.end)} />
+      <DiffPath path={named.path} line={anchor} words={line.slice(named.start, named.end)} />
       {line.slice(named.end)}
     </>
   );

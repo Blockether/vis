@@ -46,6 +46,7 @@ import type { SessionArtifact } from '../lib/artifacts';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { Banner, ComposerButton, LoadMore, Spinner } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon } from '../components/icons';
+import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
 import { PasteEditor } from '../components/PasteEditor';
@@ -4293,19 +4294,16 @@ export function SessionScreen({
     () => [session?.workspace?.root, session?.workspace?.repo_root],
     [session?.workspace?.root, session?.workspace?.repo_root],
   );
-  // A PATH IN THIS TRANSCRIPT OPENS ON THE MACHINE THAT RAN THE STEP. The device
-  // reading the session rarely holds the tree the row names, so the press goes back
-  // to the gateway, which opens the file in the editor there — and says so plainly
-  // when it cannot, because a press that silently did nothing is the worse answer.
-  const openPath = useCallback(
-    (path: string) => {
-      setError(null);
-      void client
-        .openPath(sid, path)
-        .catch((cause: unknown) => setError((cause as Error).message));
-    },
-    [client, sid],
-  );
+  // A PATH IN THIS TRANSCRIPT IS READ HERE, AND OPENED THERE. The device reading the
+  // session rarely holds the tree the row names, so the press first shows the file
+  // itself — the gateway reads a bounded window and the sheet stands at the line the
+  // press named. The editor on the machine that ran the step is one band button
+  // further in, where it helps whoever is sitting at that machine.
+  const [previewed, setPreviewed] = useState<{ path: string; line?: number } | null>(null);
+  const openPath = useCallback((path: string, line?: number) => {
+    setError(null);
+    setPreviewed({ path, line });
+  }, []);
   // Every live view is now a view. Protocol 7 gave Activity to the form that
   // produced it, so no picture below the transcript is a Python slot's twin and
   // nothing has to be held back from the rail to avoid painting it twice.
@@ -5091,7 +5089,18 @@ export function SessionScreen({
   );
   return (
     <ActivityHistoryContext.Provider value={activityHistorySource}>
-      <OpenPathContext.Provider value={openPath}>{screen}</OpenPathContext.Provider>
+      <OpenPathContext.Provider value={openPath}>
+        {screen}
+        {previewed ? (
+          <FilePreview
+            client={client}
+            sid={sid}
+            path={previewed.path}
+            line={previewed.line}
+            onClose={() => setPreviewed(null)}
+          />
+        ) : null}
+      </OpenPathContext.Provider>
     </ActivityHistoryContext.Provider>
   );
 }
