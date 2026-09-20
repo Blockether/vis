@@ -1844,9 +1844,9 @@ export const ThinkingBand = memo(function ThinkingBand({
   );
 });
 
-// ONE artifact a tool call produced (a matplotlib figure, an `attach`ed
-// image). The gateway ships descriptors only, never bytes, so the picture is
-// pulled from the attachment endpoint on first paint — with the auth headers an
+// ONE artifact a tool call produced (an `attach`ed image or file). The gateway
+// ships descriptors only, never bytes, so the picture is pulled from the
+// attachment endpoint on first paint — with the auth headers an
 // `<img src>` cannot carry, hence the object URL. This is the app's twin of the
 // TUI's inline image: the SAME produced artifact, painted where it was made.
 const AttachmentTile = memo(function AttachmentTile({

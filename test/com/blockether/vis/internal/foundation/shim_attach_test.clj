@@ -266,7 +266,7 @@
       ;; naming the SHAPE that was wrong, never a repr reported as a missing file
       (expect
         (re-find
-          #"RAISED attach: source must be a path, bytes, a PIL image or a matplotlib figure, got dict"
+          #"RAISED attach: source must be a path, bytes, an image or a figure object, got dict"
           (str (:stdout out))))
       (expect (empty? (:attachments out)))))
   (it

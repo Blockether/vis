@@ -423,8 +423,8 @@ def __vis_install_attach__():
         # reach it as a keyword at all.
         if source is None:
             raise TypeError(
-                "attach: source is required - a confined path, bytes, a PIL image "
-                "or a matplotlib figure (path=/file= reach it too)."
+                "attach: source is required - a confined path, bytes, an image "
+                "or a figure object (path=/file= reach it too)."
             )
         # ONE attach verb, four shapes of source: a confined PATH, in-memory
         # BYTES (a str is a path, so encode text you produced), anything with
@@ -470,8 +470,8 @@ def __vis_install_attach__():
         # repr as a missing file and hide which shape was actually wrong.
         if not isinstance(source, str) and not hasattr(source, "__fspath__"):
             raise TypeError(
-                "attach: source must be a path, bytes, a PIL image or a "
-                "matplotlib figure, got " + type(source).__name__
+                "attach: source must be a path, bytes, an image or a figure "
+                "object, got " + type(source).__name__
             )
         # A PATH in any spelling a human types: a str, an os.PathLike (pathlib),
         # with `~` and $VARS expanded - the string that works in a shell works
@@ -583,7 +583,7 @@ def __vis_install_attach__():
             " · commentable (boolean, default False)",
             "Persist a produced artifact as a durable attachment, across restarts. "
             "source is a confined PATH, in-memory BYTES (name them with filename), "
-            "a PIL image, or a matplotlib figure. SAME DOCUMENT, SAME NAME: "
+            "or an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "
             "re-attaching a filename stores the next VERSION of that artifact, never "
             "report_v2.png beside report.png; a new name is a different document. "
             "Attach one or two artifacts per turn - compose many images into ONE "

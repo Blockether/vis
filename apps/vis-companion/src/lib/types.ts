@@ -604,9 +604,9 @@ export interface GatewayAttachment {
 }
 
 /**
- * ONE artifact a tool call PRODUCED (a matplotlib figure, an `attach`ed
- * image/file), as the gateway's byte-free descriptor. It ships identically on
- * the live `iteration.completed` frame and on the persisted transcript, so a
+ * ONE artifact a tool call PRODUCED (an `attach`ed image/file), as the
+ * gateway's byte-free descriptor. It ships identically on the live
+ * `iteration.completed` frame and on the persisted transcript, so a
  * produced image renders the same live and in history. The bytes are lazy:
  * `GatewayClient.attachmentUrl(...)` for media, `attachmentBlob(...)` for text.
  */
