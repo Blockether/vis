@@ -98,9 +98,7 @@ def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize(
-    "name", ["jailed_shell", "jailed_shell_session", "council_wake"]
-)
+@pytest.mark.parametrize("name", ["jailed_shell", "council_wake"])
 def test_session_bound_operations_refuse_without_the_host(name):
     with pytest.raises(_outside.Refused, match=f"vis\\.{name}"):
         getattr(vis._host, name)({"command": "true"})

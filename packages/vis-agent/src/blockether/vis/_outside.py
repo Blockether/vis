@@ -61,15 +61,6 @@ def jailed_shell(opts):
     )
 
 
-def jailed_shell_session(opts):
-    """Refuse a persistent shell without the Vis host's confinement boundary."""
-    raise Refused(
-        "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis "
-        "process can enforce it. Run the command with vis.shell when an unjailed "
-        "process is what you meant, or run this extension under vis-agent."
-    )
-
-
 def council_wake(opts):
     """Refuse a session wake without a bound Vis session."""
     raise Refused(
@@ -1290,7 +1281,6 @@ _IMPLEMENTATIONS = {
     "notify": notify,
     "shell": shell,
     "jailed_shell": jailed_shell,
-    "jailed_shell_session": jailed_shell_session,
     "council_wake": council_wake,
     "request_input": request_input,
     "live": live,
