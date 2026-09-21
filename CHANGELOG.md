@@ -7,11 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.18] - 2026-09-21
+
+### Added
+- Read a session once and it is read everywhere: unread lives in the gateway now, not on each
+  device, so a session you open in the terminal stops being new on your phone, and reinstalling the
+  app no longer brings every old answer back as unread.
+- See what the whole fleet is doing from the terminal's project rail: the running, waiting and
+  unread counts come from the gateway instead of the tabs this terminal happens to have open, so a
+  project no longer looks idle while another machine works in it. The session navigator marks a
+  session that was interrupted with an answer you have not read as stopped.
+- Add a project without a dialog in the way: **+** opens a field on the rail itself, completes
+  directory paths from the machine the gateway runs on, and files the path when you press Enter.
+- Reach a model your provider released after this build: adding a provider, a finished sign-in and a
+  status recheck merge the vendor's live model list into your configuration. New models are
+  appended; nothing you already configured is reordered or dropped. OpenCode Go arrives with its
+  current catalog, `deepseek-v4.1-flash` included.
+- Tell groups and sessions apart in a project: a session you file into a group leaves the plain
+  session list instead of standing in both, and each set is headed once the project has a group. A
+  search still answers one list, with the filed sessions in it.
+- Ask for GLM-5.3-FlashX on any Z.ai surface — the fast serving lane of GLM-5.3-Flash.
+- Declare `version: latest` for an extension in `vis.yml` instead of pinning a version by hand.
+- Start dictating without the first clip waiting: the transcription model loads once the gateway is
+  up, and the recognizer is reused from one clip to the next.
+
 ### Fixed
 - Sign in to a provider that authenticates with a plain API key — OpenCode Go, OpenRouter, Z.ai
   or Alibaba: the app and the terminal now ask for the key, instead of refusing the sign-in with
   a message about a missing headless authentication flow.
-
+- Add a provider without waiting on the ones you already have: the answer no longer probes every
+  configured provider for authentication and quota before it can show you the key field.
+- Badge new answers on sessions you filed into a group, however far down the project they sit.
+- Recolour a group and every one of its rows follows at once, instead of rows read earlier keeping
+  the old colour beside a band that already wears the new one.
+- Keep a row's menu open while something else on the page scrolls: a transcript following its own
+  end no longer closes the menu you just opened.
+- Open a menu and it stands on the control it came from, keeps that anchor where the space is
+  tight, and belongs to the row it ends.
+- Pick a model for one session in that session's pane, instead of in a dialog centred over the
+  whole app that dimmed the list beside it.
+- Add a provider inside Providers: the presets open as a band of the panel, one offer to a line,
+  without a sheet over the settings dialog.
+- Read what deleting a group does from its two answers: each stands behind its own icon — the
+  project folder for the answer that keeps the sessions, the bin for the one that does not — with
+  no sentence repeating the title.
+- Read a project's sets at a glance: "Groups" and "Sessions" are ruled strips over their rows, and
+  a session title sits at the body scale under the names that head it.
+- Swipe back to the session list on iOS with the system gesture.
+- Follow a long run: live-view labels are trimmed so a head and its steps keep their band, and RUN
+  and LIVE stay whole beside a long run name.
+- Tell a failed Python worker from a provider outage — the terminal names what actually failed.
+- Read plain words when a gateway stops or an extension installs, instead of the raw wire map, and
+  see two extensions that share a version on their own lines.
+- Find the documentation catalog's sort control where you left it: it keeps to the search line at
+  any width, and every dropdown chevron looks the same in every browser.
 ## [v0.2.17] - 2026-09-21
 
 ### Added
