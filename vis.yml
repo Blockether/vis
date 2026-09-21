@@ -166,7 +166,7 @@ toggles:
 extensions:
   vis-lang-interface:
     source: https://github.com/Blockether/vis-lang-interface
-    version: "2.1.0"
+    version: "2.1.1"
   vis-lang-clojure:
     source: https://github.com/Blockether/vis-lang-clojure
     subdirectory: extension
