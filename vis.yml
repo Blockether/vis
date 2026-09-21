@@ -1,27 +1,14 @@
-# vis.yml — project config (snapshotted when an environment is created).
-#
-# Everything below is commented out: this file documents every knob and its
-# default. To enable a block, copy the config lines (the ones indented under a
-# heading) and remove their single leading "# ". Lines that are plain prose stay
-# comments.
-#
-# Master switch: the OS jail + egress proxy are OFF by default. Opt in with
-# `jail.enabled: true` in the jail block below; omit it (or set false) to run
-# children unconfined — full filesystem, open network.
-
-
-# Coding-agent name shared by the JVM prompt, TUI and Companion through the gateway.
-# agent_name: Vis
+# vis.yml — project config for the Vis checkout, snapshotted when an environment
+# is created. Every knob and its default lives in resources/vis-docs/configuration.md
+# (confinement: resources/vis-docs/jail.md). No `jail:` block here, so children
+# run unconfined: full filesystem, open network.
 
 # ── Workspace filesystem catalog ─────────────────────────────────────────────
-# One documented list of every filesystem root Vis knows about. Each entry:
-#   id          stable handle referenced by jail.filesystem.allow
-#   path        the root (bare path or ~-relative)
-#   description shown in the session access view so the agent knows its purpose
-#   access      read-write (default) | read-only
-#   search      true (default) = walked by the default rg/find_files sweep;
-#               false = kept OUT of the default sweep (explicit paths still reach it)
-
+# Every filesystem root Vis knows about. Per entry: `id` (the handle a
+# jail.filesystem.allow list would reference), `path`, `description` (shown in
+# the session access view), `access` (read-write by default), `search` (true by
+# default; false keeps the root out of the default sweep, explicit paths still
+# reach it) and `when`/`optional` for roots that only exist on some hosts.
 workspace:
   filesystem:
     - id: fff
@@ -54,6 +41,20 @@ workspace:
     - id: vis-python-runtime
       path: ~/vis-python-runtime
       description: Sibling repo — first-party embedded Python runtime for the sandbox, replacing GraalPy in the native image; prebuilt per platform and pinned from vis' deps.edn.
+    # Sources of the language extensions pinned under `extensions:` below.
+    # Each is released from its own repo, then its version is bumped here.
+    - id: vis-lang-interface
+      path: ~/vis-lang-interface
+      description: Sibling repo — shared result contract every Vis language extension returns.
+      optional: true
+    - id: vis-lang-clojure
+      path: ~/vis-lang-clojure
+      description: Sibling repo — source of the clj extension; zprint/cljfmt formatting, clj-kondo lint, Lazytest runs and the managed nREPL.
+      optional: true
+    - id: vis-lang-python
+      path: ~/vis-lang-python
+      description: Sibling repo — source of the py extension; ruff formatting and lint, pytest runs and a persistent Python REPL.
+      optional: true
     - id: infrastructure
       path: ~/infrastructure
       description: Sibling repo — private operations automation. Nothing about it belongs in this repository.
@@ -66,8 +67,10 @@ workspace:
       access: read-only
       search: false
     # (`~/.vis` — Vis' own session folder — is granted implicitly by the engine.)
-    # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
-    # resolves already-cached artifacts, but kept OUT of the default search sweep.
+    # Managed REPL / test-runner caches and tool config. Granted so a jailed
+    # JVM/Node resolves already-cached artifacts, but kept OUT of the default
+    # search sweep. The ones a machine may simply not have yet are `optional`,
+    # so a missing cache is an info line at startup instead of a warning.
     - id: m2
       path: ~/.m2
       description: Maven/Clojure dependency cache.
@@ -76,92 +79,31 @@ workspace:
       path: ~/.clojure
       description: tools.deps config + cache (deps.edn) read at JVM startup.
       search: false
+    - id: gitlibs
+      path: ~/.gitlibs
+      description: tools.deps checkouts of :git/url dependencies.
+      search: false
+      optional: true
+    - id: clojure-xdg
+      path: ~/.config/clojure
+      description: tools.deps config in its XDG location, used when XDG_CONFIG_HOME is set — usually Linux/WSL, not this macOS host.
+      search: false
+      optional: true
     - id: npm
       path: ~/.npm
       description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
       search: false
 
 # ── Feature toggles ──────────────────────────────────────────────────────────
-# Built-in extension toggles. Omit a key to use its default.
 toggles:
-  # Default false. ON here because this repo IS vis: the agent needs to read its
+  # Default false. ON here because this repo IS Vis: the agent needs to read its
   # own gateway event journals and session transcripts to debug them.
   introspection: true
-#   # Default true. Set false to remove the Exa/GitHub/arXiv live-research extension.
-#   web_search: false
-
-
-# ── Jail ─────────────────────────────────────────────────────────────────────
-# The single confinement switch. When `enabled: true`, Vis enforces BOTH axes
-# together — filesystem admission and network egress. When false (the default),
-# neither applies: open filesystem, open network.
-#
-# jail:
-#   enabled: true
-#
-#   # Which workspace ids enter the OS jail. Deny-by-omission: an id NOT listed
-#   # here is not confined-granted. Access (RW vs read-only) comes from the
-#   # catalog entry above.
-#   filesystem:
-#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, spel, svar, skjema, clj-imaging, vis-python-runtime, infrastructure, blockether-com, actions-runner, m2, clojure, npm]
-#
-#   # Outbound egress allowlist. A bare host also matches its subdomains, so
-#   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
-#   # `raw.githubusercontent.com`. Empty / unset allowlist = any host (minus the
-#   # SSRF deny-floor).
-#   network:
-#     allowed_domains:
-#       - github.com
-#       - githubusercontent.com
-#       - exa.ai
-#
-#     # Extra local ports on which a confined shell child may accept connections.
-#     # Empty / unset = no extra inbound ports (the secure default).
-#     inbound_ports:
-#       - 5273
-#
-#   # What of the OPERATOR's ambient environment a confined child keeps:
-#   #   declared (default) nothing but a non-secret basics allowlist
-#   #                      (PATH, HOME, USER, SHELL, LANG/LC_*, TERM, TZ, TMPDIR …)
-#   #   inherit            the whole ambient environment, secrets included, with
-#   #                      filesystem, network, exec and Mach confinement untouched.
-#   # The PROJECT's own variables (.env and the `environment:` block below) reach
-#   # the child in BOTH modes; LD_*, DYLD_*, PERL*, BASH_ENV … are refused in both.
-#   environment: declared
-
-
-# ── Environment ──────────────────────────────────────────────────────────────
-# The workspace's `.env` and `.env.local` are loaded BY DEFAULT — the whole file,
-# with nothing declared — and reach every child Vis spawns: shell(...) (confined
-# or not), managed REPLs, test runners and Python extensions.
-#
-# `environment:` is for what a dotenv file cannot say. It names the SOURCE of a
-# value, never the value itself (a literal is refused: config is rewritten to
-# disk, and a secret typed here would land there in plaintext).
-#
-# Resolution order for any name, everywhere:
-#   `environment:` declaration → .env, then .env.local → the environment that
-#   started Vis.
-#
-# environment:
-#   # another process variable, passed through or renamed
-#   OPENAI_API_KEY: {env: WORK_OPENAI_KEY}
-#   # a dotenv name under a different name (a plain .env entry needs nothing)
-#   STRIPE_KEY: {dotenv: STRIPE_TEST_KEY}
-#   # the OS credential store (macOS Keychain; secret-tool elsewhere)
-#   EXA_API_KEY:
-#     keychain: vis-exa
-#     account: alice
-#   # a helper command — argv, never a shell line; trimmed stdout IS the value
-#   GITHUB_TOKEN: {command: [gh, auth, token]}
-
 
 # ── Extensions ───────────────────────────────────────────────────────────────
-# Packages from Extension Center (https://vis.blockether.com/extensions/).
-# The KEY is the `project.name` from the package's pyproject.toml, not the
-# catalog identifier. A declaration takes `source`, optional `subdirectory`,
-# and either `version` (approved release) or a full lowercase `revision`.
-# Install/refresh what is declared here with:
+# Packages from Extension Center (https://vis.blockether.com/extensions/). The
+# KEY is the `project.name` from the package's pyproject.toml. Install or
+# refresh what is declared here with:
 #   vis-agent extension sync --project --trust
 extensions:
   vis-lang-interface:
