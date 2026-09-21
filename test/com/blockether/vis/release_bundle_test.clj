@@ -3373,23 +3373,19 @@
         (expect (not (str/includes? (slurp ".github/workflows/release.yml")
                                     "uses: ./.github/workflows/installer-assets.yml")))))
   (it
-    "requires every uploaded platform artifact and rejects published or mismatched releases"
+    "requires every supported artifact without Windows and rejects invalid releases"
     (let
       [{:keys [exit output]}
        (run-bash
          ["python3" "-c"
           (str
-            "import runpy\n"
-            "m = runpy.run_path('bin/verify-release-assets.py')\n" "tag = 'v9.8.7'\n"
-            "names = m['required_assets'](tag)\n" "assert len(names) == 16, names\n"
-            "windows = 'vis-companion-9.8.7-windows-x64.msi'\n" "assert windows in names, names\n"
+            "import runpy\n" "m = runpy.run_path('bin/verify-release-assets.py')\n"
+            "tag = 'v9.8.7'\n" "names = m['required_assets'](tag)\n"
+            "assert len(names) == 15, names\n"
+            "assert 'vis-companion-9.8.7-windows-x64.msi' not in names, names\n"
             "release = {'tag_name': tag, 'draft': True, 'prerelease': False, 'assets': "
             "[{'name': n, 'size': 42, 'state': 'uploaded'} for n in names]}\n"
             "assert m['verify_release'](release, tag) == names\n"
-            "without_windows = dict(release, assets=[a for a in release['assets'] if a['name'] != windows])\n"
-            "try: m['verify_release'](without_windows, tag)\n"
-            "except ValueError as error: assert windows in str(error)\n"
-            "else: raise AssertionError('accepted release without Windows installer')\n"
             "m['verify_release'](dict(release, draft=False), tag, draft=False)\n"
             "bad = [dict(release, assets=release['assets'][:i] + release['assets'][i+1:]) for i in range(len(names))]\n"
             "bad += [dict(release, draft=False), dict(release, prerelease=True), dict(release, tag_name='v9.8.6')]\n"
@@ -3434,8 +3430,9 @@
             ["import copy, json, runpy" "from unittest.mock import patch"
              "m = runpy.run_path('bin/verify-release-assets.py')"
              "repo, tag, sha = 'example/project', 'v9.8.7', 'a' * 40"
-             "names = m['required_recovery_checks']()" "assert len(names) == 31, names"
-             "windows = 'desktop / Package Windows x64'" "assert windows in names, names"
+             "names = m['required_recovery_checks']()" "assert len(names) == 30, names"
+             "assert 'desktop / Package Windows x64' not in names, names"
+             "desktop = 'desktop / Package macOS universal'"
              "replaced = {f'native / native / vis-agent-linux-{arch}.tar.gz' for arch in ('x64', 'arm64')}"
              "publisher = 'Verify complete assets, deploy libraries and publish stable'"
              "base = {'repository': {'full_name': repo}, 'head_repository': {'full_name': repo}, 'status': 'completed'}"
@@ -3447,7 +3444,7 @@
              "def check(s=source, n=native, t=tag, commit=sha):"
              "    m['verify_recovery'](repo, t, commit, s, n)" "check()" "cases = []"
              "for outcome in ('failure', 'skipped'):" "    changed = copy.deepcopy(source)"
-             "    next(job for job in changed['jobs'] if job['name'] == windows)['conclusion'] = outcome"
+             "    next(job for job in changed['jobs'] if job['name'] == desktop)['conclusion'] = outcome"
              "    cases.append((changed, native))"
              "inactive = {'name': 'Verify original product gates and repaired Linux checks', 'status': 'completed', 'conclusion': 'skipped'}"
              "changed = copy.deepcopy(source)" "changed['jobs'].append(inactive)" "check(changed)"

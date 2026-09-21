@@ -1,11 +1,12 @@
 name: Desktop companion
 
-# Packages Vis Companion for universal macOS, Linux x64/ARM64 and Windows x64
+# Packages Vis Companion for universal macOS and Linux x64/ARM64
 # with Pake — the same web bundle the phones get, wrapped in a Tauri window
 # (see apps/vis-companion/scripts/desktop-package.mjs for the flags and asset names).
 # A regular release attaches all installers to an unpublished draft. Only the
 # complete-product gate publishes it. Branch dispatches build without publishing;
 # dispatched tag recovery may update a draft, never an already published version.
+# Windows desktop CI is disabled until platform support is available.
 
 on:
   workflow_call:
@@ -23,7 +24,7 @@ on:
 
 permissions:
   contents: write          # upload assets to the release
-  id-token: write          # Azure workload identity; no long-lived signing secret
+  # id-token: write        # Azure workload identity; no long-lived signing secret
 
 concurrency:
   group: desktop-companion-${{ github.ref }}-${{ inputs.tag }}
@@ -33,7 +34,8 @@ jobs:
   package:
     name: Package ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}
+    environment: desktop-build
+    # environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,9 +49,9 @@ jobs:
           - runner: ubuntu-24.04-arm
             label: Linux ARM64
             asset: linux-arm64
-          - runner: windows-2022
-            label: Windows x64
-            asset: windows-x64
+          # - runner: windows-2022
+          #   label: Windows x64
+          #   asset: windows-x64
     defaults:
       run:
         working-directory: apps/vis-companion
@@ -127,30 +129,30 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run package:desktop
 
-      - name: Log in to Azure with GitHub OIDC
-        if: runner.os == 'Windows'
-        uses: azure/login@v3
-        with:
-          client-id: ${{ vars.WINDOWS_SIGNING_CLIENT_ID }}
-          tenant-id: ${{ vars.WINDOWS_SIGNING_TENANT_ID }}
-          subscription-id: ${{ vars.WINDOWS_SIGNING_SUBSCRIPTION_ID }}
+      # - name: Log in to Azure with GitHub OIDC
+      #   if: runner.os == 'Windows'
+      #   uses: azure/login@v3
+      #   with:
+      #     client-id: ${{ vars.WINDOWS_SIGNING_CLIENT_ID }}
+      #     tenant-id: ${{ vars.WINDOWS_SIGNING_TENANT_ID }}
+      #     subscription-id: ${{ vars.WINDOWS_SIGNING_SUBSCRIPTION_ID }}
 
-      - name: Sign and package Windows with Pake
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
-          WINDOWS_SIGNING_ACCOUNT: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
-          WINDOWS_SIGNING_PROFILE: ${{ vars.WINDOWS_SIGNING_PROFILE }}
-          WINDOWS_SIGNING_PUBLISHER: ${{ vars.WINDOWS_SIGNING_PUBLISHER }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # Same pinned module used by azure/artifact-signing-action@v2.
-          Install-Module ArtifactSigning -RequiredVersion 0.1.8 -Scope CurrentUser -Force -Repository PSGallery
-          pwsh -NoProfile -NonInteractive -File ./scripts/windows-sign.test.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows signature verification tests failed' }
-          npm run package:desktop
-          if ($LASTEXITCODE -ne 0) { throw 'Signed Windows packaging failed' }
+      # - name: Sign and package Windows with Pake
+      #   if: runner.os == 'Windows'
+      #   shell: pwsh
+      #   env:
+      #     WINDOWS_SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+      #     WINDOWS_SIGNING_ACCOUNT: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+      #     WINDOWS_SIGNING_PROFILE: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+      #     WINDOWS_SIGNING_PUBLISHER: ${{ vars.WINDOWS_SIGNING_PUBLISHER }}
+      #   run: |
+      #     $ErrorActionPreference = 'Stop'
+      #     # Same pinned module used by azure/artifact-signing-action@v2.
+      #     Install-Module ArtifactSigning -RequiredVersion 0.1.8 -Scope CurrentUser -Force -Repository PSGallery
+      #     pwsh -NoProfile -NonInteractive -File ./scripts/windows-sign.test.ps1
+      #     if ($LASTEXITCODE -ne 0) { throw 'Windows signature verification tests failed' }
+      #     npm run package:desktop
+      #     if ($LASTEXITCODE -ne 0) { throw 'Signed Windows packaging failed' }
 
       # Isolate CI signing from locked or duplicate identities in the login keychain.
       - name: Sign and notarize macOS with Pake
@@ -221,37 +223,37 @@ jobs:
           spctl --assess --type execute --verbose=2 "$mount/Vis.app"
 
       # Exercise the actual MSI and WebView2 host, not just the packaging helpers.
-      - name: Smoke-test Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_PUBLISHER: ${{ vars.WINDOWS_SIGNING_PUBLISHER }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installers = @(Get-ChildItem build/desktop/*-windows-x64.msi)
-          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows MSI' }
-          ./scripts/windows-sign.ps1 -FilePath $installers[0].FullName -VerifyOnly
-          $destination = Join-Path $env:RUNNER_TEMP 'vis-windows-smoke'
-          $arguments = "/a `"$($installers[0].FullName)`" /qn TARGETDIR=`"$destination`""
-          $install = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "MSI extraction failed: $($install.ExitCode)" }
-          $executables = @(Get-ChildItem $destination -Recurse -Filter 'pake-vis.exe')
-          if ($executables.Count -ne 1) { throw 'Expected the packaged Vis executable' }
-          ./scripts/windows-sign.ps1 -FilePath $executables[0].FullName -VerifyOnly
-          $app = Start-Process $executables[0].FullName -PassThru
-          try {
-            $ready = $false
-            foreach ($attempt in 1..30) {
-              Start-Sleep -Seconds 1
-              $app.Refresh()
-              if ($app.HasExited) { throw "Vis exited before opening its window: $($app.ExitCode)" }
-              if ($app.MainWindowHandle -ne 0 -and $app.Responding) { $ready = $true; break }
-            }
-            if (-not $ready) { throw 'Vis did not open a responsive window within 30 seconds' }
-            Write-Output 'Windows MSI extracted and Vis opened a responsive window.'
-          } finally {
-            if (-not $app.HasExited) { $app | Stop-Process -Force }
-          }
+      # - name: Smoke-test Windows installer
+      #   if: runner.os == 'Windows'
+      #   shell: pwsh
+      #   env:
+      #     WINDOWS_SIGNING_PUBLISHER: ${{ vars.WINDOWS_SIGNING_PUBLISHER }}
+      #   run: |
+      #     $ErrorActionPreference = 'Stop'
+      #     $installers = @(Get-ChildItem build/desktop/*-windows-x64.msi)
+      #     if ($installers.Count -ne 1) { throw 'Expected exactly one Windows MSI' }
+      #     ./scripts/windows-sign.ps1 -FilePath $installers[0].FullName -VerifyOnly
+      #     $destination = Join-Path $env:RUNNER_TEMP 'vis-windows-smoke'
+      #     $arguments = "/a `"$($installers[0].FullName)`" /qn TARGETDIR=`"$destination`""
+      #     $install = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+      #     if ($install.ExitCode -ne 0) { throw "MSI extraction failed: $($install.ExitCode)" }
+      #     $executables = @(Get-ChildItem $destination -Recurse -Filter 'pake-vis.exe')
+      #     if ($executables.Count -ne 1) { throw 'Expected the packaged Vis executable' }
+      #     ./scripts/windows-sign.ps1 -FilePath $executables[0].FullName -VerifyOnly
+      #     $app = Start-Process $executables[0].FullName -PassThru
+      #     try {
+      #       $ready = $false
+      #       foreach ($attempt in 1..30) {
+      #         Start-Sleep -Seconds 1
+      #         $app.Refresh()
+      #         if ($app.HasExited) { throw "Vis exited before opening its window: $($app.ExitCode)" }
+      #         if ($app.MainWindowHandle -ne 0 -and $app.Responding) { $ready = $true; break }
+      #       }
+      #       if (-not $ready) { throw 'Vis did not open a responsive window within 30 seconds' }
+      #       Write-Output 'Windows MSI extracted and Vis opened a responsive window.'
+      #     } finally {
+      #       if (-not $app.HasExited) { $app | Stop-Process -Force }
+      #     }
 
       - name: List installers
         run: ls -la build/desktop
