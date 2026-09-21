@@ -10,7 +10,6 @@ import {
 } from '../dev/story-data';
 import { EMPTY_DRAFT_MESSAGE } from '../lib/draft-messages';
 import type { Session } from '../lib/types';
-import { markSessionRead } from '../lib/unread';
 import { SessionRow } from './SessionList';
 
 const onOpen = fn();
@@ -231,13 +230,12 @@ const STOPPED_SESSION: Session = {
   is_awaiting_input: false,
   favorite_rank: null,
   answer_count: 2,
+  is_unread: true,
+  unread_answers: 2,
   was_interrupted: true,
 };
 
 export const Stopped: Story = {
-  beforeEach: () => {
-    markSessionRead(STOPPED_SESSION.id, 0);
-  },
   args: { session: STOPPED_SESSION },
   play: async ({ canvas, canvasElement }) => {
     await expect(canvas.getByText('STOPPED')).toBeVisible();
@@ -269,9 +267,6 @@ const UNSENT_SESSION: Session = {
 };
 
 export const Unsent: Story = {
-  beforeEach: () => {
-    markSessionRead(UNSENT_SESSION.id, UNSENT_SESSION.turn_count ?? 0);
-  },
   args: {
     session: UNSENT_SESSION,
     draft: { ...EMPTY_DRAFT_MESSAGE, text: 'the part I could not finish' },

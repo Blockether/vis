@@ -3165,10 +3165,12 @@
         raw
         (get (body-json request) "seen_answers")
 
+        text
+        (str/trim (str raw))
+
         seen
         (cond (number? raw) (max 0 (long raw))
-              (and (string? raw) (re-matches #"\d+" (str/trim (str raw))))
-              (parse-long (str/trim (str raw)))
+              (re-matches #"\d+" text) (parse-long text)
               :else nil)]
 
     (cond (or (nil? sid) (nil? (state/soul sid))) (session-404 sid-str)

@@ -1100,6 +1100,23 @@
                        str))
             (:tabs db))))
 
+(defn- activate-tab-fx
+  "Focus `workspace-id` and report that its session has been read.
+
+   Focusing a tab is what clears its local unread dot, so it is also the moment
+   the session stops being new EVERYWHERE: the gateway owns that truth, and the
+   companion badge and every later session list read the mark back from it."
+  [db workspace-id]
+  (let [db'
+        (activate-tab db workspace-id)
+
+        sid
+        (tab-session-id db' workspace-id)]
+
+    (cond-> {:db db'}
+      sid
+      (assoc :fx [[:mark-session-read sid]]))))
+
 (defn- reasoning-effort-configurable?
   "True when the session's model takes a caller-chosen reasoning depth.
 
@@ -1830,7 +1847,7 @@
           root
           (assoc :workspace/root root))))))
 
-(reg-event-db :select-tab-index
+(reg-event-fx :select-tab-index
               (fn [db [_ idx]]
                 (let [db
                       (-> db
@@ -1859,10 +1876,10 @@
                         idx)]
 
                   (if-let [entry (and (integer? idx) (nth entries idx nil))]
-                    (activate-tab db (:id entry))
-                    db))))
+                    (activate-tab-fx db (:id entry))
+                    {:db db}))))
 
-(reg-event-db :select-tab-by-session
+(reg-event-fx :select-tab-by-session
               (fn [db [_ session-id]]
                 (let [target-id
                       (some-> session-id
@@ -1880,7 +1897,7 @@
                       (when target-id
                         (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
 
-                  (if entry (activate-tab db (:id entry)) db))))
+                  (if entry (activate-tab-fx db (:id entry)) {:db db}))))
 
 (reg-event-fx
   :close-tab
@@ -2061,10 +2078,15 @@
                                             (dissoc :unread?))))
                                     tabs)))
                     (restore-tab next-id))
-                db)]
+                db)
+
+              next-sid
+              (when active-removed? (tab-session-id db next-id))]
 
           {:db db
-           :fx (into [[:release-session-listener sid]]
+           :fx (into (cond-> [[:release-session-listener sid]]
+                       next-sid
+                       (conj [:mark-session-read next-sid]))
                      (map (fn [token]
                             [:cancel-local-turn token]))
                      tokens)})))))
@@ -2349,12 +2371,17 @@
 
               {:db db'
                :fx (cond-> []
+                     (and sid (not background?))
+                     (conj [:mark-session-read sid])
+
                      (seq (:pending-sends tab-view))
                      (conj [:dispatch [:drain-pending tab-id]]))})
             existing
             ;; Already open — just focus that tab; its view state
             ;; (messages, scroll, in-flight turn) lives in :tab-locals.
-            {:db (seed-ctx (if background? db (activate-tab db (:id existing))))}
+            (cond-> {:db (seed-ctx (if background? db (activate-tab db (:id existing))))}
+              (and sid (not background?))
+              (assoc :fx [[:mark-session-read sid]]))
             :else
             (let [n
                   (next-tab-number entries)
@@ -2585,7 +2612,7 @@
               (fn [db [_ changes]]
                 (update db :project-sidebar merge changes)))
 
-(reg-event-db :select-project
+(reg-event-fx :select-project
               ;; Switching is ONLY a view change: no close, cancel, release or queue effects.
               (fn [db [_ pid specs build-id]]
                 (let [db
@@ -2610,8 +2637,8 @@
                           (assoc-in [:project-sidebar :opening] nil))]
 
                   (if target
-                    (activate-tab db (:id target))
-                    (building-tab-db (assoc db :active-project-id pid) build-id false)))))
+                    (activate-tab-fx db (:id target))
+                    {:db (building-tab-db (assoc db :active-project-id pid) build-id false)}))))
 
 (reg-event-db :order-project-tabs
               ;; Re-seat the tabs bound to a PROJECT so the strip reads in the
@@ -5810,7 +5837,16 @@
           db'
           (cond-> db'
             deferred
-            (update-tab workspace-id #(dissoc % :deferred-sibling-start)))]
+            (update-tab workspace-id #(dissoc % :deferred-sibling-start)))
+
+          ;; The reader is LOOKING at this tab, so its answer is read the moment it
+          ;; lands. `db-for-tab` is the only reliable read of that session: the ACTIVE
+          ;; tab lives at the db root, not in its `:tab-locals` snapshot.
+          read-sid
+          (when (= workspace-id (current-tab-id db))
+            (some-> (:session (db-for-tab db' workspace-id))
+                    :id
+                    str))]
 
       {:db (cond-> db'
              ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
@@ -5828,6 +5864,12 @@
                                  (assoc :unread? true)))
                              entries))))
        :fx (cond-> []
+             ;; The tab in FOCUS is read as it answers: the gateway owns the unread
+             ;; truth, so without this the session the reader is watching would stay
+             ;; new on every other surface until they switched tabs.
+             read-sid
+             (conj [:mark-session-read read-sid])
+
              ;; This is the whole mode: the tab you ARMED answers out loud. A
              ;; cancelled or failed turn stays silent - that text is a verdict for the
              ;; eye, not an answer to what was asked.
@@ -6608,3 +6650,14 @@
         ;; A project switch changes focus only and never reaches this effect.
         (fn [sid]
           (when sid (try (vis/gateway-assign-project! sid nil) (catch Throwable _ nil)))))
+
+(reg-fx :mark-session-read
+        ;; Focusing a session IS reading it. The gateway keeps the mark, so this
+        ;; one PUT is what clears the companion badge and the session list for
+        ;; the same reader. Best-effort and off the input thread: a lost mark
+        ;; simply leaves the session new.
+        (fn [sid]
+          (when sid
+            (gateway-queue-io! (fn []
+                                 (try (vis/gateway-mark-session-read! sid)
+                                      (catch Throwable _ nil)))))))

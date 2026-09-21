@@ -493,6 +493,36 @@
                (catch Throwable error (.rollback conn) (throw error))
                (finally (.setAutoCommit conn true))))))))
 
+(defn- existing-index-names
+  "Lower-cased names of every index a store already holds."
+  [^java.sql.Connection conn]
+  (with-open [st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st "SELECT name FROM sqlite_master WHERE type = 'index'")]
+
+    (loop [acc #{}]
+      (if (.next rs) (recur (conj acc (str/lower-case (.getString rs "name")))) acc))))
+
+(defn- install-missing-canonical-indexes!
+  "Create the canonical indexes a store does not carry yet.
+
+   `install-missing-canonical-tables!` brings the indexes of a table it installed
+   itself, and nothing else installs one: an index ADDED to a table that already
+   exists would never appear, and the store would keep answering the query that
+   index was written for with a full scan. Runs after the column passes, because
+   a new index may name a newly added column. Per index and best effort - one
+   SQLite refuses leaves every other one installed."
+  [^DataSource ds locations]
+  (let [objects (canonical-objects (migration-sql-texts locations))]
+    (with-open [conn (.getConnection ds)]
+      (let [held (existing-index-names conn)]
+        (doseq [{:keys [kind name sql]} objects
+                :when (and (= "index" kind) (not (contains? held (str/lower-case name))))]
+
+          (try (execute-ddl! conn sql) (catch Throwable _ nil)))))))
+
 (defn- restoring-dependents!
   "Run `alter!` between DROPPING every schema object whose DDL names `column`
    and recreating the ones the canonical SQL still defines, each recreated FTS5
@@ -649,9 +679,11 @@
    into V1 self-heal through Flyway `repair`, then migration is retried. Repair
    changes only `flyway_schema_history`; persisted Vis rows and schema objects
    are preserved. Databases created by an older V1 are then topped up additively
-   by `reconcile-canonical-columns!`, realigned by `realign-drifted-columns!`
-   wherever a column's own definition changed, and stripped of `retired-columns`,
-   so one canonical migration keeps serving stores that already exist."
+   by `reconcile-canonical-columns!`, given every index the canonical file has
+   gained since (`install-missing-canonical-indexes!`), realigned by
+   `realign-drifted-columns!` wherever a column's own definition changed, and
+   stripped of `retired-columns`, so one canonical migration keeps serving stores
+   that already exist."
   [^DataSource ds locations]
   (let [locs
         (cond (string? locations) [locations]
@@ -684,6 +716,7 @@
     (install-missing-canonical-tables! ds locs)
     (reconcile-canonical-columns! ds locs)
     (realign-drifted-columns! ds locs)
+    (install-missing-canonical-indexes! ds locs)
     (delete-retired-rows! ds)
     (drop-retired-columns! ds locs)
     ds))

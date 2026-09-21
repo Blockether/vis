@@ -5113,3 +5113,93 @@
           s
           {:parent-session-id sid :user-request "retried" :status :success})
         (expect (false? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid)))))))
+
+;; Regression, this Vis session (paraphrased: "the same conversation is NEW on
+;; one surface and read on another"): every client kept a private watermark, so
+;; a session a device had never listed had no reading position at all. The store
+;; owns one row per (reader, session) now.
+(defdescribe session-read-marks-test
+             (it "seeds a first sight and leaves a position the reader already holds alone"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (str (h/store-session! s {:channel :api}))]
+
+                   ;; Never shown to this reader: no row, which is what tells a first sight
+                   ;; apart from an answer they have not read yet.
+                   (expect (= {} (persistance/db-session-read-marks s "local")))
+                   (expect (= [sid] (persistance/db-seed-session-read-marks! s "local" {sid 3})))
+                   (expect (= {sid 3} (persistance/db-session-read-marks s "local")))
+                   (expect (= [] (persistance/db-seed-session-read-marks! s "local" {sid 99})))
+                   (expect (= {sid 3} (persistance/db-session-read-marks s "local")))))
+             (it "moves a watermark forward and never backwards"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (str (h/store-session! s {:channel :api}))]
+
+                   (expect (= 4 (persistance/db-mark-session-read! s "local" sid 4)))
+                   ;; A surface reporting a stale count cannot raise NEW again on a
+                   ;; conversation this reader has already read.
+                   (expect (= 4 (persistance/db-mark-session-read! s "local" sid 1)))
+                   (expect (= 6 (persistance/db-mark-session-read! s "local" sid 6)))
+                   (expect (= {sid 6} (persistance/db-session-read-marks s "local")))))
+             (it "keeps one reader's position out of another's"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (str (h/store-session! s {:channel :api}))]
+
+                   (persistance/db-mark-session-read! s "local" sid 5)
+                   (expect (= {} (persistance/db-session-read-marks s "phone")))
+                   (persistance/db-mark-session-read! s "phone" sid 2)
+                   (expect (= {sid 5} (persistance/db-session-read-marks s "local")))
+                   (expect (= {sid 2} (persistance/db-session-read-marks s "phone")))))
+             (it "forgets a conversation's marks with the conversation"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (str (h/store-session! s {:channel :api}))]
+
+                   (persistance/db-mark-session-read! s "local" sid 3)
+                   (persistance/db-delete-session-tree! s sid)
+                   (expect (= {} (persistance/db-session-read-marks s "local"))))))
+
+;; Membership by id, served by `idx_session_soul_group` / `idx_session_soul_project`:
+;; the callers used to walk every session in the store and filter in memory.
+(defdescribe session-membership-ids-test
+             (it "answers a group's and a project's members from their own columns"
+                 (let [s
+                       (h/store)
+
+                       a
+                       (str (h/store-session! s {:channel :api}))
+
+                       b
+                       (str (h/store-session! s {:channel :api}))
+
+                       pid
+                       (str (:id (persistance/db-create-project! s {:name "P" :root "/repo/p"})))
+
+                       gid
+                       (str (:id (persistance/db-create-session-group! s pid {:name "Shelf"})))]
+
+                   (persistance/db-set-session-project! s a pid)
+                   (persistance/db-set-session-project! s b pid)
+                   (persistance/db-set-session-group! s a gid)
+                   (expect (= [a] (persistance/db-session-group-session-ids s gid)))
+                   (expect (= #{a b} (set (persistance/db-project-session-ids s pid))))))
+             (it "answers nothing for a group or project that holds nothing"
+                 (let [s
+                       (h/store)
+
+                       unknown
+                       (str (java.util.UUID/randomUUID))]
+
+                   (expect (= [] (persistance/db-session-group-session-ids s unknown)))
+                   (expect (= [] (persistance/db-session-group-session-ids s nil)))
+                   (expect (= [] (persistance/db-project-session-ids s unknown))))))

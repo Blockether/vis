@@ -850,6 +850,13 @@
   [sid gid]
   (send-json! "PUT" (str "/v1/sessions/" (enc sid) "/group") {:group_id (when gid (str gid))}))
 
+(defn mark-session-read!
+  "PUT /v1/sessions/:sid/read - report that every answer this session has
+   produced has been seen. The gateway keeps the mark, so the same read
+   clears what every other surface calls new."
+  [sid]
+  (send-json! "PUT" (str "/v1/sessions/" (enc sid) "/read") {}))
+
 (defn release-session-runtime!
   "Best-effort release of one session runtime through the configured gateway."
   [sid]
@@ -2372,6 +2379,8 @@
 (def gateway-list-turns list-turns)
 
 (def gateway-live-views live-views)
+
+(def gateway-mark-session-read! mark-session-read!)
 
 (def gateway-mcp-auth-cancel! mcp-auth-cancel!)
 

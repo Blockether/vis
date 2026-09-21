@@ -2712,8 +2712,8 @@
                                   #'bus/waiting-requests (constantly {"a" [] "c" [] "d" []})
                                   #'state/resolve-workspace (fn [_ sid]
                                                               {:root (get roots sid)})
-                                  #'state/session-summary-extras (fn [rows _ _]
-                                                                   rows)
+                                   #'state/session-summary-extras (fn [rows _ _ _]
+                                                                    rows)
                                   #'config/agent-name (fn [workspace-root]
                                                         (swap! calls conj workspace-root)
                                                         (str @label ":" workspace-root))}
@@ -5929,3 +5929,103 @@
                    (expect (= :rate-limit (:kind info)))
                    (expect (str/includes? (:explanation info) "rate-limited"))
                    (expect (some #{["HTTP" "429"]} (:facts info))))))
+
+;; Regression, this Vis session (paraphrased: "the phone and the terminal
+;; disagree about what is NEW"): each surface counted answers against a
+;; watermark of its own, and a session it had never listed had no watermark at
+;; all - so a conversation filed in a group badged its whole history, or nothing.
+;; The listing answers `is_unread` now, and stamps a first sight as it answers.
+(defn- unread-fleet-window
+  "One `list-sessions-page` answer over a fleet where the reader has read part of
+   one conversation and has never met the other. `seeds` collects the first-sight
+   watermarks the listing writes."
+  [seeds opts]
+  (with-redefs-fn {#'lp/db-info (constantly ::db)
+                   #'lp/projects (constantly [])
+                   #'persistance/db-session-turn-stats (constantly
+                                                         {"read1" {:turn-count 4 :answer-count 3}
+                                                          "filed1" {:turn-count 2 :answer-count 2}})
+                   #'lp/session-read-marks (constantly {"read1" 1})
+                   #'lp/seed-session-read-marks! (fn [reader marks]
+                                                   (swap! seeds conj [reader marks])
+                                                   (vec (keys marks)))
+                   #'lp/by-channel (constantly
+                                     [{:id "read1" :title "One" :created-at 300}
+                                      {:id "filed1" :title "Two" :created-at 100 :group-id "g1"}])
+                   #'bus/live-turns (constantly {})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})}
+    (fn []
+      (state/list-sessions-page :all opts))))
+
+(defdescribe gateway-owns-the-new-badge-test
+             (it "counts the answers that landed after this reader last read"
+                 (let [seeds
+                       (atom [])
+
+                       row
+                       (first (filter (fn [s]
+                                        (= "read1" (get s "id")))
+                                      (:sessions (unread-fleet-window seeds {}))))]
+
+                   (expect (= 3 (get row "answer_count")))
+                   (expect (= 2 (get row "unread_answers")))
+                   (expect (true? (get row "is_unread")))))
+             (it "reads a conversation nobody has met as READ, and remembers the sight"
+                 (let [seeds
+                       (atom [])
+
+                       got
+                       (unread-fleet-window seeds {:limit 1 :grouped "aside"})
+
+                       shelved
+                       (first (:grouped got))]
+
+                   ;; Deeper in the fleet than this window reaches: without a mark of its
+                   ;; own, its whole history would badge as NEW the first time it is shown.
+                   (expect (= "filed1" (get shelved "id")))
+                   (expect (= 0 (get shelved "unread_answers")))
+                   (expect (false? (get shelved "is_unread")))
+                   ;; Only the row without a watermark is stamped, and at the count it
+                   ;; carries right now - the read one keeps the position it had.
+                   (expect (= [["local" {"filed1" 2}]] @seeds)))))
+
+(defdescribe gateway-marks-a-conversation-read-test
+             (it "reads ALL of it when the caller names no count"
+                 (let [moved (atom [])]
+                   (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                    #'persistance/db-session-turn-stats (fn [_ _]
+                                                                          {:answer-count 5})
+                                    #'lp/mark-session-read! (fn [reader sid seen]
+                                                              (swap! moved conj
+                                                                [reader (str sid) seen])
+                                                              seen)}
+                     (fn []
+                       (let [receipt (state/mark-session-read! "sid-1")]
+                         (expect (= [["local" "sid-1" 5]] @moved))
+                         (expect (= "local" (:reader receipt)))
+                         (expect (= 5 (:seen_answers receipt)))
+                         (expect (false? (:is_unread receipt))))))))
+             (it "answers with the position the STORE holds, not the one the caller sent"
+                 ;; The watermark never moves backwards, so a surface reporting a stale
+                 ;; count repaints from the gateway's answer instead of its own number.
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'persistance/db-session-turn-stats (fn [_ _]
+                                                                        {:answer-count 5})
+                                  #'lp/mark-session-read! (fn [_ _ _]
+                                                            5)}
+                   (fn []
+                     (let [receipt (state/mark-session-read! "sid-1" {:seen-answers 2})]
+                       (expect (= 5 (:seen_answers receipt)))
+                       (expect (false? (:is_unread receipt)))))))
+             (it "stays unread while answers sit beyond the position that was marked"
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'persistance/db-session-turn-stats (fn [_ _]
+                                                                        {:answer-count 5})
+                                  #'lp/mark-session-read! (fn [_ _ seen]
+                                                            seen)}
+                   (fn []
+                     (let [receipt (state/mark-session-read! "sid-1" {:seen-answers 2})]
+                       (expect (= 2 (:seen_answers receipt)))
+                       (expect (true? (:is_unread receipt))))))))

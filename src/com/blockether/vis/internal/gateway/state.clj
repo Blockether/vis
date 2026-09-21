@@ -5465,39 +5465,60 @@
    calls / ~7.5s at 54 sessions). Deliberately NO git status here: that stays in
    the per-session `session-workspace-info`.
 
-   `db` and `stats` are passed IN because the caller has already paid for both:
-   this runs over a PAGE, and re-querying per page would put the whole-store
-   scan back on every window."
-  [souls db stats]
-  (mapv (fn [s]
-          (let [st
-                (get stats (str (get s "id")))
+   `db`, `stats` and `marks` are passed IN because the caller has already paid
+   for all three: this runs over a PAGE, and re-querying per page would put the
+   whole-store scan back on every window.
 
-                ws
-                (when db
-                  (try (when-let [w (resolve-workspace db (get s "id"))]
-                         (wire/canonical {:root (:root w)
-                                          :repo-root (:repo-root w)
-                                          :label (:label w)
-                                          :fork-ms (:fork-ms w)
-                                          ;; A DRAFT is a per-session clone under
-                                          ;; ~/.vis/drafts/<repo>/<label>; without this flag a
-                                          ;; client cannot tell its `root` from a real project
-                                          ;; root and groups every draft as its own project.
-                                          ;; Clients group by `repo_root`, badge on `is_draft`.
-                                          :is-draft (boolean (workspace/draft? w))}))
-                       (catch Throwable _ nil)))]
+   `marks` is the asking reader's watermarks (`{id seen-answers}`), so every row
+   carries `unread_answers`/`is_unread`. The gateway answers the is-there-
+   something-new question ONCE, instead of every surface keeping a private copy
+   of the count it last saw and disagreeing about a session it never happened
+   to list."
+  [souls db stats marks]
+  (mapv
+    (fn [s]
+      (let [st
+            (get stats (str (get s "id")))
 
-            (cond-> (assoc s
-                      "turn_count" (long (or (:turn-count st) 0))
-                      "answer_count" (long (or (:answer-count st) 0))
-                      "was_interrupted" (boolean (:latest-turn-interrupted? st)))
-              (:latest-turn-at st)
-              (assoc "modified_at" (:latest-turn-at st))
+            ws
+            (when db
+              (try (when-let [w (resolve-workspace db (get s "id"))]
+                     (wire/canonical {:root (:root w)
+                                      :repo-root (:repo-root w)
+                                      :label (:label w)
+                                      :fork-ms (:fork-ms w)
+                                      ;; A DRAFT is a per-session clone under
+                                      ;; ~/.vis/drafts/<repo>/<label>; without this flag a
+                                      ;; client cannot tell its `root` from a real project
+                                      ;; root and groups every draft as its own project.
+                                      ;; Clients group by `repo_root`, badge on `is_draft`.
+                                      :is-draft (boolean (workspace/draft? w))}))
+                   (catch Throwable _ nil)))
 
-              ws
-              (assoc "workspace" ws))))
-        souls))
+            answers
+            (long (or (:answer-count st) 0))
+
+            ;; A row the reader has NEVER been shown reads as READ: the
+            ;; listing stamps its watermark as it answers
+            ;; (`seed-first-sights!`), so only an answer that landed AFTER
+            ;; that first sight is NEW.
+            unread
+            (if-let [seen (get marks (str (get s "id")))]
+              (max 0 (- answers (long seen)))
+              0)]
+
+        (cond-> (assoc s
+                  "turn_count" (long (or (:turn-count st) 0))
+                  "answer_count" answers
+                  "unread_answers" unread
+                  "is_unread" (pos? unread)
+                  "was_interrupted" (boolean (:latest-turn-interrupted? st)))
+          (:latest-turn-at st)
+          (assoc "modified_at" (:latest-turn-at st))
+
+          ws
+          (assoc "workspace" ws))))
+    souls))
 
 ;; Times reach this namespace as ms longs, `Instant`s or legacy `java.util.Date`s
 ;; depending on which store they came from; ordering must not care which.
@@ -5715,6 +5736,31 @@
          (or (:repo-root w) (:root w)))
        (catch Throwable _ nil)))
 
+(def default-reader-id
+  "The reader a gateway answers for when a caller names none. One gateway serves
+   one human - the same `local` owner `projects` defaults to - so a read mark is
+   ONE truth across that human's surfaces: reading a conversation in the terminal
+   clears its NEW badge on the phone."
+  "local")
+
+(defn- seed-first-sights!
+  "Stamp a watermark on every row this answer shows `reader-id` for the FIRST
+   time, at the answer count that row carries right now.
+
+   This is what makes \"never met\" mean READ without a client rule of its own: a
+   session painted in a group SHELF the fleet window never held gets its mark the
+   moment it is answered, so the next answer it produces is unread everywhere -
+   the app, the terminal and the push that goes out. Best effort: a store that
+   refuses the write leaves the listing itself untouched."
+  [reader-id marks rows]
+  (let [fresh (into {}
+                    (comp (map (fn [row]
+                                 [(str (get row "id")) (long (or (get row "answer_count") 0))]))
+                          (remove (fn [[id _]]
+                                    (contains? marks id))))
+                    rows)]
+    (when (seq fresh) (try (lp/seed-session-read-marks! reader-id fresh) (catch Throwable _ nil)))))
+
 (defn list-sessions-page
   "A WINDOW of the navigator list, in the gateway's own order:
    `{:sessions rows :awaiting rows :grouped rows :total n :limit l :next-cursor s :has-more bool}`.
@@ -5755,6 +5801,13 @@
    printed under the groups is counting. Without the option nothing moves and
    `:grouped` is empty.
 
+   Every row carries `is_unread`/`unread_answers` for the asking `:reader`
+   (`default-reader-id` when a caller names none). The gateway owns NEW the way it
+   owns the star: it stamps a first-sight watermark on every row it answers, so a
+   row painted only in a group SHELF - one the fleet window never held - still
+   badges its NEXT answer, on every surface and in the push, without a device
+   counting anything itself.
+
    `nil` limit means \"the rest\". No ROUTE leaves it nil any more: a read that names
    no cut is answered with the head window (`list-sessions-handler`), so a whole-list
    build is a deliberate in-process call and no client can ask for one.
@@ -5781,13 +5834,22 @@
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped]}]
+  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped reader]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
          ;; ONE grouped query serves BOTH the ordering and the page's decorations.
          stats
          (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+
+         reader-id
+         (or (not-empty (str reader)) default-reader-id)
+
+         ;; The asking reader's watermarks, read ONCE for the whole answer: the
+         ;; window, the parked rows beside it and every group shelf are decorated
+         ;; out of this one indexed read.
+         marks
+         (if db (try (lp/session-read-marks reader-id) (catch Throwable _ {})) {})
 
          ;; A running session is never empty, so liveness decides whether a
          ;; title-less row is in the list at all. Cached per `bus/live-turns`.
@@ -5856,7 +5918,7 @@
 
          rows
          (-> (into [] (comp (map :id) (keep page-soul)) window)
-             (session-summary-extras db stats)
+             (session-summary-extras db stats marks)
              (order-by-ranking window))
 
          ;; Sessions PARKED on an unanswered human-input request, beside the window
@@ -5870,15 +5932,19 @@
          awaiting
          (let [listed (into #{} (map :id) ranked)]
            (-> (into [] (comp (filter listed) (keep page-soul)) (keys (bus/waiting-requests)))
-               (session-summary-extras db stats)
+               (session-summary-extras db stats marks)
                order-session-summaries))
 
          ;; The group shelves, complete and in the listing's own order.
          grouped-rows
          (-> (into [] (comp (map :id) (keep page-soul)) filed)
-             (session-summary-extras db stats)
+             (session-summary-extras db stats marks)
              (order-by-ranking filed))]
 
+     ;; Every row this answer SHOWS is a row this reader has now met, so the NEXT
+     ;; answer any of them produces reads as NEW - including the shelved ones the
+     ;; window never held.
+     (seed-first-sights! reader-id marks (into (into rows awaiting) grouped-rows))
      {:sessions rows
       :awaiting awaiting
       :grouped grouped-rows
@@ -6201,6 +6267,33 @@
   [sid gid]
   (lp/assign-session-group! sid gid)
   (soul sid))
+
+(defn mark-session-read!
+  "Record that a reader has read `sid`: their watermark moves to `seen-answers`,
+   or to the session's CURRENT settled answer count when the caller names none -
+   which is what a surface OPENING a conversation means.
+
+   The mark never moves backwards, so a device reporting a stale count cannot
+   raise NEW again on a conversation the reader has already read. Returns
+   `{:session_id … :reader … :seen_answers n :is_unread bool}`."
+  ([sid] (mark-session-read! sid nil))
+  ([sid {:keys [reader seen-answers]}]
+   (let [reader-id
+         (or (not-empty (str reader)) default-reader-id)
+
+         db
+         (try (lp/db-info) (catch Throwable _ nil))
+
+         answers
+         (long (or (when db
+                     (:answer-count (try (persistance/db-session-turn-stats db sid)
+                                         (catch Throwable _ nil))))
+                   0))
+
+         held
+         (long (or (lp/mark-session-read! reader-id sid (or seen-answers answers)) 0))]
+
+     {:session_id (str sid) :reader reader-id :seen_answers held :is_unread (> answers held)})))
 
 (defn release-session!
   "Release the live runtime for a session while keeping persisted data resumable.

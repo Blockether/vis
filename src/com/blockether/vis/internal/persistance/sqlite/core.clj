@@ -2740,6 +2740,119 @@
                       {:update :session_soul :set set-map :where [:= :id (->id session-id)]})))))
     session-id))
 
+(defn db-session-group-session-ids
+  "Ids of every soul filed under `group-id`, newest first, as STRINGS.
+
+   MEMBERSHIP, not a navigator's visible list: an untitled or turn-less
+   conversation is a member too. One indexed read (`idx_session_soul_group`) -
+   a caller that walks the whole store and filters in memory pays a scan of
+   every session, once per group."
+  [db-info group-id]
+  (if (and (ds db-info) group-id)
+    (mapv #(str (:id %))
+          (query! db-info
+                  {:select [:id]
+                   :from :session_soul
+                   :where [:= :group_id (->id group-id)]
+                   :order-by [[:created_at :desc]]}))
+    []))
+
+(defn db-project-session-ids
+  "Ids of every soul belonging to `project-id`, in the project's own tab order,
+   as STRINGS. Membership like `db-session-group-session-ids`, served by
+   `idx_session_soul_project`."
+  [db-info project-id]
+  (if (and (ds db-info) project-id)
+    (mapv #(str (:id %))
+          (query! db-info
+                  {:select [:id]
+                   :from :session_soul
+                   :where [:= :project_id (->id project-id)]
+                   :order-by [[:project_position :asc]]}))
+    []))
+
+;; Read marks - how far a reader has read each conversation (the "NEW" badge).
+
+(defn db-session-read-marks
+  "How far `reader-id` has read, as `{session-id-string seen-answers}`.
+
+   ONE indexed pass over that reader's own rows (the table's primary key), never
+   a query per session: a listing decorates a whole window out of this map. An id
+   MISSING from it is a conversation this reader has never been shown, which is
+   what makes a first sight distinguishable from an unread answer."
+  [db-info reader-id]
+  (if (and (ds db-info) (not (str/blank? (str reader-id))))
+    (into {}
+          (map (fn [row]
+                 [(str (:session_id row)) (long (or (:seen_answers row) 0))]))
+          (query! db-info
+                  {:select [:session_id :seen_answers]
+                   :from :session_read_mark
+                   :where [:= :reader_id (str reader-id)]}))
+    {}))
+
+(defn db-seed-session-read-marks!
+  "Record a FIRST SIGHT for `reader-id`: each `{session-id seen-answers}` of
+   `marks` is written only where that reader has no mark yet, so a conversation
+   the gateway has just shown for the first time reads as READ instead of badging
+   its whole history. An existing watermark is never moved. Returns the ids
+   actually seeded."
+  [db-info reader-id marks]
+  (if (and (ds db-info) (not (str/blank? (str reader-id))) (seq marks))
+    (let [held
+          (db-session-read-marks db-info reader-id)
+
+          fresh
+          (into []
+                (comp (remove (fn [[sid _]]
+                                (contains? held (str sid))))
+                      (map (fn [[sid seen]]
+                             {:reader_id (str reader-id)
+                              :session_id (->ref sid)
+                              :seen_answers (max 0 (long (or seen 0)))
+                              :seen_at (now-ms)})))
+                marks)]
+
+      (when (seq fresh)
+        (sqlite-write-tx! db-info
+                          (fn [tx-info]
+                            (execute! tx-info
+                                      {:insert-into :session_read_mark
+                                       :values fresh
+                                       :on-conflict [:reader_id :session_id]
+                                       :do-nothing true}))))
+      (mapv :session_id fresh))
+    []))
+
+(defn db-mark-session-read!
+  "Move `reader-id`'s watermark on `session-id` to `seen-answers`: that many
+   settled answers are read, so no surface badges the session until the next one
+   lands. Idempotent, and never moves BACKWARDS - a device reporting a stale
+   count cannot raise NEW again on a conversation the reader has already read.
+   Returns the watermark the store now holds, or nil when there is no store."
+  [db-info reader-id session-id seen-answers]
+  (when (and (ds db-info) session-id (not (str/blank? (str reader-id))))
+    (let [seen
+          (max 0 (long (or seen-answers 0)))
+
+          now
+          (now-ms)]
+
+      (sqlite-write-tx! db-info
+                        (fn [tx-info]
+                          (execute! tx-info
+                                    {:insert-into :session_read_mark
+                                     :values [{:reader_id (str reader-id)
+                                               :session_id (->ref session-id)
+                                               :seen_answers seen
+                                               :seen_at now}]
+                                     :on-conflict [:reader_id :session_id]
+                                     :do-update-set {:seen_answers [:max
+                                                                    :session_read_mark.seen_answers
+                                                                    :excluded.seen_answers]
+                                                     :seen_at :excluded.seen_at}})))
+      (get (db-session-read-marks db-info reader-id) (str session-id) seen))))
+
 ;; Fork - branch a session at a point
 
 (defn db-list-session-states

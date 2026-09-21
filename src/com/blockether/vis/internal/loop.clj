@@ -13062,17 +13062,15 @@
 (defn delete-project! [project-id] (persistance/db-delete-project! (db-info) project-id))
 
 (defn project-session-ids
-  "Ids of every session soul belonging to `project-id`, across channels.
+  "Ids of every session soul belonging to `project-id`, across channels, in the
+   project's own tab order.
 
    This is MEMBERSHIP, not a client's visible list: an untitled or empty
    conversation is a member too, and a caller that fans out over what it can see
-   would delete the visible rows and silently keep the rest."
+   would delete the visible rows and silently keep the rest. One indexed read -
+   membership is a WHERE clause, never a walk of the whole store."
   [project-id]
-  (let [pid (str project-id)]
-    (->> (by-channel :all)
-         (filter (fn [s]
-                   (= pid (str (:project-id s)))))
-         (mapv :id))))
+  (persistance/db-project-session-ids (db-info) project-id))
 
 (defn assign-project!
   "Assign the session soul to `project-id` (nil clears / removes from project)."
@@ -13118,21 +13116,41 @@
   (persistance/db-delete-session-group! (db-info) group-id))
 
 (defn session-group-session-ids
-  "Ids of every session soul filed under `group-id`, across channels.
+  "Ids of every session soul filed under `group-id`, across channels, newest first.
 
-   MEMBERSHIP, like `project-session-ids`: an untitled conversation counts too."
+   MEMBERSHIP, like `project-session-ids`: an untitled conversation counts too,
+   and the group's own index answers it."
   [group-id]
-  (let [gid (str group-id)]
-    (->> (by-channel :all)
-         (filter (fn [s]
-                   (= gid (str (:group-id s)))))
-         (mapv :id))))
+  (persistance/db-session-group-session-ids (db-info) group-id))
 
 (defn assign-session-group!
   "File the session soul under `group-id` (nil leaves it ungrouped). Joining a
    group of another project adopts the session into that project as well."
   [session-id group-id]
   (persistance/db-set-session-group! (db-info) session-id group-id))
+
+;; --- Read marks: how far a reader has read (the gateway's own "NEW") ---
+
+(defn session-read-marks
+  "How far `reader-id` has read each conversation, as `{session-id-string
+   seen-answers}` - one indexed read of that reader's own rows. An id ABSENT from
+   the map has never been shown to this reader, which is what separates a first
+   sight from an unread answer."
+  [reader-id]
+  (persistance/db-session-read-marks (db-info) reader-id))
+
+(defn seed-session-read-marks!
+  "Write a FIRST-SIGHT watermark for every `{session-id seen-answers}` of `marks`
+   this reader holds no mark for, leaving the marks they already have alone.
+   Returns the ids seeded."
+  [reader-id marks]
+  (persistance/db-seed-session-read-marks! (db-info) reader-id marks))
+
+(defn mark-session-read!
+  "Advance `reader-id`'s watermark on `session-id` to `seen-answers` settled
+   answers. Never moves backwards. Returns the watermark the store now holds."
+  [reader-id session-id seen-answers]
+  (persistance/db-mark-session-read! (db-info) reader-id session-id seen-answers))
 
 ;; Host title setter + public env accessor
 

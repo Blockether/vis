@@ -80,7 +80,9 @@
         (expect (= [{:text "Keep this"}] (:messages db)))
         (expect (not (contains? (:tab-locals db) :main)))
         (expect (not-any? #{:main} (vals (:project-active-tabs db))))
-        (expect (= [[:release-session-listener "gone"]] fx))))
+        ;; The neighbor takes focus, so its session is read: that mark is what stops
+        ;; every other surface from calling it new.
+        (expect (= [[:release-session-listener "gone"] [:mark-session-read "kept"]] fx))))
   (it "removes every background view, preserving the focused session and its input"
       (let [before
             (-> (two-tabs)

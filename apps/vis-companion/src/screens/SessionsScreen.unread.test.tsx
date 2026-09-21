@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
-import { act, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { markSessionRead } from '../lib/unread';
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 let restore = () => {};
@@ -10,25 +9,39 @@ afterEach(() => {
   restore();
 });
 
-// Regression, user report: a session still wore its `NEW` badge after it had just
-// been opened and read. The list is not unmounted while the transcript is on screen
-// (`App.tsx` hides it), and `SessionRow` is `memo`ised over row objects a poll returns
-// unchanged — so the read mark moved, the store announced, and the one component that
-// paints the badge never re-rendered.
-describe('the NEW badge clears without a reload', () => {
-  it('drops the badge the moment the mark moves, with the list still mounted', async () => {
-    markSessionRead('s1', 1);
+// The NEW badge is the GATEWAY's answer, painted straight from the row it serves: it
+// counts the settled answers that have landed since this owner last read the session,
+// so the badge agrees with the TUI, survives a reinstall, and retires as soon as a
+// listing comes back with the session read.
+describe('the NEW badge', () => {
+  it('paints the unread answers the gateway counted', async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({
+              id: 's1',
+              turn_count: 6,
+              answer_count: 3,
+              is_unread: true,
+              unread_answers: 2,
+            }),
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+
+    expect(await screen.findByText('2 new')).toBeInTheDocument();
+  });
+
+  it('says nothing about a session the gateway calls read', async () => {
     const view = renderSessionsScreen({
       machines: [{ sessions: [listSession({ id: 's1', turn_count: 6, answer_count: 3 })] }],
     });
     restore = view.restore;
 
-    expect(await screen.findByText('2 new')).toBeInTheDocument();
-
-    await act(async () => {
-      markSessionRead('s1', 3);
-    });
-
-    expect(screen.queryByText('2 new')).not.toBeInTheDocument();
+    expect(await screen.findByText('A session')).toBeInTheDocument();
+    expect(screen.queryByText('new')).not.toBeInTheDocument();
   });
 });

@@ -1800,7 +1800,10 @@
       (expect (empty? (:messages local-db)))
       (expect (= "first" (input/input->text (:input local-db))))
       ;; The queued backlog comes back WITH the prompt, not one ACK later.
-      (expect (= [[:dispatch [:restore-pending-to-input :main]]] (:fx local-result)))
+      ;; A turn settling on the tab in FOCUS is read where it lands, so the
+      ;; gateway never reports this session as new to another surface.
+      (expect (= [[:mark-session-read "s1"] [:dispatch [:restore-pending-to-input :main]]]
+                 (:fx local-result)))
       (expect (false? (:loading? (:db ack-result))))
       (expect (false? (:cancelling? (:db ack-result))))
       (expect (= [[:notify "Cancellation accepted. You can send again." :info 2500]
@@ -3238,7 +3241,7 @@
                                  [:message-received :main [:ast {} [:p {} [:span {} "ok"]]]
                                   {:client-turn-id pending-id}])]
 
-        (expect (= [[:dispatch [:drain-pending :main]]] fx))
+        (expect (= [[:mark-session-read "c1"] [:dispatch [:drain-pending :main]]] fx))
         (expect (false? (:loading? db)))
         (expect (= ["second"] (mapv :text (:pending-sends db))))))
   (it "drains one queued item without nested provider dispatch"
@@ -3423,7 +3426,7 @@
                                   [:ast {} [:p {} [:span {} "Cancelled by user."]]]
                                   {:status :cancelled :client-turn-id pending-id}])]
 
-        (expect (= [[:dispatch [:restore-pending-to-input :main]]] fx))
+        (expect (= [[:mark-session-read "c1"] [:dispatch [:restore-pending-to-input :main]]] fx))
         (expect (false? (:loading? db)))
         ;; queue survives the commit; the follow-up fx clears + restores it.
         (expect (= ["second"] (mapv :text (:pending-sends db))))))

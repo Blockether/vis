@@ -159,7 +159,7 @@ import {
   shellViewportHeight,
   useSafeBottomStyle,
 } from '../lib/viewport';
-import { markSessionRead, visibleAnsweredTurnCount } from '../lib/unread';
+import { visibleAnsweredTurnCount } from '../lib/unread';
 import { App } from '@capacitor/app';
 
 import { OpenPathContext } from '../lib/open-path';
@@ -749,10 +749,10 @@ export function SessionScreen({
     [session, turns, runningTurn],
   );
   useEffect(() => {
-    if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);
+    if (document.visibilityState !== 'hidden') void client.markSessionRead(sid, readTurns);
     // Coming back to a screen that stayed mounted through a suspend is also a read.
-    return onWake(() => markSessionRead(sid, readTurns));
-  }, [sid, readTurns]);
+    return onWake(() => void client.markSessionRead(sid, readTurns));
+  }, [client, sid, readTurns]);
   // Turns that exist on the gateway BEFORE the window we hold. The transcript is
   // fetched newest-page-first (a long session is tens of megabytes whole), so
   // "earlier" can mean rows we have but hide, or rows we have not read yet.

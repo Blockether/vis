@@ -6,7 +6,6 @@ import userEvent from '@testing-library/user-event';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { Session, SessionGroup } from '../../lib/types';
-import { hasSessionReadMark } from '../../lib/unread';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -275,11 +274,11 @@ describe('ProjectGroup groups', () => {
   });
 
   // Regression, user report: a session filed in a group never reported a new answer.
-  // Read watermarks are seeded from the FLEET WINDOW — the newest twenty rows across
-  // every machine (`SessionsScreen`, `GatewayClient.listSessions`) — while a group shelf
-  // is answered COMPLETE however deep its sessions sit (`?grouped=aside`). A filed row
-  // below that window therefore stood on screen with no watermark at all, and a session
-  // this device has never met reads as READ (`lib/unread`): its next answer was silent.
+  // Read marks used to be a per-device watermark seeded from the FLEET WINDOW — the
+  // newest twenty rows across every machine — while a group shelf is answered COMPLETE
+  // however deep its sessions sit (`?grouped=aside`). A filed row below that window
+  // therefore carried no watermark at all and read as already seen. The gateway owns
+  // the mark now, so a shelved row arrives carrying its own answer.
   it('raises NEW on a filed session the fleet window never held', async () => {
     const shelved: Session = {
       ...ROWS[0],
@@ -303,11 +302,11 @@ describe('ProjectGroup groups', () => {
       [LOOSE],
     );
     await band('Wallet work');
-    await waitFor(() => expect(hasSessionReadMark(shelved.id)).toBe(true));
 
-    // The answer lands, and the row rides up into the window carrying it.
+    // The answer lands, and the row rides up into the window carrying the gateway's
+    // own unread mark.
     await act(async () => {
-      hold([LOOSE, { ...shelved, answer_count: 4 }]);
+      hold([LOOSE, { ...shelved, answer_count: 4, is_unread: true, unread_answers: 1 }]);
     });
 
     expect(await screen.findByText('new')).toBeInTheDocument();

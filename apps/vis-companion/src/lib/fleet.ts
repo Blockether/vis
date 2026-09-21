@@ -229,8 +229,8 @@ export function fleetError(machines: FleetMachine[]): string | null {
  *
  * WHAT IT HOLDS is the gateway's own count, never a count of the rows this device
  * paged in: the list is a window, so counting it read low and moved as pages landed.
- * Unread is the one number that stays local — it is this device's reading of the
- * window it holds, and an answer older than that window is not news any more.
+ * Unread is counted over the window this device holds — the gateway marks each row
+ * it serves — and an answer older than that window is not news any more.
  */
 export function machineCounts(
   machine: FleetMachine,
@@ -540,7 +540,7 @@ export interface Tally {
   live: number;
   /** Live sessions parked on human input. */
   awaiting?: number;
-  /** Finished answers this device has not read yet. */
+  /** Finished answers the reader has not seen yet. */
   unread?: number;
 }
 

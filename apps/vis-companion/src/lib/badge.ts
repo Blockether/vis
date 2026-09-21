@@ -6,7 +6,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { FleetMachine } from './fleet';
 import { dropDeliveredPushes } from './push';
-import { hasSessionReadMark, unreadTurnCount } from './unread';
+import { unreadTurnCount } from './unread';
 
 /** The whole native surface: one verb, no state. */
 interface VisBadgePlugin {
@@ -63,9 +63,9 @@ export async function reassertBadge(): Promise<void> {
  *
  * A machine that is not answering is skipped for the same reason its rows
  * leave the `All` view — its counts are last week's news. An alert is only
- * dropped when this device KNOWS its session and knows it is no longer unread;
- * an alert for a session outside the loaded window is left exactly where the
- * OS put it.
+ * dropped when the loaded window HOLDS its session and the gateway says it is no
+ * longer unread; an alert for a session outside that window is left exactly where
+ * the OS put it.
  *
  * What survives that tidying is the badge: the alerts still waiting, which is
  * exactly what `VisNotify` counts when the next one arrives.
@@ -76,8 +76,6 @@ export async function syncBadge(machines: readonly FleetMachine[]): Promise<void
   for (const machine of machines) {
     if (machine.error) continue;
     for (const session of machine.sessions ?? []) {
-      // Until durable marks have loaded, this device does not KNOW the alert was read.
-      if (!hasSessionReadMark(session.id)) continue;
       known.add(session.id);
       if (unreadTurnCount(session) > 0) unread.add(session.id);
     }

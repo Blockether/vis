@@ -35,11 +35,10 @@ vi.mock('./push', () => ({
 // The module holds what it last told the OS, so every test gets its own copy.
 const fresh = async () => {
   vi.resetModules();
-  const [badge, unread] = await Promise.all([import('./badge'), import('./unread')]);
-  return { ...badge, ...unread };
+  return import('./badge');
 };
 
-const row = (id: string, turns: number) => ({ id, turn_count: turns, answer_count: turns, status: 'idle' });
+const row = (id: string, unread = 0) => ({ id, status: 'idle', is_unread: unread > 0, unread_answers: unread });
 const machine = (sessions: ReturnType<typeof row>[], error?: string) =>
   ({ sessions, error }) as unknown as FleetMachine;
 
@@ -50,7 +49,6 @@ beforeEach(() => {
   native.waiting = 0;
   native.writes.length = 0;
   native.dropped.length = 0;
-  localStorage.clear();
 });
 
 describe('the icon badge', () => {
@@ -108,30 +106,25 @@ describe('syncBadge', () => {
   // that decides the number — the same set VisNotify counts inside an arriving
   // alert. A fleet tally would be a second, disagreeing source.
   it('badges what is still waiting in the tray, not what the fleet holds', async () => {
-    const { markSessionRead, syncBadge } = await fresh();
+    const { syncBadge } = await fresh();
     native.waiting = 3;
-    markSessionRead('unread', 1);
     await syncBadge([machine([row('unread', 40)])]);
     expect(native.writes).toEqual([3]);
   });
 
-  // The tray must hold exactly the answers still owed — but an alert for a
-  // session outside the loaded window, one whose durable read mark has not loaded,
-  // or one belonging to a machine that is not answering is not ours to throw away.
-  it('drops the delivered alerts of sessions it knows are read, and only those', async () => {
-    const { markSessionRead, syncBadge } = await fresh();
-    markSessionRead('read', 4);
-    markSessionRead('unread', 3);
-    markSessionRead('down', 1);
+  // The tray must hold exactly the answers still owed — but an alert for a session
+  // outside the loaded window, or one belonging to a machine that is not answering,
+  // is not ours to throw away.
+  it('drops the delivered alerts of sessions the gateway calls read, and only those', async () => {
+    const { syncBadge } = await fresh();
     await syncBadge([
-      machine([row('read', 4), row('unread', 5), row('unmarked', 5)]),
-      machine([row('down', 9)], 'connection refused'),
+      machine([row('read'), row('unread', 2)]),
+      machine([row('down', 1)], 'connection refused'),
     ]);
     const isDone = native.dropped[0];
     expect(isDone('read')).toBe(true);
     expect(isDone('down')).toBe(false);
     expect(isDone('unread')).toBe(false);
-    expect(isDone('unmarked')).toBe(false);
     expect(isDone('elsewhere')).toBe(false);
     expect(isDone(undefined)).toBe(false);
   });

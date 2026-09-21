@@ -4878,3 +4878,50 @@
         (let [thread (deref preloaded 5000 nil)]
           (is (some? thread))
           (is (not= (Thread/currentThread) thread)))))))
+
+;; Regression, this Vis session (paraphrased: "NEW should be one truth, not a
+;; count every surface keeps for itself"): opening a conversation reports how far
+;; this reader has read, and the receipt carries the position the gateway holds.
+(deftest mark-session-read-route-reports-the-position-the-gateway-holds
+  (let [sid
+        (java.util.UUID/randomUUID)
+
+        marked
+        (atom [])]
+
+    (with-redefs-fn {#'state/soul (fn [s]
+                                    {"id" (str s)})
+                     #'state/mark-session-read!
+                     (fn [s opts]
+                       (swap! marked conj [(str s) opts])
+                       {:session_id (str s) :reader "local" :seen_answers 4 :is_unread false})}
+      (fn []
+        (let [handler
+              (rv 'mark-session-read-handler)
+
+              params
+              {:path-params {:sid (str sid)}}]
+
+          (testing "an absent count means ALL of it - what OPENING a session reports"
+            (let [response (handler (merge params (json-body {})))]
+              (is (= 200 (:status response)))
+              (is (= [[(str sid) {:seen-answers nil}]] @marked))
+              (let [body (wire/parse-json (:body response))]
+                (is (= 4 (get body "seen_answers")))
+                (is (false? (get body "is_unread"))))))
+          (testing "a caller may name how far it has read"
+            (reset! marked [])
+            (is (= 200 (:status (handler (merge params (json-body {:seen_answers 2}))))))
+            (is (= [[(str sid) {:seen-answers 2}]] @marked)))
+          (testing "a count that is not a whole number of answers is a 400, not a 500"
+            (let [response (handler (merge params (json-body {:seen_answers "soon"})))]
+              (is (= 400 (:status response)))
+              (is (= "invalid-request"
+                     (get-in (wire/parse-json (:body response)) ["error" "type"])))))))))
+  (testing "a session the gateway does not know is a 404"
+    (with-redefs-fn {#'state/soul (constantly nil)}
+      (fn []
+        (is (= 404
+               (:status ((rv 'mark-session-read-handler)
+                          (merge {:path-params {:sid (str (java.util.UUID/randomUUID))}}
+                                 (json-body {}))))))))))

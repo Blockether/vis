@@ -28,7 +28,7 @@ import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { onWake } from '../lib/wake';
-import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
+import { unreadTurnCount } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { notifyDesktopFleet } from '../lib/desktop-notify';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
@@ -421,21 +421,11 @@ export function SessionsScreen({
   // Transport identity of the WHOLE fleet: pairing, unpairing or re-tokening a
   // machine reloads it; renaming one never does.
   const fleetKey = conns.map((conn) => `${conn.url}\u0000${conn.token ?? ''}`).join('|');
-  // Repaint when a read mark moves — opening a session clears its badge from here.
-  const readMarks = useReadMarks();
   // Unsent words this device is holding, keyed by (gateway, session). An EMPTY
   // session that has some is DIRTY: it stays in the list — with a way back into
   // what you wrote, and a way to throw it away — instead of being hidden with
   // the words locked inside it.
   const draftMessages = useDraftMessages(isVisible);
-
-  // A session this device has never met is NOT unread: seed it at the turn count
-  // it arrived with, so only answers that land AFTER this point raise a badge.
-  // Without the seed, a fresh install would paint the whole fleet unread.
-  useEffect(() => {
-    const sessions = machines.flatMap((machine) => machine.sessions ?? []);
-    void seedReadMarks(sessions);
-  }, [machines]);
 
   // The app icon's badge is the SAME tally as the dots on these rows: one per
   // answer this device has not read. It is written from here because this is
@@ -445,7 +435,7 @@ export function SessionsScreen({
   // since been read, which is what keeps the extension's count honest.
   useEffect(() => {
     void syncBadge(machines);
-  }, [machines, readMarks]);
+  }, [machines]);
   useEffect(() => onWake(() => void reassertBadge()), []);
 
   // The desktop window receives no push at all, so it raises its own alerts from the fleet it is
@@ -1364,7 +1354,7 @@ export function SessionsScreen({
           machineCounts(machine, sessionIsLive, (session) => unreadTurnCount(session) > 0),
         ]),
       ),
-    [machines, readMarks],
+    [machines],
   );
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
@@ -1585,7 +1575,7 @@ export function SessionsScreen({
               (session) => unreadTurnCount(session) > 0,
             ),
       })),
-    [heldRows, searching, readMarks, pageSize, epoch, isVisible, acceptUpdates],
+    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.

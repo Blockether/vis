@@ -203,11 +203,42 @@ CREATE UNIQUE INDEX idx_project_position
 CREATE INDEX idx_session_soul_favorite ON session_soul(favorite_rank)
   WHERE favorite_rank IS NOT NULL;
 
+-- A group is a SHELF: every surface paints it whole, however deep its rows sit,
+-- so one group's members are read by group id. Without this index that read is a
+-- scan of every session in the store, paid again for every group.
+CREATE INDEX idx_session_soul_group ON session_soul(group_id, created_at DESC)
+  WHERE group_id IS NOT NULL;
+
 -- Cross-channel session list: its predicates match this partial index exactly,
 -- and its order avoids a transient sort of every claimed top-level session.
 CREATE INDEX idx_session_soul_list_order
   ON session_soul(project_position ASC, created_at DESC)
   WHERE claimed_at IS NOT NULL AND parent_state_id IS NULL;
+
+-- =============================================================================
+-- session_read_mark — how far a reader has read one conversation. "NEW" is the
+-- gateway's own fact, like the star above: every surface reads one truth instead
+-- of each device keeping a private watermark and disagreeing about a session it
+-- never happened to list. `seen_answers` is the `answer_count` this reader has
+-- already been shown; the row is written the FIRST time the gateway answers that
+-- session to that reader, so a conversation nobody has met yet reads as read,
+-- and one that has answered since is unread — however deep in the fleet it sits.
+-- One row per (reader, session), and the primary key IS the lookup: a listing
+-- reads a reader's whole set of watermarks in one indexed pass.
+-- =============================================================================
+CREATE TABLE session_read_mark (
+  -- The human whose reading position this is. A gateway serves ONE owner today
+  -- ('local', the way `project.owner_id` does), and naming the reader keeps a
+  -- store that later serves more than one honest.
+  reader_id    TEXT NOT NULL,
+  session_id   TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  seen_answers INTEGER NOT NULL DEFAULT 0 CHECK (seen_answers >= 0),
+  seen_at      INTEGER NOT NULL,
+  PRIMARY KEY (reader_id, session_id)
+);
+
+-- The FK's own side: dropping a conversation drops its marks without a scan.
+CREATE INDEX idx_session_read_mark_session ON session_read_mark(session_id);
 
 -- =============================================================================
 -- workspace — a rift copy-on-write clone of cwd (a "draft"). One row = one

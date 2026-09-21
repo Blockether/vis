@@ -496,6 +496,17 @@
 
 (defdelegate db-set-session-group! [db-info session-id group-id])
 
+(defdelegate db-session-group-session-ids [db-info group-id])
+
+(defdelegate db-project-session-ids [db-info project-id])
+
+;; --- Read marks: how far a reader has read each conversation (the "NEW" badge) ---
+(defdelegate db-session-read-marks [db-info reader-id])
+
+(defdelegate db-seed-session-read-marks! [db-info reader-id marks])
+
+(defdelegate db-mark-session-read! [db-info reader-id session-id seen-answers])
+
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
 

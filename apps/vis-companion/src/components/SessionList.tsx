@@ -19,7 +19,7 @@ import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
-import { unreadTurnCount, useReadMarks } from '../lib/unread';
+import { unreadTurnCount } from '../lib/unread';
 import { isFavorite } from '../lib/favorites';
 import { groupSwatch } from '../lib/group-colors';
 import {
@@ -163,11 +163,9 @@ export const SessionRow = memo(function SessionRow({
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
   // Turns that finished while this session was closed: the one thing a relative
-  // timestamp cannot announce. The row SUBSCRIBES to the marks: the list stays
-  // mounted behind the transcript, and this component is memoised over row objects
-  // an unchanged poll returns identical — so without the subscription the badge of
-  // the session you just read stayed on screen until something else moved.
-  useReadMarks();
+  // timestamp cannot announce. The GATEWAY counts them and says so on the row, so
+  // every surface of that machine paints the same badge — and the poll that brings
+  // the row back read is what retires it here.
   const unread = unreadTurnCount(session);
   // STOPPED: the newest turn was cut off — the operator cancelled it, or the
   // gateway died mid-answer and swept it on its next start. Gated on the unread

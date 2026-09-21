@@ -39,7 +39,6 @@ import {
   noteReachable,
   noteUnreachable,
 } from './lib/reachability';
-import { hydrateReadMarks } from './lib/unread';
 import { warm } from './lib/warm';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
@@ -575,7 +574,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // Keep the splash bounded while restoring both durable device state and gateways.
+    // Keep the splash bounded while the stored gateways are restored.
     let revealed = false;
     const reveal = () => {
       if (revealed) return;
@@ -583,7 +582,7 @@ export function App() {
       setReady(true);
     };
     const timer = window.setTimeout(reveal, BOOT_REVEAL_MS);
-    void Promise.all([refresh(), hydrateReadMarks()]).finally(reveal);
+    void refresh().finally(reveal);
     return () => window.clearTimeout(timer);
   }, [refresh]);
 

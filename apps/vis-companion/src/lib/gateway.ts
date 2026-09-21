@@ -3696,6 +3696,38 @@ export class GatewayClient {
   }
 
   /**
+   * Tell the gateway how far the reader has got in this session. The mark is the
+   * GATEWAY's, not this device's: the TUI, this app and another phone clear the
+   * same badge, and it never moves backwards. Leaving `seenAnswers` out marks
+   * every settled answer read.
+   *
+   * Housekeeping, like `forgetVoiceJob`: a failed mark is nothing to report,
+   * because the next time this session is on screen it is marked again.
+   */
+  async markSessionRead(sid: string, seenAnswers?: number): Promise<void> {
+    try {
+      const mark = await this.request<{ is_unread?: boolean; seen_answers?: number }>(
+        'PUT',
+        `/v1/sessions/${encodeURIComponent(sid)}/read`,
+        seenAnswers === undefined ? {} : { seen_answers: seenAnswers },
+      );
+      const previous = this.cachedSession(sid);
+      if (!previous) return;
+      // Paint the answer straight into the cached row, so a cold start from the
+      // snapshot does not show a badge the gateway has already retired.
+      const isUnread = mark?.is_unread === true;
+      const behind = Number(previous.answer_count ?? 0) - Number(mark?.seen_answers ?? 0);
+      this.absorbSessionRow(sid, {
+        ...previous,
+        is_unread: isUnread,
+        unread_answers: isUnread ? Math.max(0, behind) : 0,
+      });
+    } catch {
+      // The reader's position is sent again the next time the session is open.
+    }
+  }
+
+  /**
    * Merge a freshly fetched slice onto the rows we already hold, BY TURN ID.
    * Windowed fetches overlap (the newest page re-covers turns we painted an hour
    * ago), so positional splicing would duplicate or reorder them; matching on id

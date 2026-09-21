@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
-import { act, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { markSessionRead } from '../lib/unread';
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 let restore = () => {};
@@ -13,16 +12,22 @@ afterEach(() => {
 // Reported: a gateway died mid-turn, and after the restart the sessions it had killed
 // looked exactly like sessions the reader had finished with. The engine already knew —
 // `db-sweep-orphaned-running-turns!` flips every orphaned turn to `interrupted` — but
-// the list row flattened that to `idle` and the unread count never moved either, so
-// neither the dot nor the NEW badge said anything.
+// the list row flattened that to `idle`, and the gateway's unread count never moved
+// either, so neither the dot nor the NEW badge said anything.
 describe('a session whose last turn was cut off', () => {
   it('wears a red STOPPED mark in place of the NEW badge', async () => {
-    markSessionRead('s-stopped', 2);
     const view = renderSessionsScreen({
       machines: [
         {
           sessions: [
-            listSession({ id: 's-stopped', turn_count: 6, answer_count: 3, was_interrupted: true }),
+            listSession({
+              id: 's-stopped',
+              turn_count: 6,
+              answer_count: 3,
+              was_interrupted: true,
+              is_unread: true,
+              unread_answers: 1,
+            }),
           ],
         },
       ],
@@ -42,31 +47,8 @@ describe('a session whose last turn was cut off', () => {
 
   // The mark must be BOUNDED. `was_interrupted` stays true on the row until that
   // session's next turn settles, which for an abandoned session never happens — so it
-  // rides the read mark and retires the moment the reader has seen the session.
-  it('retires the mark once the session is read', async () => {
-    markSessionRead('s-clears', 2);
-    const view = renderSessionsScreen({
-      machines: [
-        {
-          sessions: [
-            listSession({ id: 's-clears', turn_count: 6, answer_count: 3, was_interrupted: true }),
-          ],
-        },
-      ],
-    });
-    restore = view.restore;
-
-    expect(await screen.findByText('STOPPED')).toBeInTheDocument();
-
-    await act(async () => {
-      markSessionRead('s-clears', 3);
-    });
-
-    expect(screen.queryByText('STOPPED')).not.toBeInTheDocument();
-  });
-
+  // rides the gateway's unread mark and retires the moment the reader has seen it.
   it('says nothing about an interrupted session the reader has already seen', async () => {
-    markSessionRead('s-seen', 3);
     const view = renderSessionsScreen({
       machines: [
         {
@@ -84,7 +66,6 @@ describe('a session whose last turn was cut off', () => {
   });
 
   it('leaves a live session alone, whatever its last settled turn did', async () => {
-    markSessionRead('s-live', 2);
     const view = renderSessionsScreen({
       machines: [
         {
@@ -97,6 +78,8 @@ describe('a session whose last turn was cut off', () => {
               live: true,
               status: 'running',
               current_turn_id: 't-9',
+              is_unread: true,
+              unread_answers: 1,
             }),
           ],
         },

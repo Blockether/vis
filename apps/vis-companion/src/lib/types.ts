@@ -141,6 +141,13 @@ export interface Session {
   turn_count: number;
   /** Settled answers addressed to the human; Council never advances this count. */
   answer_count?: number;
+  /**
+   * The gateway's own reading mark for this owner: whether answers have landed
+   * since this session was last read, and how many. Every surface of the machine
+   * paints the same badge from these two fields.
+   */
+  is_unread?: boolean;
+  unread_answers?: number;
   created_at?: string;
   modified_at?: string;
   workspace?: {
