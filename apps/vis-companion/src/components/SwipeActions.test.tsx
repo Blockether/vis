@@ -98,6 +98,23 @@ describe('a mouse never slides', () => {
     expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
+  // Regression, user report right after BLO-167 shipped: the kebab on a session row still
+  // ran across the row. The trigger turned its mark a quarter turn, which was right while
+  // `DotsIcon` drew a horizontal ellipsis and laid the vertical one on its side once the
+  // icon itself started standing up.
+  it('opens the row menu off a standing kebab, not one on its side', () => {
+    const html = markup();
+    const dots = [...html.matchAll(/<circle[^>]*>/g)].map(([tag]) => ({
+      cx: Number(/cx="([\d.]+)"/.exec(tag)?.[1]),
+      cy: Number(/cy="([\d.]+)"/.exec(tag)?.[1]),
+    }));
+
+    expect(dots).toHaveLength(3);
+    expect(new Set(dots.map(({ cx }) => cx)).size).toBe(1);
+    expect(new Set(dots.map(({ cy }) => cy)).size).toBe(3);
+    expect(html).not.toContain('rotate-90');
+  });
+
   // Row actions must not cover permanent controls such as session details.
   it('reserves space beside row controls rather than overlaying them', () => {
     const html = markup();

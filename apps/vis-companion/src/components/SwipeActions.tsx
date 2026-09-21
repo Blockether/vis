@@ -165,7 +165,7 @@ function RowActionMenu({
         aria-expanded={at !== null}
         onClick={(event) => openFrom(event.currentTarget.getBoundingClientRect())}
       >
-        <DotsIcon className="size-3.5 rotate-90" />
+        <DotsIcon className="size-3.5" />
       </IconButton>
       {at && (
         <Menu label={label ? `${label} actions` : 'Row actions'} at={at} onDismiss={dismiss}>
