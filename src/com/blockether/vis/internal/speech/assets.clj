@@ -32,6 +32,12 @@
 
 (def ^:const manifest-resource "vis-models/manifest.edn")
 
+(def ^:const transcribe-model-id
+  "Manifest id of the local transcription model. Named in the CATALOG's own
+   namespace so a caller can ask whether it is installed — [[installed?]] on its
+   [[entry]] — without loading the speech backend that would use it."
+  "parakeet-tdt-0.6b-v3-int8")
+
 (def models-dir-env "VIS_SPEECH_MODELS_DIR")
 
 (def hf-token-env-vars

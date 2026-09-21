@@ -20,7 +20,7 @@
 
 (def model-dir-env "VIS_PARAKEET_MODEL_DIR")
 
-(def ^:const asset-id "parakeet-tdt-0.6b-v3-int8")
+(def ^:const asset-id assets/transcribe-model-id)
 
 (defn model-asset
   "This model's manifest entry — where it may be fetched from, what verifies it
@@ -197,6 +197,16 @@
                             :encoder (:encoder files)}
                      :msg "loaded the Parakeet recognizer"})
           r)))))
+
+(defn warm!
+  "Load the recognizer NOW, so the FIRST recording decodes instead of waiting for
+   the model. True when one is loaded, false when no model is installed: a head
+   start is never a reason to begin a download nobody asked for — that is
+   [[start-download!]], which a human drives. Cheap and idempotent once warm. The
+   caller provides the native runtime, exactly as it does for [[transcribe-file!]]."
+  []
+  (let [dir (model-dir)]
+    (if (model-installed? dir) (do (cached-recognizer (model-files dir)) true) false)))
 
 (defn- u16le
   ^long [^bytes b ^long off]

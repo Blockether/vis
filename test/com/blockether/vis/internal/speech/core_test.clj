@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.speech.core-test
   "The fixed gateway speech engines and their shared job lifecycle."
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.core :as speech]))
 
 (defn- with-only-engines!
@@ -581,3 +582,39 @@
                                   (throw (ex-info "the model store is gone" {}))))]
       (is (= [{:id "one" :label "One"}] (speech/voices angry)))
       (is (nil? (speech/voice-sample! angry "one"))))))
+
+(deftest preload-transcription-only-loads-a-model-that-is-already-installed
+  ;; #275 follow-up: the gateway preloads the transcription model at startup. The
+  ;; manifest answers first so a machine that never installed one stays untouched.
+  (testing "an absent model neither warms nor even resolves the backend engine"
+    (let [resolved (atom 0)]
+      (with-redefs [assets/installed? (fn [_entry]
+                                        false)
+                    speech/default-engine (fn [_direction]
+                                            (swap! resolved inc)
+                                            nil)]
+
+        (is (false? (speech/preload-transcription!)))
+        (is (zero? @resolved)))))
+  (testing "an installed model warms the default engine"
+    (let [warmed (atom 0)]
+      (with-redefs [assets/installed? (fn [_entry]
+                                        true)
+                    speech/default-engine (fn [_direction]
+                                            {:id :test-engine
+                                             :warm (fn []
+                                                     (swap! warmed inc)
+                                                     true)})]
+
+        (is (true? (speech/preload-transcription!)))
+        (is (= 1 @warmed)))))
+  (testing "an engine with nothing to warm is not an error"
+    (with-redefs [assets/installed?
+                  (fn [_entry]
+                    true)
+
+                  speech/default-engine
+                  (fn [_direction]
+                    {:id :test-engine})]
+
+      (is (false? (speech/preload-transcription!))))))

@@ -392,3 +392,37 @@
                                                (float-array [])
                                                (float-array [])
                                                0.0)))))
+
+;; Follow-up to #275: the per-clip reload is gone, but the FIRST recording still
+;; paid the whole model read. The gateway warms the recognizer once it is already
+;; serving, so warming must be a head start — never a download nobody asked for.
+(defdescribe recognizer-warm-test
+             (it "loads nothing, and says so, when no model is installed"
+                 (let [built (atom 0)]
+                   (with-redefs-fn {#'asr/model-installed? (fn [_dir]
+                                                             false)
+                                    #'asr/recognizer (fn [_files]
+                                                       (swap! built inc)
+                                                       (Object.))
+                                    #'asr/release-native! (fn [_r]
+                                                            nil)}
+                     (fn []
+                       (try (asr/release!)
+                            (expect (false? (asr/warm!)))
+                            (expect (zero? @built))
+                            (finally (asr/release!)))))))
+             (it "loads an installed model once, and the clip after it reuses that one"
+                 (let [built (atom 0)]
+                   (with-redefs-fn {#'asr/model-installed? (fn [_dir]
+                                                             true)
+                                    #'asr/recognizer (fn [_files]
+                                                       (swap! built inc)
+                                                       (Object.))
+                                    #'asr/release-native! (fn [_r]
+                                                            nil)}
+                     (fn []
+                       (try (asr/release!)
+                            (expect (true? (asr/warm!)))
+                            (expect (true? (asr/warm!)))
+                            (expect (= 1 @built))
+                            (finally (asr/release!))))))))

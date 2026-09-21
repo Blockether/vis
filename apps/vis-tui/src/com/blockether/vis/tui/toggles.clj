@@ -573,6 +573,23 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    ;; The transcription model is ~640 MB of weights, and the first recording of
+    ;; the day used to pay the whole read while a human watched "transcribing"
+    ;; (#275). Loading it once in the background, after the gateway is already
+    ;; serving, makes the first dictation as quick as the second one. A machine
+    ;; with no model installed never loads the backend at all and nothing is ever
+    ;; downloaded for it, so this defaults ON; OFF leaves that memory free until
+    ;; someone actually records.
+    (register-toggle!
+      {:id "speech_preload_model"
+       :label "Preload the voice model"
+       :description
+       "Load the installed transcription model at startup so the first recording is fast."
+       :type :boolean
+       :default true
+       :owner :vis
+       :group :provider
+       :persist? true})
     ;; Automatic fallback is a COST decision the human owns: a rescue on another
     ;; provider answers in a model they did not pick and starts that provider's
     ;; prompt cache from cold (~4x input spend for the rest of the session,

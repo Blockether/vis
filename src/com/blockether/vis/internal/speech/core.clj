@@ -2,6 +2,7 @@
   "The gateway's fixed local speech engines and their shared asynchronous job lifecycle."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io File]
            [java.util UUID]))
@@ -158,6 +159,20 @@
        (readiness engine opts)))))
 
 (defn ready? "Can this engine take work right now?" [engine] (= :ready (:state (readiness engine))))
+
+(defn preload-transcription!
+  "Load the installed transcription model into memory on THIS thread, so the first
+   recording of the process decodes instead of waiting for the model (#275). True
+   when a model was loaded.
+
+   The asset manifest answers first, and that is the point: a machine that never
+   installed the model does not even LOAD the speech backend, so nothing is paid
+   for a feature nobody set up. Never downloads — an absent model stays absent
+   until a human asks for it ([[prepare!]])."
+  []
+  (boolean (when (assets/installed? (assets/entry assets/transcribe-model-id))
+             (when-let [warm (:warm (default-engine :transcribe))]
+               (warm)))))
 
 ;; Voices - the catalogue only a SPEAKING engine has
 

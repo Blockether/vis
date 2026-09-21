@@ -5387,6 +5387,23 @@
       (.insertHandler server (gzip-handler))
       (when mirror (mirror server)))))
 
+(defn- preload-voice-model!
+  "Load the installed transcription model on a BACKGROUND thread, so the first
+   recording of the day decodes instead of waiting for ~640 MB of model (#275).
+   Answers the decision it made: `:off` when the switch is off, `:started` otherwise.
+
+   Never on the boot thread, and only once the port is already serving: a gateway
+   must be ANSWERABLE before it is fast. [[speech/preload-transcription!]] reads the
+   asset manifest first, so a machine that never installed a model neither loads the
+   speech backend nor downloads anything for it."
+  []
+  (if-not (toggles/enabled? "speech_preload_model")
+    :off
+    (do (future (try (speech/preload-transcription!)
+                     (catch Throwable t
+                       (tel/log! :warn ["gateway: voice model preload failed" (ex-message t)]))))
+        :started)))
+
 (defn start!
   "Start the gateway on the Jetty 12 core adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -5547,6 +5564,7 @@
                ["gateway: listening" (str host ":" port)
                 (if require-token? "auth: bearer token" "auth: disabled (loopback)")
                 (if managed? "lifecycle: managed" "lifecycle: foreground")])
+     (preload-voice-model!)
      {:port port
       :host host
       :token-file (str path)

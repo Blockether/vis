@@ -177,10 +177,18 @@
                                              (clean-transcript text))
                                      :segments (words->segments cleaned)})))))
 
+(defn warm
+  "Load the model before any recording arrives, with the native runtime
+   provisioned exactly as [[transcribe]] provisions it. True when a model is
+   loaded now, false when none is installed."
+  []
+  (sherpa/call-native asr/warm!))
+
 (def descriptor
   "The gateway's fixed local transcription engine descriptor."
   {:id engine-id
    :label "Parakeet (local)"
    :transcribe transcribe
    :model-state asr/model-state
-   :start-download asr/start-download!})
+   :start-download asr/start-download!
+   :warm warm})

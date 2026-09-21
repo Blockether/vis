@@ -4763,3 +4763,29 @@
                   (.delete picture)
                   (.delete root)
                   (.delete outside)))))
+
+(deftest voice-model-preload-follows-its-toggle
+  ;; #275 follow-up: the gateway warms the transcription model once it is already
+  ;; serving, so the first recording decodes instead of waiting for ~640 MB of model.
+  (testing "the switch off loads nothing at all"
+    (let [preloads (atom 0)]
+      (with-redefs [toggles/enabled? (fn [id]
+                                       (not= "speech_preload_model" id))
+                    speech/preload-transcription! (fn []
+                                                    (swap! preloads inc)
+                                                    true)]
+
+        (is (= :off (#'server/preload-voice-model!)))
+        (is (zero? @preloads)))))
+  (testing "the switch on warms the model OFF the thread that boots the gateway"
+    (let [preloaded (promise)]
+      (with-redefs [toggles/enabled? (fn [id]
+                                       (= "speech_preload_model" id))
+                    speech/preload-transcription! (fn []
+                                                    (deliver preloaded (Thread/currentThread))
+                                                    true)]
+
+        (is (= :started (#'server/preload-voice-model!)))
+        (let [thread (deref preloaded 5000 nil)]
+          (is (some? thread))
+          (is (not= (Thread/currentThread) thread)))))))

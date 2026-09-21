@@ -403,3 +403,24 @@
                    (expect (toggle-contract/settings-description? (:description spec)))
                    (doseq [channel [:tui :web]]
                      (expect (some #(= "plans" (:id %)) (t/toggles-for-channel channel)))))))
+
+(defdescribe
+  speech-preload-toggle-test
+  "`speech_preload_model` decides whether the gateway loads an ALREADY INSTALLED
+   transcription model at startup. It ships ON: the first recording is then as quick
+   as the second, and a machine that never installed a model pays nothing either way."
+  (it "is registered as a persisted boolean that defaults on"
+      (let [spec (t/toggle-spec "speech_preload_model")]
+        (expect (some? spec))
+        (expect (= :boolean (:type spec)))
+        (expect (true? (:default spec)))
+        (expect (true? (:persist? spec)))
+        (expect (= :vis (:owner spec)))
+        (expect (= :provider (:group spec)))
+        (expect (toggle-contract/settings-description? (:description spec)))))
+  (it "reads true by default and follows an override"
+      (expect (true? (t/enabled? "speech_preload_model")))
+      (t/set-value! "speech_preload_model" false)
+      (try (expect (false? (t/enabled? "speech_preload_model")))
+           (finally (t/reset-to-default! "speech_preload_model")))
+      (expect (true? (t/enabled? "speech_preload_model")))))
