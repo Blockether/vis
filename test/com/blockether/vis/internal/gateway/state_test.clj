@@ -2712,8 +2712,8 @@
                                   #'bus/waiting-requests (constantly {"a" [] "c" [] "d" []})
                                   #'state/resolve-workspace (fn [_ sid]
                                                               {:root (get roots sid)})
-                                   #'state/session-summary-extras (fn [rows _ _ _]
-                                                                    rows)
+                                  #'state/session-summary-extras (fn [rows _ _ _]
+                                                                   rows)
                                   #'config/agent-name (fn [workspace-root]
                                                         (swap! calls conj workspace-root)
                                                         (str @label ":" workspace-root))}
@@ -5699,6 +5699,38 @@
                        (select-keys overview
                                     [:project_count :session_count :live_count
                                      :awaiting_count]))))))))
+  ;; Regression, same class as the read marks themselves: a client tallying NEW over
+  ;; the window it downloaded reads it low, and a conversation in no window reads 0.
+  (it "counts NEW per project from the reader's watermarks, never from a window"
+      (let [roots {"s1" "/repo/a" "s2" "/repo/a" "s3" "/repo/b"}]
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'lp/projects (fn [_]
+                                         [{:id "p-a" :name "Vis" :workspace-root "/repo/a"}])
+                         #'persistance/db-session-turn-stats
+                         (fn [_]
+                           {"s1" {:latest-turn-at 300 :turn-count 4 :answer-count 4}
+                            "s2" {:latest-turn-at 100 :turn-count 1 :answer-count 1}
+                            "s3" {:latest-turn-at 200 :turn-count 2 :answer-count 2}})
+                         #'lp/by-channel (fn [_]
+                                           [{:id "s1"} {:id "s2"} {:id "s3"}])
+                         #'lp/session-read-marks (fn [_]
+                                                   {"s1" 2 "s2" 1})
+                         #'state/session-project-root (fn [_ sid]
+                                                        (get roots (str sid)))
+                         #'bus/live-turns (constantly {})
+                         #'bus/waiting-requests (constantly {})}
+          (fn []
+            (let [overview (state/projects-overview)
+                  by-root (into {}
+                                (map (fn [p]
+                                       [(get p "root") p]))
+                                (:projects overview))]
+
+              ;; s1 has answered twice since its watermark; s2 is caught up; s3 has
+              ;; no mark at all, so it has never been shown and reads as READ.
+              (expect (= 1 (get-in by-root ["/repo/a" "unread_count"])))
+              (expect (= 0 (get-in by-root ["/repo/b" "unread_count"])))
+              (expect (= 1 (:unread_count overview))))))))
   ;; Regression: live updates must not move project headers.
   (it "keeps root order across activity, liveness and input-order changes"
       (let [stats
@@ -5751,6 +5783,7 @@
                          "session_count" 0
                          "live_count" 0
                          "awaiting_count" 0
+                         "unread_count" 0
                          "last_activity_ms" 0}]
                        (:projects overview)))))))
   (it "answers empty totals, never an exception, when nothing is persisted"

@@ -2541,6 +2541,47 @@
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
 
+;; The gateway owns NEW and the interrupted verdict, and this picker lists sessions
+;; no tab in this terminal holds: anything derived locally reads every one of them
+;; as read and idle, so a run the phone reported as stopped read as "12 turns" here.
+(defdescribe
+  navigator-new-and-stopped-test
+  "The session list paints the gateway's read mark and its interrupted verdict."
+  (it "badges the answers that landed since this reader last read"
+      (let [row (fn [session]
+                  ((var-get #'dlg/navigator-session-row) nil {} session))]
+        (expect (= "NEW"
+                   (:status (row {"id" "s-new"
+                                  "title" "Deploy"
+                                  "turn_count" 3
+                                  "is_unread" true
+                                  "unread_answers" 1}))))
+        (expect (= "2 NEW"
+                   (:status (row {"id" "s-new"
+                                  "title" "Deploy"
+                                  "turn_count" 3
+                                  "is_unread" true
+                                  "unread_answers" 2}))))
+        (expect (true? (:unread? (row {"id" "s-new" "title" "Deploy" "unread_answers" 1}))))
+        ;; A read row is its turn count again, exactly as before.
+        (expect (= "3 turns" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
+  (it
+    "says a run STOPPED instead of letting it read as idle"
+    (let [row
+          (fn [session]
+            ((var-get #'dlg/navigator-session-row) nil {} session))
+
+          cut
+          {"id" "s-cut" "title" "Deploy" "turn_count" 3 "was_interrupted" true "unread_answers" 1}]
+
+      (expect (= "⨯ stopped" (:status (row cut))))
+      (expect (true? (:stopped? (row cut))))
+      ;; Bounded by the read mark, exactly as the app bounds it: an interrupted
+      ;; run the reader has already seen is an ordinary idle session.
+      (expect (= "3 turns" (:status (row (dissoc cut "unread_answers")))))
+      ;; Whatever the last turn did, a session running right now is live.
+      (expect (= "● live" (:status (row (assoc cut "live" true))))))))
+
 ;; Regression (user report): the fullscreen log viewer a diff visit opens
 ;; for a diff painted a scrollbar its key loop never wired mouse events to, so
 ;; pressing the scrollbar did nothing — only the wheel scrolled.

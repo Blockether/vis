@@ -5630,9 +5630,19 @@
   (vis/worker-future
     "tui-projects"
     (fn []
-      (try (let [projects (vec (vis/gateway-list-projects))]
+      (try (let [projects
+                 (vec (vis/gateway-list-projects))
+
+                 ;; The rail's counters are the GATEWAY's: a project's running,
+                 ;; waiting and NEW sessions include the ones no tab here holds.
+                 overview
+                 (try (vis/gateway-projects-overview) (catch Throwable _ nil))
+
+                 items
+                 (projects/with-gateway-counts projects overview)]
+
              (state/dispatch [:project-sidebar
-                              {:items projects :groups (project-groups projects) :loading? false}]))
+                              {:items items :groups (project-groups items) :loading? false}]))
            (catch Throwable _
              (state/dispatch [:project-sidebar
                               {:loading? false :error "Load failed · r retry"}]))))))

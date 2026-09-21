@@ -60,6 +60,62 @@
                     (.getCount mouse)))
     key))
 
+(defn with-gateway-counts
+  "Fold the gateway's own per-project counts (`GET /v1/projects/overview`) into
+   the rail's project rows.
+
+   Matching is by project id first and by workspace root second, because a root
+   nobody named has no id to match on. A project the overview does not mention is
+   left exactly as it came."
+  [projects overview]
+  (let [rows
+        (get overview "projects")
+
+        index
+        (fn [k]
+          (into {}
+                (keep (fn [row]
+                        (when-let [v (not-empty (str (get row k)))]
+                          [v row])))
+                rows))
+
+        by-id
+        (index "project_id")
+
+        by-root
+        (index "root")]
+
+    (mapv (fn [project]
+            (if-let [row (or (get by-id (str (get project "id")))
+                             (get by-root (str (get project "workspace_root"))))]
+              (assoc project
+                "live_count" (long (or (get row "live_count") 0))
+                "awaiting_count" (long (or (get row "awaiting_count") 0))
+                "unread_count" (long (or (get row "unread_count") 0)))
+              project))
+          projects)))
+
+(defn- project-counts
+  "What a project header paints: the GATEWAY's tally for that project, with the
+   tabs open in THIS terminal as the instant overlay on top of it.
+
+   The rail counted its own tabs alone, so a run in another process - or any
+   session nobody opened here - counted zero, which is the same bug the local
+   unread marks had. The gateway tallies every session in the project
+   (`with-gateway-counts`), and a session parked on a human is a LIVE one, so
+   running is what is live beside the demand. A local flag is a strict subset of
+   the gateway's answer and moves first, so each count is the larger of the two."
+  [project running waiting unread]
+  (let [demand
+        (long (or (get project "awaiting_count") 0))
+
+        live
+        (long (or (get project "live_count") 0))]
+
+    {:running (max (long running) (- live (min live demand)))
+     :needs-input (max (long waiting) demand)
+     :unread (max (long unread) (long (or (get project "unread_count") 0)))}))
+
 (defn sidebar-entries
   "Project counters and actionable sessions, in shared paint/keyboard order.
    Waiting tabs are not running. Unread replies persist until their tab is opened."
@@ -82,16 +138,19 @@
                  running
                  (count (filter #(let [local (tab-state db %)] (and (:loading? local)
                                                                     (not (:human-input local))))
-                                tabs))]
+                                tabs))
+
+                 counts
+                 (project-counts project running (count waiting) (count unread))]
 
              (into
                [{:kind :project-select
                  :project project
                  :label (get project "name" "Untitled project")
                  :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
-                 :running running
-                 :needs-input (count waiting)
-                 :unread (count unread)
+                 :running (:running counts)
+                 :needs-input (:needs-input counts)
+                 :unread (:unread counts)
                  :action [:select project]}]
                (concat
                  ;; Groups nest under their project: a group row is the project's

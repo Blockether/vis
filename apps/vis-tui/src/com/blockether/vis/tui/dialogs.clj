@@ -5110,6 +5110,18 @@
         live?
         (true? (get session "live"))
 
+        ;; The gateway's own NEW, painted rather than re-derived: this picker lists
+        ;; sessions no tab in this terminal holds, so a local guess reads every one
+        ;; of them as read.
+        unread
+        (long (or (get session "unread_answers") 0))
+
+        ;; STOPPED is bounded by that mark, exactly as the app bounds it
+        ;; (`SessionList`): it reports a run that was cut off and not yet read,
+        ;; instead of sitting on an abandoned session for good.
+        stopped?
+        (and (not live?) (true? (get session "was_interrupted")) (pos? unread))
+
         gid
         (not-empty (str (get session "group_id")))
 
@@ -5119,6 +5131,8 @@
     {:id (str "session:" id)
      :focused? active?
      :awaiting-input? awaiting-input?
+     :unread? (pos? unread)
+     :stopped? stopped?
      :title (session-title session)
      :session (short-session-id session)
      :group (not-empty (get session "project_name"))
@@ -5133,7 +5147,9 @@
                                      "! input needed")
                    (and active? live?) "● focused · live"
                    live? "● live"
+                   stopped? "⨯ stopped"
                    active? "● focused"
+                   (pos? unread) (if (> unread 1) (str unread " NEW") "NEW")
                    :else (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
@@ -5589,7 +5605,8 @@
       (p/put-str! g content-x row title))
     (p/set-colors! g
                    (cond (:awaiting-input? entry) t/warning-fg
-                         focused? t/dialog-hint-key
+                         (:stopped? entry) t/cancelled-fg
+                         (or focused? (:unread? entry)) t/dialog-hint-key
                          :else t/dialog-hint)
                    t/dialog-bg)
     (p/put-str! g status-x row status)

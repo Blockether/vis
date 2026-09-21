@@ -2408,6 +2408,8 @@
 
 (def gateway-mux-subscribe! mux-subscribe!)
 
+(def gateway-projects-overview projects-overview)
+
 (def gateway-provider-auth-cancel! provider-auth-cancel!)
 
 (def gateway-provider-auth-complete! provider-auth-complete!)

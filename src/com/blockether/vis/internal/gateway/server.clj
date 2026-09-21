@@ -2842,7 +2842,7 @@
 
         etag
         (weak-etag [(:project_count payload) (:session_count payload) (:live_count payload)
-                    (:awaiting_count payload) (:projects payload)])
+                    (:awaiting_count payload) (:unread_count payload) (:projects payload)])
 
         base
         {"ETag" etag "Cache-Control" "no-cache"}]

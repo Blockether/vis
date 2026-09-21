@@ -900,6 +900,42 @@
       (is (= {:tab-count 2 :running 2 :needs-input 0} (second (summary))))
       (is (= 2 (count (projects/sidebar-entries @state/app-db)))))))
 
+(deftest project-header-counts-are-the-gateways-test
+  ;; The rail counted the tabs open in THIS terminal, so a run in another process -
+  ;; or a conversation nobody opened here - counted zero on the project header. The
+  ;; gateway tallies every session in the project; the rail paints that tally, with
+  ;; the local tab flags (covered above, with no gateway counts at all) as the
+  ;; instant overlay on top of it.
+  (let [overview
+        {"projects"
+         [{"root" "/work/vis" "project_id" "a" "live_count" 3 "awaiting_count" 1 "unread_count" 2}
+          ;; A root nobody named has no project id: matched by root.
+          {"root" "/work/companion"
+           "project_id" ""
+           "live_count" 1
+           "awaiting_count" 0
+           "unread_count" 0}]}
+
+        items
+        (projects/with-gateway-counts [project-a project-b] overview)
+
+        headers
+        (filterv #(= :project-select (:kind %))
+          (projects/sidebar-entries {:project-sidebar {:items items} :tabs []}))]
+
+    (is (= [{"live_count" 3 "awaiting_count" 1 "unread_count" 2}
+            {"live_count" 1 "awaiting_count" 0 "unread_count" 0}]
+           (mapv #(select-keys % ["live_count" "awaiting_count" "unread_count"]) items)))
+    ;; A session parked on a human is a LIVE session: 3 live beside 1 waiting is
+    ;; 2 running, never 3.
+    (is (= [{:tab-count 2 :running 2 :needs-input 1 :unread 2}
+            {:tab-count 1 :running 1 :needs-input 0 :unread 0}]
+           (mapv #(select-keys % [:tab-count :running :needs-input :unread]) headers)))
+    (is (= "2 tabs · 2 run · 1 input · 2 NEW" (#'projects/row-status (first headers) nil 60)))
+    ;; A project the overview never mentions keeps exactly what it came with.
+    (is (= [project-a] (projects/with-gateway-counts [project-a] {"projects" []})))
+    (is (= [project-a] (projects/with-gateway-counts [project-a] nil)))))
+
 (deftest project-input-grid-and-navigation-test
   (doseq [pointer? [true false]]
     (let [refreshes (atom [])

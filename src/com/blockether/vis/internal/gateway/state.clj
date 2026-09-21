@@ -5972,9 +5972,9 @@
    with its own counts, plus the gateway's totals beside them.
 
    `{:projects [{root project_id name session_count live_count awaiting_count
-                 last_activity_ms} ...]
+                 unread_count last_activity_ms} ...]
      :project_count n :session_count n :live_count n :awaiting_count n
-     :server_time_ms ms}`
+     :unread_count n :server_time_ms ms}`
 
    A client used to DERIVE this: download the fleet, group it by working
    directory, tally each group. That made a project header cost the whole
@@ -5991,6 +5991,11 @@
    overlay, so a header that says 763 is the number of rows its pages hold.
    `name` is the persisted project's name when the root is bound to one and \"\"
    otherwise - the folder is the client's own fallback.
+
+   `unread_count` is the same NEW a session row carries (`session-summary-extras`):
+   answers that landed after the reader's watermark. A header therefore counts every
+   unread conversation in the project, including the ones outside whatever window a
+   client happens to hold - a client tallying its own rows reads it low.
 
    Projects are ordered by canonical root, ascending. Activity, liveness and
    demand update counts only; they never move project headers."
@@ -6015,6 +6020,18 @@
          waiting
          (into #{} (map str) (keys (bus/waiting-requests)))
 
+         ;; The asking reader's watermarks, read ONCE for the whole answer, and NEW
+         ;; decided by the same rule the rows use: an answer that landed after the
+         ;; reader's mark. A session never shown to this reader has no mark and
+         ;; reads as READ, so a header counts news, not backlog.
+         marks
+         (if db (try (lp/session-read-marks default-reader-id) (catch Throwable _ {})) {})
+
+         unread?
+         (fn [sid]
+           (when-let [seen (get marks (str sid))]
+             (> (long (or (:answer-count (get stats (str sid))) 0)) (long seen))))
+
          ;; Persisted projects by their bound root: the only thing the tally cannot
          ;; read off a session is the NAME a human gave the project.
          named
@@ -6025,7 +6042,7 @@
                (try (lp/projects {}) (catch Throwable _ nil)))
 
          empty-counts
-         {:session-count 0 :live-count 0 :awaiting-count 0 :last-activity-ms 0}
+         {:session-count 0 :live-count 0 :awaiting-count 0 :unread-count 0 :last-activity-ms 0}
 
          groups
          (reduce (fn [acc row]
@@ -6046,6 +6063,9 @@
                              :awaiting-count (cond-> (long (:awaiting-count g))
                                                (contains? waiting sid)
                                                inc)
+                             :unread-count (cond-> (long (:unread-count g))
+                                             (unread? sid)
+                                             inc)
                              :last-activity-ms (max (long (:last-activity-ms g))
                                                     (long (:recency-ms row)))})))
                  (into {}
@@ -6064,6 +6084,7 @@
                                        :session_count (long (:session-count g))
                                        :live_count (long (:live-count g))
                                        :awaiting_count (long (:awaiting-count g))
+                                       :unread_count (long (:unread-count g))
                                        :last_activity_ms (long (:last-activity-ms g))})))
               (sort-by #(str (get % "root")))
               vec)
@@ -6076,6 +6097,7 @@
       :session_count (count ranked)
       :live_count (count (filterv listed (keys live)))
       :awaiting_count (count (filterv listed waiting))
+      :unread_count (count (filterv unread? (map :id ranked)))
       :server_time_ms (util/now-ms)})))
 
 (defn search-session-ids
