@@ -237,14 +237,23 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(compactStyle('.extension-card:first-child').getPropertyValue('border-top-width')).toBe(
     '1px',
   );
-  const touch = rules.find((rule) => rule.conditionText === '(pointer: coarse)');
-  // WebKit's native select ignores min-height, so the touch target needs an explicit height.
-  expect(
-    [...touch.cssRules]
-      .find((rule) => rule.selectorText === '.sort-field select')
-      ?.style.getPropertyValue('height'),
-  ).toBe('2.75rem');
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
+});
+
+test('every native select carries the same chevron as a mounted dropdown trigger', () => {
+  const style = document.createElement('style');
+  style.textContent = readFileSync('web/style.css', 'utf8');
+  document.body.append(style);
+  const field = [...style.sheet.cssRules].find((rule) => rule.selectorText === 'select').style,
+    chevron = readFileSync('../../resources/vis-docs/assets/select.js', 'utf8').match(
+      /icon\('([^']+)'\)/,
+    )[1];
+  for (const property of ['-webkit-appearance', 'appearance'])
+    expect(field.getPropertyValue(property)).toBe('none');
+  expect(field.getPropertyValue('background-image')).toContain("d='" + chevron + "'");
+  expect(field.getPropertyValue('background-position')).toBe('calc(100% - 0.75rem) center');
+  expect(field.getPropertyValue('background-size')).toBe('0.875rem');
+  expect(field.getPropertyValue('padding-right')).toBe('2rem');
 });
 
 test('the search field and the sort control share one toolbar line at every width', () => {

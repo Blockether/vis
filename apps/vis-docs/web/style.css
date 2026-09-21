@@ -19,6 +19,19 @@ textarea {
   font-size: var(--text-small);
   line-height: 1.5;
 }
+/* Each engine paints a native select its own way and WebKit drops this padding and height
+   outright, which leaves its arrow sitting where the engine wants it. Draw the field's own
+   mark instead: the ChevronDown from assets/select.js, at the inset the mounted
+   .vis-select trigger uses. The stroke repeats --fg, which a data URI cannot read. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e1e1e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: calc(100% - 0.75rem) center;
+  background-size: 0.875rem;
+}
 textarea {
   resize: vertical;
 }
@@ -502,9 +515,6 @@ dialog form label {
   white-space: nowrap;
 }
 @media (pointer: coarse) {
-  .sort-field select {
-    height: 2.75rem;
-  }
   .repository-link,
   .actions a {
     min-height: 2.75rem;
