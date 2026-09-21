@@ -631,6 +631,9 @@ export const ListRow = forwardRef<
     <button
       ref={ref}
       type="button"
+      // The row's pressable half: `SwipeActions` reads it to carry this row's press
+      // and focus paper across its trailing cells.
+      data-row-surface=""
       className={`flex w-full min-w-0 items-center gap-2 ${gutter} text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 motion-reduce:transition-none ${paper} ${spacing} ${className}`}
       {...props}
     />

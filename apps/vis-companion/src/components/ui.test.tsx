@@ -508,6 +508,14 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
     expect(screen.getByRole('button', { name: 'anthropic' })).toBeInTheDocument();
   });
 
+  // A row inside `SwipeActions` hands its press to the WHOLE row: the row paints the
+  // paper, keyed on this mark, so the trailing chevron or kebab is pressed along with
+  // the name instead of standing on unpressed paper beside it.
+  it('ListRow marks itself as the row surface', () => {
+    render(<ListRow onClick={() => {}}>anthropic</ListRow>);
+    expect(screen.getByRole('button', { name: 'anthropic' })).toHaveAttribute('data-row-surface');
+  });
+
   // Regression #222: RUN launches a viewer, never a disclosure or form submission.
   it('ExecutionAction provides a named button without disclosure state', () => {
     render(

@@ -77,7 +77,13 @@ export type SessionListActions = {
 
 export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> | null;
 
-/** The row's slab keeps one geometry while its title changes from ink to a field. */
+/**
+ * The row's slab keeps one geometry while its title changes from ink to a field.
+ *
+ * `data-row-surface` names it as the row's pressable half, so `SwipeActions` paints
+ * the press across the whole row — chevron and menu cell included — instead of
+ * stopping at this button's edge.
+ */
 function SessionRowSurface({
   isEditing,
   sessionId,
@@ -103,6 +109,7 @@ function SessionRowSurface({
       type="button"
       className={`${layout} transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none`}
       data-session-id={sessionId}
+      data-row-surface=""
       onClick={onOpen}
     >
       {children}

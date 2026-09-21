@@ -20,6 +20,20 @@ import {
 } from '../lib/anchored-menu';
 import { hasHardwarePointer } from '../lib/pointer';
 
+/**
+ * A ROW'S PRESS BELONGS TO THE WHOLE ROW.
+ *
+ * The pressable half is one cell beside the permanent trailing controls and the
+ * desktop menu trigger, so a press painted on that button alone stopped at the
+ * chevron: the row read as half-selected, its own trailing cell left standing on
+ * unpressed paper. The row paints it here instead — the track carries the desktop
+ * row, whose panel is `contents`, and the snap panel carries the touch one — so
+ * every cell of the row wears the same paper. A pressable row marks itself with
+ * `data-row-surface`; a row with no such control simply never lights up.
+ */
+const ROW_PRESS_PAPER =
+  'has-[[data-row-surface]:active]:bg-hover has-[[data-row-surface]:focus-visible]:bg-hover';
+
 export interface SwipeAction {
   key: string;
   /** The caption ON the cell, and the shortest true word for it: `Star`, `Rename`, `Forget`. */
@@ -299,7 +313,7 @@ export function SwipeActions({
   if (actions.length === 0) {
     if (!trailing) return <>{children}</>;
     return (
-      <div className="grid grid-cols-[minmax(0,1fr)_auto]">
+      <div className={`grid grid-cols-[minmax(0,1fr)_auto] ${ROW_PRESS_PAPER}`}>
         {children}
         {trailing}
       </div>
@@ -338,12 +352,12 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden"
+      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${ROW_PRESS_PAPER}`}
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
           Desktop reserves just one menu trigger before the permanent trailing edge. */}
       <div
-        className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents bg-panel"
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents bg-panel ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

@@ -391,3 +391,65 @@ describe('the slide', () => {
     expect(onDetails).toHaveBeenCalledOnce();
   });
 });
+
+// Regression, user report with a screenshot (paraphrased: pressing a row highlights
+// only part of it, while the chevron keeps a different background). The press was
+// painted by the row's own button, and that button is ONE CELL of a grid whose other
+// cells are the permanent trailing controls and the desktop menu trigger. Everything
+// standing beside it — the disclosure chevron, the kebab — kept the list's paper, so a
+// pressed row read as half-selected. The row paints the press now, not the button.
+describe('a press paints the whole row', () => {
+  const PRESSED = 'has-[[data-row-surface]:active]:bg-hover';
+  const FOCUSED = 'has-[[data-row-surface]:focus-visible]:bg-hover';
+
+  const surface = <button type="button" data-row-surface="">row</button>;
+
+  // Both layouts need their own paper: the desktop row IS the track, because the panel
+  // inside it is `contents` there, and the touch row is that panel at full width.
+  it('paints the track and the touch panel alike', () => {
+    render(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
+        trailing={<button type="button">Details</button>}
+      >
+        {surface}
+      </SwipeActions>,
+    );
+    const painted: Element[] = [];
+    for (
+      let node = screen.getByRole('button', { name: 'row' }).parentElement;
+      node;
+      node = node.parentElement
+    ) {
+      if (node.className.includes(PRESSED)) painted.push(node);
+    }
+    expect(painted).toHaveLength(2);
+    expect(painted.every((node) => node.className.includes(FOCUSED))).toBe(true);
+    expect(painted.some((node) => node.hasAttribute('data-swipe-track'))).toBe(true);
+  });
+
+  it('keeps the trailing controls inside the paper the press paints', () => {
+    render(
+      <SwipeActions actions={[]} trailing={<button type="button">Details</button>}>
+        {surface}
+      </SwipeActions>,
+    );
+    const paper = screen.getByRole('button', { name: 'row' }).closest(`[class*="${PRESSED}"]`);
+    expect(paper?.contains(screen.getByRole('button', { name: 'Details' }))).toBe(true);
+  });
+
+  // A row with no pressable half of its own — a static machine row, a skeleton — simply
+  // never matches, so the paper stays the list's own.
+  it('lights up for nothing but a row surface', () => {
+    render(
+      <SwipeActions actions={[]} trailing={<button type="button">Details</button>}>
+        <span>row</span>
+      </SwipeActions>,
+    );
+    const details = screen.getByRole('button', { name: 'Details' });
+    expect(details.closest(`[class*="${PRESSED}"]`)?.querySelector('[data-row-surface]')).toBe(
+      null,
+    );
+  });
+});
