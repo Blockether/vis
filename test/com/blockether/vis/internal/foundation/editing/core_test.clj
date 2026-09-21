@@ -1884,11 +1884,11 @@
         ;; A capped page also names the answer that is NOT a page: without it, the
         ;; caller who wants "which files, how many times" rewrites the search as a
         ;; hand-rolled walk instead of asking for files-only.
-        (expect
-          (= (str "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r) or"
-                  " grep({…, \"offset\": 50}); 125 more files match — add \"is_files_only\": True"
-                  " for every file with its hit count")
-             head)))))
+        (expect (= (str
+                     "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r), or"
+                     " THIS SAME query with grep({…, \"offset\": 50}); 125 more files match — add"
+                     " \"is_files_only\": True for every file with its hit count")
+                   head)))))
 
 (defdescribe a-grep-hit-is-a-patch-anchor-test
              ;; The point of the whole scheme: search, then edit, with NO read between.
@@ -5048,7 +5048,10 @@
         (expect (string/includes? description "\"context\": 3"))
         (expect (string/includes? description "default 3"))
         (expect (string/includes? description "set it to 0"))
-        (expect (string/includes? description "pure location/count sweeps"))))
+        (expect (string/includes? description "pure location/count sweeps"))
+        ;; Regression: the description sold `offset` as a free knob, so a capped page's
+        ;; offset was pasted onto the NEXT, different query.
+        (expect (string/includes? description "`offset` belongs to ONE query"))))
   (it "the grep symbol declares is_files_only as a key and describes it"
       (let [names (mapv :name (:ext.symbol/params editing/grep-symbol))]
         (expect (contains? (set names) "is_files_only"))

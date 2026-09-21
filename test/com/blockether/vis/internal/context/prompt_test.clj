@@ -1539,7 +1539,14 @@
                    (expect
                      (str/includes?
                        text
-                       "`is_files_only: True` answers one row per matching file and its count"))))
+                       "`is_files_only: True` answers one row per matching file and its count"))
+                   ;; Regression, user report: a capped page taught `offset` and stopped
+                   ;; there, so the next call carried that offset onto a DIFFERENT query
+                   ;; and read the empty page as proof the symbol does not exist.
+                   (expect
+                     (str/includes?
+                       text
+                       "`offset` resumes THAT SAME query, never a new one"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".

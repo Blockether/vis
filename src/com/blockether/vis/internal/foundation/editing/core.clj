@@ -2085,9 +2085,11 @@
   "Line 1, ALWAYS: the query, the counts, and — when the sweep was capped — how
    to CONTINUE: `next(r)` first, because the caller is Python and that is the
    whole step, then the literal call, which carries the offset the next page
-   starts at and is what the sandbox reads back out of this line. It goes FIRST
-   because a block's printed output is HEAD-clipped, so a trailing summary is the
-   first casualty of exactly the wide grep whose truncation you must know about."
+   starts at and is what the sandbox reads back out of this line. Both name THIS
+   query: an `offset` carried onto a DIFFERENT search silently skips its hits.
+   The continuation goes FIRST because a block's printed output is HEAD-clipped,
+   so a trailing summary is the first casualty of exactly the wide grep whose
+   truncation you must know about."
   ^String [result]
   (let [ls?
         (str/blank? (str (get result "query")))
@@ -2144,7 +2146,7 @@
                 (and next-offset
                      (or (contains? #{"limit" "bytes"} content-cap) (= "limit" name-cap)))
                 (str "  capped by " (or content-cap name-cap)
-                     " → next(r) or grep({…, \"offset\": " next-offset
+                     " → next(r), or THIS SAME query with grep({…, \"offset\": " next-offset
                      "})" complete)
                 :else ""))
 
@@ -4087,6 +4089,8 @@
        "files (default 500). "
        "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
        "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
+       "`offset` belongs to ONE query: passing another query's offset skips real hits, and the "
+       "empty page says so rather than reporting no match. "
        "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
        "`context`, `max_results`/`max_count`/`max_matches`→`limit`, `path`→`paths` — so no search dies over a word.")
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
