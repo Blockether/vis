@@ -1086,7 +1086,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </>
               );
             }
-            const isFiled = (session: Session) => session.group_id === band.id;
             return (
               <>
                 <MenuBack
@@ -1123,19 +1122,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }
                   />
                 ))}
-                <MenuHeading tone="quiet">Sessions on this page</MenuHeading>
-                {rows.length === 0 ? (
-                  <MenuNote>This page has no sessions to file.</MenuNote>
-                ) : (
-                  rows.map((session) => (
-                    <MenuItem
-                      key={session.id}
-                      title={rowTitle(session)}
-                      badge={isFiled(session) ? 'filed' : undefined}
-                      onSelect={() => fileSession(session, isFiled(session) ? null : band.id, here)}
-                    />
-                  ))
-                )}
                 {failure && <MenuNote>{failure}</MenuNote>}
               </>
             );

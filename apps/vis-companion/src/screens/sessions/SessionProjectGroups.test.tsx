@@ -234,17 +234,17 @@ describe('ProjectGroup groups', () => {
     ).toBeInTheDocument();
   });
 
-  it('files a session from the band menu and paints it in that band', async () => {
-    const { client, user } = mount();
-    const wallet = await band('Wallet work');
+  // A SESSION JOINS A GROUP FROM ITS OWN ROW ("Move to..."), never from the group's
+  // settings: that sheet renames, recolours and deletes the group, and nothing else.
+  it('keeps session filing out of the group menu', async () => {
+    const { user } = mount();
+    await band('Wallet work');
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText(String(LOOSE.title)));
-    await waitFor(() =>
-      expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET),
-    );
-    await waitFor(() =>
-      expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
-    );
+    const menu = sheet(`Groups in ${ROOT}`);
+    expect(within(menu).getByText('Rename group')).toBeInTheDocument();
+    expect(within(menu).getByText('Delete group')).toBeInTheDocument();
+    expect(within(menu).getByText('Colour')).toBeInTheDocument();
+    expect(within(menu).queryByText(String(LOOSE.title))).toBeNull();
   });
   it('asks what becomes of the sessions before it deletes a group', async () => {
     const { client, user } = mount();
