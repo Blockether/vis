@@ -15,11 +15,9 @@ import {
   Banner,
   Button,
   ConfirmRow,
-  DialogFrame,
   IconButton,
   Input,
   ListRow,
-  Modal,
   Text,
 } from './ui';
 import {
@@ -29,6 +27,7 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   MARK_NUDGE,
+  MinusIcon,
   PlusIcon,
   RefreshIcon,
   SortIcon,
@@ -921,22 +920,31 @@ export function presetHint(preset: ProviderPreset): string {
  * A provider is not a client setting: the daemon writes it into its own config
  * next to its own credentials, so this picker only offers what that machine
  * reported as missing, and the add is finished by the very same flow panel a
- * sign-in uses. A local runtime is the one preset that asks a question first —
- * LM Studio and Ollama listen wherever that machine put them, so the address is
- * editable before the add, and resolved THERE, not on this device.
+ * sign-in uses.
  *
- * The picker is a SHEET the band's button opens, exactly as pairing is: it used
- * to be a bordered panel standing permanently open under the provider list, so
- * the accounts the panel was opened FOR ended below a form for an account that
- * does not exist yet. A machine with every provider already configured has no
- * button at all — the panel asks the gateway BEFORE it paints, and renders
- * nothing until the answer is a non-empty list.
+ * THE VERB OPENS A BAND, NEVER A SECOND DIALOG. The list used to be a sheet over
+ * the settings dialog — a dialog standing on the dialog it was opened from,
+ * reported over its own screenshot — and before that a bordered panel standing
+ * permanently open under the provider list, so the accounts the panel was opened
+ * FOR ended below a form for an account that does not exist yet. A disclosure is
+ * neither: nothing of it paints until this verb is pressed, what paints then is
+ * one more band of the Providers panel, and the same verb closes it again.
+ *
+ * A machine with every provider already configured has no button at all — the
+ * panel asks the gateway BEFORE it paints, and renders nothing until the answer
+ * is a non-empty list.
  */
-export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
+export function AddProviderButton({
+  auth,
+  isOpen,
+  onToggle,
+}: {
+  auth: ProviderAuth;
+  /** Whether the picker band is open; the panel holding both owns that state. */
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
   const { presets, loadPresets, pending } = auth;
-  const [isPicking, setIsPicking] = useState(false);
-  const [chosen, setChosen] = useState<ProviderPreset | null>(null);
-  const [baseUrl, setBaseUrl] = useState('');
 
   // Only the daemon knows what is still addable, so ask on mount — and again
   // whenever a removal puts a preset back in play (`presets` drops to `null`).
@@ -945,129 +953,137 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
     if (presets === null && pending !== 'presets') void loadPresets();
   }, [presets, pending, loadPresets]);
 
-  function close() {
-    setIsPicking(false);
-    setChosen(null);
-  }
-
   // Unasked, or every provider this machine knows is already configured.
+  if (presets === null || presets.length === 0) return null;
+
+  return (
+    /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The bare mark keeps the
+       standard icon box, so it centers on the rail the provider rows' menu marks
+       below it center on, and it is also the way back out of what it opened. */
+    <IconButton
+      variant="quiet"
+      label={isOpen ? 'Hide the providers this machine can add' : 'Add a provider'}
+      title={isOpen ? 'Hide the providers this machine can add' : 'Add a provider to this machine'}
+      aria-expanded={isOpen}
+      onClick={onToggle}
+    >
+      {isOpen ? <MinusIcon className="size-4" /> : <PlusIcon className="size-4" />}
+    </IconButton>
+  );
+}
+
+/**
+ * WHAT THIS MACHINE CAN STILL BE GIVEN, as a band of the Providers panel.
+ *
+ * The panel mounts this only while `AddProviderButton` holds it open, so every
+ * opening starts at the list again. A local runtime is the one preset that asks
+ * a question first — LM Studio and Ollama listen wherever that machine put them,
+ * so the address is editable before the add, and resolved THERE, not on this
+ * device.
+ *
+ * The rows are COMPACT and the band is one step of paper up from the panel:
+ * these are offers standing above the accounts that already exist, not the
+ * subject of the panel, and they read as work in progress between the verb that
+ * opened them and the list they are about to join.
+ */
+export function AddProviderPicker({ auth, onClose }: { auth: ProviderAuth; onClose: () => void }) {
+  const { presets, pending } = auth;
+  const [chosen, setChosen] = useState<ProviderPreset | null>(null);
+  const [baseUrl, setBaseUrl] = useState('');
+
+  // The verb and this band appear and vanish together.
   if (presets === null || presets.length === 0) return null;
 
   const busy = chosen !== null && pending === `add:${chosen.id}`;
 
-  return (
-    <>
-      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The bare plus keeps the
-          standard icon box, so its mark centers on the rail the provider rows'
-          menu marks below it center on. */}
-      <IconButton
-        variant="quiet"
-        label="Add a provider"
-        title="Add a provider to this machine"
-        onClick={() => {
-          setIsPicking(true);
-          setChosen(null);
-        }}
-      >
-        <PlusIcon className="size-4" />
-      </IconButton>
-
-      {isPicking && (
-        <Modal size="fit" onDismiss={close}>
-          <DialogFrame
-            title={chosen ? `Add ${chosen.label}` : 'Add a provider'}
-            subtitle={
-              chosen
-                ? 'A local runtime listens wherever that machine put it, so the gateway resolves this address — not this device.'
-                : 'Written into the gateway machine’s own config, next to its own credentials.'
-            }
-            onClose={close}
+  if (chosen)
+    return (
+      <div className="space-y-3 bg-panel-2 p-3">
+        <div className="space-y-2">
+          <label className="block" htmlFor="add-provider-base-url">
+            <Text variant="label">Where {chosen.label} listens on that machine</Text>
+          </label>
+          <Input
+            id="add-provider-base-url"
+            value={baseUrl}
+            inputMode="url"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+          <Text as="p" variant="description" className="break-words">
+            Leave it blank for {chosen.base_url ?? 'the default'}. The gateway resolves this
+            address, not this device.
+          </Text>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button
+            className="flex-1"
+            disabled={busy}
+            onClick={() => {
+              void (async () => {
+                await auth.addProvider(chosen, baseUrl.trim() || undefined);
+                setBaseUrl('');
+                onClose();
+              })();
+            }}
           >
-            {chosen ? (
-              <div className="space-y-3 p-3 sm:p-4">
-                <div className="space-y-2">
-                  <label className="block" htmlFor="add-provider-base-url">
-                    <Text variant="label">Where it listens on that machine</Text>
-                  </label>
-                  <Input
-                    id="add-provider-base-url"
-                    value={baseUrl}
-                    inputMode="url"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
-                    onChange={(event) => setBaseUrl(event.target.value)}
-                  />
-                  <Text as="p" variant="description" className="break-words">
-                    Leave it blank for {chosen.base_url ?? 'the default'}.
-                  </Text>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    className="flex-1"
-                    disabled={busy}
-                    onClick={() => {
-                      void (async () => {
-                        await auth.addProvider(chosen, baseUrl.trim() || undefined);
-                        setBaseUrl('');
-                        close();
-                      })();
-                    }}
-                  >
-                    {busy ? 'Adding…' : `Add ${chosen.label}`}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="flex-1"
-                    disabled={busy}
-                    onClick={() => setChosen(null)}
-                  >
-                    Back
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2 p-3 sm:p-4">
-                {presets.map((preset) => {
-                  const adding = pending === `add:${preset.id}`;
-                  return (
-                    <ListRow
-                      key={preset.id}
-                      isFramed
-                      disabled={adding}
-                      onClick={() => {
-                        if (preset.is_local) {
-                          setBaseUrl('');
-                          setChosen(preset);
-                          return;
-                        }
-                        void (async () => {
-                          await auth.addProvider(preset);
-                          close();
-                        })();
-                      }}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <Text variant="label" className="block truncate">
-                          {preset.label}
-                        </Text>
-                        <Text variant="meta" className="mt-0.5 block truncate">
-                          {adding ? 'Adding…' : presetHint(preset)}
-                        </Text>
-                      </span>
-                      <span className="shrink-0 text-dialog-hint" aria-hidden="true">
-                        {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
-                      </span>
-                    </ListRow>
-                  );
-                })}
-              </div>
-            )}
-          </DialogFrame>
-        </Modal>
-      )}
-    </>
+            {busy ? 'Adding…' : `Add ${chosen.label}`}
+          </Button>
+          <Button
+            variant="secondary"
+            className="flex-1"
+            disabled={busy}
+            onClick={() => setChosen(null)}
+          >
+            Back
+          </Button>
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="space-y-2 bg-panel-2 p-3">
+      <Text as="p" variant="description">
+        Written into the gateway machine’s own config, next to its own credentials.
+      </Text>
+      {presets.map((preset) => {
+        const adding = pending === `add:${preset.id}`;
+        return (
+          <ListRow
+            key={preset.id}
+            isFramed
+            density="compact"
+            disabled={adding}
+            onClick={() => {
+              if (preset.is_local) {
+                setBaseUrl('');
+                setChosen(preset);
+                return;
+              }
+              void (async () => {
+                await auth.addProvider(preset);
+                onClose();
+              })();
+            }}
+          >
+            <span className="min-w-0 flex-1">
+              <Text variant="label" className="block truncate">
+                {preset.label}
+              </Text>
+              <Text variant="meta" className="block truncate">
+                {adding ? 'Adding…' : presetHint(preset)}
+              </Text>
+            </span>
+            <span className="shrink-0 text-dialog-hint" aria-hidden="true">
+              {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
+            </span>
+          </ListRow>
+        );
+      })}
+    </div>
   );
 }
 

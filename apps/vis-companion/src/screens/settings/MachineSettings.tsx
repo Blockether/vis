@@ -43,6 +43,7 @@ import {
 } from '../../components/ui';
 import {
   AddProviderButton,
+  AddProviderPicker,
   ProviderRows,
   unscopedMessage,
   useProviderAuth,
@@ -1205,6 +1206,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
 function ProvidersPanel({ client }: { client: GatewayClient }) {
   const auth = useProviderAuth(client);
   const { providers, err, note } = auth;
+  const [isAdding, setIsAdding] = useState(false);
   // A message that names a provider is painted inside THAT provider's row by
   // `ProviderNotice`; only what has no row left to live in surfaces here.
   const fleetErr = unscopedMessage(err, providers);
@@ -1216,7 +1218,13 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS, and it renders nothing
          until the gateway has said something is addable — so the band asks for it
          unconditionally and `AddProviderButton` answers with its own silence. */
-      action={<AddProviderButton auth={auth} />}
+      action={
+        <AddProviderButton
+          auth={auth}
+          isOpen={isAdding}
+          onToggle={() => setIsAdding((open) => !open)}
+        />
+      }
     >
       {(fleetErr || fleetNote) && (
         <div className="space-y-2 p-3">
@@ -1224,6 +1232,11 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
           {fleetNote && <Banner kind="ok">{fleetNote.text}</Banner>}
         </div>
       )}
+
+      {/* WHAT CAN STILL BE ADDED OPENS HERE, directly under the verb that asked
+          for it and above the accounts it is about to join — not in a dialog
+          standing on the dialog this panel already lives in. */}
+      {isAdding && <AddProviderPicker auth={auth} onClose={() => setIsAdding(false)} />}
 
       {providers === null && (
         <p className="py-4 text-center">

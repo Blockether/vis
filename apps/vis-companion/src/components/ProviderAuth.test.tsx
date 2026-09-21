@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AuthFlow, ProviderPreset, RouterProvider } from '../lib/types';
 import {
   AddProviderButton,
+  AddProviderPicker,
   isProviderAuthed,
   ProviderNotice,
   ProviderRows,
@@ -37,9 +39,10 @@ const provider = (id: string): RouterProvider => ({
 });
 
 /**
- * Only the fields the collapsed panel reads. A static render runs no effect and
- * no handler, which is exactly the question here: what does the FIRST paint of
- * this panel put on screen for a machine with nothing left to add.
+ * Only the fields the band reads: what the gateway said is addable, what is in
+ * flight, and the calls a pick makes. A static render of it runs no effect and no
+ * handler, which is exactly what the first two cases ask — what the FIRST paint
+ * of this panel puts on screen for a machine with nothing left to add.
  */
 const auth = (presets: ProviderPreset[] | null): ProviderAuth =>
   ({
@@ -74,21 +77,95 @@ const apiKeyFlow = (providerId: string): AuthFlow => ({
   instructions: ['Z.ai (Coding Plan) requires a static API key.'],
 });
 
+/**
+ * The panel's own wiring, as the two pieces see it: the verb draws a mark and
+ * nothing else, and the band it opens is mounted around it by the panel.
+ */
+function AddProviderBand({ state }: { state: ProviderAuth }) {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <>
+      <AddProviderButton auth={state} isOpen={isOpen} onToggle={() => setIsOpen((open) => !open)} />
+      {isOpen && <AddProviderPicker auth={state} onClose={() => setIsOpen(false)} />}
+    </>
+  );
+}
+
+const localPreset = (id: string, baseUrl: string): ProviderPreset => ({
+  ...preset(id),
+  is_local: true,
+  base_url: baseUrl,
+});
+
 describe('AddProviderButton', () => {
   it('offers nothing when every provider this machine knows is already configured', () => {
-    expect(renderToStaticMarkup(<AddProviderButton auth={auth([])} />)).toBe('');
+    expect(
+      renderToStaticMarkup(<AddProviderButton auth={auth([])} isOpen={false} onToggle={() => {}} />),
+    ).toBe('');
   });
 
   it('stays silent until the gateway has said what is addable', () => {
-    expect(renderToStaticMarkup(<AddProviderButton auth={auth(null)} />)).toBe('');
+    expect(
+      renderToStaticMarkup(
+        <AddProviderButton auth={auth(null)} isOpen={false} onToggle={() => {}} />,
+      ),
+    ).toBe('');
   });
 
-  it('is one band verb, and the picker it opens is a sheet rather than a standing panel', () => {
-    const html = renderToStaticMarkup(<AddProviderButton auth={auth([preset('ollama')])} />);
+  it('is one band verb, and nothing of what it opens paints until it is pressed', () => {
+    const html = renderToStaticMarkup(
+      <AddProviderButton auth={auth([preset('ollama')])} isOpen={false} onToggle={() => {}} />,
+    );
     expect(html).toContain('Add a provider');
-    // The list of presets belongs to the sheet, so nothing of it paints until
-    // the band verb is pressed.
+    // The presets belong to the band this verb opens, not to the verb.
     expect(html).not.toContain('OLLAMA');
+  });
+});
+
+// Reported over a screenshot of the settings dialog: the picker was a sheet
+// standing on the very dialog it had been opened from. It is a band of the
+// Providers panel now — opened and closed by the one verb, with no dialog of its
+// own, and a local runtime asks for its address in that same band.
+describe('AddProviderPicker', () => {
+  it('opens inside the panel, and the verb that opened it closes it again', () => {
+    render(<AddProviderBand state={auth([preset('mistral')])} />);
+    expect(screen.queryByText('MISTRAL')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
+
+    expect(screen.getByText('MISTRAL')).toBeVisible();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide the providers this machine can add' }));
+    expect(screen.queryByText('MISTRAL')).toBeNull();
+  });
+
+  it('asks a local runtime for its address in the same band', () => {
+    render(<AddProviderBand state={auth([localPreset('ollama', 'http://localhost:11434/v1')])} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
+    fireEvent.click(screen.getByText('OLLAMA'));
+
+    expect(screen.getByLabelText('Where OLLAMA listens on that machine')).toBeVisible();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByText('OLLAMA')).toBeVisible();
+  });
+
+  it('adds a preset on the spot and closes the band behind it', async () => {
+    const added: string[] = [];
+    const state = {
+      ...auth([preset('mistral')]),
+      addProvider: async (chosen: ProviderPreset) => {
+        added.push(chosen.id);
+      },
+    } as unknown as ProviderAuth;
+    render(<AddProviderBand state={state} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
+    fireEvent.click(screen.getByText('MISTRAL'));
+
+    await waitFor(() => expect(added).toEqual(['mistral']));
+    await waitFor(() => expect(screen.queryByText('MISTRAL')).toBeNull());
   });
 });
 

@@ -7,7 +7,8 @@ import {
   STORY_APP_AUTH,
   storyProviderAuth,
 } from '../dev/story-data';
-import { ProviderRows } from './ProviderAuth';
+import type { ProviderPreset } from '../lib/types';
+import { AddProviderPicker, ProviderRows } from './ProviderAuth';
 
 /**
  * THE ACCOUNTS, AS A FLEET OF MACHINE-SIZED SLABS.
@@ -209,4 +210,31 @@ export const CodexLimits: Story = {
     await expect(args.auth.recheck).toHaveBeenCalledTimes(2);
     await expect(args.auth.resetLimits).not.toHaveBeenCalled();
   },
+};
+
+/** What a machine with three accounts still has left, as the gateway reports it. */
+const ADDABLE_PRESETS: ProviderPreset[] = [
+  { id: 'openai', label: 'OpenAI', auth_kind: 'api-key', is_local: false, models: [] },
+  { id: 'github-copilot', label: 'GitHub Copilot', auth_kind: 'oauth', is_local: false, models: [] },
+  {
+    id: 'ollama',
+    label: 'Ollama',
+    auth_kind: 'none',
+    is_local: true,
+    base_url: 'http://localhost:11434/v1',
+    models: [],
+  },
+];
+
+/**
+ * WHAT THIS MACHINE CAN STILL BE GIVEN, open as a band of the Providers panel.
+ *
+ * The settings dialog used to stack a second dialog on itself to show this list.
+ * It stands under the verb that opens it instead, one step of paper up from the
+ * accounts it is about to join, and at a list's compact height rather than a
+ * sheet's.
+ */
+export const AddProviderBand: Story = {
+  args: { auth: { ...storyProviderAuth(), presets: ADDABLE_PRESETS } },
+  render: (args) => <AddProviderPicker auth={args.auth} onClose={() => {}} />,
 };
