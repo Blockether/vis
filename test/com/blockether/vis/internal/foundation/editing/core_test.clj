@@ -3281,6 +3281,30 @@
           (expect (= 10 (get first-page "next_offset")))
           (expect (= 10 (count (get second-page "paths"))))
           (expect (not-any? (set (get first-page "paths")) (get second-page "paths")))))
+    ;; Regression: `offset` carried onto a DIFFERENT query answered "No file NAME
+    ;; or CONTENT matched" for a symbol that was in the file all along, and line 1
+    ;; never said the page had started at an offset at all.
+    (it "an empty page past the end says so instead of claiming nothing matched"
+        (let [_
+              (write-temp! "grep-page-past/a.txt"
+                           (string/join "\n" (map #(str "needle " %) (range 8))))
+
+              dir
+              (temp-dir-path "grep-page-past")
+
+              past
+              (page {"query" "needle" "paths" [dir] "offset" 50})
+
+              text
+              ((private-fn "render-grep-text") past)]
+
+          (expect (= 0 (get past "hit_count")))
+          (expect (string/includes? (get past "hint") "`offset` 50"))
+          (expect (string/includes? (get past "hint") "PAST the end"))
+          (expect (not (string/includes? (get past "hint") "No file NAME or CONTENT matched")))
+          ;; Line 1 carries the offset, so a page of nothing is never read as a
+          ;; search that found nothing.
+          (expect (string/includes? (first (string/split-lines text)) "from offset 50"))))
     (it "a negative offset is refused at the seam, never silently floored"
         (expect (throws? clojure.lang.ExceptionInfo #(grep-tool {"query" "needle" "offset" -1}))))))
 

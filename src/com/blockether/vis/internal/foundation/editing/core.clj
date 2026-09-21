@@ -2146,11 +2146,15 @@
                 (str "  capped by " (or content-cap name-cap)
                      " → next(r) or grep({…, \"offset\": " next-offset
                      "})" complete)
-                :else ""))]
+                :else ""))
+
+        from
+        (let [o (long (or (get result "offset") 0))]
+          (if (pos? o) (str "  from offset " o) ""))]
 
     (if ls?
       (str "grep '' — file listing  " (count-phrase (count (get result "paths")) "file"))
-      (str "grep '" query "'  " (count-phrase hits "hit") " · " breadth capped))))
+      (str "grep '" query "'  " (count-phrase hits "hit") " · " breadth from capped))))
 
 (defn- render-grep-text
   "grep's whole model-facing answer as ONE string: the summary line, then per
@@ -2331,6 +2335,9 @@
    both axes are still capped it advances by the SMALLER delivered count, so a
    page can repeat a row of the wider axis but can never skip one. A `time`
    cap is NOT paged: a re-scan stops at the same wall, so narrow the search.
+   `offset` continues THIS query in THIS scope: carried onto a different query it
+   skips hits that query does have, and the empty page says so instead of
+   reporting that nothing matched.
 
    NAME and CONTENT matching share the caller's exact file or directory scope.
    An existing file is never widened to its parent, including on zero hits.
@@ -2430,6 +2437,25 @@
              "Try a different term, a real symbol/string, or widen the scope.")
            (when (regex-looking-query? query)
              " CONTENT matching is LITERAL smart-case substring by DEFAULT — pass `is_regex: True` to run this query as a regular expression.")))
+
+       ;; A page PAST THE END is not a miss. `offset` continues ONE query, so
+       ;; carried onto a different query — or a narrower scope — it skips every
+       ;; hit that search does have. "Nothing matched" here sent a caller away
+       ;; from a symbol that sat in the file all along.
+       (and (not ls?)
+            (pos? (long (or offset 0)))
+            (zero? (long (or item_count 0)))
+            (zero? content-hits))
+       (assoc "hint"
+         (str "Nothing on this page: `offset` "
+              offset
+              " starts PAST the end of \""
+              query
+              "\" — that search has fewer results than that. `offset` continues the SAME "
+              "query and scope, so drop it (or pass back only a `next_offset` this very "
+              "query returned) to see what \""
+              query
+              "\" matches."))
 
        ;; Names matched but content did not, and the query reads like a regex:
        ;; say so AND name the switch, or the caller re-runs the same pattern with
