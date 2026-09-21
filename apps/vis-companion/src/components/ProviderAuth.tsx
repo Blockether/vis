@@ -906,9 +906,16 @@ export function ProviderNotice({
   );
 }
 
-/** What adding this preset will ask for next, in the user's words. */
+/**
+ * What adding this preset will ask for next, in the user's words.
+ *
+ * A local runtime says only what it is. The address it listens on is the very
+ * question the next step asks, and carrying it here put a URL in the middle of
+ * a list of plain sentences; the field that wants it still offers it as its
+ * default.
+ */
 export function presetHint(preset: ProviderPreset): string {
-  if (preset.is_local) return `Local runtime · ${preset.base_url ?? 'address on that machine'}`;
+  if (preset.is_local) return 'Local runtime';
   if (preset.auth_kind === 'oauth') return 'Sign in with your account';
   if (preset.auth_kind === 'command') return 'Credential minted on that machine';
   return 'Needs an API key';

@@ -156,9 +156,15 @@ describe('AddProviderPicker', () => {
   it('asks a local runtime for its address in the same band', () => {
     render(<AddProviderBand state={auth([localPreset('ollama', 'http://localhost:11434/v1')])} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
+
+    // The offer says what it is; the URL belongs to the question it opens, not
+    // to a list of plain sentences.
+    expect(screen.getByText('OLLAMA').closest('button')?.textContent).toBe('OLLAMALocal runtime');
+
     fireEvent.click(screen.getByText('OLLAMA'));
 
     expect(screen.getByLabelText('Where OLLAMA listens on that machine')).toBeVisible();
+    expect(screen.getByPlaceholderText('http://localhost:11434/v1')).toBeVisible();
     expect(screen.queryByRole('dialog')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
