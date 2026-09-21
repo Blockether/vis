@@ -1069,16 +1069,18 @@ export function AddProviderPicker({ auth, onClose }: { auth: ProviderAuth; onClo
               })();
             }}
           >
-            <span className="min-w-0 flex-1">
-              <Text variant="label" className="block truncate">
+            {/* ONE LINE, AND THE WHOLE ROW IS THE PRESS. A trailing plus or
+                chevron only repeated what pressing the row already does, so what
+                the pick asks for next rides the name's own line instead — and
+                drops to a line of its own only where it cannot fit beside it. */}
+            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <Text variant="label" className="min-w-0 flex-auto truncate">
                 {preset.label}
               </Text>
-              <Text variant="meta" className="block truncate">
-                {adding ? 'Adding…' : presetHint(preset)}
-              </Text>
-            </span>
-            <span className="shrink-0 text-dialog-hint" aria-hidden="true">
-              {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
+              {/* Alignment is the call site's; the type is `Text`'s own. */}
+              <span className="ms-auto min-w-0 max-w-full truncate text-right">
+                <Text variant="meta">{adding ? 'Adding…' : presetHint(preset)}</Text>
+              </span>
             </span>
           </ListRow>
         );

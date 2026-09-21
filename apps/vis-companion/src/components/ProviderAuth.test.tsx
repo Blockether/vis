@@ -140,6 +140,19 @@ describe('AddProviderPicker', () => {
     expect(screen.queryByText('MISTRAL')).toBeNull();
   });
 
+  // The row IS the press, so a trailing plus or chevron only said again what
+  // pressing it does, and the hint belongs BESIDE the name rather than under it.
+  it('carries each offer on one line and repeats no mark for the press', () => {
+    render(<AddProviderBand state={auth([preset('mistral')])} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
+
+    const row = screen.getByText('MISTRAL').closest('button');
+    expect(row).toBeVisible();
+    if (!row) throw new Error('preset row missing');
+    expect(row.textContent).toBe('MISTRALSign in with your account');
+    expect(row.querySelector('svg')).toBeNull();
+  });
+
   it('asks a local runtime for its address in the same band', () => {
     render(<AddProviderBand state={auth([localPreset('ollama', 'http://localhost:11434/v1')])} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
