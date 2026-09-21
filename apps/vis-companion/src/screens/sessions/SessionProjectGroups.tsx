@@ -24,6 +24,7 @@ import {
   ChevronIcon,
   DotsIcon,
   FolderPlusIcon,
+  PaletteIcon,
   PencilIcon,
   TrashIcon,
 } from '../../components/icons';
@@ -953,7 +954,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                   <MenuItem
                     title="New group"
                     icon={<FolderPlusIcon className="size-3.5" />}
-                    hint="File some of this project's sessions under a name of your own."
                     onSelect={() => {
                       setTyped('');
                       goTo({ kind: 'new' });
@@ -1086,36 +1086,53 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </>
               );
             }
-            // COLOUR IS A CHOICE, NOT A COLUMN. Eight swatches standing open under the
-            // verbs made this sheet taller than the room a band low on the screen has
-            // above or below it, so the palette is a step and the group keeps three rows.
+            // COLOUR IS A PALETTE, NOT A COLUMN. Eight named rows stood as tall as the
+            // verbs above them and read as eight more of them; a tile says what it does
+            // by BEING the colour, so the choice is two rows of four and the group's own
+            // is the one wearing the accent frame (the pen strip in `AnnotationLayer`).
             if (step.kind === 'colour')
               return (
                 <>
                   <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
                     Colour {band.name}
                   </MenuBack>
-                  {GROUP_COLORS.map((color) => (
-                    <MenuItem
-                      key={color}
-                      title={`${color[0].toUpperCase()}${color.slice(1)}`}
-                      icon={<Swatch color={color} />}
-                      badge={color === groupColor(band.color) ? 'now' : undefined}
-                      onSelect={() =>
-                        void attempt(
-                          () => getClient(conn).updateSessionGroup(band.id, { color }),
-                          here,
-                        )
-                      }
-                    />
-                  ))}
+                  <div
+                    role="group"
+                    aria-label={`Colour for ${band.name}`}
+                    className="grid grid-cols-4 justify-items-center gap-1 p-2"
+                  >
+                    {GROUP_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        aria-label={`${color[0].toUpperCase()}${color.slice(1)}`}
+                        aria-pressed={color === groupColor(band.color)}
+                        className="flex min-h-11 min-w-11 shrink-0 items-center justify-center mouse:min-h-9 mouse:min-w-9"
+                        onClick={() =>
+                          void attempt(
+                            () => getClient(conn).updateSessionGroup(band.id, { color }),
+                            here,
+                          )
+                        }
+                      >
+                        <span
+                          className={`size-7 rounded-none border-2 ${groupSwatch(color)} ${
+                            color === groupColor(band.color)
+                              ? 'border-accent'
+                              : 'border-edge-strong'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                  </div>
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
             // A GROUP'S SHEET HANGS UNDER ITS OWN ⋮: a band repeating the name the reader
             // just pressed is a title, not a way back, and the root it offered to return
             // to lists nothing about this group. What is left is three verbs, each behind
-            // the mark it is drawn with everywhere else — pencil, its own swatch, bin.
+            // the mark it is drawn with everywhere else — pencil, palette, bin — and no
+            // sentence under a title that already says what the row does.
             return (
               <>
                 <MenuItem
@@ -1127,15 +1144,14 @@ export const ProjectGroup = memo(function ProjectGroup({
                   }}
                 />
                 <MenuItem
-                  title="Colour"
-                  icon={<Swatch color={band.color} />}
+                  title="Choose colour"
+                  icon={<PaletteIcon className="size-3.5" />}
                   onSelect={() => goTo({ kind: 'colour', id: band.id })}
                 />
                 <MenuItem
                   title="Delete group"
                   tone="danger"
                   icon={<TrashIcon className="size-3.5" />}
-                  hint="Asks what becomes of the sessions filed under it."
                   onSelect={() => goTo({ kind: 'delete', id: band.id })}
                 />
                 {failure && <MenuNote>{failure}</MenuNote>}

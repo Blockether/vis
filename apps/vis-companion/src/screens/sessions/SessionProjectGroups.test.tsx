@@ -284,7 +284,9 @@ describe('ProjectGroup groups', () => {
     const menu = sheet(`Groups in ${ROOT}`);
     expect(within(menu).getByText('Rename group')).toBeInTheDocument();
     expect(within(menu).getByText('Delete group')).toBeInTheDocument();
-    expect(within(menu).getByText('Colour')).toBeInTheDocument();
+    expect(within(menu).getByText('Choose colour')).toBeInTheDocument();
+    // A TITLE THAT SAYS WHAT THE ROW DOES CARRIES NO SENTENCE UNDER IT.
+    expect(within(menu).queryByText(/Asks what becomes/)).toBeNull();
     // The sheet hangs under the band's own ⋮, so nothing repeats the name just pressed
     // and no way back to a project root that says nothing about this group.
     expect(within(menu).queryByText('Wallet work')).toBeNull();
@@ -292,18 +294,22 @@ describe('ProjectGroup groups', () => {
     expect(within(menu).queryByText(String(LOOSE.title))).toBeNull();
   });
 
-  // A GROUP'S COLOUR IS A STEP, NOT A COLUMN. The palette is eight rows tall, and it
-  // stood open under the verbs of every group sheet until a reader asked for it.
-  it('keeps the palette a step away and returns to the verbs after a pick', async () => {
+  // A GROUP'S COLOUR IS A PALETTE, NOT A COLUMN. Eight named rows stood open under the
+  // verbs of every group sheet, each as tall as a verb and reading like one.
+  it('picks a colour off a palette a step in and returns to the verbs', async () => {
     const { client, user } = mount();
     await band('Wallet work');
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
     const menu = sheet(`Groups in ${ROOT}`);
-    expect(within(menu).queryByText('Slate')).toBeNull();
-    await user.click(within(menu).getByText('Colour'));
-    // What the group wears now is marked, so a reader sees what they are changing.
-    expect(within(menu).getByText('Blue').closest('button')).toHaveTextContent('now');
-    await user.click(within(menu).getByText('Violet'));
+    expect(within(menu).queryByRole('button', { name: 'Slate' })).toBeNull();
+    await user.click(within(menu).getByText('Choose colour'));
+    // The tile says what it does by being the colour, and the group's own is pressed.
+    expect(within(menu).getByRole('button', { name: 'Blue' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(menu).queryByText('Violet')).toBeNull();
+    await user.click(within(menu).getByRole('button', { name: 'Violet' }));
     await waitFor(() =>
       expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET, { color: 'violet' }),
     );

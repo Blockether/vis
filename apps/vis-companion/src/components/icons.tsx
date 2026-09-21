@@ -49,6 +49,7 @@ import {
   Share2,
   Square,
   Star,
+  SwatchBook,
   Trash2,
   TriangleAlert,
   Undo2,
@@ -308,6 +309,14 @@ export function ProjectsIcon({ className }: { className?: string }) {
 /** Make a folder: the project's own mark, taking the add stroke inside it. */
 export function FolderPlusIcon({ className }: { className?: string }) {
   return <Mark icon={FolderPlus} className={className} />;
+}
+
+/**
+ * The palette a colour is chosen from: a book of swatches, because the choice is
+ * eight filled tiles and not a painter's tools.
+ */
+export function PaletteIcon({ className }: { className?: string }) {
+  return <Mark icon={SwatchBook} className={className} />;
 }
 
 /** A fork of a conversation: one trunk with a branch leaving it. */

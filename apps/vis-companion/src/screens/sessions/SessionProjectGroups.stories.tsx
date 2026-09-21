@@ -338,7 +338,7 @@ export const Groups: Story = {
 };
 
 // THE BAND'S OWN ⋮ CARRIES THE VERBS — one mark each, and nothing that only repeats the
-// name the reader pressed. The palette waits a step behind the swatch the group wears.
+// name the reader pressed. The palette waits a step behind a row that names the verb.
 export const GroupVerbs: Story = {
   ...Groups,
   play: async ({ canvasElement }) => {
@@ -350,10 +350,13 @@ export const GroupVerbs: Story = {
     await expect(within(sheet).getByText('Rename group')).toBeVisible();
     await expect(within(sheet).getByText('Delete group')).toBeVisible();
     await expect(within(sheet).queryByText('Wallet work')).toBeNull();
-    await expect(within(sheet).queryByText('Slate')).toBeNull();
-    // Eight swatches arrive only when asked for, with the one in use marked.
-    await userEvent.click(within(sheet).getByText('Colour'));
-    await expect(within(sheet).getByText('Slate')).toBeVisible();
-    await expect(within(sheet).getByText('Blue').closest('button')).toHaveTextContent('now');
+    await expect(within(sheet).queryByRole('button', { name: 'Slate' })).toBeNull();
+    // Eight tiles arrive only when asked for, with the one in use wearing the frame.
+    await userEvent.click(within(sheet).getByText('Choose colour'));
+    await expect(within(sheet).getByRole('button', { name: 'Slate' })).toBeVisible();
+    await expect(within(sheet).getByRole('button', { name: 'Blue' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   },
 };
