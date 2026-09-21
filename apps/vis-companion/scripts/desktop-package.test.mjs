@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   desktopTargets,
@@ -229,12 +229,16 @@ describe('desktop release platforms', () => {
     vi.stubEnv('CARGO_TARGET_DIR', '');
     packageDesktop({ platform: 'linux', arch: 'x64', log: vi.fn() });
     for (const [, , options] of spawnSync.mock.calls) {
-      expect(options.env.CARGO_TARGET_DIR).toBe('/app/build/desktop-target');
+      // Windows resolves a POSIX-absolute path onto the current drive, so the
+      // expectation is the same `resolve` the script itself applies.
+      expect(options.env.CARGO_TARGET_DIR).toBe(resolve('/app/build/desktop-target'));
     }
     vi.stubEnv('CARGO_TARGET_DIR', '/cache/custom-target');
     vi.clearAllMocks();
     packageDesktop({ platform: 'darwin', arch: 'arm64', log: vi.fn() });
-    expect(spawnSync.mock.calls[0][2].env.CARGO_TARGET_DIR).toBe('/cache/custom-target');
+    expect(spawnSync.mock.calls[0][2].env.CARGO_TARGET_DIR).toBe(
+      resolve('/cache/custom-target'),
+    );
   });
 
   it.each(['x64', 'arm64'])('packages native Linux %s with truthful asset names', (arch) => {
