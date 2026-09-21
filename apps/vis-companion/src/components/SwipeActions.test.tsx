@@ -261,10 +261,25 @@ describe('the slide', () => {
     fireEvent.scroll(track(0));
     expect(shut()).toBe(0);
 
-    // The LIST moving under it still closes it: that scroll comes from something
-    // that is not a drawer.
+    // The LIST moving under it still closes it: that scroll comes from a
+    // scroller the row itself stands in.
     fireEvent.scroll(document.body);
     expect(shut()).toBe(1);
+  });
+
+  // Regression, user report (paraphrased: every update to the session hides what
+  // I have open): a transcript following its end rewrites its own `scrollTop` on
+  // every update it receives, and on the window that reached an open drawer as
+  // "the list moved under me" — from a scroller the row does not stand in.
+  it('keeps the drawer open while a scroller that does not carry the row moves', () => {
+    render(row('first'));
+    slide(track(0));
+    const elsewhere = document.body.appendChild(document.createElement('div'));
+
+    fireEvent.scroll(elsewhere);
+
+    expect(closed).not.toContain(track(0));
+    elsewhere.remove();
   });
 
   // A drawer animating home reports itself OPEN for every frame of that slide, and

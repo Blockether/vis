@@ -68,6 +68,29 @@ describe('desktop row action menu', () => {
     fireEvent(window, new Event('resize'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  // Regression, user report (paraphrased: every update to the session hides the
+  // menu I have open): the panel dismissed itself on ANY scroll in the document,
+  // and a transcript that is following its end rewrites its own `scrollTop` on
+  // every update it receives — behind a settings dialog, on another screen, it
+  // makes no difference. A scroller that does not carry the row cannot move the
+  // panel off its anchor, so it no longer closes it.
+  it('stays open while something that cannot move it scrolls', () => {
+    const elsewhere = document.body.appendChild(document.createElement('div'));
+    const { trigger } = setup();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.scroll(elsewhere);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // The list the row stands in is the other case: it takes the anchor with it.
+    fireEvent.scroll(trigger.closest('[data-swipe-track]')!.parentElement!);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    elsewhere.remove();
+  });
 });
 
 // The desktop window drops the webview's own right-click menu (`lib/desktop.ts`), so a

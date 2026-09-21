@@ -141,13 +141,17 @@ function RowActionMenu({
   useEffect(() => {
     if (!at) return;
     panelRef.current?.querySelector('button')?.focus({ preventScroll: true });
+    // ONLY A SCROLLER THAT CARRIES THE ROW CAN STRAND THIS PANEL. The listener
+    // sits on the window in capture, so it hears every scroll in the document —
+    // and a transcript following its end rewrites its own `scrollTop` on each
+    // update it receives. Read as "the page moved", that shut the menu a reader
+    // had open in a settings dialog standing over it, on every turn of a live
+    // session. The panel is portaled to the document and never carries the
+    // trigger either, so its own scrolling stays out of this by the same rule.
     const onScroll = (event: Event) => {
-      if (
-        event.target instanceof Node &&
-        panelRef.current?.closest('[role="dialog"]')?.contains(event.target)
-      )
-        return;
-      dismiss();
+      const trigger = triggerRef.current;
+      const scroller = event.target;
+      if (trigger && scroller instanceof Node && scroller.contains(trigger)) dismiss();
     };
     window.addEventListener('resize', dismiss);
     window.addEventListener('scroll', onScroll, true);
@@ -294,14 +298,17 @@ export function SwipeActions({
       if (event.key === 'Escape') close();
     };
     const onScroll = (event: Event) => {
-      // The LIST moving under an open row closes it; another ROW'S drawer moving
-      // does not. Closing row A animates its own scrollLeft back to 0, and every
-      // frame of that was reaching row B as "something else scrolled", so the row
-      // the thumb had just opened shut itself before the finger left the glass.
-      const target = event.target;
-      if (target === scrollerRef.current) return;
-      if (target instanceof Element && target.hasAttribute('data-swipe-track')) return;
-      close();
+      // The LIST moving under an open row closes it; a scroller that does not
+      // carry the row does not. Closing row A animates its own scrollLeft back to
+      // 0, and every frame of that was reaching row B as "something else
+      // scrolled", so the row the thumb had just opened shut itself before the
+      // finger left the glass — and a live transcript, which rewrites its own
+      // `scrollTop` on every update the session receives, reached every open row
+      // on another screen the very same way.
+      const track = scrollerRef.current;
+      const scroller = event.target;
+      if (!track || scroller === track) return;
+      if (scroller instanceof Node && scroller.contains(track)) close();
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
