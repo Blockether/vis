@@ -102,9 +102,6 @@ label input {
 .search-field input {
   padding-right: 2.5rem;
 }
-.sort-field {
-  justify-self: end;
-}
 kbd {
   position: absolute;
   right: 0.625rem;
@@ -561,7 +558,6 @@ dialog form label {
     visibility: hidden;
   }
   .toolbar {
-    grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
   }
   .search-field input {

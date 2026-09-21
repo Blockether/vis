@@ -247,7 +247,7 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
-test('the sort control stays at the end of the toolbar on every width', () => {
+test('the search field and the sort control share one toolbar line at every width', () => {
   const style = document.createElement('style');
   style.textContent = readFileSync('web/style.css', 'utf8');
   document.body.append(style);
@@ -256,12 +256,12 @@ test('the sort control stays at the end of the toolbar on every width', () => {
   expect(declaration('.toolbar').getPropertyValue('grid-template-columns')).toBe(
     'minmax(0, 1fr) auto',
   );
-  // The toolbar collapses to a single column on narrow screens, so the sort control carries
-  // its own alignment instead of wrapping to the left edge under the search field.
-  expect(declaration('.sort-field').getPropertyValue('justify-self')).toBe('end');
+  // Collapsing the toolbar to a single column on narrow screens dropped the sort control onto a
+  // second line under the search field, so the narrow query only tightens the gap.
   const narrow = [...rules.find((rule) => rule.conditionText === '(max-width: 820px)').cssRules],
     narrowToolbar = narrow.find((rule) => rule.selectorText === '.toolbar').style;
-  expect(narrowToolbar.getPropertyValue('grid-template-columns')).toBe('minmax(0, 1fr)');
+  expect(narrowToolbar.getPropertyValue('grid-template-columns')).toBe('');
+  expect(narrowToolbar.getPropertyValue('gap')).toBe('0.5rem');
   expect(narrow.some((rule) => rule.selectorText.includes('.sort-field'))).toBe(false);
 });
 
