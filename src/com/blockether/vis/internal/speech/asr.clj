@@ -6,7 +6,8 @@
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [taoensso.telemere :as tel])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineRecognizerResult OfflineStream OfflineTransducerModelConfig WaveReader]
            [java.io File]))
@@ -150,6 +151,52 @@
             build)]
 
     (OfflineRecognizer. config)))
+
+;; ONE loaded recognizer, reused by every clip. Building one READS THE WHOLE
+;; ~640 MB model, so a recognizer per recording made a three-second dictation
+;; wait for the model again — seconds on an idle machine, a minute and a half on
+;; a busy one (#275). The model files ARE the cache key: point
+;; `VIS_PARAKEET_MODEL_DIR` somewhere else and the next transcription releases
+;; the old recognizer and loads the new model, instead of answering from a model
+;; nobody asked for.
+(defonce ^:private loaded* (atom nil))
+
+(defn- release-native!
+  "Free one recognizer's NATIVE memory. Total: a release that throws has released
+   either way, and no caller could act on the difference."
+  [^OfflineRecognizer r]
+  (when r (try (.release r) (catch Throwable _ nil))))
+
+(defn release!
+  "Drop the cached recognizer and free the model it holds — the call for shutdown
+   and for a reconfiguration that must not keep a model in memory. The next
+   transcription loads one again. Safe when nothing is cached."
+  []
+  (locking loaded*
+    (let [current @loaded*]
+      (reset! loaded* nil)
+      (release-native! (:recognizer current)))))
+
+(defn- cached-recognizer
+  "The recognizer for `files`, built ONCE and answered to every later clip. The
+   caller holds the same monitor while it decodes ([[transcribe-file!]]), so the
+   instance answered here is never released under a decode still running."
+  ^OfflineRecognizer [files]
+  (locking loaded*
+    (let [current @loaded*]
+      (if (= files (:key current))
+        (:recognizer current)
+        (let [started (System/nanoTime)
+              r (recognizer files)]
+
+          (release-native! (:recognizer current))
+          (reset! loaded* {:key files :recognizer r})
+          (tel/log! {:level :info
+                     :id ::recognizer-loaded
+                     :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
+                            :encoder (:encoder files)}
+                     :msg "loaded the Parakeet recognizer"})
+          r)))))
 
 (defn- u16le
   ^long [^bytes b ^long off]
@@ -459,25 +506,40 @@
            (long (alength samples))
 
            plan
-           (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))
+           (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))]
 
-           _
-           (report {:phase :transcribing :progress 0})
+       ;; DECODE UNDER THE CACHE'S OWN MONITOR: one native recognizer serves every
+       ;; surface that transcribes — a voice job and an attached memo meet here —
+       ;; sherpa promises nothing about decoding on one from two threads, and the
+       ;; monitor is also what keeps [[release!]] from freeing a model out from
+       ;; under a decode.
+       (locking loaded*
+         (let [^OfflineRecognizer r
+               (cached-recognizer files)
 
-           ^OfflineRecognizer r
-           (recognizer files)]
+               _
+               (report {:phase :transcribing :progress 0})
 
-       (try (let [decoded (mapv (fn [[start end]]
-                                  (let [chunk (decode-chunk! r samples sample-rate start end)]
-                                    (report {:phase :transcribing
-                                             :progress
-                                             (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
-                                    chunk))
-                                plan)]
-              {:text (->> decoded
-                          (map :text)
-                          (remove str/blank?)
-                          (str/join " ")
-                          str/trim)
-               :words (into [] (mapcat :words) decoded)})
-            (finally (try (.release r) (catch Throwable _))))))))
+               started
+               (System/nanoTime)
+
+               decoded
+               (mapv (fn [[start end]]
+                       (let [chunk (decode-chunk! r samples sample-rate start end)]
+                         (report {:phase :transcribing
+                                  :progress (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
+                         chunk))
+                     plan)]
+
+           (tel/log! {:level :info
+                      :id ::decoded
+                      :data {:audio-seconds (/ total (double (max 1 sample-rate)))
+                             :chunks (count plan)
+                             :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}
+                      :msg "decoded a recording"})
+           {:text (->> decoded
+                       (map :text)
+                       (remove str/blank?)
+                       (str/join " ")
+                       str/trim)
+            :words (into [] (mapcat :words) decoded)}))))))

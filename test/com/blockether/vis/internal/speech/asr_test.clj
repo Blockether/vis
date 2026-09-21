@@ -257,6 +257,89 @@
                           (expect (= 16000 (alength ^floats (.getSamples reader)))))
                         (finally (.delete wav))))))
 
+;; Regression, issue #275: every clip used to build its own `OfflineRecognizer` and
+;; release it at the end, so a three-second dictation reloaded the ~640 MB model each
+;; time — a second on an idle machine, 52-98 s on a busy one, with the TUI saying only
+;; "transcribing" the whole time.
+(defdescribe
+  recognizer-cache-test
+  (it "builds the recognizer once and answers every later clip from the cache"
+      (let [built
+            (atom 0)
+
+            files
+            (asr/model-files "/m")]
+
+        (with-redefs-fn {#'asr/recognizer (fn [_files]
+                                            (swap! built inc)
+                                            (Object.))
+                         #'asr/release-native! (fn [_r]
+                                                 nil)}
+          (fn []
+            (try (asr/release!)
+                 (let [first-load
+                       (#'asr/cached-recognizer files)
+
+                       second-load
+                       (#'asr/cached-recognizer files)]
+
+                   (expect (= 1 @built))
+                   (expect (identical? first-load second-load)))
+                 (finally (asr/release!)))))))
+  (it "releases the loaded model when the model directory changes, and on release!"
+      (let [built
+            (atom [])
+
+            released
+            (atom [])]
+
+        (with-redefs-fn {#'asr/recognizer (fn [files]
+                                            (swap! built conj (:encoder files))
+                                            (:encoder files))
+                         #'asr/release-native! (fn [r]
+                                                 ;; releasing nothing is a no-op in
+                                                 ;; production; only real models count
+                                                 (when r (swap! released conj r)))}
+          (fn []
+            (try (asr/release!)
+                 (#'asr/cached-recognizer (asr/model-files "/one"))
+                 (#'asr/cached-recognizer (asr/model-files "/two"))
+                 (expect (= ["/one/encoder.int8.onnx" "/two/encoder.int8.onnx"] @built))
+                 (expect (= ["/one/encoder.int8.onnx"] @released))
+                 (asr/release!)
+                 (expect (= ["/one/encoder.int8.onnx" "/two/encoder.int8.onnx"] @released))
+                 (finally (asr/release!)))))))
+  (it "transcribes one clip after another through the SAME recognizer"
+      (let [dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-speech-asr-cache-test"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            wav
+            (java.io.File/createTempFile "vis-speech-asr-cache" ".wav")
+
+            built
+            (atom 0)]
+
+        (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+          (spit (io/file dir name) "x"))
+        (write-silence-wav! wav 1.5)
+        (with-redefs-fn {#'asr/ensure-model! (fn [dir _report]
+                                               dir)
+                         #'asr/recognizer (fn [_files]
+                                            (swap! built inc)
+                                            (Object.))
+                         #'asr/release-native! (fn [_r]
+                                                 nil)
+                         #'asr/decode-chunk! (fn [_r _samples _sample-rate _start _end]
+                                               {:text "one" :words []})}
+          (fn []
+            (try (asr/release!)
+                 (expect (= {:text "one" :words []} (asr/transcribe-file! (str dir) (str wav))))
+                 (expect (= {:text "one" :words []} (asr/transcribe-file! (str dir) (str wav))))
+                 (expect (= 1 @built))
+                 (finally (asr/release!) (.delete wav) (files/delete-dir! dir))))))))
+
 (defdescribe chunk-plan-test
              ;; Progress used to be impossible to report at all: the whole recording went
              ;; into ONE offline `decode` call, so a two-minute clip was a black box.
