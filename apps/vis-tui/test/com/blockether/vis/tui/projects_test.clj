@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
@@ -226,20 +225,33 @@
     (is (false? (get-in @state/app-db [:project-sidebar :loading?]))))
   (let [calls (atom [])]
     (with-redefs-fn {#'state/app-db (atom (fixture-db))
-                     #'screen/with-dialog-lock (fn [f]
-                                                 (f))
-                     #'dlg/text-input-dialog! (constantly " /work/new ")
                      #'vis/worker-future (fn [_ f]
                                            (f))
                      #'vis/gateway-list-projects (constantly [project-a project-b])
                      #'vis/gateway-ensure-project-for-root! (fn [path]
                                                               (swap! calls conj path)
                                                               project-b)}
-      #(do (#'screen/add-project!
-            nil
-            (fn [project]
-              (swap! calls conj project)))
-           (is (= ["/work/new" project-b] @calls))))))
+      #(let [select!
+             (fn [project]
+               (swap! calls conj project)) press!
+             (fn [k]
+               (#'screen/project-sidebar-key!
+                (cap/key-stroke k)
+                (fn [_])
+                (fn [path]
+                  (#'screen/add-project! path select!))
+                (fn [_])
+                (fn [_])))]
+         ;; Adding a project is a rail action, not a dialog: `+` opens the field in
+         ;; place, the path is typed into it and Enter files it.
+         (press! \+) (is (= {:text "" :cursor 0} (get-in @state/app-db [:project-sidebar :adding])))
+         (doseq [c " /work/new "]
+           (press! c)) (is (= " /work/new "
+                              (get-in @state/app-db [:project-sidebar :adding :text]))) (press!
+                                                                                          :enter)
+         (is (nil? (get-in @state/app-db [:project-sidebar :adding]))) (is (= ["/work/new"
+                                                                               project-b]
+                                                                              @calls))))))
 
 (deftest project-sidebar-input-test
   (let [db (fixture-db)]
@@ -251,7 +263,26 @@
     (is (= [:blur] (projects/key-action db (cap/key-stroke :esc))))
     (is (nil? (projects/key-action db (KeyStroke. \x true false))))
     (is (nil? (projects/key-action (assoc-in db [:project-sidebar :open?] false)
-                                   (cap/key-stroke \+))))))
+                                   (cap/key-stroke \+)))))
+  ;; With its field open the rail is an editor: ordinary keys are the path, Enter
+  ;; files the trimmed path and Esc closes the field without leaving the rail.
+  (let [typing (assoc-in (fixture-db) [:project-sidebar :adding] {:text "/work/vi" :cursor 8})]
+    (is (= [:adding {:text "/work/vis" :cursor 9}]
+           (projects/key-action typing (cap/key-stroke \s))))
+    (is (= [:adding {:text "/work/v" :cursor 7}]
+           (projects/key-action typing (cap/key-stroke :backspace))))
+    (is (= [:adding {:text "/work/vi" :cursor 0}]
+           (projects/key-action typing (cap/key-stroke :home))))
+    (is (= [:adding {:text "/work/vi" :cursor 7}]
+           (projects/key-action typing (cap/key-stroke :left))))
+    (is (= [:add-commit "/work/vi"] (projects/key-action typing (cap/key-stroke :enter))))
+    (is (= [:adding nil] (projects/key-action typing (cap/key-stroke :esc))))
+    (is (= [:noop] (projects/key-action typing (cap/key-stroke :down))))
+    ;; C-x still reaches global navigation from inside the field.
+    (is (nil? (projects/key-action typing (KeyStroke. \x true false))))
+    ;; A pasted path arrives as one line: newlines and paste markers never enter it.
+    (is (= {:text "/work/v is" :cursor 10}
+           (projects/add-field-insert {:text "/work/v" :cursor 7} "\n is\uE201")))))
 
 (deftest project-sidebar-width-test
   ;; Keep the sidebar bounded without squeezing the conversation below 60 columns.
@@ -304,6 +335,51 @@
              (projects/key-action
                db
                (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5))))))))
+
+(deftest project-sidebar-inline-add-test
+  ;; The whole add lives on the rail: its field, its caret and the hint that ends
+  ;; it. Nothing here opens a dialog.
+  (doseq [cols [40 120]]
+    (let [db (assoc-in (fixture-db) [:project-sidebar :adding] {:text "/work/new" :cursor 9})
+          caret (atom nil)
+          capture (cap/capture! {:cols cols
+                                 :rows 18
+                                 :paint!
+                                 (fn [{:keys [screen]}]
+                                   (reset! caret
+                                     (projects/paint! (.newTextGraphics screen) db cols 18)))})
+          lines (str/split-lines (cap/frame-text capture))]
+
+      (is (nil? (:error capture)))
+      (is (str/includes? (nth lines 3) "› /work/new"))
+      (is (str/includes? (nth lines 16) "Esc cancel"))
+      (is (= 12 (.getColumn ^TerminalPosition @caret)))
+      (is (= 3 (.getRow ^TerminalPosition @caret)))))
+  ;; A resting rail claims no caret, so the chat keeps its own.
+  (let [capture (cap/capture! {:cols 40
+                               :rows 18
+                               :paint!
+                               (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) (fixture-db) 40 18))})]
+    (is (nil? (:error capture)))
+    (is (nil? (:ret capture)))))
+
+(deftest project-rail-takes-a-pasted-path-test
+  ;; A path pasted while the field is open belongs to the field — not to the chat
+  ;; composer, and not to attachment intake.
+  (with-redefs [state/app-db (atom (assoc-in (fixture-db)
+                                     [:project-sidebar :adding]
+                                     {:text "/work/" :cursor 6}))]
+    (let [before (:input @state/app-db)]
+      (#'screen/insert-pasted-text! "vis")
+      (is (= {:text "/work/vis" :cursor 9} (get-in @state/app-db [:project-sidebar :adding])))
+      (is (= before (:input @state/app-db)))))
+  ;; With no field open the composer keeps the paste.
+  (with-redefs [state/app-db (atom (fixture-db))]
+    (let [before (:input @state/app-db)]
+      (#'screen/insert-pasted-text! "vis")
+      (is (nil? (get-in @state/app-db [:project-sidebar :adding])))
+      (is (not= before (:input @state/app-db))))))
 
 (deftest project-sidebar-footer-error-test
   (let [db
@@ -434,7 +510,7 @@
           (is (str/includes? (.renderHtml html) "Projects")))))))
 
 (deftest project-sidebar-dispatch-test
-  (let [added (atom 0)]
+  (let [added (atom [])]
     (with-redefs [state/app-db (atom (fixture-db))
                   vis/gateway-list-projects (constantly [project-a project-b])
                   vis/worker-future (fn [_ f]
@@ -442,7 +518,7 @@
                   timg/images-protocol (constantly nil)]
 
       (let [select! #(state/dispatch [:select-project (get % "id") [] "unused"])
-            add! #(swap! added inc)
+            add! #(swap! added conj %)
             refresh! (fn [_])
             menu! (fn [_]
                     (throw (ex-info "Wrong menu action" {})))]
@@ -453,7 +529,11 @@
         (is (= "b" (:active-project-id @state/app-db)))
         (is (= "background-turn" (:gateway-turn-id @state/app-db)))
         (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh! menu!)
-        (is (= 1 @added))
+        (is (= {:text "" :cursor 0} (get-in @state/app-db [:project-sidebar :adding])))
+        (#'screen/project-sidebar-key! (cap/key-stroke \/) select! add! refresh! menu!)
+        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu!)
+        (is (= ["/"] @added))
+        (is (nil? (get-in @state/app-db [:project-sidebar :adding])))
         (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh! menu!)
         (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
         (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh! menu!)))

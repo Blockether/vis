@@ -2301,19 +2301,19 @@
 (defn- insert-pasted-text!
   [text]
   (when-not (empty? text)
-    (if (input/use-placeholder? text)
-      (do (state/dispatch [:add-paste text])
-          (let [{:keys [paste-counter pastes] :as db}
-                @state/app-db
+    (if-let [field (get-in @state/app-db [:project-sidebar :adding])]
+      ;; The rail's own add field is a text input: a pasted path belongs in it.
+      (state/dispatch [:project-sidebar {:adding (projects/add-field-insert field text)}])
+      (if (input/use-placeholder? text)
+        (do (state/dispatch [:add-paste text])
+            (let [{:keys [paste-counter pastes] :as db} @state/app-db
+                  entry (get pastes paste-counter)]
 
-                entry
-                (get pastes paste-counter)]
-
-            (state/dispatch [:update-input
-                             (input/paste-text (:input db)
-                                               (input/format-paste-placeholder entry))])))
-      (let [db @state/app-db]
-        (state/dispatch [:update-input (input/paste-text (:input db) text)])))))
+              (state/dispatch [:update-input
+                               (input/paste-text (:input db)
+                                                 (input/format-paste-placeholder entry))])))
+        (let [db @state/app-db]
+          (state/dispatch [:update-input (input/paste-text (:input db) text)]))))))
 
 (defn- pick-attachments!
   [screen]
@@ -3460,18 +3460,24 @@
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
-      (binding [frame/*column-offset* 0]
-        (projects/paint! (frame/surface-graphics screen screen-cols rows)
-                         (if (project-sidebar-locked? db screen-cols)
-                           (assoc-in db [:project-sidebar :open?] false)
-                           db)
-                         screen-cols
-                         rows))
-      (when-not (project-sidebar-locked? db screen-cols)
-        (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
-          (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
-            (when (or (get-in db [:project-sidebar :focused?]) (< (.getColumn cursor) (long width)))
-              (.setCursorPosition screen nil)))))
+      (let [rail-cursor (binding [frame/*column-offset* 0]
+                          (projects/paint! (frame/surface-graphics screen screen-cols rows)
+                                           (if (project-sidebar-locked? db screen-cols)
+                                             (assoc-in db [:project-sidebar :open?] false)
+                                             db)
+                                           screen-cols
+                                           rows))]
+        (when-not (project-sidebar-locked? db screen-cols)
+          (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
+            ;; The rail's inline add field owns the caret while it is open; otherwise
+            ;; the rail hides a chat cursor it would paint over.
+            (if rail-cursor
+              (binding [frame/*column-offset* 0]
+                (frame/set-cursor! screen rail-cursor))
+              (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
+                (when (or (get-in db [:project-sidebar :focused?])
+                          (< (.getColumn cursor) (long width)))
+                  (.setCursorPosition screen nil)))))))
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -5609,23 +5615,19 @@
                                    {:opening nil :error "Open failed · select to retry"}]))))))))))
 
 (defn- add-project!
-  "Get or create a root-bound project using the shared input dialog and gateway API."
-  [screen select!]
-  (when-let [path (with-dialog-lock #(dlg/text-input-dialog!
-                                       screen
-                                       "Add project" "Project directory"
-                                       :body "Absolute directory on the gateway host"))]
-    (when-not (str/blank? path)
-      (state/dispatch [:project-sidebar {:loading? true :error nil}])
-      (vis/worker-future
-        "tui-add-project"
-        (fn []
-          (try (let [project (vis/gateway-ensure-project-for-root! (str/trim path))]
-                 (refresh-projects!)
-                 (select! project))
-               (catch Throwable _
-                 (state/dispatch [:project-sidebar
-                                  {:loading? false :error "Add failed · check directory"}]))))))))
+  "Get or create a root-bound project from a path typed in the rail's own field."
+  [path select!]
+  (when-not (str/blank? path)
+    (state/dispatch [:project-sidebar {:loading? true :error nil}])
+    (vis/worker-future "tui-add-project"
+                       (fn []
+                         (try (let [project (vis/gateway-ensure-project-for-root! (str/trim path))]
+                                (refresh-projects!)
+                                (select! project))
+                              (catch Throwable _
+                                (state/dispatch [:project-sidebar
+                                                 {:loading? false
+                                                  :error "Add failed · check directory"}])))))))
 
 (defn- group-color-items
   "One pick row per palette token, straight from the gateway contract's closed
@@ -5786,7 +5788,7 @@
 (defn- toggle-project-sidebar!
   []
   (let [open? (not (get-in @state/app-db [:project-sidebar :open?]))]
-    (state/dispatch [:project-sidebar {:open? open? :focused? open? :index 0}])
+    (state/dispatch [:project-sidebar {:open? open? :focused? open? :index 0 :adding nil}])
     (when open? (refresh-projects!))))
 
 (defn- project-sidebar-key!
@@ -5802,26 +5804,39 @@
       (menu! value)
 
       :select
-      (select! value)
+      (do (state/dispatch [:project-sidebar {:adding nil}]) (select! value))
 
       :session
       (let [before (:active-tab-id @state/app-db)]
         ;; Invalidate a slower project lookup before focusing this exact session.
-        (state/dispatch [:project-sidebar {:opening nil :request-id nil :focused? false}])
+        (state/dispatch [:project-sidebar
+                         {:opening nil :request-id nil :focused? false :adding nil}])
         (state/dispatch [:select-tab-by-session value])
         (when-not (= before (:active-tab-id @state/app-db)) (refresh! false)))
 
       :add
-      (add!)
+      ;; Adding happens IN the rail: `+` opens its own field on the row under the
+      ;; header instead of taking the screen away for a modal.
+      (state/dispatch [:project-sidebar
+                       {:adding (or (get-in @state/app-db [:project-sidebar :adding])
+                                    (projects/add-field))
+                        :focused? true
+                        :index 0}])
+
+      :adding
+      (state/dispatch [:project-sidebar {:adding value}])
+
+      :add-commit
+      (do (state/dispatch [:project-sidebar {:adding nil}]) (add! value))
 
       :refresh
       (refresh-projects!)
 
       :hide
-      (state/dispatch [:project-sidebar {:open? false :focused? false}])
+      (state/dispatch [:project-sidebar {:open? false :focused? false :adding nil}])
 
       (:blur :blur-pass)
-      (state/dispatch [:project-sidebar {:focused? false}])
+      (state/dispatch [:project-sidebar {:focused? false :adding nil}])
 
       :focus
       (state/dispatch [:project-sidebar {:focused? true}])
@@ -6850,7 +6865,7 @@
                                                {:build-id build-id
                                                 :root (get project "workspace_root")}))
                          (persist-tabs!)))))
-                 add-project! #(add-project! screen select-project!)
+                 add-project! #(add-project! % select-project!)
                  switch-project! toggle-project-sidebar!
                  sidebar-key! #(project-sidebar-key! %
                                                      select-project!
@@ -6956,19 +6971,24 @@
                        (let [pasted (.toString sb)
                              current (:attachments @state/app-db)
                              workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
-                             result (cond (.isEmpty pasted) (if-let [image
-                                                                     (input/read-clipboard-image!)]
-                                                              (attachment-intake/clipboard-image
-                                                                (attachment-capabilities!)
-                                                                current
-                                                                image)
-                                                              {:handled? false :source :clipboard})
-                                          (attachment-intake/dropped-files pasted workspace-root)
-                                          (attachment-intake/file-drop (attachment-capabilities!)
-                                                                       current
-                                                                       pasted
-                                                                       workspace-root)
-                                          :else {:handled? false :source :drop})]
+                             result (cond
+                                      ;; The rail's add field claims a pasted path
+                                      ;; before attachment intake can.
+                                      (get-in @state/app-db [:project-sidebar :adding])
+                                      {:handled? false :source :project-rail}
+                                      (.isEmpty pasted) (if-let [image
+                                                                 (input/read-clipboard-image!)]
+                                                          (attachment-intake/clipboard-image
+                                                            (attachment-capabilities!)
+                                                            current
+                                                            image)
+                                                          {:handled? false :source :clipboard})
+                                      (attachment-intake/dropped-files pasted workspace-root)
+                                      (attachment-intake/file-drop (attachment-capabilities!)
+                                                                   current
+                                                                   pasted
+                                                                   workspace-root)
+                                      :else {:handled? false :source :drop})]
 
                          (vreset! paste-buffer nil)
                          (if (:handled? result)

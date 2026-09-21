@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.projects
   "Left-hand project navigation. Geometry, hit targets and keyboard share one model."
-  (:require [com.blockether.vis.tui.components :as components]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -183,9 +184,101 @@
         (when (pos? (long unread)) (str separator unread " NEW"))
         (when (= (get project "id") opening) " · Loading…")))))
 
+(defn add-field
+  "The inline add field's empty state — what `+` opens in place of a modal."
+  []
+  {:text "" :cursor 0})
+
+(defn add-field-insert
+  "Insert `s` at the caret and return the field's next state. Control characters
+   and bracketed-paste markers are dropped, so a pasted path arrives as one line."
+  [field s]
+  (let [text
+        (str (:text field))
+
+        cursor
+        (max 0 (min (long (or (:cursor field) 0)) (count text)))
+
+        s
+        (str/replace (str s) #"[\p{Cntrl}\uE200\uE201]" "")]
+
+    {:text (str (subs text 0 cursor) s (subs text cursor)) :cursor (+ cursor (count s))}))
+
+(defn- add-field-erase
+  "Delete the character before (`-1`) or under (`1`) the caret."
+  [field delta]
+  (let [text
+        (str (:text field))
+
+        cursor
+        (max 0 (min (long (or (:cursor field) 0)) (count text)))]
+
+    (cond (neg? (long delta)) (if (zero? cursor)
+                                {:text text :cursor 0}
+                                {:text (str (subs text 0 (dec cursor)) (subs text cursor))
+                                 :cursor (dec cursor)})
+          (>= cursor (count text)) {:text text :cursor cursor}
+          :else {:text (str (subs text 0 cursor) (subs text (inc cursor))) :cursor cursor})))
+
+(defn- add-field-caret
+  "Move the caret by a delta, or to `:home`/`:end`."
+  [field where]
+  (let [text
+        (str (:text field))
+
+        cursor
+        (max 0 (min (long (or (:cursor field) 0)) (count text)))]
+
+    {:text text
+     :cursor (case where
+               :home
+               0
+
+               :end
+               (count text)
+
+               (max 0 (min (count text) (+ cursor (long where)))))}))
+
+(defn- add-field-action
+  "Keys while the inline add field is open. Enter submits the trimmed path, Esc
+   closes the field without leaving the rail, and everything else is typing."
+  [field ^KeyStroke key]
+  (let [kind
+        (.getKeyType key)
+
+        ch
+        (.getCharacter key)]
+
+    (cond (= KeyType/Escape kind) [:adding nil]
+          (= KeyType/Enter kind) [:add-commit (str/trim (str (:text field)))]
+          (= KeyType/Backspace kind) [:adding (add-field-erase field -1)]
+          (= KeyType/Delete kind) [:adding (add-field-erase field 1)]
+          (= KeyType/ArrowLeft kind) [:adding (add-field-caret field -1)]
+          (= KeyType/ArrowRight kind) [:adding (add-field-caret field 1)]
+          (= KeyType/Home kind) [:adding (add-field-caret field :home)]
+          (= KeyType/End kind) [:adding (add-field-caret field :end)]
+          (and (= KeyType/Character kind) ch) [:adding (add-field-insert field ch)]
+          :else [:noop])))
+
+(defn- paint-add-field!
+  "Paint the inline add field on the rail's spare header row, returning the
+   position its caret sits at — or nil when no field is open."
+  [g db cols rows]
+  (when-let [field (get-in db [:project-sidebar :adding])]
+    (when-let [{:keys [left width]} (geometry db cols rows)]
+      (when (and (> (long width) 8) (> (long rows) 6))
+        (dlg/draw-text-input-field! g
+                                    (long left)
+                                    3
+                                    (long width)
+                                    (str (:text field))
+                                    (long (or (:cursor field) 0))
+                                    "/absolute/directory")))))
+
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
-   Waiting and unread sessions have filled buttons and independently focusable rows."
+   Waiting and unread sessions have filled buttons and independently focusable rows.
+   Returns the caret position of the inline add field, or nil when none is open."
   [g db cols rows]
   (binding [interactions/hit-map
             hit-map
@@ -276,7 +369,7 @@
           (.register interactions/hit-map
                      (assoc entry
                        :bounds {:col (inc left) :row row :width (max 0 (- width 2)) :height 1})))
-        (when (and (empty? (:items sidebar)) (> rows 8))
+        (when (and (empty? (:items sidebar)) (not (:adding sidebar)) (> rows 8))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (p/put-str! g
                       (+ left 2)
@@ -290,18 +383,24 @@
             (p/put-str! g (+ left 2) (- rows 4) (p/truncate-cols error (max 0 (- width 4))))))
         (when (> rows 5)
           (let [available (max 0 (- width 4))
-                hints ["↑↓ select · ↵ open · g menu · C-x w hide · Esc chat"
-                       "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
-                       ;; The narrowest rail still spells every verb: tighter
-                       ;; separators buy the room the words need.
-                       "↑↓·↵ open·g menu·C-x w hide·Esc chat" "↑↓ · ↵ · g menu · C-x w hide · Esc"
-                       "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
-                       "↑↓ ↵ g C-x w Esc"]
+                hints (if (:adding sidebar)
+                        ;; The field owns the keyboard while it is open, so the rail
+                        ;; spells only what ends it.
+                        ["↵ add project · Esc cancel" "↵ add · Esc cancel" "↵ add · Esc"]
+                        ["↑↓ select · ↵ open · g menu · C-x w hide · Esc chat"
+                         "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
+                         ;; The narrowest rail still spells every verb: tighter
+                         ;; separators buy the room the words need.
+                         "↑↓·↵ open·g menu·C-x w hide·Esc chat" "↑↓ · ↵ · g menu · C-x w hide · Esc"
+                         "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
+                         "↑↓ ↵ g C-x w Esc"])
                 hint (or (first (filter #(<= (p/display-width %) available) hints)) (last hints))]
 
             (p/set-colors! g t/dialog-hint t/dialog-bg)
             (p/put-str! g (+ left 2) (- rows 2) (p/truncate-cols hint available))))))
-    (.commitFrame hit-map)))
+    (let [cursor (paint-add-field! g db cols rows)]
+      (.commitFrame hit-map)
+      cursor)))
 
 (defn key-action
   "Return a sidebar action or nil to leave the event to the normal TUI dispatcher."
@@ -347,6 +446,9 @@
               [:blur-pass])))
         (not (:focused? sidebar)) nil
         (or (.isCtrlDown key) (.isAltDown key)) nil
+        ;; The inline `+` field owns every ordinary key while it is open: a path
+        ;; is typed, not navigated.
+        (:adding sidebar) (add-field-action (:adding sidebar) key)
         (= KeyType/Escape (.getKeyType key)) [:blur]
         (= KeyType/Tab (.getKeyType key)) [:blur]
         (= KeyType/ArrowUp (.getKeyType key)) [:move -1]
