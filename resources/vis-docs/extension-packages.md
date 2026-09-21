@@ -217,17 +217,46 @@ The catalog resolves the version to its approved full SHA; Git fetches that comm
 and the installer checks the manifest identity and runtime requirements again.
 Moving or deleting a GitHub tag cannot change an approved version's SHA.
 
-For source outside the catalog, use `--revision` with a reviewed full lowercase
-40-character commit SHA instead of `--version`. This deliberately bypasses catalog
-approval, not trust or manifest checks. Use the catalog identifier shown on the extension
-page (`owner/repository` or `owner/repository/folder`), its `github.com/owner/repository`
-HTTPS URL or the extension page URL itself — not a file or tree URL. For source that is
-not in the catalog, `--subdirectory` names the folder instead.
+Use the catalog identifier shown on the extension page (`owner/repository` or
+`owner/repository/folder`), its `github.com/owner/repository` HTTPS URL or the extension
+page URL itself — not a file or tree URL. Source that is not listed installs from
+[a commit you pin yourself](#install-source-that-is-not-in-the-catalog).
 
 GitHub installation stages and validates only the selected project before atomically
 activating a source snapshot. The catalog stores no source distributions. Submodules
 and Git LFS are not fetched; symlinks are refused. Keep required source and portable
 dependency paths inside the selected project, within 4096 entries and 64 MiB.
+
+### Install source that is not in the catalog
+
+A listing is not required. When an extension, or the version you need, is not in the
+catalog, pin the exact commit you reviewed with `--revision` instead of `--version`:
+
+```bash
+vis-agent extension install example/greeting \
+  --revision 8f4c1d2e5a9b70c3e61d84af2b5079cc31de6a04 \
+  --subdirectory extensions/greeting \
+  --project \
+  --trust
+```
+
+Copy the SHA from the commit on GitHub, or read it with `git ls-remote`. It must be the
+full, lowercase 40-character commit SHA; branch and tag names are refused because they can
+move. `--subdirectory` names the package folder in a repository, and `--save` records the
+commit in your configuration for [`extension sync`](#declare-packages-in-configuration).
+
+Vis fetches that commit, verifies it is the one you named and applies the same manifest and
+runtime checks as a listed release. Only catalog moderation is skipped, so review the source
+and its dependencies before you pass `--trust`.
+
+`versions`, `update` and `rollback` work on approved releases and report none for a pinned
+commit. Move to newer code by installing its SHA, or by editing `revision:` in your
+declaration and running `vis-agent extension sync --trust`. The source must carry a new
+`project.version`: an installed name and version cannot be rebound to another commit.
+
+When the code is your own, a local checkout is simpler than a pinned commit:
+`vis-agent extension install ./greeting --project --trust` links the directory and keeps
+your edits live after `/reload`.
 
 ### Check for updates and roll back
 
