@@ -145,4 +145,18 @@ describe('session row inline rename', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Name already exists');
     expect(screen.getByRole('textbox')).toHaveValue('Existing');
   });
+
+  // The list is mostly titles, so the leaf rests at the body step (12px) - one under the
+  // machine, project and set names that head it. The field that REPLACES a title stands
+  // at that same step, or renaming would resize the row it happens inside.
+  it('edits at the same type step the title rests at', async () => {
+    pointing('fine');
+    row();
+
+    expect(screen.getByText(`${STORY_SESSION_ROW.title}`)).toHaveClass('text-body');
+
+    await startRename();
+
+    expect(screen.getByRole('textbox')).toHaveClass('text-body');
+  });
 });

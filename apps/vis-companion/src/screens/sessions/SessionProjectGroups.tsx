@@ -93,7 +93,7 @@ function rowTitle(session: Session): string {
   return title === '' ? 'Untitled session' : title;
 }
 
-/** A group's colour, as the one mark that carries it. */
+/** A group's colour where no rail carries it: one mark, beside a group's name in a menu. */
 function Swatch({ color }: { color: string | null }) {
   return <span aria-hidden className={`size-2.5 shrink-0 ${groupSwatch(color)}`} />;
 }
@@ -147,7 +147,7 @@ function NameForm({
  */
 function SetHeader({ label, count, unit }: { label: string; count: number; unit: string }) {
   return (
-    <div className="flex items-center gap-2 border-t border-edge py-1 pr-2 pl-4">
+    <div className="flex items-center gap-2 border-y border-edge py-1 pr-2 pl-4">
       <span className="font-mono text-chip font-bold tracking-[0.08em] text-dialog-hint uppercase">
         {label}
       </span>
@@ -215,7 +215,8 @@ function GroupBand({
       }}
     >
       {/* The band and its rows share one coloured edge, so a group reads as a place
-          rather than as a caption. */}
+          rather than as a caption. That rail is the ONLY place this colour is painted
+          in the list: a dot beside the name repeated what the edge already says. */}
       <span aria-hidden className={`w-1 shrink-0 ${groupSwatch(color)}`} />
       <button
         type="button"
@@ -227,7 +228,6 @@ function GroupBand({
         <span className={LIST_MARK}>
           <ChevronIcon open={isOpen} className="size-3 text-dialog-hint" />
         </span>
-        <Swatch color={color} />
         <span className="min-w-0 truncate font-mono text-ui font-bold text-white">{name}</span>
         <HeaderMeta>
           <HeaderTally count={count} unit="session" />

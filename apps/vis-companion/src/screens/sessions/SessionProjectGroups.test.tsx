@@ -125,9 +125,15 @@ describe('ProjectGroup groups', () => {
     mount();
     const wallet = await band('Wallet work');
     expect(within(wallet).getByText('2 sessions')).toBeInTheDocument();
-    // The band wears its colour twice over: the swatch beside its name, and the rail
-    // down the leading edge it shares with every row filed under it (BLO-167).
-    expect(wallet.querySelectorAll('.bg-group-blue').length).toBeGreaterThanOrEqual(4);
+    // The band wears its colour ONCE, as the rail down the leading edge it shares with
+    // every row filed under it (BLO-167): band rail + one per filed row, nothing else.
+    // A dot beside the name said the same thing a second time, so it is gone.
+    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(3);
+    expect(
+      (await screen.findByRole('button', { name: 'Collapse Wallet work' })).querySelector(
+        '[class*="bg-group-"]',
+      ),
+    ).toBeNull();
     expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     )).toEqual([ROWS[0].id, ROWS[1].id]);
@@ -157,9 +163,13 @@ describe('ProjectGroup groups', () => {
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
     expect(within(groupsHeader).getByText('1 group')).toBeInTheDocument();
+    // Each headline is RULED on both edges, so the set it names reads as a strip over its
+    // own rows instead of as the first of them.
+    expect(groupsHeader).toHaveClass('border-y', 'border-edge');
     // The tally over the sessions is the gateway's LOOSE total, not the band's own two.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
     expect(within(sessionsHeader).getByText('2 sessions')).toBeInTheDocument();
+    expect(sessionsHeader).toHaveClass('border-y', 'border-edge');
 
     // The session set starts under its own word and holds neither filed row.
     const loose: string[] = [];

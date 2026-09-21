@@ -372,9 +372,10 @@ export const SessionRow = memo(function SessionRow({
               the line entirely. They have their own column now. */}
                 <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 @3xl:col-start-auto @3xl:row-start-auto">
                   {/* THE LEAF is the one line a human wrote. It keeps the same
-                JetBrains Mono face as the whole app. Its 13px medium type completes
-                the hierarchy below the larger machine and project names, while every
-                fact beside it steps down to the metadata scale. */}
+                JetBrains Mono face as the whole app. Its 12px medium type completes
+                the hierarchy below the larger machine, project and set names, while
+                every fact beside it steps down to the metadata scale. A list is mostly
+                titles, so one step down is one more row in the same glass. */}
                   {renameDraft !== null ? (
                     <EditableNameField
                       ref={renameInputRef}
@@ -383,7 +384,7 @@ export const SessionRow = memo(function SessionRow({
                       aria-label={`Rename ${title}`}
                       autoCapitalize="sentences"
                       autoCorrect="off"
-                      face="text-title font-medium text-white placeholder:text-white/45"
+                      face="text-body font-medium text-white placeholder:text-white/45"
                       fit="track"
                       placeholder="Untitled session"
                       readOnly={renameBusy}
@@ -428,7 +429,7 @@ export const SessionRow = memo(function SessionRow({
                   ) : (
                     <span
                       title={title}
-                      className={`min-w-0 truncate text-title font-medium mouse:group-hover:text-accent-ink ${
+                      className={`min-w-0 truncate text-body font-medium mouse:group-hover:text-accent-ink ${
                         session.title?.trim() ? 'text-white' : 'text-white/45'
                       }`}
                     >
