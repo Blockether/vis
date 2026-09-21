@@ -286,6 +286,9 @@ jobs:
       - uses: ./.github/actions/test-native-python-sdk
       - name: Upload native build logs
         if: always()
+        # Diagnostics only: an artifact service that refuses the logs must not
+        # fail the build that produced them, and with it the release.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: native-build-logs-${{ matrix.asset }}
@@ -471,6 +474,9 @@ jobs:
       - uses: ./.github/actions/test-native-python-sdk
       - name: Upload native build logs
         if: always()
+        # Diagnostics only: an artifact service that refuses the logs must not
+        # fail the build that produced them, and with it the release.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: native-build-logs-macos-arm64

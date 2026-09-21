@@ -1531,8 +1531,12 @@
   (it "retains engine and TUI build logs even when a build fails"
       (let [workflow (slurp ".github/workflows/native-release.yml")]
         (expect (= 2 (count (re-seq #"name: Upload native build logs" workflow))))
+        ;; A 403 from the artifact service failed the macOS job AFTER its binaries
+        ;; were built and tested, which skipped the attach and took the release
+        ;; down with it: the log upload runs after a failure and can never fail
+        ;; the job itself.
         (expect (= 2
-                   (count (re-seq #"if: always\(\)\n        uses: actions/upload-artifact@v4"
+                   (count (re-seq #"if: always\(\)\n(?:        #[^\n]*\n)*        continue-on-error: true\n        uses: actions/upload-artifact@v4"
                                   workflow))))
         (doseq [name ["engine" "tui"]]
           (expect (= 2
