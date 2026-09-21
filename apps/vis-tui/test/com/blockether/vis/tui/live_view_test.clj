@@ -1170,7 +1170,46 @@
                                                                     :label "Compile"}]))))]
 
         (is (str/includes? (nth (heads-of renamed) 0) "▾ Compile · 1 row")
-            "expansion is keyed by [table-id group-id], so a new label is the same fold")))))
+            "expansion is keyed by [table-id group-id], so a new label is the same fold")))
+    (testing "a band too narrow for the whole name trims the NAME and keeps the count"
+      (let [head (first (filterv #(= :tparent (:kind %))
+                          (lv/plan
+                            (grouped
+                              [(fixture/table-group
+                                 "build"
+                                 {:label
+                                  "Verify release source / python-package / ubuntu-latest"})])
+                            44)))]
+        (is (= 44 (count (:text head))) "a head paints its band exactly, never past the rail")
+        (is (str/includes? (:text head) "▸ Verify release source / pytho… · 1 row")
+            "the count is the head's furniture, not the first thing an ellipsis eats")))))
+
+;; A step is a line with TWO things on it: what it is doing, and what it reports.
+;; The band a narrow pane has is not always wide enough for both — so the words
+;; give way and the number stays, instead of the row running past the rail.
+(deftest live-view-steps-width-test
+  (let [stepped
+        (fn [label]
+          (lv/opened
+            (mounted {}
+                     {:id "steps"
+                      :type :steps
+                      :steps [{:id "s-1" :label label :detail "waiting for a runner" :value 42}]})))
+
+        row-of
+        (fn [p w]
+          (first (filterv #(= :step (:kind %)) (lv/plan p w))))]
+
+    (testing "a step too long for its band trims its words and still reports"
+      (let [row (row-of (stepped "Verify release source / python-package / ubuntu-latest") 44)]
+        (is (= 44 (count (:text row))) "the row paints its band exactly, never past it")
+        (is (str/includes? (:text row) "…") "the words are what gives way")
+        (is (str/ends-with? (:text row) "42")
+            "and what the step reports still rides the right edge")))
+    (testing "a step that fits says everything it has"
+      (let [row (row-of (stepped "Build") 60)]
+        (is (str/includes? (:text row) "Build — waiting for a runner"))
+        (is (str/ends-with? (:text row) "42"))))))
 
 ;; Every string a human reads in this program is markdown already — the
 ;; transcript, the form and the view's own document all speak it — so a live view

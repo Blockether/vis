@@ -198,7 +198,9 @@
 (defn- runs-cut
   "`runs` cut to `w` display columns, the last run that still fits ellipsized —
    the styled twin of `primitives/ellipsize`, so a cell too long for its column
-   says so with the same `…` the rest of the TUI uses."
+   says so with the same `…` the rest of the TUI uses. Every other key a run
+   carries rides through the cut, so this trims painted SEGMENTS — ink, styles
+   and all — as readily as markdown runs."
   [runs w]
   (loop [out
          []
@@ -211,15 +213,15 @@
 
     (if (or (nil? rs) (>= (long used) (long w)))
       out
-      (let [{:keys [text style]}
+      (let [run
             (first rs)
 
             shown
-            (p/ellipsize (str text) (- (long w) (long used)))]
+            (p/ellipsize (str (:text run)) (- (long w) (long used)))]
 
         (recur (cond-> out
                  (seq shown)
-                 (conj {:text shown :style style}))
+                 (conj (assoc run :text shown)))
                (+ (long used) (long (p/display-width shown)))
                (next rs))))))
 
@@ -658,11 +660,17 @@
               (map vector cells widths aligns))
         {:text " │" :fg t/dialog-hint}))
 
+(defn- span-inner
+  "The columns a line spanning the whole table gets INSIDE its frame: every
+   column it covers, plus the rail and the pads standing between them."
+  ^long [widths]
+  (+ (long (reduce + 0 (map long widths))) (* 3 (max 0 (dec (count widths))))))
+
 (defn- span-segments
   "A line that spans the whole table inside its frame: what a table says when it
    holds nothing yet."
   [widths text fg styles]
-  (let [inner (+ (long (reduce + 0 (map long widths))) (* 3 (max 0 (dec (count widths)))))]
+  (let [inner (span-inner widths)]
     [{:text "│ " :fg t/dialog-hint}
      {:text (p/pad-right (p/ellipsize (str text) inner) inner) :fg fg :styles (vec styles)}
      {:text " │" :fg t/dialog-hint}]))
@@ -803,12 +811,18 @@
                         ;; down the same column.
                         reported (when (seq (flat-text value))
                                    (run-segments (md-runs value) t/dialog-hint []))
-                        segments (cond-> said
+                        ;; …and it KEEPS that slot: a step too long for the band
+                        ;; trims its own words with the same `…`, instead of
+                        ;; pushing what it reports off the row.
+                        fitted (cond-> said
+                                 reported
+                                 (runs-cut (max 1 (- (long text-w) (runs-width reported) 1))))
+                        segments (cond-> fitted
                                    reported
                                    (conj {:text (apply str
                                                   (repeat (max 1
                                                                (- (long text-w)
-                                                                  (runs-width said)
+                                                                  (runs-width fitted)
                                                                   (runs-width reported)))
                                                           \space))})
 
@@ -976,8 +990,24 @@
         ;; it into the name.
         head
         (fn [{:keys [parent label tone held is-open]}]
-          (let [text
-                (str (if is-open "▾ " "▸ ") label " · " held " row" (when (not= 1 (long held)) "s"))
+          (let [mark
+                (if is-open "▾ " "▸ ")
+
+                ;; How much the fold holds is the head's own FURNITURE: a band too
+                ;; narrow for the whole name trims the NAME with the same `…` and
+                ;; keeps the count, instead of ellipsizing away the one thing a
+                ;; shut fold says about itself.
+                tail
+                (str " · " held " row" (when (not= 1 (long held)) "s"))
+
+                text
+                (str mark
+                     (p/ellipsize (str label)
+                                  (max 1
+                                       (- (span-inner ws)
+                                          (long (p/display-width mark))
+                                          (long (p/display-width tail)))))
+                     tail)
 
                 segments
                 (span-segments ws text (tone-fg tone t/dialog-hint-key) [p/BOLD])]

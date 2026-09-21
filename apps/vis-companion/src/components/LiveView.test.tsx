@@ -292,6 +292,25 @@ describe('selecting a table row', () => {
     expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
     expect(screen.getByText('Android')).toBeVisible();
   });
+  // Regression, reported from the phone: a long job name ran straight into the
+  // count beside it, so a head read as one run-on line and the name gave way
+  // right up against the number.
+  it('keeps a group head name off the count it carries', () => {
+    const view = matrixView([]);
+    const parent = 'Verify release source / python-package / ubuntu-latest';
+    hostsTable(view).rows = [
+      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent },
+      { id: 'android', cells: ['Android', 'running'], tone: 'running', parent },
+    ];
+    paint({ view, onSelect: vi.fn() });
+
+    const name = screen.getByText(parent);
+    const count = screen.getByText('2 rows');
+    // The name is the only part that may give way, and it stops short of the count.
+    expect(name.className).toContain('truncate');
+    expect(count.className).toContain('shrink-0');
+    expect(count.className).toContain('pl-2');
+  });
   // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
   // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
   // rows were the only ones still repeating their parent's name.
@@ -675,6 +694,35 @@ describe('what a run says about its own layout', () => {
     expect(headline.parentElement?.className).not.toContain('flex');
   });
 
+
+  // Regression, reported from the phone: a step's detail is the part that can be
+  // any length, and it refused to shrink — so a long one pushed the row past the
+  // screen instead of saying a little less.
+  it('trims a long step detail instead of stretching its row', () => {
+    const view: LiveView = {
+      ...opened(),
+      nodes: [
+        {
+          id: 'timeline',
+          type: 'steps',
+          steps: [
+            {
+              id: 'verify',
+              label: 'Verify release source',
+              detail: 'python-package / ubuntu-latest / real SDK engine, waiting for a runner',
+              tone: 'running',
+            },
+          ],
+        },
+      ],
+    };
+    paint({ view });
+
+    const detail = screen.getByText(/real SDK engine/).closest('span') as HTMLElement;
+    expect(detail.className).toContain('truncate');
+    expect(detail.className).toContain('min-w-0');
+    expect(detail.className).not.toContain('shrink-0');
+  });
   // Regression, user report: Activity patches rendered one-by-one on WKWebView and
   // starved the independent elapsed-time paint, leaving its clock visibly frozen.
   it('coalesces a patch burst into one phone paint', async () => {

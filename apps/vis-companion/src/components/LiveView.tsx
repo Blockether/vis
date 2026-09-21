@@ -327,8 +327,11 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
           {step.value && (
             <span className="shrink-0 font-bold tabular-nums text-white">{step.value}</span>
           )}
+          {/* What a step REPORTS keeps its width, and the words beside it give way:
+              a detail that could not shrink pushed the whole row off a narrow screen
+              instead of saying a little less. */}
           {step.detail && (
-            <span className="shrink-0 text-meta text-dialog-hint">
+            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">
               <InlineMarkdown>{step.detail}</InlineMarkdown>
             </span>
           )}
@@ -800,7 +803,10 @@ function TableRows({
                       <span className={`min-w-0 flex-1 truncate ${rowInk(item.tone ?? 'idle')}`}>
                         {item.label}
                       </span>
-                      <span className="shrink-0 font-normal text-meta text-dialog-hint">
+                      {/* The count keeps a step of its own between it and the name, so a
+                          head too long for the band trims the NAME and still reads as two
+                          things instead of one run-on line. */}
+                      <span className="shrink-0 pl-2 font-normal text-meta text-dialog-hint">
                         {held}
                       </span>
                     </Disclosure>
