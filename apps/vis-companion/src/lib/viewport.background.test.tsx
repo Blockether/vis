@@ -161,10 +161,10 @@ describe('the native shell after backgrounding', () => {
 });
 
 // Regression, user report (paraphrased: on the phone the box for typing the group's
-// name cannot be seen): a menu sheet is pinned to the bottom of the window, and the
-// raised keyboard covers that edge — so the field the sheet opened for sat under the
-// keys. The shell already knows how tall the covered band is; it now publishes it, and
-// `Menu`'s sheet lifts by exactly that much (BLO-167).
+// name cannot be seen): a menu hanging under a control low on the window ran into the
+// raised keyboard, so the field it opened for sat under the keys. The shell already
+// knows how tall the covered band is; it now publishes it, and `Menu`'s panel stands
+// on exactly that much (BLO-167).
 describe('the band a raised keyboard covers', () => {
   it('publishes the covered height to whoever is pinned to the bottom edge', () => {
     render(<ViewportProbe />);

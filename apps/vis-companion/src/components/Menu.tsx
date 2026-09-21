@@ -1,11 +1,10 @@
 /**
  * THE ONE MENU.
  *
- * A menu in this app is a SHEET on a phone — docked to the bottom edge over a
- * scrim, capped by the Blockether rule, safe-area aware — and a popover pinned
- * under the control it came from from `sm:` up. It NAMES what it acts on in one
- * band, and every row below that band is a title, the consequence of pressing
- * it, and an optional badge.
+ * A menu in this app is a POPOVER over a scrim, pinned under the control it came
+ * from — the same panel at every width, a phone included, and never a drawer sliding
+ * up from the bottom edge. It NAMES what it acts on in one band, and every row below
+ * that band is a title, the consequence of pressing it, and an optional badge.
  *
  * It is one component because it used to be several. The machine's `⋯` opened a
  * 320px panel with an amber band and two-line rows; the project's `⋯` opened a
@@ -20,7 +19,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { MenuPosition } from '../lib/anchored-menu';
+import { EDGE_MARGIN, type MenuPosition } from '../lib/anchored-menu';
 import { useKeyboardInset } from '../lib/viewport';
 import { ChevronIcon } from './icons';
 import { CloseButton } from './ui';
@@ -29,29 +28,31 @@ import { CloseButton } from './ui';
  * The two widths an anchored panel comes in, each paired with the class that paints
  * it. An anchored popover is PLACED from its own width before it has ever been
  * measured, so the number and the class have to travel together or they drift — and
- * a drifted pair is a menu that right-aligns to nothing.
+ * a drifted pair is a menu that right-aligns to nothing. The class clamps itself to
+ * the screen — `24px` is twice the margin the placement keeps — because a phone is
+ * narrower than the browse panel is wide.
  */
 export const PANEL_SIZES = {
   /** A list of verbs. */
-  menu: { width: 320, className: 'sm:w-80' },
+  menu: { width: 320, className: 'w-[min(20rem,calc(100vw-24px))]' },
   /** A list of folders, which need room for a name and a hint on one line. */
-  browse: { width: 384, className: 'sm:w-96' },
+  browse: { width: 384, className: 'w-[min(24rem,calc(100vw-24px))]' },
 } as const;
 
 export type PanelSize = keyof typeof PANEL_SIZES;
 
-/** Desktop width in px. Must stay equal to the `sm:w-80` the panel paints. */
+/** The width in px the panel paints where the screen has room for it. */
 export const MENU_WIDTH = PANEL_SIZES.menu.width;
 
 /**
  * THE PANEL, and every layer this app anchors to a control is it.
  *
- * A sheet docked to the bottom edge of a phone over a scrim, capped by the
- * Blockether rule and clear of the home indicator; an anchored popover pinned under
- * the control it came from from `sm:` up. `Menu` is one of these and the folder
- * browser is the other — and the browser used to spell the whole box out again by
- * hand, forty characters of it, which is how it ended up as the one surface in the
- * app with no way out but the scrim.
+ * An anchored popover over a scrim, pinned under the control it came from at every
+ * width: a phone gets the panel a desktop gets, not a drawer docked to the bottom
+ * edge of the screen. `Menu` is one of these and the folder browser is the other —
+ * and the browser used to spell the whole box out again by hand, forty characters of
+ * it, which is how it ended up as the one surface in the app with no way out but the
+ * scrim.
  *
  * It is a COLUMN, and it caps its own height; what scrolls inside it is the caller's
  * decision, because a menu scrolls whole while a browser has to keep its path and its
@@ -71,16 +72,23 @@ export function AnchoredPanel({
   role: 'menu' | 'dialog';
   /** What this panel is about, for a reader who cannot see where it hangs. */
   label: string;
-  /** Where the popover sits from `sm:` up; the phone sheet ignores it. */
+  /** Where the popover sits; `null` while its control has not been measured. */
   at: MenuPosition | null;
   onDismiss: () => void;
   children: ReactNode;
 }) {
   // The panel is PORTALED to the document, so the app shell's keyboard pin never
-  // moves it: on iOS the webview stays full height and a sheet docked to the
-  // bottom edge disappeared under the software keyboard - with the name field of
-  // a new group inside it. It lifts itself by the covered height instead.
+  // moves it: on iOS the webview stays full height and a panel hanging under a
+  // control low on the screen disappeared under the software keyboard - with the
+  // name field of a new group inside it. It STANDS on the keyboard instead, keeping
+  // the column its anchor gave it, and the cap it paints trims it to what is left.
   const keyboardInset = useKeyboardInset();
+  const isLifted = keyboardInset > 0;
+  // A panel whose control has not been measured yet still belongs on the screen, so
+  // it keeps the margin every placement keeps rather than the corner of the document.
+  const place = at ?? { left: EDGE_MARGIN, top: EDGE_MARGIN };
+  const top = isLifted ? undefined : place.top;
+  const bottom = isLifted ? keyboardInset + EDGE_MARGIN : place.bottom;
 
   return createPortal(
     <div
@@ -92,17 +100,19 @@ export function AnchoredPanel({
         role={role}
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={label}
-        className={`absolute inset-x-0 bottom-[var(--sheet-bottom,0px)] flex max-h-[calc(82vh-var(--sheet-bottom,0px))] flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-[var(--menu-bottom,auto)] sm:left-[var(--menu-left)] sm:top-[var(--menu-top,auto)] sm:max-h-[var(--menu-max-height,70vh)] sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-float ${PANEL_SIZES[size].className}`}
+        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${PANEL_SIZES[size].className}`}
         style={
           {
-            '--sheet-bottom': `${keyboardInset}px`,
+            '--menu-keyboard': `${keyboardInset}px`,
+            '--menu-left': `${place.left}px`,
             // ONE vertical edge is pinned, and which one says where the panel
             // hangs: a head under the anchor, or a foot standing on top of it. A
             // panel with room for neither keeps its place and wears a tighter cap.
-            ...(at ? { '--menu-left': `${at.left}px` } : {}),
-            ...(at?.top === undefined ? {} : { '--menu-top': `${at.top}px` }),
-            ...(at?.bottom === undefined ? {} : { '--menu-bottom': `${at.bottom}px` }),
-            ...(at?.maxHeight === undefined ? {} : { '--menu-max-height': `${at.maxHeight}px` }),
+            ...(top === undefined ? {} : { '--menu-top': `${top}px` }),
+            ...(bottom === undefined ? {} : { '--menu-bottom': `${bottom}px` }),
+            ...(place.maxHeight === undefined
+              ? {}
+              : { '--menu-max-height': `${place.maxHeight}px` }),
           } as CSSProperties
         }
         onClick={(event) => event.stopPropagation()}
@@ -125,7 +135,7 @@ const LOUD = 'border-b-2 border-dialog-title bg-dialog-title text-dialog-title-f
 const QUIET = 'border-b border-dialog-edge bg-panel-2 text-dialog-hint';
 
 /**
- * The panel: a docked sheet on a phone, an anchored popover from `sm:` up.
+ * The panel, anchored to the control that opened it at every width.
  *
  * The scrim swallows the tap that dismisses it, so a caller never wires one; the
  * key loop stays with the caller, because Escape usually has to unwind a flow
@@ -139,7 +149,7 @@ export function Menu({
 }: {
   /** What this menu is about, for a reader who cannot see where it hangs. */
   label: string;
-  /** Where the popover sits from `sm:` up; the phone sheet ignores it. */
+  /** Where the popover sits, measured from the control that opened it. */
   at: MenuPosition;
   onDismiss: () => void;
   children: ReactNode;
@@ -147,7 +157,7 @@ export function Menu({
   return (
     <AnchoredPanel size="menu" role="dialog" label={label} at={at} onDismiss={onDismiss}>
       {/* This is a dialog containing ordinary buttons, not the ARIA `menu` widget:
-          ARIA menus require roving focus and arrow-key navigation, while this sheet
+          ARIA menus require roving focus and arrow-key navigation, while this panel
           deliberately keeps the browser's familiar Tab order and may also contain
           a heading, an explanation, or an empty-state sentence. */}
       <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
@@ -247,7 +257,7 @@ export function MenuBack({
  * One row. The title carries the choice and the hint carries the CONSEQUENCE —
  * a workspace decision is unrecoverable-ish once the agent starts writing, so no
  * row is allowed to be a bare noun. `min-h-11` keeps every row a real thumb
- * target on a phone sheet.
+ * target on a phone.
  *
  * `danger` is the same row in the app's red, never a different one: a menu whose
  * destructive row is built by hand is how two `⋯` menus stop looking alike.

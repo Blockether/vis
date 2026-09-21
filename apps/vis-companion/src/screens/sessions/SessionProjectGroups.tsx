@@ -1090,12 +1090,12 @@ export const ProjectGroup = memo(function ProjectGroup({
             // verbs above them and read as eight more of them; a tile says what it does
             // by BEING the colour, so the choice is two rows of four and the group's own
             // is the one wearing the accent frame (the pen strip in `AnnotationLayer`).
+            // Nothing is titled over it, either: a strip of colours under the row that
+            // asked for them needs no band spelling this group's name a third time, and
+            // a tile both picks and returns, so the step keeps its own way out.
             if (step.kind === 'colour')
               return (
                 <>
-                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
-                    Colour {band.name}
-                  </MenuBack>
                   <div
                     role="group"
                     aria-label={`Colour for ${band.name}`}

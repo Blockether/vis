@@ -32,8 +32,8 @@ export type MenuPosition = {
 /** Air between the anchor and the menu it drops. */
 const ANCHOR_GAP = 6;
 
-/** Closest the menu ever comes to any edge of the screen. */
-const EDGE_MARGIN = 12;
+/** Closest a panel ever comes to any edge of the screen — or to a raised keyboard. */
+export const EDGE_MARGIN = 12;
 
 /**
  * How tall an anchored panel is allowed to be, as a fraction of the viewport.

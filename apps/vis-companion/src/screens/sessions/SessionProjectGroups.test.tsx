@@ -294,8 +294,9 @@ describe('ProjectGroup groups', () => {
     expect(within(menu).queryByText(String(LOOSE.title))).toBeNull();
   });
 
-  // A GROUP'S COLOUR IS A PALETTE, NOT A COLUMN. Eight named rows stood open under the
-  // verbs of every group sheet, each as tall as a verb and reading like one.
+  // A GROUP'S COLOUR IS A PALETTE, NOT A COLUMN, and nothing is titled over it: eight
+  // named rows stood open under the verbs, each as tall as a verb and reading like one,
+  // under a band that spelled the group's name a third time.
   it('picks a colour off a palette a step in and returns to the verbs', async () => {
     const { client, user } = mount();
     await band('Wallet work');
@@ -303,6 +304,8 @@ describe('ProjectGroup groups', () => {
     const menu = sheet(`Groups in ${ROOT}`);
     expect(within(menu).queryByRole('button', { name: 'Slate' })).toBeNull();
     await user.click(within(menu).getByText('Choose colour'));
+    expect(within(menu).queryByText(/^Colour /)).toBeNull();
+    expect(within(menu).queryByText(/Back to/)).toBeNull();
     // The tile says what it does by being the colour, and the group's own is pressed.
     expect(within(menu).getByRole('button', { name: 'Blue' })).toHaveAttribute(
       'aria-pressed',

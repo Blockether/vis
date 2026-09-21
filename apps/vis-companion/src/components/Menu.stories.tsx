@@ -8,14 +8,14 @@ import { BandButton } from './ui';
 /**
  * THE RARER VERBS OF ONE ROW, HUNG UNDER THE `⋯` THAT ASKED FOR THEM.
  *
- * From `sm:` up it is a popover placed at the anchor's own box; on a phone it is a
- * sheet from the bottom edge, and `at` is ignored — which is why the frame you read
- * this in changes the control and not just its width.
+ * It is a popover placed at the anchor's own box at EVERY width: a phone gets the
+ * panel a desktop gets, clamped to the screen, not a sheet sliding up from the
+ * bottom edge of it.
  *
  * A menu is a LIST OF VERBS, never a form: each row is a title, an optional fact
  * on the same line, and at most one hint under it. When a verb needs a second
  * step, the panel walks — `MenuBack` replaces the band and the same panel holds
- * the step, so nothing is stacked over a phone sheet.
+ * the step, so nothing is stacked over the panel.
  */
 const meta = {
   title: 'Components/Menu',
@@ -26,7 +26,7 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-const AT = { top: 96, left: 360 };
+const AT = { top: 96, left: 82 };
 const noop = () => {};
 const selectedVerb = fn();
 const closedMenu = fn();
@@ -167,7 +167,7 @@ export const Empty: Story = {
 export const StandingOnItsAnchor: Story = {
   args: {
     label: 'Projects on tower',
-    at: { left: 360, bottom: 240 },
+    at: { left: 82, bottom: 240 },
     onDismiss: noop,
     children: (
       <>
@@ -189,10 +189,13 @@ export const StandingOnItsAnchor: Story = {
     });
     const paint = win.getComputedStyle(panel);
     // ONE vertical edge is pinned, and a panel standing above its anchor pins its
-    // foot. This project runs at phone width, where the panel is a docked sheet and
-    // `at` is ignored, so what it holds to account is the placement the panel paints;
-    // the geometry behind it is `anchored-menu.test.ts`.
-    await expect(paint.getPropertyValue('--menu-bottom').trim()).toBe('240px');
+    // foot. This project runs at PHONE width, where the panel was once a sheet docked
+    // across the bottom edge and `at` was ignored: it holds its anchor's column and
+    // its own foot here too. The geometry behind it is `anchored-menu.test.ts`.
+    await expect(win.innerWidth).toBeLessThan(640);
+    await expect(paint.bottom).toBe('240px');
+    await expect(paint.left).toBe('82px');
+    await expect(panel.getBoundingClientRect().width).toBe(Math.min(320, win.innerWidth - 24));
     await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
   },
 };
@@ -205,7 +208,7 @@ export const StandingOnItsAnchor: Story = {
 export const SqueezedAgainstItsAnchor: Story = {
   args: {
     label: 'Projects on relay',
-    at: { left: 360, bottom: 240, maxHeight: 180 },
+    at: { left: 82, bottom: 240, maxHeight: 180 },
     onDismiss: noop,
     children: (
       <>
@@ -221,9 +224,10 @@ export const SqueezedAgainstItsAnchor: Story = {
       name: 'Projects on relay',
     });
     const paint = win.getComputedStyle(panel);
-    // Same caveat as above: this project runs at phone width, where the sheet ignores
-    // `at`, so what is held to account here is the cap the panel PAINTS.
-    await expect(paint.getPropertyValue('--menu-max-height').trim()).toBe('180px');
+    // Same phone width as above, and the cap the placement handed the panel is the
+    // one it wears — never the height of the screen it used to fill from the bottom.
+    await expect(paint.maxHeight).toBe('180px');
+    await expect(paint.bottom).toBe('240px');
     await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
   },
 };

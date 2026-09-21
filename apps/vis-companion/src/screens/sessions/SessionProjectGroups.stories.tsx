@@ -351,8 +351,10 @@ export const GroupVerbs: Story = {
     await expect(within(sheet).getByText('Delete group')).toBeVisible();
     await expect(within(sheet).queryByText('Wallet work')).toBeNull();
     await expect(within(sheet).queryByRole('button', { name: 'Slate' })).toBeNull();
-    // Eight tiles arrive only when asked for, with the one in use wearing the frame.
+    // Eight tiles arrive only when asked for, under no band of their own, with the
+    // one in use wearing the frame.
     await userEvent.click(within(sheet).getByText('Choose colour'));
+    await expect(within(sheet).queryByText(/^Colour /)).toBeNull();
     await expect(within(sheet).getByRole('button', { name: 'Slate' })).toBeVisible();
     await expect(within(sheet).getByRole('button', { name: 'Blue' })).toHaveAttribute(
       'aria-pressed',

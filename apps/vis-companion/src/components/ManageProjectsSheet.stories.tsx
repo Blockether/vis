@@ -65,7 +65,7 @@ export const Inventory: Story = {
   },
 };
 
-/** The desktop gutter must fit just as it does in the phone sheet. */
+/** The desktop gutter must fit just as it does on a phone. */
 export const DesktopInventory: Story = {
   ...Inventory,
   globals: { viewport: { value: 'desktop', isRotated: false } },
