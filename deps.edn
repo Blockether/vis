@@ -16,7 +16,7 @@
         com.blockether/imaging {:mvn/version "0.1.10"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/ruff {:mvn/version "0.3.5"}
-        com.blockether/svar {:mvn/version "0.7.172"}
+        com.blockether/svar {:mvn/version "0.7.173"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "a4961544e7e00bf24beac860b4ffdea9c51d4730"
