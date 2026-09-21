@@ -1201,7 +1201,9 @@ export function LiveViewPanel({
               aria-label={`Open run ${view.title}`}
               onClick={() => setOpened(true)}
             >
-              <BandLabel>RUN</BandLabel>
+              {/* The band's own word never gives way: a squeezed row printed "R…" and spent the
+                  width on the name beside it. Furniture keeps its width; the PROSE truncates. */}
+              <BandLabel className="shrink-0">RUN</BandLabel>
               <span className="min-w-0 shrink truncate">{view.title}</span>
               {summary && (
                 <span className="min-w-0 flex-1 truncate text-dialog-hint">{summary}</span>
@@ -1254,7 +1256,7 @@ export function LiveViewPanel({
                   |
                 </span>
               )}
-              <BandLabel tone="hint" weight="state" className="shrink-0">
+              <BandLabel weight="state" className="shrink-0">
                 LIVE
               </BandLabel>
             </>

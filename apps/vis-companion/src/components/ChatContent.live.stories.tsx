@@ -193,6 +193,44 @@ export const RunningTablet: Story = {
   globals: { viewport: { value: 'tablet', isRotated: false } },
 };
 
+// Regression, user report (screenshot): a long run name ate the band around it. RUN shrank to
+// "R…", the row ran past the card and LIVE trailed off it in light type. The PROSE is what gives
+// way: the band's own words keep their width, and the row still ends INTERRUPT | LIVE inside it.
+const longRunName: LiveView = {
+  ...view,
+  id: 'clojars-release',
+  title: 'Release & Deploy to Clojars · run 18234567',
+  nodes: [{ id: 'status', type: 'status', text: 'Queued · 0 of 6 jobs finished', tone: 'running' }],
+};
+
+export const LongRunName: Story = {
+  args: { liveViews: [longRunName] },
+  globals: { viewport: { value: 'phone', isRotated: false } },
+  play: async ({ canvas }) => {
+    await document.fonts.ready;
+    const live = canvas.getByText('LIVE');
+    const run = canvas.getByText('RUN');
+    const interrupt = canvas.getByRole('button', { name: 'Interrupt' });
+    const band = live.closest('header')!;
+    const row = band.getBoundingClientRect();
+    for (const word of [run, interrupt, live]) {
+      await expect(word.scrollWidth).toBeLessThanOrEqual(word.clientWidth);
+    }
+    await expect(band.scrollWidth).toBeLessThanOrEqual(band.clientWidth);
+    await expect(live.getBoundingClientRect().right).toBeCloseTo(row.right, 0);
+    // The name is the prose, so the name is what ends in an ellipsis.
+    const name = canvas.getByText(longRunName.title);
+    await expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+    await expect(name.getBoundingClientRect().right).toBeLessThanOrEqual(
+      interrupt.getBoundingClientRect().left,
+    );
+    // LIVE reads as the verb beside it: one line of type, one weight, one ink.
+    const state = getComputedStyle(live);
+    await expect(Number(state.fontWeight)).toBeGreaterThanOrEqual(700);
+    await expect(state.color).toBe(getComputedStyle(interrupt).color);
+  },
+};
+
 // Regression, user report (screenshot): the live run sat in a bordered box on a rhythm of its
 // own. The three bands of an execution are one column — the step from ACTIVITY down to RUN is
 // the step from CODE down to ACTIVITY.
