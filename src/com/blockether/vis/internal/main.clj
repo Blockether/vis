@@ -4457,12 +4457,32 @@
     (let [{:keys [path residual]} (commandline/find-leaf root (cons (:cmd/name root) args))]
       (and (= 1 (count path)) (seq residual)))))
 
+(def ^:private wrapper-owned-commands
+  "Words the `vis-agent` launcher implements ITSELF and never forwards. The
+   engine advertises them in its own help (`vis-agent update`, `switch`, …) but
+   owns none of them, so one reaching this binary means the caller ran the
+   engine directly, or a launcher too old to know the word — and without this
+   set it would become a PROMPT: `vis-agent upgrade` silently spent a turn
+   asking a model about the word \"upgrade\" instead of updating anything."
+  #{"update" "upgrade" "switch" "desktop" "runtime"})
+
+(defn- wrapper-owned-invocation?
+  "True for EXACTLY one bare wrapper word. Deliberately not for longer argument
+   lists: `vis-agent update the readme` is an ordinary prompt that happens to
+   start with one of these words, and stealing it would be the same class of
+   surprise this guard exists to remove."
+  [args]
+  (and (= 1 (count args)) (contains? wrapper-owned-commands (first args))))
+
 (defn- root-run-shortcut?
   "True when bare `vis-agent ...` should run the one-shot CLI agent.
    Unknown commands that ask for help stay errors, so typo diagnostics
-   remain honest (`vis-agent sessions --help` must not become a prompt)."
+   remain honest (`vis-agent sessions --help` must not become a prompt), and a
+   lone wrapper-owned word is an invocation mistake, never a question."
   [root args]
-  (and (unknown-command? root args) (not-any? #{"--help" "-h"} args)))
+  (and (unknown-command? root args)
+       (not (wrapper-owned-invocation? args))
+       (not-any? #{"--help" "-h"} args)))
 
 (defn- exit-with-user-error!
   [^Throwable t]
@@ -4735,7 +4755,17 @@
                             unknown-root?
                             (unknown-command? root args)]
 
-                        (cond (and unknown-root? (root-run-shortcut? root args))
+                        (cond (wrapper-owned-invocation? args)
+                              (do (println (str "vis-agent: `"
+                                                (first args)
+                                                "` is handled by the vis-agent command itself, "
+                                                "not by the engine."))
+                                  (println (str "Run it through the launcher on your PATH: "
+                                                "vis-agent "
+                                                (first args)))
+                                  (System/exit 2))
+
+                              (and unknown-root? (root-run-shortcut? root args))
                               (timed-startup! measure? "run-shortcut" #(cli-run! {} args))
                               unknown-root? (do (println (commandline/render-tree root))
                                                 (println)

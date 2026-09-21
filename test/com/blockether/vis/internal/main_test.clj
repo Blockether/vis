@@ -617,7 +617,22 @@
         (expect (false? (#'main/root-run-shortcut? root ["providers" "list"])))
         (expect (false? (#'main/root-run-shortcut? root ["sessions" "export" "42d580bb" "--md"])))
         (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
-        (expect (false? (#'main/root-run-shortcut? root ["--help"]))))))
+        (expect (false? (#'main/root-run-shortcut? root ["--help"])))))
+  ;; `vis-agent upgrade` used to reach the engine, match no command and become a
+  ;; PROMPT: a whole model turn spent on the word "upgrade" while nothing
+  ;; updated. The launcher owns these words; one arriving here is a mistake.
+  (it "never turns a lone wrapper word into a prompt"
+      (let [root (#'main/root-command)]
+        (doseq [word ["update" "upgrade" "switch" "desktop" "runtime"]]
+          (expect (false? (#'main/root-run-shortcut? root [word])) word))))
+  (it "still lets a real question that starts with one through"
+      (let [root (#'main/root-command)]
+        (expect (true? (#'main/root-run-shortcut? root ["update" "the" "readme"])))
+        (expect (true? (#'main/root-run-shortcut? root ["switch" "to" "the" "other" "branch"])))))
+  (it "recognizes exactly the words the launcher implements"
+      (expect (true? (#'main/wrapper-owned-invocation? ["upgrade"])))
+      (expect (false? (#'main/wrapper-owned-invocation? ["upgrades"])))
+      (expect (false? (#'main/wrapper-owned-invocation? ["update" "--track" "beta"])))))
 
 (defdescribe sessions-command-test
              (it "registers canonical session verbs under host-owned sessions command"

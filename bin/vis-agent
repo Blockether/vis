@@ -906,7 +906,8 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
+Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
+         `upgrade` is an alias of `update`; both run exactly this command.
          --track NAME  release  newest complete stable native release (default)
                        beta     newest published native beta from green main CI
                        dev      newest main source, always run on the JVM
@@ -1443,7 +1444,7 @@ vis_update_desktop() {
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
   desktop) shift; vis_do_desktop "$@" ;;
-  update)
+  update|upgrade)
     shift
     (( ! jvm_requested )) || die "update: --jvm selects a launch runtime, not an update track" \
       "Use: vis-agent update --track dev"
