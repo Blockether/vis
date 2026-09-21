@@ -1357,6 +1357,66 @@
 
         (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))
 
+;; Requested in this Vis session (paraphrased: the groups and the sessions should be two
+;; different sets, a filed session out of the session list and still findable by a query
+;; over it). The app paints the same two sets over one project.
+(defdescribe
+  navigator-session-set-test
+  (let [sessions [{"id" "loose-1"
+                   "title" "Loose one"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 4000
+                   :work-dir "~/proj"}
+                  {"id" "filed-1"
+                   "title" "Filed one"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 3000
+                   "group_name" "Release"
+                   "group_color" "blue"
+                   :work-dir "~/proj"}
+                  {"id" "loose-2"
+                   "title" "Loose two"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 2000
+                   :work-dir "~/proj"}
+                  {"id" "filed-2"
+                   "title" "Filed two"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 1000
+                   "group_name" "Release"
+                   "group_color" "blue"
+                   :work-dir "~/proj"}]]
+    (it "files every group ahead of the sessions that are in none of them"
+        (let [all-rows (var-get #'dlg/navigator-all-rows)
+              rows (all-rows {:active-session-id "none" :sessions sessions})]
+
+          (expect (= ["filed-1" "filed-2" "loose-1" "loose-2"] (mapv (comp str :id :target) rows)))
+          (expect (= ["Release" "Release" nil nil] (mapv :session-group rows)))))
+    (it "heads each set with its own word and its own count"
+        (let [all-rows (var-get #'dlg/navigator-all-rows)
+              visible-rows (var-get #'dlg/navigator-visible-rows)
+              band-label (var-get #'dlg/navigator-band-label)
+              visible
+              (visible-rows (all-rows {:active-session-id "none" :sessions sessions}) "" {})]
+
+          (expect (= ["~/proj  ·  Groups  ·  2 sessions" "~/proj  ·  Sessions  ·  2 sessions"]
+                     (mapv band-label (filter :group-start? visible))))))
+    (it "a query still finds a session its group took out of the list"
+        (let [all-rows (var-get #'dlg/navigator-all-rows)
+              visible-rows (var-get #'dlg/navigator-visible-rows)
+              band-label (var-get #'dlg/navigator-band-label)
+              visible (visible-rows (all-rows {:active-session-id "none" :sessions sessions})
+                                    "filed one"
+                                    {})]
+
+          (expect (= ["filed-1"] (mapv (comp str :id :target) visible)))
+          (expect (= ["~/proj  ·  Groups  ·  1 session"]
+                     (mapv band-label (filter :group-start? visible))))))))
+
 ;; Regression, this Vis session (paraphrased: "why do we download every session just to
 ;; open the picker"): C-g read the whole fleet, because the dialog was handed the list
 ;; once and had no way to ask for more of it.

@@ -140,6 +140,25 @@ function NameForm({
 }
 
 /**
+ * The name of ONE SET inside a project: the groups a reader filed, and the sessions
+ * that are in none of them. A filed session stands under its band and NOWHERE else, so
+ * without these two words the shelves and the page under them read as a single list
+ * that happens to wear a coloured stripe on some of its rows.
+ */
+function SetHeader({ label, count, unit }: { label: string; count: number; unit: string }) {
+  return (
+    <div className="flex items-center gap-2 border-t border-edge py-1 pr-2 pl-4">
+      <span className="font-mono text-chip font-bold tracking-[0.08em] text-dialog-hint uppercase">
+        {label}
+      </span>
+      <HeaderMeta>
+        <HeaderTally count={count} unit={unit} />
+      </HeaderMeta>
+    </div>
+  );
+}
+
+/**
  * One group's own band, inside its project's list.
  *
  * A level quieter than the project header above it, and deliberately so: the project
@@ -674,9 +693,10 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [conn, root, isVisible, getClient, groupsRead]);
-  // WHERE EACH ROW IS FILED. A group's rows stay CONTIGUOUS under its own name, and
-  // whatever nobody filed keeps the project's own order below them — the shape the
-  // TUI's navigator paints (`tui/dialogs`), so one list is not two different pictures.
+  // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
+  // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
+  // which keeps the project's own order. It is the shape the TUI's navigator paints
+  // (`tui/dialogs`), so one list is not two different pictures.
   const filed = useMemo(() => {
     const byGroup = new Map<string, Session[]>();
     const loose: Session[] = [];
@@ -860,6 +880,16 @@ export const ProjectGroup = memo(function ProjectGroup({
     </span>
   );
 
+  // THE TWO SETS THIS PROJECT PAINTS. A project nobody has filed anything in has one
+  // list and needs no words over it; one with a group names both, so what the bands
+  // hold is visibly not what the page under them holds. A QUERY collapses them into
+  // one answer: every hit is painted in the session set, filed or not, each filed row
+  // still wearing its group's colour (`SessionList`). A group takes a session out of
+  // the list, never out of the search.
+  const hasGroups = bands.length > 0;
+  const listed = searching ? painted : filed.loose;
+  const listedCount = searching ? listed.length : (paged?.total ?? filed.loose.length);
+
   return (
     <>
       {/* The rail's index finds this band by the two facts that identify it, and the
@@ -911,30 +941,35 @@ export const ProjectGroup = memo(function ProjectGroup({
             ref={rowsRef}
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
-            {bands.map((band) => {
-              const held = filed.byGroup.get(band.id) ?? NO_ROWS;
-              const isBandOpen = isGroupOpen(band.id);
-              return (
-                <div key={band.id}>
-                  <GroupBand
-                    name={band.name}
-                    color={band.color}
-                    count={band.count}
-                    isOpen={isBandOpen}
-                    onToggle={() => foldGroup(band.id, !isBandOpen)}
-                    machine={machineLabel(conn)}
-                    onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
-                    // A session started HERE is minted inside this group, so it opens
-                    // at the top of this band instead of loose in the project.
-                    onNewSession={() => void onNewSession(conn, root, band.id)}
-                    isCreating={creating?.at === creationKey(base, root, band.id)}
-                    onDropSession={(sid) => dropSession(sid, band.id)}
-                  />
-                  {isBandOpen && held.map(row)}
-                </div>
-              );
-            })}
-            {filed.loose.map(row)}
+            {hasGroups && !searching && (
+              <SetHeader label="Groups" count={bands.length} unit="group" />
+            )}
+            {!searching &&
+              bands.map((band) => {
+                const held = filed.byGroup.get(band.id) ?? NO_ROWS;
+                const isBandOpen = isGroupOpen(band.id);
+                return (
+                  <div key={band.id}>
+                    <GroupBand
+                      name={band.name}
+                      color={band.color}
+                      count={band.count}
+                      isOpen={isBandOpen}
+                      onToggle={() => foldGroup(band.id, !isBandOpen)}
+                      machine={machineLabel(conn)}
+                      onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                      // A session started HERE is minted inside this group, so it opens
+                      // at the top of this band instead of loose in the project.
+                      onNewSession={() => void onNewSession(conn, root, band.id)}
+                      isCreating={creating?.at === creationKey(base, root, band.id)}
+                      onDropSession={(sid) => dropSession(sid, band.id)}
+                    />
+                    {isBandOpen && held.map(row)}
+                  </div>
+                );
+              })}
+            {hasGroups && <SetHeader label="Sessions" count={listedCount} unit="session" />}
+            {listed.map(row)}
           </div>
         )}
       </section>

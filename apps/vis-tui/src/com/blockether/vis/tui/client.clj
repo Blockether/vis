@@ -619,17 +619,19 @@
 
    `opts` names the cut: `:limit` rows, `:after` the cursor of the last row already held,
    `:root` one project's column, `:project-id` one project's tab set, `:id-prefix` the
-   session a short id names, `:ids` exactly the rows those ids name. The gateway owns the
-   ordering, so a caller that wants ten rows asks for ten instead of downloading the fleet
-   to slice it locally - and a read that names no cut and no limit is answered with the
-   head window, never the fleet."
-  [{:keys [limit after root project-id id-prefix ids]}]
+   session a short id names, `:ids` exactly the rows those ids name, `:grouped` `:aside`
+   the gateway's own split between a project's GROUPS and the loose sessions under them.
+   The gateway owns the ordering, so a caller that wants ten rows asks for ten instead of
+   downloading the fleet to slice it locally - and a read that names no cut and no limit
+   is answered with the head window, never the fleet."
+  [{:keys [limit after root project-id id-prefix ids grouped]}]
   (let [qs (->> [(when limit (str "limit=" (enc limit)))
                  (when (seq (str after)) (str "after=" (enc after)))
                  (when (seq (str root)) (str "root=" (enc root)))
                  (when (seq (str project-id)) (str "project_id=" (enc project-id)))
                  (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))
-                 (when (seq ids) (str "ids=" (enc (str/join "," (map str ids)))))]
+                 (when (seq ids) (str "ids=" (enc (str/join "," (map str ids)))))
+                 (when grouped (str "grouped=" (enc (name grouped))))]
                 (remove nil?)
                 (str/join "&"))]
     (cond-> "/v1/sessions"
@@ -644,14 +646,20 @@
 
 (defn list-sessions-page
   "One window of the session list WITH the walk that continues it:
-   `{:sessions rows :next-cursor str-or-nil :has-more bool :total n}`.
+   `{:sessions rows :grouped rows :next-cursor str-or-nil :has-more bool :total n}`.
 
    `opts` names the cut (`session-window-path`). A surface that pages - the session picker
    - holds this window and asks for the next one with `:after` `:next-cursor`, so a list of
-   a thousand sessions is read a screen at a time instead of downloaded whole."
+   a thousand sessions is read a screen at a time instead of downloaded whole.
+
+   With `:grouped :aside` the sessions a human FILED in a group leave that window and come
+   back COMPLETE under `:grouped`, while `:total`, `:next-cursor` and `:has-more` describe
+   the loose sessions alone. A group is a shelf a surface paints whole, however deep in the
+   fleet its rows sit; without the option `:grouped` is empty and nothing moves."
   [opts]
   (let [body (send-json! "GET" (session-window-path opts))]
     {:sessions (vec (get body "sessions"))
+     :grouped (vec (get body "grouped"))
      :next-cursor (get body "next_cursor")
      :has-more (boolean (get body "has_more"))
      :total (get body "total")}))

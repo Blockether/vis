@@ -5129,10 +5129,14 @@
      :target {:action :switch :id id}}))
 
 (defn- group-rows-by-dir
-  "Keep each working directory contiguous, and each session GROUP inside it contiguous
-   under its own header. The focused directory comes first, the focused session's
-   group leads that directory and the session leads its group; persisted order
-   remains intact for every other row."
+  "Keep each working directory contiguous, and paint TWO SETS inside it: the session
+   GROUPS a human filed, each contiguous under its own header, and under them the sessions
+   that are in none of them. A filed session is never in that loose set - the app paints
+   the same two sets (`screens/sessions/SessionProjectGroups`) - and a query still finds
+   it, because the filter reads every row wherever it stands.
+
+   The focused directory comes first, the focused session's group leads the groups and the
+   session leads its group; persisted order remains intact for every other row."
   [rows]
   (let [order
         (distinct (map :dir rows))
@@ -5140,21 +5144,26 @@
         by-dir
         (group-by :dir rows)]
 
-    (vec (mapcat (fn [dir]
-                   (let [dir-rows
-                         (get by-dir dir)
+    (vec
+      (mapcat (fn [dir]
+                (let [dir-rows
+                      (get by-dir dir)
 
-                         group-order
-                         (distinct (concat (map :session-group (filter :focused? dir-rows))
-                                           (map :session-group dir-rows)))]
+                      ;; The groups in the order this directory met them, and the loose
+                      ;; sessions (`nil`) after every one of them rather than among them.
+                      group-order
+                      (->> (concat (map :session-group (filter :focused? dir-rows))
+                                   (map :session-group dir-rows))
+                           (remove nil?)
+                           distinct)]
 
-                     (mapcat (fn [group]
-                               (let [group-rows (filter #(= group (:session-group %)) dir-rows)]
-                                 (concat (filter :focused? group-rows)
-                                         (sort-by #(or (:position %) Long/MAX_VALUE)
-                                                  (remove :focused? group-rows)))))
-                             group-order)))
-                 order))))
+                  (mapcat (fn [group]
+                            (let [group-rows (filter #(= group (:session-group %)) dir-rows)]
+                              (concat (filter :focused? group-rows)
+                                      (sort-by #(or (:position %) Long/MAX_VALUE)
+                                               (remove :focused? group-rows)))))
+                          (concat group-order [nil]))))
+              order))))
 
 (defn- navigator-all-rows
   "Build the project-grouped session list. Empty untitled shells stay hidden by
@@ -5494,31 +5503,35 @@
                      (+ (long used) base (count hits) (if spacer? 1 0))
                      (conj acc {:idx i :entry entry :hits hits :spacer? spacer?})))))))))
 
-(defn- draw-navigator-group!
-  [g x row width {:keys [dir work-dir group-count session-group session-group-color]}]
+(defn- navigator-band-label
+  "The header over one BAND of rows: where they live, WHICH SET of that project they are -
+   the groups a human filed, or the sessions in none of them - and how many rows stand
+   under it. The two words name the list's own division (`group-rows-by-dir`), the same
+   one the app prints over its bands."
+  [{:keys [dir work-dir group-count session-group]}]
   (let [count-label
         (str group-count " " (if (= 1 group-count) "session" "sessions"))
 
         root-label
         (when (and (seq work-dir) (not= dir work-dir)) work-dir)
 
-        label
-        (str dir (when root-label (str "  ·  " root-label)) "  ·  " count-label)]
+        set-label
+        (if (seq session-group) "Groups" "Sessions")]
 
+    (str dir (when root-label (str "  ·  " root-label)) "  ·  " set-label "  ·  " count-label)))
+
+(defn- draw-navigator-group!
+  [g x row width {:keys [session-group session-group-color] :as entry}]
+  (let [label (navigator-band-label entry)]
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label (max 1 (long width)))))
     ;; A session group nests under its project directory: the same header row,
     ;; in the group's own ink, so the reader sees which group the rows below
     ;; belong to.
     (when (seq session-group)
-      (let [used
-            (min (long width) (long (p/display-width label)))
-
-            group-label
-            (str "  ◆ " session-group)
-
-            room
-            (max 0 (- (long width) used))]
+      (let [used (min (long width) (long (p/display-width label)))
+            group-label (str "  ◆ " session-group)
+            room (max 0 (- (long width) used))]
 
         (when (pos? room)
           (p/set-colors! g (t/group-ink session-group-color) t/dialog-bg)

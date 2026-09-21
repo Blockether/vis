@@ -60,7 +60,7 @@ function machine(overrides: Machine = {}) {
   };
 }
 
-function mount(client: Machine = machine(), creation?: ProjectCreation) {
+function mount(client: Machine = machine(), creation?: ProjectCreation, needle = '') {
   const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
   render(
     <ProjectGroup
@@ -76,7 +76,7 @@ function mount(client: Machine = machine(), creation?: ProjectCreation) {
         getClient: () => client as unknown as GatewayClient,
         drafts: {},
         matches: null,
-        needle: '',
+        needle,
         actions: {
           commands: {
             open: vi.fn(),
@@ -138,6 +138,51 @@ describe('ProjectGroup groups', () => {
       row.getAttribute('data-session-id'),
     );
     expect(painted).toEqual([ROWS[0].id, ROWS[1].id, ROWS[2].id, ROWS[3].id]);
+  });
+
+  // Requested in this Vis session (paraphrased: the groups and the sessions should be two
+  // different sets, and a session in a group is not in the sessions). Each set is named,
+  // and the count over the sessions is the gateway's LOOSE total — what the pager walks.
+  it('names both sets and keeps a filed session out of the session set', async () => {
+    const page = {
+      rows: [ROWS[2], ROWS[3]],
+      total: 2,
+      awaiting: [],
+      grouped: [ROWS[0], ROWS[1]],
+      nextCursor: '',
+    };
+    mount(machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }));
+    const wallet = await band('Wallet work');
+    const list = wallet.parentElement as HTMLElement;
+
+    const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
+    expect(within(groupsHeader).getByText('1 group')).toBeInTheDocument();
+    // The tally over the sessions is the gateway's LOOSE total, not the band's own two.
+    const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
+    expect(within(sessionsHeader).getByText('2 sessions')).toBeInTheDocument();
+
+    // The session set starts under its own word and holds neither filed row.
+    const loose: string[] = [];
+    for (let node = sessionsHeader.nextElementSibling; node; node = node.nextElementSibling) {
+      const id = node.querySelector('[data-session-id]')?.getAttribute('data-session-id');
+      if (id) loose.push(id);
+    }
+    expect(loose).toEqual([ROWS[2].id, ROWS[3].id]);
+  });
+
+  // A group takes a session out of the list, never out of the search: under a query the
+  // project paints ONE set, and every hit is in it.
+  it('answers a query with one set that still holds the filed sessions', async () => {
+    mount(machine(), undefined, 'session');
+
+    expect(await screen.findByText('Sessions')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull();
+    expect(screen.queryByText('Groups')).toBeNull();
+    expect(
+      [...document.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).toEqual(ROWS.map((row) => row.id));
   });
 
   // BLO-167, user report (paraphrased: "groups should be outside the paging, and there is

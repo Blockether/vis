@@ -5367,11 +5367,16 @@
 (defn- tui-session-page
   "One WINDOW of the picker's list: its rows, enriched for the navigator, and the cursor
    naming the page after them (`nil` when the walk is over). The gateway owns the order,
-   so the page is painted as it arrives."
+   so the page is painted as it arrives.
+
+   The GROUPS come aside (`:grouped :aside`): a session a human filed leaves the window
+   and arrives complete beside it, so the navigator's group bands are whole from the first
+   read instead of filling in as the reader pages deeper into the fleet."
   [opts]
-  (let [page (vis/gateway-list-sessions-page opts)]
+  (let [page (vis/gateway-list-sessions-page (assoc opts :grouped :aside))]
     {:sessions (mapv enrich-session-row
-                     (latest-modified-first (map session-summary (:sessions page))))
+                     (latest-modified-first (map session-summary
+                                                 (concat (:grouped page) (:sessions page)))))
      :next-cursor (:next-cursor page)}))
 
 (defn- show-session-picker!
