@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   sweeps that run on resume run at most once per gap.
 - Press a session row anywhere and the whole row lights up, instead of the press stopping at the
   disclosure chevron and the row reading as half selected.
+- Read a session row's menu the right way up: the three-dot trigger no longer lies on its side.
 - Reach a project's **+** without stretching your thumb: the button that starts a session now
   stands with the header's other controls, immediately before the pager.
 - Trust a `grep` page you continued: `offset` belongs to the query it came from, so carrying it
