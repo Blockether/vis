@@ -349,9 +349,9 @@ workspace:
     - id: reference
       path: ~/shared-reference
       access: read-only
-    - id: m2
-      path: ~/.m2
-      description: Maven/Clojure dependency cache
+    - id: npm
+      path: ~/.npm
+      description: Node build cache
       search: false
     - id: cuda
       path: /usr/local/cuda
