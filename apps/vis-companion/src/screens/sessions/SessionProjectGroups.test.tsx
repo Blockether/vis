@@ -285,7 +285,29 @@ describe('ProjectGroup groups', () => {
     expect(within(menu).getByText('Rename group')).toBeInTheDocument();
     expect(within(menu).getByText('Delete group')).toBeInTheDocument();
     expect(within(menu).getByText('Colour')).toBeInTheDocument();
+    // The sheet hangs under the band's own ⋮, so nothing repeats the name just pressed
+    // and no way back to a project root that says nothing about this group.
+    expect(within(menu).queryByText('Wallet work')).toBeNull();
+    expect(within(menu).queryByText(/Back to/)).toBeNull();
     expect(within(menu).queryByText(String(LOOSE.title))).toBeNull();
+  });
+
+  // A GROUP'S COLOUR IS A STEP, NOT A COLUMN. The palette is eight rows tall, and it
+  // stood open under the verbs of every group sheet until a reader asked for it.
+  it('keeps the palette a step away and returns to the verbs after a pick', async () => {
+    const { client, user } = mount();
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    const menu = sheet(`Groups in ${ROOT}`);
+    expect(within(menu).queryByText('Slate')).toBeNull();
+    await user.click(within(menu).getByText('Colour'));
+    // What the group wears now is marked, so a reader sees what they are changing.
+    expect(within(menu).getByText('Blue').closest('button')).toHaveTextContent('now');
+    await user.click(within(menu).getByText('Violet'));
+    await waitFor(() =>
+      expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET, { color: 'violet' }),
+    );
+    await waitFor(() => expect(within(menu).getByText('Rename group')).toBeInTheDocument());
   });
   it('asks what becomes of the sessions before it deletes a group', async () => {
     const { client, user } = mount();

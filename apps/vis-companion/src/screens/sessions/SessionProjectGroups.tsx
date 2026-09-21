@@ -19,8 +19,14 @@ import {
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
-import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
-import { ChevronIcon, DotsIcon } from '../../components/icons';
+import { Menu, MenuBack, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
+import {
+  ChevronIcon,
+  DotsIcon,
+  FolderPlusIcon,
+  PencilIcon,
+  TrashIcon,
+} from '../../components/icons';
 import { Button, IconButton, Input, TextButton } from '../../components/ui';
 import { menuPosition, type MenuPosition } from '../../lib/anchored-menu';
 import {
@@ -60,6 +66,7 @@ type MenuStep =
   | { kind: 'group'; id: string }
   | { kind: 'rename'; id: string }
   | { kind: 'delete'; id: string }
+  | { kind: 'colour'; id: string }
   | { kind: 'move'; sid: string };
 
 /** One group as a band paints it: the gateway's row, or what a row itself said. */
@@ -945,6 +952,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 <>
                   <MenuItem
                     title="New group"
+                    icon={<FolderPlusIcon className="size-3.5" />}
                     hint="File some of this project's sessions under a name of your own."
                     onSelect={() => {
                       setTyped('');
@@ -1078,42 +1086,58 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </>
               );
             }
+            // COLOUR IS A CHOICE, NOT A COLUMN. Eight swatches standing open under the
+            // verbs made this sheet taller than the room a band low on the screen has
+            // above or below it, so the palette is a step and the group keeps three rows.
+            if (step.kind === 'colour')
+              return (
+                <>
+                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
+                    Colour {band.name}
+                  </MenuBack>
+                  {GROUP_COLORS.map((color) => (
+                    <MenuItem
+                      key={color}
+                      title={`${color[0].toUpperCase()}${color.slice(1)}`}
+                      icon={<Swatch color={color} />}
+                      badge={color === groupColor(band.color) ? 'now' : undefined}
+                      onSelect={() =>
+                        void attempt(
+                          () => getClient(conn).updateSessionGroup(band.id, { color }),
+                          here,
+                        )
+                      }
+                    />
+                  ))}
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            // A GROUP'S SHEET HANGS UNDER ITS OWN ⋮: a band repeating the name the reader
+            // just pressed is a title, not a way back, and the root it offered to return
+            // to lists nothing about this group. What is left is three verbs, each behind
+            // the mark it is drawn with everywhere else — pencil, its own swatch, bin.
             return (
               <>
-                <MenuBack
-                  label={`Back to groups in ${project}`}
-                  onBack={() => goTo({ kind: 'root' })}
-                >
-                  {band.name}
-                </MenuBack>
                 <MenuItem
                   title="Rename group"
+                  icon={<PencilIcon className="size-3.5" />}
                   onSelect={() => {
                     setTyped(band.name);
                     goTo({ kind: 'rename', id: band.id });
                   }}
                 />
                 <MenuItem
+                  title="Colour"
+                  icon={<Swatch color={band.color} />}
+                  onSelect={() => goTo({ kind: 'colour', id: band.id })}
+                />
+                <MenuItem
                   title="Delete group"
                   tone="danger"
+                  icon={<TrashIcon className="size-3.5" />}
                   hint="Asks what becomes of the sessions filed under it."
                   onSelect={() => goTo({ kind: 'delete', id: band.id })}
                 />
-                <MenuHeading tone="quiet">Colour</MenuHeading>
-                {GROUP_COLORS.map((color) => (
-                  <MenuItem
-                    key={color}
-                    title={`${color[0].toUpperCase()}${color.slice(1)}`}
-                    icon={<Swatch color={color} />}
-                    badge={color === groupColor(band.color) ? 'now' : undefined}
-                    onSelect={() =>
-                      void attempt(
-                        () => getClient(conn).updateSessionGroup(band.id, { color }),
-                        here,
-                      )
-                    }
-                  />
-                ))}
                 {failure && <MenuNote>{failure}</MenuNote>}
               </>
             );

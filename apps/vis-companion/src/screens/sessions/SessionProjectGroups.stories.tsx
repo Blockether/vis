@@ -336,3 +336,24 @@ export const Groups: Story = {
     await expect(within(sheet).queryByText('Receipts')).toBeNull();
   },
 };
+
+// THE BAND'S OWN ⋮ CARRIES THE VERBS — one mark each, and nothing that only repeats the
+// name the reader pressed. The palette waits a step behind the swatch the group wears.
+export const GroupVerbs: Story = {
+  ...Groups,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    await userEvent.click(await page.findByRole('button', { name: 'Actions for Wallet work' }));
+    const sheet = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: `Groups in ${fixture.name}`,
+    });
+    await expect(within(sheet).getByText('Rename group')).toBeVisible();
+    await expect(within(sheet).getByText('Delete group')).toBeVisible();
+    await expect(within(sheet).queryByText('Wallet work')).toBeNull();
+    await expect(within(sheet).queryByText('Slate')).toBeNull();
+    // Eight swatches arrive only when asked for, with the one in use marked.
+    await userEvent.click(within(sheet).getByText('Colour'));
+    await expect(within(sheet).getByText('Slate')).toBeVisible();
+    await expect(within(sheet).getByText('Blue').closest('button')).toHaveTextContent('now');
+  },
+};
