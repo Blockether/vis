@@ -77,6 +77,13 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * coloured line for one of them was a second vocabulary for "a group starts here", and
  * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
  * Every session is in a project, so the list has ONE kind of section.
+ *
+ * WHAT A SECTION OFFERS COMES BEFORE WHERE IT IS. Reported over the project header:
+ * the pager stood between the project's name and the header's own controls, so the
+ * plus that starts a session was the very last thing on the band and the thumb had
+ * to reach past the page steps to find it. The controls now stand together,
+ * immediately before the pager, and the pager keeps the trailing edge it pages
+ * from — the one place in the list where the trailing cell is navigation.
  */
 export function SectionHeader({
   children,
@@ -87,7 +94,7 @@ export function SectionHeader({
 }) {
   const header = (
     <header
-      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-3' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-2' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
@@ -96,7 +103,7 @@ export function SectionHeader({
   return (
     <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto]">
       {header}
-      <div className="z-20 col-start-2 row-start-1 flex items-center justify-end @md:px-4">
+      <div className="z-20 col-start-3 row-start-1 flex items-center justify-end pr-2 mouse:pr-2.5 @md:pl-4">
         {navigation}
       </div>
     </div>
@@ -453,7 +460,9 @@ export function Pager({
  * edge while the project header one row below it ended flush, so the two `⋯` that were
  * finally the same button still sat at two different distances from the same screen
  * edge; the session rows below them then ran their disclosure flush to the screen, a
- * third distance. One component decides all of it now.
+ * third distance. One component decides all of it now — with one exception it names
+ * itself: on a PAGED project header the pager takes the trailing edge and this
+ * cluster stands just inside it, so the plus is met before the page steps.
  *
  * A row stretches its trailing target through its height. A header instead centres its
  * compact controls through the full band, so neither is pinned to the title's first line.

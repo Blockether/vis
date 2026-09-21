@@ -2,7 +2,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Pager } from './SessionNavigator';
+import { HeaderActions, Pager, SectionHeader } from './SessionNavigator';
 
 // Regression: the chosen header layout is `previous · current / total · next` on every device.
 describe('project pages', () => {
@@ -219,5 +219,33 @@ describe('project pages', () => {
     rerender(<Pager page={5} pageCount={7} label="vis sessions" onPage={onPage} />);
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(onPage).toHaveBeenCalledExactlyOnceWith(7);
+  });
+
+  // Reported over the project header (paraphrased: "the plus should simply sit on the
+  // left of the pager"): the pages stood between the project's name and the header's
+  // own controls, so the plus that starts a session was the last thing on the band.
+  it('stands a header’s own controls before the pager, which keeps the trailing edge', () => {
+    render(
+      <SectionHeader
+        navigation={<Pager page={2} pageCount={9} label="vis sessions" onPage={vi.fn()} />}
+      >
+        <span>vis</span>
+        <HeaderActions align="center">
+          <button type="button">New session on tower</button>
+        </HeaderActions>
+      </SectionHeader>,
+    );
+    const actions = screen.getByRole('button', { name: 'New session on tower' })
+      .parentElement as HTMLElement;
+    const header = actions.parentElement as HTMLElement;
+    const pages = screen.getByRole('navigation').parentElement as HTMLElement;
+
+    expect(header.tagName).toBe('HEADER');
+    // The band's rule reaches the cluster through its LAST child, so the cluster is it.
+    expect(header.lastElementChild).toBe(actions);
+    expect(header.className).toContain('[&>:last-child]:col-start-2');
+    expect(pages.className).toContain('col-start-3');
+    // And the pager, now on the edge, takes the inset every trailing cell in the list has.
+    expect(pages.className).toContain('pr-2');
   });
 });
