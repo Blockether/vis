@@ -89,7 +89,7 @@ jobs:
     needs: [prepare, verify]
     permissions:
       contents: write
-      # id-token: write  # Enable with Windows desktop signing.
+      id-token: write
     uses: ./.github/workflows/desktop-companion.yml
     with:
       tag: ${{ github.ref_name }}

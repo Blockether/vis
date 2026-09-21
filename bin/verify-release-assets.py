@@ -19,8 +19,7 @@ def required_assets(tag: str) -> set[str]:
             f"{product}-{platform}.tar.gz" for product in ("vis-agent", "vis-tui")
         )
     names.add(f"vis-companion-{version}-macos-universal.dmg")
-    # Windows desktop is not supported yet; enable with its workflow matrix.
-    # names.add(f"vis-companion-{version}-windows-x64.msi")
+    names.add(f"vis-companion-{version}-windows-x64.msi")
     for arch in ("x64", "arm64"):
         names.update(
             f"vis-companion-{version}-linux-{arch}.{ext}" for ext in ("deb", "AppImage")
@@ -66,7 +65,7 @@ def required_recovery_checks() -> set[str]:
         "desktop / Package Linux x64",
         "desktop / Package Linux ARM64",
         "desktop / Package macOS universal",
-        # "desktop / Package Windows x64",  # Enable with the Windows matrix.
+        "desktop / Package Windows x64",
     }
     checks.update(
         f"Verify release source / {name}"
