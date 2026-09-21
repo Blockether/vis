@@ -154,3 +154,23 @@ toggles:
 #     account: alice
 #   # a helper command — argv, never a shell line; trimmed stdout IS the value
 #   GITHUB_TOKEN: {command: [gh, auth, token]}
+
+
+# ── Extensions ───────────────────────────────────────────────────────────────
+# Packages from Extension Center (https://vis.blockether.com/extensions/).
+# The KEY is the `project.name` from the package's pyproject.toml, not the
+# catalog identifier. A declaration takes `source`, optional `subdirectory`,
+# and either `version` (approved release) or a full lowercase `revision`.
+# Install/refresh what is declared here with:
+#   vis-agent extension sync --project --trust
+extensions:
+  vis-lang-interface:
+    source: https://github.com/Blockether/vis-lang-interface
+    version: "2.0.2"
+  vis-lang-clojure:
+    source: https://github.com/Blockether/vis-lang-clojure
+    subdirectory: extension
+    version: "1.3.0"
+  vis-lang-python:
+    source: https://github.com/Blockether/vis-lang-python
+    version: "1.2.0"
