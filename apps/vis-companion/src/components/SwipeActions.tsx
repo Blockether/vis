@@ -133,7 +133,9 @@ function RowActionMenu({
     const height = panel?.getBoundingClientRect().height;
     if (!height) return;
     const placed = menuPosition(anchor, MENU_WIDTH, undefined, height);
-    if (placed && (placed.top !== at.top || placed.left !== at.left)) setAt(placed);
+    if (!placed) return;
+    if (placed.top !== at.top || placed.bottom !== at.bottom || placed.left !== at.left)
+      setAt(placed);
   }, [at]);
 
   useEffect(() => {

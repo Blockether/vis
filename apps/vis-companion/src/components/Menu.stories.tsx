@@ -159,3 +159,39 @@ export const Empty: Story = {
     ),
   },
 };
+
+/**
+ * A menu with no room to drop STANDS on its anchor instead: the panel's own foot is
+ * pinned just above the control, whatever height the list inside it turns out to be.
+ */
+export const StandingOnItsAnchor: Story = {
+  args: {
+    label: 'Groups in vis',
+    at: { left: 360, bottom: 240 },
+    onDismiss: noop,
+    children: (
+      <>
+        <MenuHeading>Groups in vis</MenuHeading>
+        <MenuItem
+          title="New group"
+          hint="File some of this project's sessions under a name of your own."
+          onSelect={noop}
+        />
+        <MenuItem title="0.2.16" badge="3" onSelect={noop} />
+      </>
+    ),
+  },
+  play: async ({ canvasElement }) => {
+    const win = canvasElement.ownerDocument.defaultView!;
+    const panel = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: 'Groups in vis',
+    });
+    const paint = win.getComputedStyle(panel);
+    // ONE vertical edge is pinned, and a panel standing above its anchor pins its
+    // foot. This project runs at phone width, where the panel is a docked sheet and
+    // `at` is ignored, so what it holds to account is the placement the panel paints;
+    // the geometry behind it is `anchored-menu.test.ts`.
+    await expect(paint.getPropertyValue('--menu-bottom').trim()).toBe('240px');
+    await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
+  },
+};

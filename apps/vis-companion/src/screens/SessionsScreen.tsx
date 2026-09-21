@@ -32,7 +32,7 @@ import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { notifyDesktopFleet } from '../lib/desktop-notify';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
-import { menuPosition } from '../lib/anchored-menu';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import {
   applyListScroll,
   forgetListScroll,
@@ -373,7 +373,7 @@ export function SessionsScreen({
   const [createError, setCreateError] = useState<string | null>(null);
   const [manageProjects, setManageProjects] = useState<{
     machine: FleetMachine;
-    at: { top: number; left: number };
+    at: MenuPosition;
   } | null>(null);
   const pollStartedAt = useRef<number | null>(null);
   // Is the gateway pushing this list its fleet status, and when did the window last

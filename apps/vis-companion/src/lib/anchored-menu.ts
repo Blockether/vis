@@ -11,8 +11,14 @@
 /** The part of a `DOMRect` an anchored menu is placed from. */
 export type AnchorBox = { top: number; bottom: number; right: number };
 
-/** Viewport-space position of the menu, in CSS pixels. */
-export type MenuPosition = { top: number; left: number };
+/**
+ * Where the menu sits in the viewport, in CSS pixels: `left`, plus the ONE vertical
+ * edge that is pinned. A panel dropping below its anchor pins its head (`top`); a
+ * panel standing above one pins its foot (`bottom`, measured up from the foot of the
+ * viewport), because the foot is the end that has to touch the control — and how far
+ * the other end reaches is not known until the panel has been painted.
+ */
+export type MenuPosition = { left: number; top?: number; bottom?: number };
 
 /** Air between the anchor and the menu it drops. */
 const ANCHOR_GAP = 6;
@@ -51,9 +57,13 @@ function currentViewport(): Viewport {
  * not scroll and the panel's own scroller is INSIDE the clipped box. The control the
  * whole sheet exists to reach was simply not on the screen.
  *
- * So a panel that does not fit below its anchor FLIPS above it, and one that fits in
- * neither direction is clamped to the taller side. A measured panel uses its real
- * height, capped at `70vh`; an unmeasured panel reserves that maximum.
+ * So a panel that does not fit below its anchor FLIPS above it and STANDS on it,
+ * foot pinned just clear of the anchor's head; one that fits in neither direction is
+ * clamped to the taller side. A measured panel uses its real height, capped at
+ * `70vh`; an unmeasured panel reserves that maximum — and that reserve chooses the
+ * DIRECTION only. Pinning a flipped panel's HEAD to it instead put a three-row menu
+ * hundreds of pixels above the glyph that dropped it, beside another project's name
+ * (reported: pressing one project's menu opened the menu somewhere else).
  *
  * `null` — close the menu — means only ONE thing: there is no anchor to hang from
  * any more. A live anchor always yields a position, including across a resize: a
@@ -79,8 +89,11 @@ export function menuPosition(
 
   // Below is the natural reading direction and wins whenever the panel fits there.
   if (below >= budget) return { top: Math.round(anchor.bottom + ANCHOR_GAP), left };
-  // Flipping is only worth the disorientation if it actually buys the whole panel.
-  if (above >= budget) return { top: Math.round(anchor.top - ANCHOR_GAP - budget), left };
+  // Flipping is only worth the disorientation if it actually buys the whole panel,
+  // and a flipped panel STANDS on its anchor: the reserve above chose the side, the
+  // anchor itself sets the foot, so a short menu still touches the control it left.
+  if (above >= budget)
+    return { bottom: Math.round(viewport.height - anchor.top + ANCHOR_GAP), left };
   // Neither side fits: take the taller one and sit flush against its margin, so the
   // panel is short but WHOLE rather than tall and beheaded.
   if (above > below) return { top: EDGE_MARGIN, left };

@@ -19,7 +19,9 @@ describe('menuPosition', () => {
     const middle = { top: 400, bottom: 428, right: 600 };
     expect(menuPosition(middle, 320, DESKTOP, 150)).toEqual({ top: 434, left: 280 });
     const bottom = { top: 800, bottom: 828, right: 600 };
-    expect(menuPosition(bottom, 320, DESKTOP, 150)).toEqual({ top: 644, left: 280 });
+    // Flipped, it is pinned by its FOOT: the same geometry read from the other edge,
+    // 900 - 106 = 794, six pixels over the trigger.
+    expect(menuPosition(bottom, 320, DESKTOP, 150)).toEqual({ bottom: 106, left: 280 });
   });
 
   it('keeps a menu wider than its anchor allows away from the left edge', () => {
@@ -55,11 +57,32 @@ describe('menuPosition', () => {
   // sheet — rendered 30px BELOW the window. Nothing could scroll it back: the page
   // behind does not scroll, and the panel's own scroller is inside the clipped box.
   describe('the bottom edge', () => {
-    it('flips a panel above its anchor when it cannot fit below', () => {
-      // A header near the foot of the window: 54px of room below, 782px above.
-      const at = menuPosition({ top: 800, bottom: 828, right: 1400 }, 384, DESKTOP);
-      expect(at).toEqual({ top: 800 - 6 - 630, left: 1016 });
-      expect(at!.top).toBeGreaterThanOrEqual(12);
+    it('hangs a panel that cannot fit below from the anchor it came from', () => {
+      // A header near the foot of the window: 54px of room below, 782px above. The
+      // panel's FOOT is pinned over the anchor, so it hugs the control it came from
+      // whatever height it turns out to have.
+      expect(menuPosition({ top: 800, bottom: 828, right: 1400 }, 384, DESKTOP)).toEqual({
+        bottom: 900 - 800 + 6,
+        left: 1016,
+      });
+    });
+
+    // Regression, user report (paraphrased: pressing a project's menu glyph opened
+    // the menu somewhere else entirely): a header at the foot of a tall window
+    // reserved 70vh above the anchor and pinned the panel's HEAD there. The sheet
+    // was three rows tall, so it hung hundreds of pixels over the button that
+    // opened it, beside a different project's name.
+    it('leaves no gap between a flipped panel and its anchor', () => {
+      const tall = { width: 1000, height: 1168 };
+      const header = { top: 985, bottom: 1013, right: 965 };
+      const at = menuPosition(header, 320, tall);
+
+      expect(at).toEqual({ bottom: tall.height - 985 + 6, left: 645 });
+      // The foot sits where it sits whatever the panel measures; only a panel short
+      // enough to fit below is placed below instead.
+      for (const height of [285, 700])
+        expect(menuPosition(header, 320, tall, height)).toEqual(at);
+      expect(menuPosition(header, 320, tall, 120)).toEqual({ top: 1019, left: 645 });
     });
 
     it('sits below the anchor and clamps when neither side has the full budget', () => {
@@ -71,11 +94,15 @@ describe('menuPosition', () => {
       });
     });
 
-    it('never places a panel whose foot would leave the window', () => {
+    it('never places a panel whose head or foot would leave the window', () => {
+      // 70vh is what an unmeasured panel reserves, so that is the band every
+      // placement has to keep inside the window, head and foot alike.
+      const reserved = DESKTOP.height * 0.7;
       for (const bottom of [100, 300, 500, 700, 880]) {
-        const at = menuPosition({ top: bottom - 28, bottom, right: 1400 }, 384, DESKTOP);
-        expect(at!.top).toBeGreaterThanOrEqual(12);
-        expect(at!.top + DESKTOP.height * 0.7).toBeLessThanOrEqual(DESKTOP.height - 12);
+        const at = menuPosition({ top: bottom - 28, bottom, right: 1400 }, 384, DESKTOP)!;
+        const head = at.top ?? DESKTOP.height - at.bottom! - reserved;
+        expect(head).toBeGreaterThanOrEqual(12);
+        expect(head + reserved).toBeLessThanOrEqual(DESKTOP.height - 12);
       }
     });
 
