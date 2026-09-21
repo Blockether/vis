@@ -1706,3 +1706,24 @@
       (is (= :gateway/remote-target
              (:type (ex-data (try (client/stop-daemon!)
                                   (catch clojure.lang.ExceptionInfo e e)))))))))
+
+;; Regression (reported: `vis-agent gateway stop` answered with the raw wire map):
+;; the stop route replies in JSON, so a body handed back unconverted matched none of
+;; the keyword branches its callers read.
+(deftest an-acknowledged-stop-is-answered-in-this-clients-vocabulary
+  (let [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/ack/vis.db")
+                                (rv 'remote-gateway) (constantly nil)
+                                #'discovery/read-registry (constantly fake-entry)
+                                #'discovery/registry-fresh? (constantly true)
+                                (rv 'send-json-with-entry!)
+                                (fn [& _]
+                                  {"stopping" true
+                                   "status" {"pid" 32379 "clients" 4 "running_turns" 0}})}
+                 (fn []
+                   (client/stop-daemon!)))]
+    (is (true? (:stopping result)))
+    (is (= "stopping" (:status result)))
+    (is (= 32379 (:pid result)))
+    (is (= 4 (:clients result)))
+    (is (= 0 (:running-turns result)))
+    (is (not-any? string? (keys result)) "no wire key survives into the client's answer")))

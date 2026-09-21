@@ -371,3 +371,18 @@
                                            (python-runtime/preparation-status))))))))
          (finally (doseq [file (reverse (file-seq project))]
                     (io/delete-file file true))))))
+
+;; Regression (reported: gateway startup printed `[vis extensions] 1.5.1: cached`):
+;; an installed extension's project directory IS its version, so the bare directory
+;; named no package and two extensions on one version shared a single status entry.
+(deftest an-installed-extension-is-staged-under-its-package-and-version
+  (let [project (io/file (temp-dir "vis-ext-name") "vis-lang-clojure" "1.5.1")]
+    (.mkdirs project)
+    (is (= "vis-lang-clojure 1.5.1" (#'python-runtime/project-display-name project)))
+    (is (= "greeter"
+           (#'python-runtime/project-display-name (io/file (temp-dir "vis-ext-name") "greeter")))
+        "a project that is not a version directory keeps its own name")
+    (#'python-runtime/preparation-stage! project "cached")
+    (is (= "cached"
+           (:stage (first (filter #(= "vis-lang-clojure 1.5.1" (:name %))
+                                  (python-runtime/preparation-status))))))))

@@ -2879,23 +2879,37 @@
     (System/setProperty "vis.db.path" db))
   (if (get parsed "if-idle")
     (gateway-stop-if-idle!)
-    (let [{:keys [stopping status type host port pid recovery escalated] :as m}
-          ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))]
-      (stdout! (cond stopping "gateway stopping"
-                     (= "stopped" status)
-                     (if escalated
-                       (str "gateway stopped by " (if (= :kill escalated) "SIGKILL" "SIGTERM")
-                            " - it had stopped answering" (when pid (str " (pid " pid ")")))
-                       "gateway stopped")
-                     (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
-                                                            host
-                                                            ":"
-                                                            port
-                                                            (when pid
-                                                              (str " (registered PID " pid ")"))
-                                                            ". "
-                                                            recovery)
-                     :else (str "gateway stop requested: " (pr-str m)))))))
+    (let [{:keys [stopping status type host port pid recovery escalated clients running-turns]}
+          ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))
+
+          cost
+          (str/join ", "
+                    (cond-> []
+                      (pos? (long (or clients 0)))
+                      (conj (str "releasing " (plural clients "client")))
+
+                      (pos? (long (or running-turns 0)))
+                      (conj (str "draining " (plural running-turns "running turn")))))]
+
+      (stdout!
+        (cond stopping (str "gateway stopping"
+                            (when pid (str " (pid " pid ")"))
+                            (when (seq cost) (str " - " cost)))
+              (= "stopped" status)
+              (if escalated
+                (str "gateway stopped by " (if (= :kill escalated) "SIGKILL" "SIGTERM")
+                     " - it had stopped answering" (when pid (str " (pid " pid ")")))
+                "gateway stopped")
+              (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
+                                                     host
+                                                     ":"
+                                                     port
+                                                     (when pid (str " (registered PID " pid ")"))
+                                                     ". "
+                                                     recovery)
+              :else (str "gateway stop requested" (when pid (str " (pid " pid ")"))
+                         " - it reported no final state. Check it with:\n"
+                         "  vis-agent gateway status"))))))
 
 ;;; ── `vis-agent gateway mcp` subcommands ──────────────────────────────────────
 
@@ -4756,15 +4770,13 @@
                             (unknown-command? root args)]
 
                         (cond (wrapper-owned-invocation? args)
-                              (do (println (str "vis-agent: `"
-                                                (first args)
+                              (do (println (str "vis-agent: `" (first args)
                                                 "` is handled by the vis-agent command itself, "
                                                 "not by the engine."))
                                   (println (str "Run it through the launcher on your PATH: "
                                                 "vis-agent "
                                                 (first args)))
                                   (System/exit 2))
-
                               (and unknown-root? (root-run-shortcut? root args))
                               (timed-startup! measure? "run-shortcut" #(cli-run! {} args))
                               unknown-root? (do (println (commandline/render-tree root))

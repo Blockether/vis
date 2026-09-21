@@ -761,6 +761,35 @@
               {:signal :kill :stopped? (await-port-free! host port 3000)})))
     {:signal nil :stopped? false}))
 
+(defn- acknowledged-stop
+  "A daemon's own answer to `POST /v1/admin/stop`, in this client's vocabulary.
+
+   That answer arrives as wire JSON - STRING keys, with `status` a whole status MAP -
+   while every other branch here answers keyword keys and a status STRING. Handed back
+   unconverted it matched none of the branches its callers read, so `vis-agent gateway
+   stop` printed the raw wire map at the human instead of saying the gateway is stopping."
+  [body]
+  (let [status
+        (get body "status")
+
+        counted
+        (fn [k]
+          (let [v (get status k)]
+            (when (number? v) (max 0 (long v)))))]
+
+    (cond-> {:stopping (boolean (get body "stopping"))}
+      (get body "stopping")
+      (assoc :status "stopping")
+
+      (get status "pid")
+      (assoc :pid (get status "pid"))
+
+      (counted "clients")
+      (assoc :clients (counted "clients"))
+
+      (counted "running_turns")
+      (assoc :running-turns (counted "running_turns")))))
+
 (defn stop-daemon!
   "Stop the daemon registered for this DB, escalating when it stops answering.
    `POST /v1/admin/stop` first; when that is met with silence from a daemon that
@@ -807,7 +836,7 @@
                                             nil
                                             {:headers (lifecycle-protocol-headers)})
                      (catch Throwable _ ::unreachable))]
-        (if (= ::unreachable res) (escalate!) (do (forget!) res)))
+        (if (= ::unreachable res) (escalate!) (do (forget!) (acknowledged-stop res))))
       (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
         (escalate!)
         {:status "stopped" :stopping false}))))

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
@@ -914,3 +915,38 @@
                         (#'main/advertise-option {})))
              (finally (System/setProperty "user.home" old-home)
                       (config/invalidate-config-cache!))))))
+
+;; Regression (reported: `vis-agent gateway stop` printed
+;; `gateway stop requested: {"stopping" true, "status" {...}}`): the daemon's
+;; acknowledgement has to read as a sentence, never as a wire map.
+(defdescribe
+  cli-gateway-stop-vocabulary-test
+  (it "says the gateway is stopping and what that releases"
+      (let [lines (atom [])]
+        (with-redefs-fn
+          {#'main/stdout! #(swap! lines conj %)
+           #'config/init-cli! (constantly nil)
+           #'gateway-client/stop-daemon!
+           (constantly {:stopping true :status "stopping" :pid 32379 :clients 4 :running-turns 0})}
+          (fn []
+            (#'main/cli-gateway-stop! {} [])))
+        (expect (= ["gateway stopping (pid 32379) - releasing 4 clients"] @lines))))
+  (it "counts a drained turn beside the clients it releases"
+      (let [lines (atom [])]
+        (with-redefs-fn {#'main/stdout! #(swap! lines conj %)
+                         #'config/init-cli! (constantly nil)
+                         #'gateway-client/stop-daemon!
+                         (constantly
+                           {:stopping true :status "stopping" :clients 1 :running-turns 2})}
+          (fn []
+            (#'main/cli-gateway-stop! {} [])))
+        (expect (= ["gateway stopping - releasing 1 client, draining 2 running turns"] @lines))))
+  (it "never answers a human with a map"
+      (let [lines (atom [])]
+        (with-redefs-fn {#'main/stdout! #(swap! lines conj %)
+                         #'config/init-cli! (constantly nil)
+                         #'gateway-client/stop-daemon! (constantly {})}
+          (fn []
+            (#'main/cli-gateway-stop! {} [])))
+        (expect (str/includes? (first @lines) "no final state"))
+        (expect (not (str/includes? (first @lines) "{"))))))

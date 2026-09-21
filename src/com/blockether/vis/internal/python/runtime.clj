@@ -389,9 +389,24 @@
   []
   (vals @preparation))
 
+(defn- project-display-name
+  "How a prepared extension names ITSELF to a human. An installed extension lives in
+   `<extensions>/<package>/<version>/`, so its project directory alone is a bare version
+   number - `[vis extensions] 1.5.1: cached` named nothing the reader could act on, and
+   two extensions sharing a version collided on one status entry. A version directory is
+   therefore qualified with the package directory above it."
+  ^String [^File project]
+  (let [dir
+        (.getName project)
+
+        ^File parent
+        (.getParentFile project)]
+
+    (if (and parent (re-matches #"\d+\.[\w.+-]*" dir)) (str (.getName parent) " " dir) dir)))
+
 (defn- preparation-stage!
   [^File project stage]
-  (let [name (.getName project)]
+  (let [name (project-display-name project)]
     (swap! preparation assoc name {:name name :stage stage})
     (.println config/original-stderr (str "[vis extensions] " name ": " stage))
     (.flush config/original-stderr)))
