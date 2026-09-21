@@ -32,6 +32,7 @@ except ImportError:
 
 CATALOG = "https://vis.blockether.com"
 CATEGORIES = ("tools", "providers", "workflows")
+LATEST = "latest"
 MAX_METADATA = 128 * 1024
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
 
@@ -975,7 +976,10 @@ def _sync_spec(spec):
     if version is not None:
         if not isinstance(version, str):
             raise ValueError("version must be a string")
-        version = str(Version(version))
+        if version.strip().lower() == LATEST:
+            version = LATEST
+        else:
+            version = str(Version(version))
     if revision is not None and (
         not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
     ):
@@ -990,6 +994,10 @@ def _sync_spec(spec):
         "version": version,
         "revision": revision,
     }
+
+
+def _tracks_latest(spec):
+    return spec["version"] == LATEST
 
 
 def _sync_records(directory):
@@ -1170,11 +1178,12 @@ def rollback_saved_install(directory, name, save_state):
 def _sync_one(name, spec, directory, current, refresh, vis_version):
     destination = _destination(directory, name)
     exists = os.path.lexists(destination)
+    tracking = _tracks_latest(spec)
     if exists and not _sync_owned(destination, current):
         raise ValueError(
             "Existing extension is not owned by sync or was changed externally; no files replaced"
         )
-    if exists and current["spec"] == spec and not refresh:
+    if exists and current["spec"] == spec and not refresh and not tracking:
         metadata = inspect_source(
             destination, vis_version, ".".join(map(str, sys.version_info[:3]))
         )
@@ -1192,7 +1201,9 @@ def _sync_one(name, spec, directory, current, refresh, vis_version):
     active = None
     if remote:
         if revision is None:
-            release = _select(_releases(source, folder), spec["version"])
+            release = _select(
+                _releases(source, folder), None if tracking else spec["version"]
+            )
             revision = release["revision"]
         if exists and current["result"]["mode"] == "github":
             active, receipt = _managed(directory, name)
@@ -1239,6 +1250,7 @@ def sync(
 ):
     """Reconcile one YAML scope; reuse pins until refresh and prune only owned links.
 
+    A `latest` version tracks the newest approved stable release on every sync.
     Receipts and pointers are atomic. Old Git snapshots and local source are retained.
     A failed package is reported without removing its previous source or other packages.
     Dry-run performs no writes, imports or network calls. Dependencies are prepared by
@@ -1284,6 +1296,7 @@ def sync(
                         _sync_owned(destination, current)
                         and current["spec"] == spec
                         and not refresh
+                        and not _tracks_latest(spec)
                     )
                     result = {
                         "name": name,

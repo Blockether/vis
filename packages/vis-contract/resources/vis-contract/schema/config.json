@@ -1194,7 +1194,7 @@
         ]
       },
       "additionalProperties": false,
-      "description": "Explicit extension sync declaration. Review source and run extension sync --trust; config loading never installs code. Omitted selector chooses the latest approved stable release once, retained until --refresh."
+      "description": "Explicit extension sync declaration. Review source and run extension sync --trust; config loading never installs code. Omitted selector chooses the latest approved stable release once, retained until --refresh; version: latest rechecks it on every sync."
     },
     "extensions": {
       "type": "object",

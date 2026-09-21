@@ -914,6 +914,29 @@ def test_sync_pins_updates_refresh_and_rollback(releases):
     )
 
 
+def test_sync_latest_tracks_approved_stable_releases(releases):
+    metadata, target, commands = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "latest",
+        }
+    }
+    assert package.sync(configured, target, trust=True)[0]["version"] == "1.0.0"
+    fetched = len(commands)
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+    assert len(commands) == fetched
+    assert (
+        package.sync(configured, target, trust=True, dry_run=True)[0]["status"]
+        == "would-sync"
+    )
+    metadata.append(newer)
+    updated = package.sync(configured, target, trust=True)[0]
+    assert (updated["status"], updated["version"]) == ("updated", "1.1.0")
+
+
 def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
     target = tmp_path / "extensions"
     monkeypatch.setattr(
@@ -931,6 +954,7 @@ def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
         {"ok": {"source": REPOSITORY, "trust": True}},
         {"ok": {"source": REPOSITORY, "revision": "main"}},
         {"ok": {"source": "https://user:secret@github.com/a/b"}},
+        {"ok": {"source": ".", "version": "latest"}},
     ):
         with pytest.raises(ValueError):
             package.sync(config, target, trust=True)

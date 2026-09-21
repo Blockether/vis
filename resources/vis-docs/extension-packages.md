@@ -65,15 +65,20 @@ extensions:
     source: https://github.com/example/vis-tools
     subdirectory: extensions/vis-tools
     version: "0.1.0"
+  vis-notes:
+    source: https://github.com/example/vis-notes
+    version: latest
   vis-greeter:
     source: ./tools/greeter
 ```
 
 Replace the example repository and version with a reviewed, approved release. A declaration accepts
 `source`, optional `subdirectory`, and either `version` or a full lowercase Git
-`revision`. The `source` may also carry the folder (`example/vis-tools/extensions/vis-tools`);
-name it once. Selectors apply only to GitHub sources. Local paths are relative to the
-YAML file declaring them, not the shell's working directory.
+`revision`. A `version` is an approved release such as `"0.1.0"`, or `latest` to track
+the newest approved stable release. The `source` may also carry the folder
+(`example/vis-tools/extensions/vis-tools`); name it once. Selectors apply only to
+GitHub sources. Local paths are relative to the YAML file declaring them, not the
+shell's working directory.
 
 ```bash
 vis-agent extension sync --dry-run
@@ -98,6 +103,10 @@ Without a selector, the first sync pins the latest approved stable release. An
 unchanged declaration reuses that SHA without fetching Git or the catalog; only
 `--refresh` checks for a newer approved release. Explicit versions stay fixed,
 including when refresh is requested. Changing a version can intentionally downgrade.
+Use `version: latest` to track releases instead of pinning: every sync checks the
+catalog and installs the newest approved stable release when it moves, without
+`--refresh`. It never selects a prerelease, and `sync --dry-run` reports it as
+`would-sync`, because a dry run makes no network calls.
 Dependencies use `uv sync --check --offline` first, falling back to normal `uv sync`
 only when preparation is needed. `uv` owns its lockfile, environment and download cache.
 

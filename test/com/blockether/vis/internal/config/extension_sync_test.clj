@@ -9,6 +9,8 @@
   (is (validation/valid? {"extensions" {"vis-tools" {"source" "https://github.com/example/vis-tools"
                                                      "subdirectory" "extensions/vis-tools"
                                                      "version" "0.1.0"}}}))
+  (is (validation/valid? {"extensions" {"vis-tools" {"source" "https://github.com/example/vis-tools"
+                                                     "version" "latest"}}}))
   (doseq [entry [{"source" "./tools" "trust" true} {"source" "./tools" "revision" "main"}
                  {"source" "./tools" "version" "1" "revision" (apply str (repeat 40 "a"))} {}]]
     (is (not (validation/valid? {"extensions" {"vis-tools" entry}}))))
