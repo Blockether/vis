@@ -23,7 +23,7 @@ import {
   Copy,
   Crop,
   Download,
-  Ellipsis,
+  EllipsisVertical,
   Eraser,
   Folder,
   FolderPlus,
@@ -383,13 +383,15 @@ export function AlertIcon({ className }: { className?: string }) {
 }
 
 /**
- * Overflow — "more actions." Three dots on the optical centre, so a menu trigger
- * reads the same weight at every size the way a strip of stroked icons does. The
- * `⋯` glyph this replaces is a MATH symbol (U+22EF): it sits on the cap-height
- * line, never the centre, and at small sizes it is a dash.
+ * Overflow — "more actions." Three dots stacked VERTICALLY on the optical centre,
+ * the kebab every mobile row and header menu is opened with. Horizontal dots read
+ * as "typing" or "truncated text" beside a title, which is what a project header
+ * and a group band looked like. The `⋯` glyph this replaces is a MATH symbol
+ * (U+22EF): it sits on the cap-height line, never the centre, and at small sizes
+ * it is a dash.
  */
 export function DotsIcon({ className }: { className?: string }) {
-  return <Mark icon={Ellipsis} className={className} />;
+  return <Mark icon={EllipsisVertical} className={className} />;
 }
 
 /**

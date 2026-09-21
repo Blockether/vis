@@ -3150,6 +3150,53 @@
              (it "leaves the list whole when the window asks nothing of it"
                  (expect (= 3 (:total (three-session-window {}))))))
 
+;; Regression, user report (paraphrased: "groups should be outside the paging, and there is
+;; no way to tell whether a session is in a group at all"): a client painted its group bands
+;; from the CURRENT PAGE, so a session filed deeper in the fleet was missing from its own
+;; group until the reader paged down to it (BLO-167).
+(defn- grouped-fleet-window
+  "One `list-sessions-page` answer over a fleet where two sessions are filed."
+  [opts]
+  (with-redefs-fn {#'lp/db-info (constantly ::db)
+                   #'lp/projects (constantly [])
+                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'lp/by-channel (constantly
+                                     [{:id "loose1" :title "One" :created-at 400}
+                                      {:id "filed1" :title "Two" :created-at 300 :group-id "g1"}
+                                      {:id "loose2" :title "Three" :created-at 200}
+                                      {:id "filed2" :title "Four" :created-at 100 :group-id "g2"}])
+                   #'bus/live-turns (constantly {})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})}
+    (fn []
+      (state/list-sessions-page :all opts))))
+
+(defdescribe
+  gateway-keeps-group-shelves-outside-the-window-test
+  (it "answers the filed sessions complete, beside a window of the loose ones"
+      (let [got (grouped-fleet-window {:limit 1 :grouped "aside"})]
+        (expect (= ["loose1"] (mapv #(get % "id") (:sessions got))))
+        ;; Deeper in the fleet than this window reaches, and still whole here.
+        (expect (= ["filed1" "filed2"] (mapv #(get % "id") (:grouped got))))
+        ;; The pager printed under the shelves counts the LOOSE sessions alone.
+        (expect (= 2 (:total got)))
+        (expect (:has-more got))))
+  (it "walks the loose sessions alone once the shelves stand aside"
+      (let [head
+            (grouped-fleet-window {:limit 1 :grouped "aside"})
+
+            tail
+            (grouped-fleet-window {:limit 1 :grouped "aside" :after (:next-cursor head)})]
+
+        (expect (= ["loose2"] (mapv #(get % "id") (:sessions tail))))
+        (expect (not (:has-more tail)))))
+  (it "leaves every session in the window when no caller asks for shelves"
+      (let [got (grouped-fleet-window {})]
+        (expect (= ["loose1" "filed1" "loose2" "filed2"] (mapv #(get % "id") (:sessions got))))
+        (expect (empty? (:grouped got)))
+        (expect (= 4 (:total got))))))
+
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty
 ;; report: the navigator key read the registry's `:last-active` TOUCH clock -

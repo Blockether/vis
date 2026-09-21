@@ -657,6 +657,14 @@ export interface ProjectPage {
    * paints it once.
    */
   awaiting: Session[];
+  /**
+   * The project's sessions FILED in a group, complete and outside the window
+   * (`?grouped=aside`). A group is a shelf the reader paints whole: painting it
+   * from the current page instead showed a filed session as ungrouped until the
+   * reader happened to page down to it, and `total`/`nextCursor` above therefore
+   * count the LOOSE sessions only.
+   */
+  grouped: Session[];
 }
 /**
  * The project windows ONE reader is holding, and the validator each was issued
@@ -3149,13 +3157,14 @@ export class GatewayClient {
     const res = await this.requestFull<{
       sessions?: Session[];
       awaiting?: Session[];
+      grouped?: Session[];
       total?: number;
       next_cursor?: string | null;
     }>(
       'GET',
       `/v1/sessions?root=${encodeURIComponent(root)}&limit=${limit}${
         after ? `&after=${encodeURIComponent(after)}` : ''
-      }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}`,
+      }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}&grouped=aside`,
       undefined,
       signal,
       pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
@@ -3173,15 +3182,18 @@ export class GatewayClient {
     // page that only gained a title does not re-render every row on it.
     const rows = reconcileRows(pin?.page.rows ?? null, res.data?.sessions ?? []);
     const awaiting = reconcileRows(pin?.page.awaiting ?? null, res.data?.awaiting ?? []);
+    const grouped = reconcileRows(pin?.page.grouped ?? null, res.data?.grouped ?? []);
     // Every row names the model it runs on, so opening any of them paints the right
     // chip on the FIRST frame instead of after a per-session round trip.
     this.seedSessionModels(rows);
     this.seedSessionModels(awaiting);
+    this.seedSessionModels(grouped);
     const page: ProjectPage = {
       rows,
       total: res.data?.total ?? rows.length,
       nextCursor: res.data?.next_cursor ?? '',
       awaiting,
+      grouped,
     };
     return remember({ etag: res.etag ?? '', page });
   }
@@ -3229,7 +3241,8 @@ export class GatewayClient {
       if (
         (root && key === this.snapshotKey('project-head', root)) ||
         page.rows.some((row) => row.id === sid) ||
-        page.awaiting.some((row) => row.id === sid)
+        page.awaiting.some((row) => row.id === sid) ||
+        (page.grouped ?? []).some((row) => row.id === sid)
       )
         snapshots.delete(key);
     }
@@ -3416,13 +3429,22 @@ export class GatewayClient {
   private withoutDeletedProjectSessions(page: ProjectPage): ProjectPage {
     const rows = this.withoutDeletedSessions(page.rows);
     const awaiting = this.withoutDeletedSessions(page.awaiting);
-    if (rows === page.rows && awaiting === page.awaiting) return page;
+    // A head snapshot written before group shelves existed carries no `grouped`,
+    // and a restored page is handed straight to the list.
+    const grouped = this.withoutDeletedSessions(page.grouped ?? []);
+    if (rows === page.rows && awaiting === page.awaiting && grouped === page.grouped) return page;
+    // `total` counts the WINDOW's own rows - the parked strip and the group
+    // shelves stand beside it - so only a deleted row of this page moves it.
     const deleted = new Set(
-      [...page.rows, ...page.awaiting]
-        .filter((row) => this.isSessionDeleted(row.id))
-        .map((row) => row.id),
+      page.rows.filter((row) => this.isSessionDeleted(row.id)).map((row) => row.id),
     );
-    return { ...page, rows, awaiting, total: Math.max(0, page.total - deleted.size) };
+    return {
+      ...page,
+      rows,
+      awaiting,
+      grouped,
+      total: Math.max(0, page.total - deleted.size),
+    };
   }
 
   /** Add an empty workspace root to the gateway's project inventory, idempotently. */

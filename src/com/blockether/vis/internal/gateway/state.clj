@@ -5568,7 +5568,7 @@
 
 (defn- session-ranking
   "Sessions of `channel` a navigator paints, in ITS order, as
-   `[{:id :band :sort-key :recency-ms :project-id} ...]` - from CHEAP facts only: the
+   `[{:id :band :sort-key :recency-ms :project-id :group-id} ...]` - from CHEAP facts only: the
    persisted record, the one grouped turn-stats query, the cached live-turn scan and
    the `dirty` ids the asking device named.
 
@@ -5618,7 +5618,12 @@
                         ;; travels with the row and `list-sessions-page` cuts to one
                         ;; project BEFORE the window instead of after it.
                         :project-id (some-> (:project-id record)
-                                            str)}))))))
+                                            str)
+                        ;; A filed session is painted BESIDE the window (`:grouped
+                        ;; :aside`), so which group holds it has to be known before
+                        ;; the page is cut, exactly like the project id above.
+                        :group-id (some-> (:group-id record)
+                                          str)}))))))
        (sort-by (juxt :band :sort-key :id))
        vec))
 
@@ -5712,7 +5717,7 @@
 
 (defn list-sessions-page
   "A WINDOW of the navigator list, in the gateway's own order:
-   `{:sessions rows :awaiting rows :total n :limit l :next-cursor s :has-more bool}`.
+   `{:sessions rows :awaiting rows :grouped rows :total n :limit l :next-cursor s :has-more bool}`.
 
    THE GATEWAY OWNS THE LIST - which sessions are in it and where each one sits
    (`session-ranking`, `session-listed?`) - so `total`, this window and a client's
@@ -5740,7 +5745,15 @@
    `:awaiting` stands BESIDE the window: the sessions parked on an unanswered
    human-input request, complete however deep in the fleet they sit, because a
    client pins them above the list instead of the ordering lifting them into it
-   (see `session-ranking`).
+    (see `session-ranking`).
+
+   `:grouped :aside` takes the sessions a human has FILED in a group OUT of the
+   window and answers them complete under `:grouped`, the way `:awaiting` already
+   stands beside it. A group is a shelf, not a page: a client paints the whole
+   shelf however deep in the fleet its rows sit, and `total`, `:next-cursor` and
+   `:has-more` then describe the LOOSE sessions alone - which is what the pager
+   printed under the groups is counting. Without the option nothing moves and
+   `:grouped` is empty.
 
    `nil` limit means \"the rest\". No ROUTE leaves it nil any more: a read that names
    no cut is answered with the head window (`list-sessions-handler`), so a whole-list
@@ -5768,7 +5781,7 @@
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root project-id id-prefix ids dirty]}]
+  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -5803,16 +5816,30 @@
                       (fn [row]
                         (contains? wanted (:id row))))))
 
+         aside-groups?
+         (= "aside"
+            (some-> grouped
+                    name))
+
+         ;; Filed rows leave the WINDOW, not the listing: `awaiting` below still
+         ;; sees them through `ranked`, and the cut, the total and the cursor are
+         ;; computed over what is left loose.
+         filed
+         (if aside-groups? (filterv :group-id ranked) [])
+
+         pageable
+         (if aside-groups? (filterv (complement :group-id) ranked) ranked)
+
          total
-         (count ranked)
+         (count pageable)
 
          cursor
          (parse-session-cursor after)
 
          tail
          (if cursor
-           (into [] (drop-while (complement (partial after-session-cursor? cursor))) ranked)
-           ranked)
+           (into [] (drop-while (complement (partial after-session-cursor? cursor))) pageable)
+           pageable)
 
          window
          (if (some? limit) (into [] (take (max 0 (long limit))) tail) (vec tail))
@@ -5844,10 +5871,17 @@
          (let [listed (into #{} (map :id) ranked)]
            (-> (into [] (comp (filter listed) (keep page-soul)) (keys (bus/waiting-requests)))
                (session-summary-extras db stats)
-               order-session-summaries))]
+               order-session-summaries))
+
+         ;; The group shelves, complete and in the listing's own order.
+         grouped-rows
+         (-> (into [] (comp (map :id) (keep page-soul)) filed)
+             (session-summary-extras db stats)
+             (order-by-ranking filed))]
 
      {:sessions rows
       :awaiting awaiting
+      :grouped grouped-rows
       :total total
       :limit (some-> limit
                      long)

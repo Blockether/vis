@@ -1779,7 +1779,15 @@
             (is (= origin (get-in preflight [:headers "Access-Control-Allow-Origin"])))
             (is (= "true" (get-in preflight [:headers "Access-Control-Allow-Credentials"])))
             (is (= "authorization,content-type"
-                   (get-in preflight [:headers "Access-Control-Allow-Headers"]))))
+                   (get-in preflight [:headers "Access-Control-Allow-Headers"])))
+            ;; #BLO-167: filing a session into a group is `PUT /v1/sessions/:sid/group`.
+            ;; With PUT missing from the advertised methods the browser refused the
+            ;; preflight and the companion only ever showed "cannot reach the gateway".
+            (let [allowed (set (map str/trim
+                                    (str/split (get-in preflight
+                                                       [:headers "Access-Control-Allow-Methods"])
+                                               #",")))]
+              (is (every? allowed ["GET" "POST" "PUT" "PATCH" "DELETE" "OPTIONS"]))))
           (testing "a 401 still carries CORS so the browser surfaces the error, not an opaque block"
             (is (= 401 (:status noauth)))
             (is (= origin (get-in noauth [:headers "Access-Control-Allow-Origin"]))))
@@ -3905,7 +3913,8 @@
                    :project-id nil
                    :id-prefix nil
                    :ids #{}
-                   :dirty #{}}]
+                   :dirty #{}
+                   :grouped nil}]
                  @seen))
           (is (= "2:-3000:b" (get body "next_cursor")))
           (is (true? (get body "has_more")))
@@ -3926,6 +3935,32 @@
                                                 (assoc "after" after))})
                              [:headers "ETag"]))]
           (is (not= (etag nil) (etag "2:-4000:a"))))))))
+
+;; Regression, user report (paraphrased: "groups should be outside the paging"): a client
+;; could only paint the group bands of the page it was holding, so a session filed deeper
+;; in the fleet looked like it was in no group at all (BLO-167).
+(deftest sessions-window-keeps-group-shelves-aside
+  (let [seen (atom nil)]
+    (with-redefs [state/list-sessions-page (fn [channel opts]
+                                             (reset! seen [channel opts])
+                                             {:sessions [{"id" "loose"}]
+                                              :awaiting []
+                                              :grouped [{"id" "filed"}]
+                                              :total 1
+                                              :limit 20
+                                              :next-cursor nil
+                                              :has-more false})]
+      (testing "`grouped=aside` reaches the store and its shelves come back on the wire"
+        (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
+                                             {:query-params {"limit" "20" "grouped" "aside"}})))]
+          (is (= "aside" (:grouped (second @seen))))
+          (is (= ["filed"] (mapv #(get % "id") (get body "grouped"))))
+          (is (= ["loose"] (mapv #(get % "id") (get body "sessions"))))))
+      (testing "a caller that does not ask for them gets the list it always got"
+        (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
+                                             {:query-params {"limit" "20"}})))]
+          (is (nil? (:grouped (second @seen))))
+          (is (nil? (get body "grouped"))))))))
 
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
 ;; list too"): the channel downloaded every session to answer two narrow questions - one

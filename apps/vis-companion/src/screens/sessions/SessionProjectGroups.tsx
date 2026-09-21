@@ -142,7 +142,6 @@ function GroupBand({
   name,
   color,
   count,
-  shown,
   isOpen,
   onToggle,
   machine,
@@ -153,10 +152,8 @@ function GroupBand({
 }: {
   name: string;
   color: string | null;
-  /** The gateway's tally for the WHOLE group, not the part of it this page holds. */
+  /** The gateway's tally for the WHOLE group, which is also what stands under it. */
   count: number;
-  /** How many of its rows are on the page under it. */
-  shown: number;
   isOpen: boolean;
   onToggle: () => void;
   /** The machine this band lives on, for the accessible name of its own plus. */
@@ -190,6 +187,9 @@ function GroupBand({
         if (sid) onDropSession(sid);
       }}
     >
+      {/* The band and its rows share one coloured edge, so a group reads as a place
+          rather than as a caption. */}
+      <span aria-hidden className={`w-1 shrink-0 ${groupSwatch(color)}`} />
       <button
         type="button"
         aria-expanded={isOpen}
@@ -204,7 +204,6 @@ function GroupBand({
         <span className="min-w-0 truncate font-mono text-ui font-bold text-white">{name}</span>
         <HeaderMeta>
           <HeaderTally count={count} unit="session" />
-          {shown === 0 && count > 0 && <span>none on this page</span>}
         </HeaderMeta>
       </button>
       <HeaderActions align="center">
@@ -349,9 +348,18 @@ export const ProjectGroup = memo(function ProjectGroup({
     rows: Session[];
     total: number;
     awaiting: Session[];
+    grouped: Session[];
   } | null>(() => {
     const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map());
-    return held ? { start: 0, rows: held.rows, total: held.total, awaiting: held.awaiting } : null;
+    return held
+      ? {
+          start: 0,
+          rows: held.rows,
+          total: held.total,
+          awaiting: held.awaiting,
+          grouped: held.grouped ?? NO_ROWS,
+        }
+      : null;
   });
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
@@ -426,6 +434,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           rows: held.rows.slice(start - from),
           total: held.total,
           awaiting: held.awaiting,
+          grouped: held.grouped ?? NO_ROWS,
         });
     }
     void (async () => {
@@ -445,6 +454,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           rows: answer.rows.slice(start - from),
           total: answer.total,
           awaiting: answer.awaiting,
+          grouped: answer.grouped,
         });
         // Behind the answer, never beside it: the reader's own page is never waiting on
         // a read taken for a page they have not asked for. A project that has ended
@@ -544,6 +554,22 @@ export const ProjectGroup = memo(function ProjectGroup({
       .map((session) => settled(session, local, refiled));
     return parked.length === 0 ? held : [...parked, ...held];
   }, [searching, painting, local, refiled, epoch, admitted, paged, getClient, conn, list]);
+  // THE GROUPS ARE NOT PAGED. The gateway answers a project's FILED sessions complete
+  // and beside the window (`?grouped=aside`), because a group is a shelf a reader reads
+  // whole: bands cut from the current page printed a name with `none on this page`
+  // under it while its sessions sat four pages down, and a session filed from the
+  // sheet left the very band that had just taken it.
+  const shelved = useMemo(() => {
+    const api = getClient(conn);
+    // A query is answered over the whole project already; its hits are the list.
+    if (searching) return NO_ROWS;
+    return (paged?.grouped ?? NO_ROWS)
+      .filter((session) => !api.isSessionDeleted(session.id))
+      .map((session) => settled(session, local, refiled));
+  }, [searching, paged, local, refiled, getClient, conn]);
+  // Every row this project is painting: the shelves, and the page under them. A verb
+  // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
+  const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
   useEffect(() => {
     // The project shrank under the pager (a deletion, a smaller step): the page that
     // no longer exists becomes the first one rather than the last one a reader never
@@ -646,7 +672,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   const filed = useMemo(() => {
     const byGroup = new Map<string, Session[]>();
     const loose: Session[] = [];
-    for (const session of rows) {
+    const seen = new Set<string>();
+    // The shelves first, then the page: a row the reader just filed is on both until
+    // the next poll lands, and it belongs to its band either way.
+    for (const session of painted) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
       const gid = typeof session.group_id === 'string' ? session.group_id : '';
       if (gid === '') {
         loose.push(session);
@@ -657,7 +688,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       else byGroup.set(gid, [session]);
     }
     return { byGroup, loose };
-  }, [rows]);
+  }, [painted]);
   // A band for every group the project HAS, plus one for any group a ROW names that
   // this device has not read yet: a row is never dropped because the list arrived a
   // beat ahead of the groups.
@@ -736,7 +767,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // project itself with everything nobody filed.
   // A ROW DROPPED ON A BAND RUNS THE SAME FILING VERB the sheet's `Move to...` does.
   const dropSession = (sid: string, gid: string | null) => {
-    const found = rows.find((one) => one.id === sid);
+    const found = painted.find((one) => one.id === sid);
     if (!found || (found.group_id ?? null) === gid) return;
     fileSession(found, gid, 'close');
   };
@@ -867,7 +898,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           </HeaderActions>
         </SectionHeader>
         {/* Rows own their internal dividers; the wrapper closes the final session. */}
-        {isShowing && rows.length > 0 && (
+        {isShowing && painted.length > 0 && (
           <div
             ref={rowsRef}
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
@@ -881,7 +912,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                     name={band.name}
                     color={band.color}
                     count={band.count}
-                    shown={held.length}
                     isOpen={isBandOpen}
                     onToggle={() => foldGroup(band.id, !isBandOpen)}
                     machine={machineLabel(conn)}
@@ -957,7 +987,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </>
               );
             if (step.kind === 'move') {
-              const session = rows.find((one) => one.id === step.sid);
+              const session = painted.find((one) => one.id === step.sid);
               // The row left the page while its sheet was open: say so, rather than
               // offering a verb with nothing behind it.
               if (!session) return <MenuNote>That session is gone.</MenuNote>;

@@ -240,6 +240,22 @@ describe('the icon set', () => {
     expect(renderToStaticMarkup(<ChevronIcon back />)).toContain('[&amp;&gt;path]:rotate-180');
   });
 
+  // Regression, reported as "the three dots that open the settings run left to right":
+  // the kebab a menu hangs off has to stack DOWN the edge it sits on, on a project row
+  // as on a session row (BLO-167).
+  it('stacks the menu kebab down the row instead of across it', () => {
+    const dots = [...renderToStaticMarkup(<DotsIcon />).matchAll(/<circle[^>]*>/g)].map(
+      ([tag]) => ({
+        cx: Number(/cx="([\d.]+)"/.exec(tag)?.[1]),
+        cy: Number(/cy="([\d.]+)"/.exec(tag)?.[1]),
+      }),
+    );
+
+    expect(dots).toHaveLength(3);
+    expect(new Set(dots.map(({ cx }) => cx)).size).toBe(1);
+    expect(new Set(dots.map(({ cy }) => cy)).size).toBe(3);
+  });
+
   // Regression: text ink made filled favorites brown instead of yellow. Keep
   // the accent fill explicit for native webviews and use the same stroke color.
   it('paints a filled favorite with the accent fill, not the darker text ink', () => {

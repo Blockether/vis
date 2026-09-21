@@ -3,7 +3,7 @@ import { act, useRef } from 'react';
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isAppForeground, useVisualViewportShell } from './viewport';
+import { isAppForeground, useKeyboardInset, useVisualViewportShell } from './viewport';
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
@@ -35,10 +35,12 @@ vi.mock('@capacitor/app', () => ({
 
 function ViewportProbe() {
   const shell = useRef<HTMLDivElement>(null);
+  const inset = useKeyboardInset();
   useVisualViewportShell(shell);
   return (
     <div ref={shell} data-testid="shell">
       <textarea aria-label="Message" />
+      <span data-testid="inset">{inset}</span>
     </div>
   );
 }
@@ -155,5 +157,33 @@ describe('the native shell after backgrounding', () => {
     const focus = vi.spyOn(composer, 'focus');
     act(() => vi.advanceTimersByTime(200));
     expect(focus).not.toHaveBeenCalled();
+  });
+});
+
+// Regression, user report (paraphrased: on the phone the box for typing the group's
+// name cannot be seen): a menu sheet is pinned to the bottom of the window, and the
+// raised keyboard covers that edge — so the field the sheet opened for sat under the
+// keys. The shell already knows how tall the covered band is; it now publishes it, and
+// `Menu`'s sheet lifts by exactly that much (BLO-167).
+describe('the band a raised keyboard covers', () => {
+  it('publishes the covered height to whoever is pinned to the bottom edge', () => {
+    render(<ViewportProbe />);
+    const inset = screen.getByTestId('inset');
+    expect(inset).toHaveTextContent('0');
+
+    act(() => screen.getByRole('textbox', { name: 'Message' }).focus());
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+
+    expect(screen.getByTestId('shell')).toHaveStyle({ height: '544px' });
+    expect(inset).toHaveTextContent('300');
+  });
+
+  it('gives the edge back when the keyboard goes down', () => {
+    render(<ViewportProbe />);
+    act(() => screen.getByRole('textbox', { name: 'Message' }).focus());
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    act(() => native.keyboard.get('keyboardWillHide')?.({ keyboardHeight: 0 }));
+
+    expect(screen.getByTestId('inset')).toHaveTextContent('0');
   });
 });

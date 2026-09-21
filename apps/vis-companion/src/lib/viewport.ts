@@ -488,6 +488,46 @@ export function useSafeBottomStyle(): CSSProperties {
   return useMemo(() => ({ '--safe-bottom': value }) as CSSProperties, [value]);
 }
 
+// How much of the window's bottom edge the software keyboard is covering, in CSS
+// pixels. The shell pin in `useVisualViewportShell` moves the app; it cannot move
+// what is PORTALED out of it, and every menu and sheet is. On native iOS the
+// webview never shrinks (`resize: 'none'`), so a sheet docked to the bottom sat
+// under the keyboard with the field the human was typing into invisible. That
+// sheet lifts itself by this value instead, published from the one place that
+// already knows the geometry.
+let keyboardInset = 0;
+const keyboardInsetListeners = new Set<() => void>();
+
+const setKeyboardInset = (value: number): void => {
+  const next = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  if (keyboardInset === next) return;
+  keyboardInset = next;
+  for (const listener of keyboardInsetListeners) listener();
+};
+
+const subscribeKeyboardInset = (listener: () => void): (() => void) => {
+  keyboardInsetListeners.add(listener);
+  return () => {
+    keyboardInsetListeners.delete(listener);
+  };
+};
+
+/**
+ * Pixels of the bottom edge the software keyboard owns right now.
+ *
+ * `0` whenever the keyboard is down, and on the platforms that resize the webview
+ * themselves — there the layout has already moved and lifting again would double
+ * the gap. Only elements OUTSIDE the app shell need this; everything inside it is
+ * moved by the shell pin.
+ */
+export function useKeyboardInset(): number {
+  return useSyncExternalStore(
+    subscribeKeyboardInset,
+    () => keyboardInset,
+    () => 0,
+  );
+}
+
 /** The shell's current height in CSS pixels, keyboard pin included. */
 export function shellViewportHeight(): number {
   const metrics = readViewportMetrics();
@@ -553,6 +593,15 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // frame after focus. Mutate only this root's inline geometry synchronously;
     // none of its thousands of descendants has to render for a keyboard frame.
     const setBox = (next: Box | null) => {
+      // What the shell gives up at the bottom is exactly what the keyboard took,
+      // and portaled UI has to give up the same. `--safe-bottom` at 0 is this
+      // driver's own word for "the keyboard owns the bottom edge", so a wake-time
+      // oversize pin - a shorter shell with no keyboard - publishes nothing.
+      setKeyboardInset(
+        next && safeBottom === SAFE_BOTTOM_KEYBOARD
+          ? layoutHeight(readViewportMetrics()) - next.height - next.top
+          : 0,
+      );
       if (
         currentBox === next ||
         (currentBox && next && currentBox.height === next.height && currentBox.top === next.top)
@@ -692,8 +741,9 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             ? { height: clampShellHeight(vv.height, metrics), top }
             : null;
         pinnedShellHeight = next ? next.height : null;
-        setBox(next);
+        // Before the box: `setBox` reads this to publish the keyboard inset.
         setSafeBottom(covered ? SAFE_BOTTOM_KEYBOARD : SAFE_BOTTOM_DEFAULT);
+        setBox(next);
       });
     };
 

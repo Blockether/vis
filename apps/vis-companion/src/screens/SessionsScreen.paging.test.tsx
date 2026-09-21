@@ -170,7 +170,9 @@ describe('gateway-backed project pages', () => {
       // and a validator each, so a page turn is a paint instead of a wait.
       const first = pageReads(view);
       expect(first).toHaveLength(3);
-      expect(first[0]).toBe('/v1/sessions?root=/Users/dev/alpha&limit=15');
+      // The shelves ride along with the window: a project's filed sessions are answered
+      // complete beside it, so a group is never cut by the pager (BLO-167).
+      expect(first[0]).toBe('/v1/sessions?root=/Users/dev/alpha&limit=15&grouped=aside');
       expect(first.slice(1).every((read) => read.includes('&after='))).toBe(true);
       expect(first.every((read) => read.includes('limit=15'))).toBe(true);
       expect(shown(view)[0]).toBe('alpha 00');

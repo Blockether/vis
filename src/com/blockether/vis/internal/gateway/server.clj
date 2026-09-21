@@ -2229,7 +2229,7 @@
   20)
 
 (defn- list-sessions-handler
-  "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=] — sessions in
+  "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=] — sessions in
    navigator order, WINDOWED, with a validator so a poller can revalidate instead of
    re-downloading.
 
@@ -2265,7 +2265,13 @@
 
    `awaiting` carries the sessions parked on an unanswered input View,
    complete and OUTSIDE the window, so a client pins them above a list that no
-   longer reorders itself when a turn starts or ends.
+    longer reorders itself when a turn starts or ends.
+
+   `grouped=aside` does the same for the sessions a human has FILED in a group:
+   they leave the window and come back complete under `grouped`, while `total`,
+   `next_cursor` and `has_more` describe the loose sessions the pager is walking.
+   A group is a shelf the client paints whole, so paging it was hiding rows the
+   human had just filed.
 
    The companion refreshes this on a timer and the payload is BIG while the
    content is identical until a turn moves. With `If-None-Match` the steady state
@@ -2315,6 +2321,13 @@
         ids
         (query-session-ids request "ids")
 
+        ;; Which sessions stand BESIDE the window. `aside` lifts the filed rows out of
+        ;; the page, so a group shelf is complete however deep its sessions sit.
+        grouped
+        (some-> (get-in request [:query-params "grouped"])
+                str
+                not-empty)
+
         ;; A read that named neither a window nor a cut asked for every session in the
         ;; store. The head window is what it gets, and `next_cursor` carries anyone who
         ;; wants the rest.
@@ -2336,7 +2349,8 @@
                                        :project-id project-id
                                        :id-prefix id-prefix
                                        :ids ids
-                                       :dirty dirty})
+                                       :dirty dirty
+                                       :grouped grouped})
 
             payload
             (cond-> {:sessions (:sessions page)
@@ -2350,6 +2364,9 @@
                      :after after
                      :next-cursor (:next-cursor page)
                      :has-more (:has-more page)}
+              (seq grouped)
+              (assoc :grouped (:grouped page))
+
               ;; One request owns the first paint. Recomputing this for every tail
               ;; window would add work while conveying the same fleet-wide fact.
               (nil? after)
@@ -4883,7 +4900,7 @@
                              (or (ex-message no-provider) "No AI provider is configured yet."))
              (error-response 500 :engine-error (or (ex-message t) "internal error")))))))
 
-(def ^:private cors-allow-methods "GET, POST, PATCH, DELETE, OPTIONS")
+(def ^:private cors-allow-methods "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
 (defn- cors-headers
   "CORS headers for a cross-origin browser request. The bearer token is the

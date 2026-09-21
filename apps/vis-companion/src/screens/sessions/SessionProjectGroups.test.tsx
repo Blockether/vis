@@ -32,7 +32,7 @@ const LOOSE = ROWS[2];
 type Machine = Record<string, unknown>;
 
 function machine(overrides: Machine = {}) {
-  const page = { rows: ROWS, total: ROWS.length, awaiting: [], nextCursor: '' };
+  const page = { rows: ROWS, total: ROWS.length, awaiting: [], grouped: [], nextCursor: '' };
   return {
     base: 'https://story.example.com',
     heldProjectPage: () => page,
@@ -125,7 +125,9 @@ describe('ProjectGroup groups', () => {
     mount();
     const wallet = await band('Wallet work');
     expect(within(wallet).getByText('2 sessions')).toBeInTheDocument();
-    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(1);
+    // The band wears its colour twice over: the swatch beside its name, and the rail
+    // down the leading edge it shares with every row filed under it (BLO-167).
+    expect(wallet.querySelectorAll('.bg-group-blue').length).toBeGreaterThanOrEqual(4);
     expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     )).toEqual([ROWS[0].id, ROWS[1].id]);
@@ -136,6 +138,41 @@ describe('ProjectGroup groups', () => {
       row.getAttribute('data-session-id'),
     );
     expect(painted).toEqual([ROWS[0].id, ROWS[1].id, ROWS[2].id, ROWS[3].id]);
+  });
+
+  // BLO-167, user report (paraphrased: "groups should be outside the paging, and there is
+  // no way to tell a session is in one"): a band was cut from the page under it, so a
+  // filed session deeper in the project was missing from its own group.
+  it('paints a filed session the page does not hold, out of the shelves beside it', async () => {
+    const offPage: Session = {
+      ...ROWS[3],
+      id: 'off-page-session',
+      title: 'Filed forty pages down',
+      group_id: WALLET,
+      group_name: WALLET_GROUP.name,
+      group_color: WALLET_GROUP.color,
+    };
+    const page = {
+      rows: [ROWS[2], ROWS[3]],
+      total: 2,
+      awaiting: [],
+      grouped: [ROWS[0], ROWS[1], offPage],
+      nextCursor: '',
+    };
+    mount(machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }));
+    const wallet = await band('Wallet work');
+    expect(
+      [...wallet.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).toEqual([ROWS[0].id, ROWS[1].id, offPage.id]);
+    // The pager below walks the LOOSE sessions only; the shelf is not part of that walk.
+    const list = wallet.parentElement as HTMLElement;
+    expect(
+      [...list.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).toEqual([ROWS[0].id, ROWS[1].id, offPage.id, ROWS[2].id, ROWS[3].id]);
   });
 
   // BLO-167: a session started ON a band is minted inside that group, so it opens at

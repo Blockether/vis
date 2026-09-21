@@ -21,6 +21,7 @@ import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages'
 import type { PendingAttachment } from '../lib/attachments';
 import { unreadTurnCount, useReadMarks } from '../lib/unread';
 import { isFavorite } from '../lib/favorites';
+import { groupSwatch } from '../lib/group-colors';
 import {
   sessionInputCount,
   sessionIsLive,
@@ -332,6 +333,23 @@ export const SessionRow = memo(function SessionRow({
         >
           {/* Hover changes the title ink; status marks retain their own meaning. */}
           <div className="group flex items-stretch">
+            {/* THE GROUP'S OWN COLOUR, down the leading edge of the row. A filed session
+                is filed wherever it is painted - pinned above the page, found by a
+                search, sitting under its band - and without this mark the only place
+                you could see it was the band, if the band happened to be on screen. */}
+            {typeof session.group_id === 'string' && session.group_id !== '' && (
+              <span className="flex shrink-0 items-stretch">
+                <span
+                  aria-hidden
+                  className={`w-1 ${groupSwatch(
+                    typeof session.group_color === 'string' ? session.group_color : null,
+                  )}`}
+                />
+                <span className="sr-only">
+                  {`In group ${typeof session.group_name === 'string' && session.group_name !== '' ? session.group_name : 'unnamed'}`}
+                </span>
+              </span>
+            )}
             <SessionRowSurface
               isEditing={renameDraft !== null}
               sessionId={session.id}
