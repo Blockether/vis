@@ -16,7 +16,7 @@ import {
 import { SwipeActions } from './SwipeActions';
 import { FolderPlusIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
-import type { GatewayConn, Session, SessionUsage } from '../lib/types';
+import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
 import { unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -119,6 +119,7 @@ function SessionRowSurface({
 
 export const SessionRow = memo(function SessionRow({
   session,
+  group,
   draft,
   conn,
   match,
@@ -128,6 +129,12 @@ export const SessionRow = memo(function SessionRow({
   isDraggable,
 }: {
   session: Session;
+  /**
+   * The GROUP this session is filed under — null while it is ungrouped, or while the
+   * list has not read the groups yet. The row's mark and its name come from HERE: the
+   * group owns both, so a rename or a recolour reaches every row wearing it at once.
+   */
+  group: SessionGroup | null;
   /** This device's unsent composer content for the session; EMPTY when there is none. */
   draft: DraftMessage;
   conn: GatewayConn;
@@ -343,18 +350,14 @@ export const SessionRow = memo(function SessionRow({
             {/* THE GROUP'S OWN COLOUR, down the leading edge of the row. A filed session
                 is filed wherever it is painted - pinned above the page, found by a
                 search, sitting under its band - and without this mark the only place
-                you could see it was the band, if the band happened to be on screen. */}
+                you could see it was the band, if the band happened to be on screen.
+                Both the colour and the name are read off the GROUP at paint time; a row
+                carrying a copy of them is a row that keeps painting a recoloured group
+                in its old ink. */}
             {typeof session.group_id === 'string' && session.group_id !== '' && (
               <span className="flex shrink-0 items-stretch">
-                <span
-                  aria-hidden
-                  className={`w-1 ${groupSwatch(
-                    typeof session.group_color === 'string' ? session.group_color : null,
-                  )}`}
-                />
-                <span className="sr-only">
-                  {`In group ${typeof session.group_name === 'string' && session.group_name !== '' ? session.group_name : 'unnamed'}`}
-                </span>
+                <span aria-hidden className={`w-1 ${groupSwatch(group?.color ?? null)}`} />
+                <span className="sr-only">{`In group ${group?.name ? group.name : 'unnamed'}`}</span>
               </span>
             )}
             <SessionRowSurface

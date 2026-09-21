@@ -11,6 +11,7 @@ function row(match: SessionMatch = STORY_SESSION_SEARCH_MATCH, needle = 'windows
   return render(
     <SessionRow
       session={STORY_SESSION_ROW}
+      group={null}
       draft={EMPTY_DRAFT_MESSAGE}
       conn={STORY_GATEWAYS[0]}
       match={match}

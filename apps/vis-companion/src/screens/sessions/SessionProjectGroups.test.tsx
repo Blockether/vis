@@ -24,7 +24,7 @@ const WALLET_GROUP: SessionGroup = {
 /** Two of this project's sessions are filed under one group; the rest are not. */
 const ROWS: Session[] = STORY_NEWER_PROJECT.rows.map((row, index) =>
   index < 2
-    ? { ...row, group_id: WALLET, group_name: WALLET_GROUP.name, group_color: WALLET_GROUP.color }
+    ? { ...row, group_id: WALLET }
     : row,
 );
 const LOOSE = ROWS[2];
@@ -53,8 +53,6 @@ function machine(overrides: Machine = {}) {
     assignSessionGroup: vi.fn(async (sid: string, gid: string | null) => ({
       ...(ROWS.find((row) => row.id === sid) ?? ROWS[0]),
       group_id: gid,
-      group_name: gid === null ? null : WALLET_GROUP.name,
-      group_color: gid === null ? null : WALLET_GROUP.color,
     })),
     ...overrides,
   };
@@ -152,31 +150,35 @@ describe('ProjectGroup groups', () => {
   });
 
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
-  // some of the rows and left the others alone): the gateway stamps a group's colour onto
-  // each session row as it reads it, so rows fetched before a recolour still carry the old
-  // token while the band above them, painted from the groups, already wears the new one.
+  // some of the rows and left the others alone): every row used to carry a COPY of its
+  // group's name and colour, stamped on it when the gateway read the row, so rows read
+  // before a recolour kept the old token while the band over them, painted from the
+  // groups, already wore the new one. The colour is the GROUP's; a row names its group
+  // and nothing else, so there is nothing left to go stale.
   it('paints every filed row in the colour its group wears now', async () => {
-    const stale = ROWS.map((row) =>
-      row.group_id === WALLET ? { ...row, group_color: 'violet' } : row,
-    );
+    const recoloured = { ...WALLET_GROUP, color: 'violet' };
     const page = {
-      rows: [stale[2], stale[3]],
+      rows: [ROWS[2], ROWS[3]],
       total: 2,
       awaiting: [],
-      grouped: [stale[0], stale[1]],
+      grouped: [ROWS[0], ROWS[1]],
       nextCursor: '',
     };
     mount(
-      machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }),
-      undefined,
-      '',
-      stale,
+      machine({
+        heldProjectPage: () => page,
+        listProjectPage: vi.fn(async () => page),
+        listSessionGroups: vi.fn(async () => ({
+          project_id: STORY_NEWER_PROJECT.projectId,
+          groups: [recoloured],
+        })),
+      }),
     );
     const wallet = await band('Wallet work');
 
-    expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(0);
+    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(0);
     // The band's rail, and one down each of the two rows filed under it.
-    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(3);
+    expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(3);
   });
 
   // Requested in this Vis session (paraphrased: the groups and the sessions should be two
@@ -237,8 +239,6 @@ describe('ProjectGroup groups', () => {
       id: 'off-page-session',
       title: 'Filed forty pages down',
       group_id: WALLET,
-      group_name: WALLET_GROUP.name,
-      group_color: WALLET_GROUP.color,
     };
     const page = {
       rows: [ROWS[2], ROWS[3]],

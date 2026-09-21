@@ -5078,8 +5078,12 @@
 
 (defn- navigator-session-row
   "Normalize one session for the full-width navigator list. The working directory
-   owns the hierarchy; project names stay metadata and never split a directory."
-  [active-session-id session]
+   owns the hierarchy; project names stay metadata and never split a directory.
+
+   `groups` indexes the machine's session GROUPS by id. A row names its group by
+   id and nothing else - the name and the palette token are the group's own - so
+   a filed row is banded and inked from this index, never from a copy."
+  [active-session-id groups session]
   (let [id
         (get session "id")
 
@@ -5104,7 +5108,13 @@
         (long (or (get session "awaiting_input_count") (if awaiting-input? 1 0)))
 
         live?
-        (true? (get session "live"))]
+        (true? (get session "live"))
+
+        gid
+        (not-empty (str (get session "group_id")))
+
+        group
+        (get groups gid)]
 
     {:id (str "session:" id)
      :focused? active?
@@ -5112,8 +5122,9 @@
      :title (session-title session)
      :session (short-session-id session)
      :group (not-empty (get session "project_name"))
-     :session-group (not-empty (get session "group_name"))
-     :session-group-color (not-empty (get session "group_color"))
+     :session-group-id gid
+     :session-group (not-empty (str (get group "name")))
+     :session-group-color (not-empty (str (get group "color")))
      :position (get session "project_position")
      :dir work-dir
      :work-dir work-dir
@@ -5152,13 +5163,13 @@
                       ;; The groups in the order this directory met them, and the loose
                       ;; sessions (`nil`) after every one of them rather than among them.
                       group-order
-                      (->> (concat (map :session-group (filter :focused? dir-rows))
-                                   (map :session-group dir-rows))
+                      (->> (concat (map :session-group-id (filter :focused? dir-rows))
+                                   (map :session-group-id dir-rows))
                            (remove nil?)
                            distinct)]
 
                   (mapcat (fn [group]
-                            (let [group-rows (filter #(= group (:session-group %)) dir-rows)]
+                            (let [group-rows (filter #(= group (:session-group-id %)) dir-rows)]
                               (concat (filter :focused? group-rows)
                                       (sort-by #(or (:position %) Long/MAX_VALUE)
                                                (remove :focused? group-rows)))))
@@ -5167,8 +5178,10 @@
 
 (defn- navigator-all-rows
   "Build the project-grouped session list. Empty untitled shells stay hidden by
-   default, but the focused session always survives and its project is first."
-  [{:keys [sessions active-session-id show-empty-untitled?]}]
+   default, but the focused session always survives and its project is first.
+   `:groups` indexes the session groups by id: the ONE place a band's name and
+   colour come from."
+  [{:keys [sessions active-session-id show-empty-untitled? groups]}]
   (let [focused-id
         (some-> active-session-id
                 str)
@@ -5183,7 +5196,7 @@
         focused-first
         (concat (filter focused? kept) (remove focused? kept))]
 
-    (group-rows-by-dir (mapv #(navigator-session-row active-session-id %) focused-first))))
+    (group-rows-by-dir (mapv #(navigator-session-row active-session-id groups %) focused-first))))
 
 (def ^:private navigator-page-slack
   "How near the end of the rows it holds the reader may come before the picker asks the
@@ -5333,7 +5346,7 @@
                                       :group-start? (zero? (long idx))
                                       :group-count n))
                                   group)))
-                 (partition-by (juxt :dir :session-group) matched)))))
+                 (partition-by (juxt :dir :session-group-id) matched)))))
 
 (defn- navigator-highlight-segments
   "Split `s` into `[text bold?]` segments, bolding case-insensitive occurrences
@@ -5508,7 +5521,7 @@
    the groups a human filed, or the sessions in none of them - and how many rows stand
    under it. The two words name the list's own division (`group-rows-by-dir`), the same
    one the app prints over its bands."
-  [{:keys [dir work-dir group-count session-group]}]
+  [{:keys [dir work-dir group-count session-group-id]}]
   (let [count-label
         (str group-count " " (if (= 1 group-count) "session" "sessions"))
 
@@ -5516,7 +5529,7 @@
         (when (and (seq work-dir) (not= dir work-dir)) work-dir)
 
         set-label
-        (if (seq session-group) "Groups" "Sessions")]
+        (if (seq session-group-id) "Groups" "Sessions")]
 
     (str dir (when root-label (str "  ·  " root-label)) "  ·  " set-label "  ·  " count-label)))
 
@@ -5649,6 +5662,16 @@
         loaded-sessions
         (atom (vec (:sessions opts)))
 
+        ;; THE GROUPS THEMSELVES, read once when the picker opens and off this
+        ;; thread. A filed row names its group by ID; the name it bands under and
+        ;; the ink it wears are the GROUP's, looked up here and never read off the
+        ;; row. A read that fails simply leaves those rows unbanded.
+        groups-index
+        (atom (or (:groups opts) {}))
+
+        groups-task
+        (atom nil)
+
         page-cursor
         (atom (:next-cursor opts))
 
@@ -5745,6 +5768,11 @@
       (try
         (when-let [load-initial (:load-initial opts)]
           (start-page! load-initial))
+        (when-let [load-groups (:load-groups opts)]
+          (reset! groups-task (future (try (when-let [index (load-groups)]
+                                             (reset! groups-index index))
+                                           (catch InterruptedException _ nil)
+                                           (catch Throwable _ nil)))))
         (loop []
 
           (when-let [{:keys [page retry]} (first (swap-vals! page-result (constantly nil)))]
@@ -5765,6 +5793,7 @@
           (let [rows
                 (navigator-all-rows (assoc opts
                                       :sessions @loaded-sessions
+                                      :groups @groups-index
                                       :show-empty-untitled? @show-empty-untitled?))
 
                 visible-rows
@@ -6035,6 +6064,8 @@
                  (when-let [running @search-task]
                    (future-cancel running))
                  (when-let [running @page-task]
+                   (future-cancel running))
+                 (when-let [running @groups-task]
                    (future-cancel running))
                  (when stop-fleet! (stop-fleet!)))))))
 

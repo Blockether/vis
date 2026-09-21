@@ -731,33 +731,33 @@ export const ProjectGroup = memo(function ProjectGroup({
       .filter(([gid]) => !groups.some((group) => group.id === gid))
       .map(([gid, held]) => ({
         id: gid,
-        name: typeof held[0].group_name === 'string' ? held[0].group_name : 'Group',
-        color: typeof held[0].group_color === 'string' ? held[0].group_color : null,
+        // The GROUP owns its name and its colour, and this device has not read THIS one
+        // yet. The band stands under a plain word until the re-read below lands it.
+        name: 'Group',
+        color: null,
         count: held.length,
       }));
     return [...known, ...unread];
   }, [groups, filed]);
-  // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The gateway stamps the group's
-  // name and palette token onto every session row it answers, at the moment it READS the
-  // row — so a window fetched before a recolour keeps painting the old token. The band
-  // over those rows does not: it is painted from `groups`, which is re-read after every
-  // group verb, so the band took the new colour the instant the picker answered while the
-  // rows under it kept the old one.
+  // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
+  // over it read the SAME group, so a recolour lands on both in the same paint.
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
-  // some of the rows and left the others alone).
-  // The GROUP owns its colour and its name; a row naming a group this device has not read
-  // yet keeps what it arrived with, which is the fallback the bands above use too.
-  const repainted = useMemo(() => {
-    const known = new Map(groups.map((group) => [group.id, group]));
-    const fresh = new Map<string, Session>();
-    for (const session of painted) {
-      const group = known.get(typeof session.group_id === 'string' ? session.group_id : '');
-      if (!group) continue;
-      if (session.group_color === group.color && session.group_name === group.name) continue;
-      fresh.set(session.id, { ...session, group_color: group.color, group_name: group.name });
+  // some of the rows and left the others alone) — the rows were painting a copy stamped on
+  // them when the gateway read them, which a later recolour could not reach.
+  const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  // A ROW CAN NAME A GROUP THIS DEVICE HAS NOT READ: it was made on another client, or the
+  // rows landed a beat ahead of the groups. Ask for the groups again ONCE per such id, so
+  // that band gets its own name and colour instead of standing as a plain "Group" forever.
+  const askedForGroup = useRef(new Set<string>());
+  useEffect(() => {
+    let missing = false;
+    for (const gid of filed.byGroup.keys()) {
+      if (groupById.has(gid) || askedForGroup.current.has(gid)) continue;
+      askedForGroup.current.add(gid);
+      missing = true;
     }
-    return fresh;
-  }, [groups, painted]);
+    if (missing) setGroupsRead((read) => read + 1);
+  }, [filed, groupById]);
   // A GROUP FOLDS ON ITS OWN, out of the store the project's fold lives in, so a band
   // this reader shut stays shut on the next screen. A group nobody shut is open: a
   // name and a count with nothing under them say less than the rows do.
@@ -844,7 +844,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       // drop, so filing by hand needs no menu at all.
       <SessionRow
         key={session.id}
-        session={repainted.get(session.id) ?? session}
+        session={session}
+        group={groupById.get(typeof session.group_id === 'string' ? session.group_id : '') ?? null}
         draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
         conn={conn}
         match={matches?.get(session.id) ?? null}

@@ -1266,7 +1266,11 @@
               (expect (= (when (> store-size 50) "next") (:next-cursor page))))
             ((:load-more @options) "next")
             ((:fetch-sessions @options) ["matched"])
-            (expect (= [{:limit 50} {:limit 50 :after "next"} {:ids ["matched"]}] @requests)))))))
+            ;; The picker asks for its pages GROUPED ASIDE: a session a human filed comes
+            ;; back beside the window instead of being cut out of it.
+            (expect (= [{:limit 50 :grouped :aside} {:limit 50 :after "next" :grouped :aside}
+                        {:ids ["matched"] :grouped :aside}]
+                       @requests)))))))
   (it "does not turn a gateway failure into a successful empty page"
       (with-redefs [vis/gateway-list-sessions-page (fn [_]
                                                      (throw (ex-info "Unavailable" {})))]

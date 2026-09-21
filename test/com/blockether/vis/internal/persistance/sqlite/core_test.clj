@@ -3890,7 +3890,7 @@
 (defdescribe
   sqlite-session-group-test
   (it
-    "creates groups inside a project, files sessions under them, and carries the group on every read"
+    "creates groups inside a project, files sessions under them, and names the group on every read"
     (let [s
           (h/store)
 
@@ -3940,11 +3940,14 @@
           _
           (expect (= (:id release) (:group-id got)))
 
+          ;; A ROW NAMES ITS GROUP BY ID ONLY: the NAME and the palette TOKEN belong to
+          ;; the GROUP, so a rename or a recolour can never leave a stale copy behind on
+          ;; a row a client already read.
           _
-          (expect (= "Release apps" (:group-name got)))
+          (expect (nil? (:group-name got)))
 
           _
-          (expect (= "amber" (:group-color got)))
+          (expect (nil? (:group-color got)))
 
           ;; joining a group ADOPTS the session into that group's project
           _
@@ -3953,15 +3956,23 @@
           _
           (expect (= 1 (:session-count (persistance/db-get-session-group s (:id release)))))
 
-          ;; the group rides the ONE list-sessions query - no per-row lookup
+          ;; the group rides the ONE list-sessions query as a REFERENCE - no copy of it
           row
           (first (filter #(= sid (:id %)) (persistance/db-list-sessions s :all)))
 
           _
-          (expect (= "Release apps" (:group-name row)))
+          (expect (= (:id release) (:group-id row)))
 
           _
-          (expect (= "amber" (:group-color row)))
+          (expect (nil? (:group-name row)))
+
+          _
+          (expect (nil? (:group-color row)))
+
+          ;; the name and the colour are read from the GROUP itself
+          _
+          (expect (= ["Release apps" "amber"]
+                     ((juxt :name :color) (persistance/db-get-session-group s (:id release)))))
 
           ;; rename + recolour
           _

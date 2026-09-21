@@ -5046,12 +5046,12 @@
                  :project_name (:project-name session)
                  :project_position (:project-position session)
                  ;; The GROUP the human filed this conversation under, inside that
-                 ;; project. Name AND palette token travel with the row so a list
-                 ;; paints the group without a second request per session.
+                 ;; project — BY ID. A group's NAME and its palette TOKEN live on the
+                 ;; GROUP (`GET /v1/session-groups`) and are never copied onto a row:
+                 ;; a copy stamped at read time is already wrong for every row a
+                 ;; client fetched before that group was renamed or recoloured.
                  :group_id (some-> (:group-id session)
                                    str)
-                 :group_name (:group-name session)
-                 :group_color (:group-color session)
                  ;; The human's STAR, and the ONE place it lives: the GATEWAY owns it,
                  ;; so every client listing this session reads the same mark instead of
                  ;; each device holding its own copy. A RANK - compare it, never show

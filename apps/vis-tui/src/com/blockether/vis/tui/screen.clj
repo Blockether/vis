@@ -5385,6 +5385,30 @@
                                                  (concat (:grouped page) (:sessions page)))))
      :next-cursor (:next-cursor page)}))
 
+(defn- fleet-group-index
+  "Every session GROUP this machine holds, keyed by group id. A session row names its
+   group by ID and nothing else - the name and the palette token belong to the group -
+   so the picker reads the groups themselves, in one pass off the input thread, and
+   bands each filed row from what its group wears NOW."
+  []
+  (into {}
+        (for [project
+              (try (vis/gateway-list-projects) (catch Throwable _ nil))
+
+              :let [pid
+                    (some-> (get project "id")
+                            str)]
+              :when pid
+              group
+              (try (vis/gateway-list-session-groups {:project-id pid}) (catch Throwable _ nil))
+
+              :let [gid
+                    (some-> (get group "id")
+                            str)]
+              :when gid]
+
+          [gid group])))
+
 (defn- show-session-picker!
   "Open the navigator without gateway I/O on the input thread. The dialog owns
    page loading, retry and cancellation; search hydrates only its missing rows."
@@ -5398,6 +5422,7 @@
                      (tui-session-page {:limit picker-page-size :after cursor}))
         :fetch-sessions (fn [ids]
                           (:sessions (tui-session-page {:ids (vec ids)})))
+        :load-groups fleet-group-index
         :watch-fleet (fn [sink]
                        (try (vis/gateway-fleet-subscribe! sink)
                             (catch Throwable _

@@ -94,13 +94,10 @@ export interface Session {
   project_position?: number | null;
   /**
    * The GROUP the human filed this session under, INSIDE that project — null or
-   * absent while it is ungrouped. The name and the palette token ride on the row,
-   * so a list paints a group band without a request per session.
+   * absent while it is ungrouped. Only the id rides here: the group aggregate owns
+   * its name and its colour, so a rename or a recolour lands on every row at once.
    */
   group_id?: string | null;
-  group_name?: string | null;
-  /** A palette token out of the closed set, never a hex string — see `lib/group-colors`. */
-  group_color?: string | null;
   /**
    * The human's STAR, owned by the GATEWAY: the order this session was starred in,
    * or null when it is not starred. A RANK — compare it, never show it — and the

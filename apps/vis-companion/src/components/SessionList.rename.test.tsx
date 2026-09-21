@@ -47,6 +47,7 @@ function row(rename = vi.fn(async () => {})) {
   render(
     <SessionRow
       session={STORY_SESSION_ROW}
+      group={null}
       draft={EMPTY_DRAFT_MESSAGE}
       conn={conn}
       match={null}

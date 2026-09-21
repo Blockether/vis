@@ -1909,6 +1909,11 @@ export interface StoryProject {
   name: string;
   projectId: string;
   rows: Session[];
+  /**
+   * THE GROUPS THIS PROJECT HAS, the gateway's own. A row only names the group it is
+   * filed under; the name and the colour live HERE, the one place a recolour lands.
+   */
+  groups?: SessionGroup[];
 }
 
 /**
@@ -2105,17 +2110,21 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
   const bandsOf = (project: StoryProject | undefined): SessionGroup[] => {
     if (!project) return [];
     const named = new Map<string, SessionGroup>();
+    for (const group of project.groups ?? []) named.set(group.id, group);
     for (const group of made) {
       if (group.project_id === project.projectId) named.set(group.id, group);
     }
     for (const row of project.rows) {
       const id = bandOf(row);
       if (id === null || named.has(id)) continue;
+      // A row filed under a band nothing here has read yet. The GROUP owns its name and
+      // its colour, and a row carries neither, so the fixture stands the same placeholder
+      // the screen does until the group itself is read.
       named.set(id, {
         id,
         project_id: project.projectId,
-        name: typeof row.group_name === 'string' ? row.group_name : 'Group',
-        color: typeof row.group_color === 'string' ? row.group_color : 'slate',
+        name: 'Group',
+        color: 'slate',
         position: named.size,
         session_count: 0,
       });
@@ -2223,14 +2232,8 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       const body = sent(init);
       const gid = typeof body.group_id === 'string' ? body.group_id : null;
       filed.set(sid, gid);
-      const project = projects.find((one) => one.rows.some((held) => held.id === sid));
-      const band = bandsOf(project).find((one) => one.id === gid);
-      return answer({
-        ...row,
-        group_id: gid,
-        group_name: band?.name ?? null,
-        group_color: band?.color ?? null,
-      });
+      // Only the id comes back: the group's name and colour are read from the group.
+      return answer({ ...row, group_id: gid });
     }
     return answer({});
   }) as typeof fetch;

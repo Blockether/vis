@@ -10,6 +10,7 @@ import {
 } from '../../dev/story-data';
 import { machineKey } from '../../lib/fleet';
 import { projectFoldKey, writeProjectFold } from '../../lib/project-fold';
+import type { SessionGroup } from '../../lib/types';
 import { ProjectGroup } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -298,15 +299,44 @@ export const ScrolledNarrowDesktopPane: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
+/** The bands this project HAS. A row names one; the name and the colour live here. */
+const GROUPED_BANDS: SessionGroup[] = [
+  {
+    id: 'wallet',
+    project_id: fixture.projectId,
+    name: 'Wallet work',
+    color: 'blue',
+    position: 0,
+    session_count: 2,
+  },
+  {
+    id: 'receipts',
+    project_id: fixture.projectId,
+    name: 'Receipts',
+    color: 'amber',
+    position: 1,
+    session_count: 1,
+  },
+];
+
 /** Groups nest INSIDE the project: named bands first, then whatever nobody filed. */
 const GROUPED = [
-  { ...fixture.rows[0], group_id: 'wallet', group_name: 'Wallet work', group_color: 'blue' },
-  { ...fixture.rows[1], group_id: 'wallet', group_name: 'Wallet work', group_color: 'blue' },
-  { ...fixture.rows[2], group_id: 'receipts', group_name: 'Receipts', group_color: 'amber' },
+  { ...fixture.rows[0], group_id: 'wallet' },
+  { ...fixture.rows[1], group_id: 'wallet' },
+  { ...fixture.rows[2], group_id: 'receipts' },
   fixture.rows[3],
 ];
 
 export const Groups: Story = {
+  // The rows name their band and nothing more, so this story serves the GROUPS as well:
+  // that is where a band takes its name and its colour from.
+  beforeEach: () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = storyFleetFetch([{ ...fixture, rows: GROUPED, groups: GROUPED_BANDS }]);
+    return () => {
+      globalThis.fetch = previous;
+    };
+  },
   args: {
     group: { ...meta.args.group, sessions: GROUPED },
     machine: { conn, sessions: GROUPED },

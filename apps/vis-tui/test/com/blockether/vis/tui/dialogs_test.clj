@@ -1362,56 +1362,92 @@
 ;; over it). The app paints the same two sets over one project.
 (defdescribe
   navigator-session-set-test
-  (let [sessions [{"id" "loose-1"
-                   "title" "Loose one"
-                   "turn_count" 1
-                   "created_at" 0
-                   "modified_at" 4000
-                   :work-dir "~/proj"}
-                  {"id" "filed-1"
-                   "title" "Filed one"
-                   "turn_count" 1
-                   "created_at" 0
-                   "modified_at" 3000
-                   "group_name" "Release"
-                   "group_color" "blue"
-                   :work-dir "~/proj"}
-                  {"id" "loose-2"
-                   "title" "Loose two"
-                   "turn_count" 1
-                   "created_at" 0
-                   "modified_at" 2000
-                   :work-dir "~/proj"}
-                  {"id" "filed-2"
-                   "title" "Filed two"
-                   "turn_count" 1
-                   "created_at" 0
-                   "modified_at" 1000
-                   "group_name" "Release"
-                   "group_color" "blue"
-                   :work-dir "~/proj"}]]
+  (let [sessions
+        [{"id" "loose-1"
+          "title" "Loose one"
+          "turn_count" 1
+          "created_at" 0
+          "modified_at" 4000
+          :work-dir "~/proj"}
+         {"id" "filed-1"
+          "title" "Filed one"
+          "turn_count" 1
+          "created_at" 0
+          "modified_at" 3000
+          "group_id" "grp-release"
+          :work-dir "~/proj"}
+         {"id" "loose-2"
+          "title" "Loose two"
+          "turn_count" 1
+          "created_at" 0
+          "modified_at" 2000
+          :work-dir "~/proj"}
+         {"id" "filed-2"
+          "title" "Filed two"
+          "turn_count" 1
+          "created_at" 0
+          "modified_at" 1000
+          "group_id" "grp-release"
+          :work-dir "~/proj"}]
+
+        groups
+        {"grp-release" {"id" "grp-release" "name" "Release" "color" "blue"}}]
+
     (it "files every group ahead of the sessions that are in none of them"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "none" :sessions sessions})]
+        (let [all-rows
+              (var-get #'dlg/navigator-all-rows)
+
+              rows
+              (all-rows {:active-session-id "none" :sessions sessions :groups groups})]
 
           (expect (= ["filed-1" "filed-2" "loose-1" "loose-2"] (mapv (comp str :id :target) rows)))
           (expect (= ["Release" "Release" nil nil] (mapv :session-group rows)))))
+    ;; Reported in this Vis session (paraphrased: recolouring a group repainted some of
+    ;; its rows and left the others alone). The COLOUR IS THE GROUP'S: a row names its
+    ;; group by id, so what the group wears now is what every one of its rows wears.
+    (it "inks a filed row with what its group wears NOW"
+        (let [all-rows
+              (var-get #'dlg/navigator-all-rows)
+
+              recoloured
+              {"grp-release" {"id" "grp-release" "name" "Releases" "color" "amber"}}
+
+              rows
+              (all-rows {:active-session-id "none" :sessions sessions :groups recoloured})]
+
+          (expect (= ["Releases" "Releases" nil nil] (mapv :session-group rows)))
+          (expect (= ["amber" "amber" nil nil] (mapv :session-group-color rows)))))
     (it "heads each set with its own word and its own count"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              visible-rows (var-get #'dlg/navigator-visible-rows)
-              band-label (var-get #'dlg/navigator-band-label)
+        (let [all-rows
+              (var-get #'dlg/navigator-all-rows)
+
+              visible-rows
+              (var-get #'dlg/navigator-visible-rows)
+
+              band-label
+              (var-get #'dlg/navigator-band-label)
+
               visible
-              (visible-rows (all-rows {:active-session-id "none" :sessions sessions}) "" {})]
+              (visible-rows (all-rows {:active-session-id "none" :sessions sessions :groups groups})
+                            ""
+                            {})]
 
           (expect (= ["~/proj  ·  Groups  ·  2 sessions" "~/proj  ·  Sessions  ·  2 sessions"]
                      (mapv band-label (filter :group-start? visible))))))
     (it "a query still finds a session its group took out of the list"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              visible-rows (var-get #'dlg/navigator-visible-rows)
-              band-label (var-get #'dlg/navigator-band-label)
-              visible (visible-rows (all-rows {:active-session-id "none" :sessions sessions})
-                                    "filed one"
-                                    {})]
+        (let [all-rows
+              (var-get #'dlg/navigator-all-rows)
+
+              visible-rows
+              (var-get #'dlg/navigator-visible-rows)
+
+              band-label
+              (var-get #'dlg/navigator-band-label)
+
+              visible
+              (visible-rows (all-rows {:active-session-id "none" :sessions sessions :groups groups})
+                            "filed one"
+                            {})]
 
           (expect (= ["filed-1"] (mapv (comp str :id :target) visible)))
           (expect (= ["~/proj  ·  Groups  ·  1 session"]
@@ -2464,7 +2500,8 @@
 (defdescribe navigator-live-status-test
              (it "marks running sessions even when the current session is focused"
                  (let [row
-                       (var-get #'dlg/navigator-session-row)
+                       (fn [active session]
+                         ((var-get #'dlg/navigator-session-row) active {} session))
 
                        live
                        {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
@@ -2479,7 +2516,8 @@
    request — normally parked in ANOTHER process — read as just another quiet
    session, and this list is exactly where its operator goes looking for it."
   (it "reports the demand instead of the turn count"
-      (let [row (var-get #'dlg/navigator-session-row)]
+      (let [row (fn [active session]
+                  ((var-get #'dlg/navigator-session-row) active {} session))]
         (expect
           (= "! input needed"
              (:status
@@ -2496,7 +2534,8 @@
                                   "is_awaiting_input" true
                                   "awaiting_input_count" 2}))))))
   (it "leaves an unparked row's status exactly as it was"
-      (let [row (var-get #'dlg/navigator-session-row)]
+      (let [row (fn [active session]
+                  ((var-get #'dlg/navigator-session-row) active {} session))]
         (expect (= "3 turns" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (= "● focused"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))

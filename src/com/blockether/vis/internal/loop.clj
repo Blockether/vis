@@ -13002,8 +13002,6 @@
      :project-name (:project-name session)
      :project-position (:project-position session)
      :group-id (:group-id session)
-     :group-name (:group-name session)
-     :group-color (:group-color session)
      :favorite-rank (:favorite-rank session)}))
 
 (defn by-channel
@@ -13020,8 +13018,6 @@
            :project-name (:project-name c)
            :project-position (:project-position c)
            :group-id (:group-id c)
-           :group-name (:group-name c)
-           :group-color (:group-color c)
            :favorite-rank (:favorite-rank c)})
         (persistance/db-list-sessions (db-info) channel)))
 

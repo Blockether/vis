@@ -1221,15 +1221,7 @@
               project (when (:project_id soul)
                         (query-one!
                           db-info
-                          {:select [:name] :from :project :where [:= :id (:project_id soul)]}))
-              ;; The group the human filed this conversation under, inside that
-              ;; project. Name AND palette token travel with the session so a
-              ;; list row can paint the group without a second round-trip.
-              group (when (:group_id soul)
-                      (query-one! db-info
-                                  {:select [:name :color]
-                                   :from :session_group
-                                   :where [:= :id (:group_id soul)]}))]
+                          {:select [:name] :from :project :where [:= :id (:project_id soul)]}))]
 
           (cond-> {:id (->uuid (:id soul))
                    :type :session
@@ -1262,12 +1254,7 @@
             (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
 
             project
-            (assoc :project-name (:name project))
-
-            group
-            (assoc :group-name
-              (:name group) :group-color
-              (:color group))))))))
+            (assoc :project-name (:name project))))))))
 
 (defn db-get-session-prompt-cache-state
   "Return the latest exact provider-prefix checkpoint stored on one session state."
@@ -1339,23 +1326,23 @@
            :project-id (->uuid (:project_id row))
            :project-position (:project_position row)
            :project-name (:project_name row)
+           ;; The group is named by ID ONLY. A group's name and its palette token
+           ;; belong to the GROUP (`db-get-session-group`), never to a row: a copy
+           ;; stamped here goes stale the moment the group is renamed or recoloured,
+           ;; while the rows carrying it sit in a window nobody read again.
            :group-id (->uuid (:group_id row))
-           :group-name (:group_name row)
-           :group-color (:group_color row)
            :favorite-rank (:favorite_rank row)})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
                           :cs.project_id :cs.project_position :cs.group_id :cs.favorite_rank
-                          :cs.goal [:p.name :project_name] [:g.name :group_name]
-                          [:g.color :group_color] [:s.title :state_title] :s.version
+                          :cs.goal [:p.name :project_name] [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
                                     [:not= :child.parent_state_id nil]]} :fork_count]]
                  :from [[:session_soul :cs]]
                  :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                 :left-join [[:project :p] [:= :p.id :cs.project_id] [:session_group :g]
-                             [:= :g.id :cs.group_id]]
+                 :left-join [[:project :p] [:= :p.id :cs.project_id]]
                  :where (into [:and
                                ;; TOP-LEVEL only — child souls (parent_state_id set)
                                ;; hang off their parent's sub-tree, never the session list.

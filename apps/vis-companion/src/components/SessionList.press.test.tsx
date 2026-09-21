@@ -16,6 +16,7 @@ describe('a pressed session row', () => {
     render(
       <SessionRow
         session={STORY_SESSION_ROW}
+        group={null}
         draft={EMPTY_DRAFT_MESSAGE}
         conn={STORY_GATEWAYS[0]}
         match={null}

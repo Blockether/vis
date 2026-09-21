@@ -3675,7 +3675,7 @@ export class GatewayClient {
     const deleted = res?.deleted_session_ids ?? [];
     for (const sid of detached) {
       const row = this.cachedSession(sid);
-      if (row) this.absorbSessionRow(sid, { ...row, group_id: null, group_name: null, group_color: null });
+      if (row) this.absorbSessionRow(sid, { ...row, group_id: null });
     }
     for (const sid of deleted) this.forgetDeletedSession(sid);
     return { detached, deleted };
