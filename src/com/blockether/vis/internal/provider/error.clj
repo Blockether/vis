@@ -326,6 +326,27 @@
     (boolean (or (re-find #"(?i)too many open files" text)
                  (re-find #"(?i)\berror[=:]\s?24\b" text)))))
 
+(def PYTHON_WORKER_ERROR_TYPES
+  "Every typed failure of the LOCAL Python worker — the separate process that runs
+   sandbox code for a session.
+
+   `:vis/python-worker` is any error the worker itself reports for an op (a refused
+   start, a failed tool bind), `:vis/python-worker-timeout` is a missed reply
+   deadline, `:vis/python-worker-missing` is a runtime archive with no worker
+   executable, and `:vis/python-worker-retired` is a worker Vis ended mid-turn."
+  #{:vis/python-worker :vis/python-worker-missing :vis/python-worker-retired
+    :vis/python-worker-timeout})
+
+(defn python-worker-error?
+  "True when the failure came from THIS machine's Python worker, so the card names
+   the sandbox instead of blaming the provider. A stale `py` global restored into a
+   session sandbox made every tool bind throw `extension tool namespace collides
+   with global`; painted as `Provider unavailable`, it kept the loop re-asking the
+   model for hours over something no model could fix (vis session f2cfccd5).
+   Dispatches on typed `ex-data` — NEVER on message text."
+  [err]
+  (contains? PYTHON_WORKER_ERROR_TYPES (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn stream-timeout-error?
   "True when the failure is one of svar's TYPED stream watchdogs firing:
    `:svar.core/stream-semantic-timeout` (transport alive, zero model/progress
@@ -571,6 +592,14 @@
            "handles in a list, or a burst of `shell` children. CPython hands a "
            "descriptor back as soon as the handle is dropped, so what exhausts the "
            "shared table is what is still held, not what was read and let go.")
+      (python-worker-error? err)
+      (str "WHAT HAPPENED: the local Python worker — the separate process that runs "
+           "sandbox code for this session — failed, so Vis could not run the block. "
+           "This is NOT a provider outage, and it is NOT something the model can fix "
+           "by rewriting its code: the worker did not start, did not answer in time, "
+           "or refused to bind this session's tools. A leftover global in the "
+           "session's sandbox file whose name matches an extension tool fails every "
+           "later bind the same way.")
       (context-overflow-error? err)
       (str "WHAT HAPPENED: the request exceeded the model's context window."
            (when-let [input (:input-tokens data)]
@@ -733,6 +762,9 @@
       :file-descriptors-exhausted
       "Out of file descriptors"
 
+      :python-worker
+      "Python sandbox failed"
+
       :refusal
       (if-let [category (get (refusal-stop-details err) "category")]
         (str "Model declined this request (" category ")")
@@ -807,6 +839,13 @@
            "handle, so what exhausts the table is handles something still HOLDS. "
            "If it recurs, raise the process open-file limit (Vis raises it at "
            "launch, but a very large tree walk can still exhaust it).")
+
+      :python-worker
+      (str "NEXT STEP: start a new turn — Vis builds a fresh Python worker, and any "
+           "variables the old sandbox held are gone. If it keeps failing, read the "
+           "worker log named in the error, then check this session's file under "
+           "`~/.vis/sandbox/`: a saved global whose name matches an extension tool "
+           "(for example `py`) breaks every tool bind until that line is removed.")
 
       :context-overflow
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
@@ -947,6 +986,7 @@
                                        str))]
 
     (cond (fd-exhaustion-error? err) :file-descriptors-exhausted
+          (python-worker-error? err) :python-worker
           (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
           (refusal-error? err) :refusal

@@ -2967,6 +2967,34 @@
               (expect (false? (get card "retryable"))))))
         (finally (lp/dispose-environment! environment))))))
 
+;; Regression, vis session f2cfccd5: a stale `py` global restored into the session
+;; sandbox made every tool bind fail, and the worker error carried no provider
+;; evidence — so the loop treated it as correctable and re-asked the model for two
+;; hours over a sandbox no model could repair, painting each attempt as an outage.
+(defdescribe
+  python-worker-failure-is-terminal-test
+  (it "ends the turn instead of re-asking the model to rewrite its code"
+      (doseq [error-type [:vis/python-worker :vis/python-worker-missing :vis/python-worker-timeout]]
+        (let [cause (ex-info
+                      "vis-python: ValueError: extension tool namespace collides with global: py"
+                      {:type error-type :op "set-tools"})]
+          (doseq [thrown [cause (ex-info "iteration wrapper" {} cause)]]
+            (let [result (lp/handle-iteration-exception! thrown {:iteration 2 :messages []})
+                  card (first (perr/provider-error-content (::lp/iteration-error result)))]
+
+              (expect (true? (::lp/fatal-iteration-error result)))
+              (expect (= "Python sandbox failed" (get card "title")))
+              (expect (false? (get card "retryable")))
+              (expect (str/includes? (str (get card "explanation")) "NOT a provider outage")))))))
+  (it "leaves a RETIRED worker correctable, so the model can finish the turn"
+      ;; worker.clj addresses that message to the MODEL: the sandbox is gone, so
+      ;; finish this turn with what you have.
+      (let [result (lp/handle-iteration-exception!
+                     (ex-info "The Python worker was retired"
+                              {:type :vis/python-worker-retired :worker "k" :reason :idle})
+                     {:iteration 2 :messages []})]
+        (expect (nil? (::lp/fatal-iteration-error result))))))
+
 (defdescribe
   retired-python-stops-turn-test
   ;; Issue #180: no automatic model retry or side-effect replay on a dead worker.

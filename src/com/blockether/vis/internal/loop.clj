@@ -1720,8 +1720,25 @@
         (run! vision-describe/remember-image-refusal!
               (mapcat perr/image-rejections (bounded-cause-chain e)))
 
+        ;; Keep the TYPED worker failure across wrappers: the card, the log and the
+        ;; message fed back are all built from the throwable chosen here, and a
+        ;; generic wrapper turns a dead LOCAL worker back into "Provider
+        ;; unavailable" — which is what sent one session re-asking the model for
+        ;; two hours over a sandbox no model could repair (vis session f2cfccd5).
+        worker-failure
+        (some (fn [cause]
+                (when (perr/python-worker-error? cause) cause))
+              (bounded-cause-chain e))
+
+        ;; A RETIRED worker is the one LOCAL Python failure the model can still act
+        ;; on: worker.clj addresses it directly — the sandbox is gone, finish this
+        ;; turn with what you have. It classifies to the same named `:python-worker`
+        ;; kind for the card, so keep it out of the non-correctable verdict.
+        worker-retired?
+        (= :vis/python-worker-retired (:type (ex-data worker-failure)))
+
         non-correctable?
-        (some? provider-failure)
+        (and (some? provider-failure) (not worker-retired?))
 
         user-error?
         (user-configuration-error? e ex-data-map)
@@ -1739,7 +1756,9 @@
             user-error?)
 
         iteration-error-data
-        (exception->iteration-error-data (or retired-context output-budget-exhaustion e) ctx)]
+        (exception->iteration-error-data
+          (or retired-context output-budget-exhaustion worker-failure e)
+          ctx)]
 
     (tel/log!
       {:level (if fatal? :error :warn)
@@ -1769,6 +1788,8 @@
         retired-context "Python environment retired - ending turn without replaying code"
         hopeless-overflow?
         "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
+        (and worker-failure (not worker-retired?))
+        "Local Python worker failed - failing turn instead of re-asking the model to rewrite code"
         non-correctable? (non-correctable-log-message provider-failure)
         user-error?
         "User configuration error (unset env var / no usable provider) - failing turn once with the actionable message"

@@ -975,6 +975,37 @@
                  :data {:type :svar.llm/provider-unavailable :status 500}}]
         (expect (not= :file-descriptors-exhausted (perr/provider-error-kind err))))))
 
+;; Regression, vis session f2cfccd5: a stale `py` global restored into the session
+;; sandbox made every tool bind throw, and the card called the local worker's death
+;; "Provider unavailable" while the loop re-asked the model for two hours.
+(defdescribe
+  python-worker-kind-test
+  (it "a failed tool bind in the local worker is named, not blamed on the provider"
+      (let [err {:message
+                 "vis-python: ValueError: extension tool namespace collides with global: py"
+                 :data {:type :vis/python-worker :op "set-tools"}}]
+        (expect (= :python-worker (perr/provider-error-kind err)))
+        (expect (= "Python sandbox failed" (perr/provider-error-title err)))
+        (expect (re-find #"(?i)python worker" (perr/provider-error-explanation err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "NOT a provider outage"))
+        (expect (nil? (re-find #"(?i)rejected the request" (perr/provider-error-explanation err))))
+        (expect (re-find #"(?i)start a new turn" (perr/provider-error-next-step err)))
+        ;; It has to reach the styled card at all: `provider-failure?` is what the
+        ;; loop and the gateway ask before they paint anything but a bare message.
+        (expect (perr/provider-failure? err))
+        (expect (false? (perr/provider-error-retryable? err)))))
+  (it "reads the typed exception the worker actually throws"
+      (doseq [error-type [:vis/python-worker :vis/python-worker-missing :vis/python-worker-retired
+                          :vis/python-worker-timeout]]
+        (expect (= :python-worker
+                   (perr/provider-error-kind (ex-info "the python worker did not answer exec"
+                                                      {:type error-type :op "exec"}))))))
+  (it "does NOT trip on an ordinary provider failure"
+      (expect (not= :python-worker
+                    (perr/provider-error-kind {:message "Provider unavailable"
+                                               :data {:type :svar.llm/provider-unavailable
+                                                      :status 500}})))))
+
 ;; The live wire fact this predicate exists to catch: a gateway proxying six models
 ;; models.dev lists as taking image input answers HTTP 400 for every one of them,
 ;; because the gateway's OWN request schema has no image variant. The capability
