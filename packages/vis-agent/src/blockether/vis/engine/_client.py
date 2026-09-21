@@ -1552,6 +1552,25 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def put_session_read(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PUT /v1/sessions/:sid/read — how far this reader has read the session."""
+        response = self._request(
+            "PUT",
+            "/v1/sessions/:sid/read",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_session_release(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> None:
