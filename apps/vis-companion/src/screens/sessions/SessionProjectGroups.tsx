@@ -60,6 +60,7 @@ import {
   writeProjectFold,
 } from '../../lib/project-fold';
 import type { GatewayConn, Session, SessionGroup } from '../../lib/types';
+import { seedReadMarks } from '../../lib/unread';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -598,6 +599,17 @@ export const ProjectGroup = memo(function ProjectGroup({
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
   const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
+  // A ROW THIS PROJECT PAINTS IS A ROW THIS DEVICE HAS MET. Read watermarks used to be
+  // seeded from the FLEET WINDOW alone — the newest twenty rows across every machine
+  // (`SessionsScreen`, `GatewayClient.listSessions`) — while a group shelf is answered
+  // COMPLETE however deep its sessions sit (`?grouped=aside`). A filed row below that
+  // window therefore stood on screen carrying no watermark at all, and `lib/unread`
+  // reads a session it has never met as READ: the next answer on that row raised no
+  // `NEW` badge, and `syncBadge` skipped its alert for the same reason.
+  // Regression, user report: sessions filed in a group never reported a new answer.
+  useEffect(() => {
+    void seedReadMarks(painted);
+  }, [painted]);
   useEffect(() => {
     // The project shrank under the pager (a deletion, a smaller step): the page that
     // no longer exists becomes the first one rather than the last one a reader never

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { Session, SessionGroup } from '../../lib/types';
+import { hasSessionReadMark } from '../../lib/unread';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -65,16 +66,19 @@ function mount(
   rows: Session[] = ROWS,
 ) {
   const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
-  render(
+  // The rows this MACHINE is holding — its own window of the fleet. A poll that lands
+  // hands the project a new one (`hold`), which is how a row arrives carrying an answer
+  // it did not have a moment ago.
+  const project = (held: Session[]) => (
     <ProjectGroup
       group={{
         root: ROOT,
         label: STORY_NEWER_PROJECT.name,
         projectId: STORY_NEWER_PROJECT.projectId,
-        tally: { count: rows.length, live: 0, awaiting: 0, unread: 0 },
-        sessions: rows,
+        tally: { count: held.length, live: 0, awaiting: 0, unread: 0 },
+        sessions: held,
       }}
-      machine={{ conn, sessions: rows }}
+      machine={{ conn, sessions: held }}
       context={{
         getClient: () => client as unknown as GatewayClient,
         drafts: {},
@@ -106,9 +110,16 @@ function mount(
       }}
       creation={started}
       initiallyOpen
-    />,
+    />
   );
-  return { client, creation: started, user: userEvent.setup() };
+  const view = render(project(rows));
+  return {
+    client,
+    creation: started,
+    user: userEvent.setup(),
+    /** The next poll landed: this machine now holds these rows. */
+    hold: (held: Session[]) => view.rerender(project(held)),
+  };
 }
 
 /** The band and the rows filed under it, as one block inside the project's list. */
@@ -261,6 +272,45 @@ describe('ProjectGroup groups', () => {
         row.getAttribute('data-session-id'),
       ),
     ).toEqual([ROWS[0].id, ROWS[1].id, offPage.id, ROWS[2].id, ROWS[3].id]);
+  });
+
+  // Regression, user report: a session filed in a group never reported a new answer.
+  // Read watermarks are seeded from the FLEET WINDOW — the newest twenty rows across
+  // every machine (`SessionsScreen`, `GatewayClient.listSessions`) — while a group shelf
+  // is answered COMPLETE however deep its sessions sit (`?grouped=aside`). A filed row
+  // below that window therefore stood on screen with no watermark at all, and a session
+  // this device has never met reads as READ (`lib/unread`): its next answer was silent.
+  it('raises NEW on a filed session the fleet window never held', async () => {
+    const shelved: Session = {
+      ...ROWS[0],
+      id: 'filed-below-the-window',
+      title: 'Filed forty pages down',
+      group_id: WALLET,
+      answer_count: 3,
+    };
+    const page = {
+      rows: [LOOSE],
+      total: 1,
+      awaiting: [],
+      grouped: [shelved],
+      nextCursor: '',
+    };
+    // This machine holds the loose row alone; the filed one sits below its window.
+    const { hold } = mount(
+      machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }),
+      undefined,
+      '',
+      [LOOSE],
+    );
+    await band('Wallet work');
+    await waitFor(() => expect(hasSessionReadMark(shelved.id)).toBe(true));
+
+    // The answer lands, and the row rides up into the window carrying it.
+    await act(async () => {
+      hold([LOOSE, { ...shelved, answer_count: 4 }]);
+    });
+
+    expect(await screen.findByText('new')).toBeInTheDocument();
   });
 
   // BLO-167: a session started ON a band is minted inside that group, so it opens at
