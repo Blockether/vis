@@ -18,6 +18,7 @@ import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';
 import { LiveView } from './LiveView';
+import { MermaidBlock } from './MermaidBlock';
 import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
 import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
 import { mergeActivity, type ActivityProjection } from '../lib/activity';
@@ -681,6 +682,27 @@ export const Markdown = memo(function Markdown({
             // both surfaces paint a real grid — the TUI's table dialog, this table.
             if (language === 'vis-table') {
               return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
+            }
+            // A `mermaid` fence is a PICTURE: the TUI draws it with box-drawing
+            // glyphs, this surface draws the same source as an SVG. Anything
+            // mermaid will not draw falls back to the fence text.
+            if (language === 'mermaid') {
+              return (
+                <MermaidBlock
+                  source={stripMarks(raw)}
+                  compact={compact}
+                  frameless={nested}
+                  fallback={
+                    <SyntaxCodeBlock
+                      value={raw}
+                      language={language}
+                      compact={compact}
+                      frameless={nested}
+                      padded={!nested}
+                    />
+                  }
+                />
+              );
             }
             // A PDF or a note is a DOCUMENT: it never reaches the model, and the
             // fence carries a descriptor only. The attachment rail below the block

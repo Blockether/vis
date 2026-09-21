@@ -217,6 +217,52 @@
                    (expect (every? #(contains? (or (:style %) #{}) :code)
                                    (mapcat :runs (filter #(seq (:runs %)) lines)))))))
 
+(defdescribe mermaid-code-block-test
+             (it "a mermaid fence is painted as a box-drawing diagram, not as its source"
+                 (let [lines
+                       (layout/ast->lines
+                         [:ast [:code {:lang "mermaid"} "flowchart TD\n  A[One] --> B[Two]\n"]]
+                         60)
+
+                       joined
+                       (str/join "\n" (texts lines))]
+
+                   (expect (str/includes? joined "One") joined)
+                   (expect (str/includes? joined "▼") joined)
+                   (expect (not (str/includes? joined "flowchart TD")) joined)
+                   (expect (not (str/includes? joined "-->")) joined)))
+             (it "diagram chrome is dim and the labels keep the foreground"
+                 (let [lines
+                       (layout/ast->lines
+                         [:ast [:code {:lang "mermaid"} "flowchart TD\n  A[One] --> B[Two]\n"]]
+                         60)
+
+                       runs
+                       (mapcat :runs lines)
+
+                       chrome
+                       (filter #(str/includes? (or (:text %) "") "─") runs)
+
+                       label
+                       (filter #(str/includes? (or (:text %) "") "One") runs)]
+
+                   (expect (seq chrome))
+                   (expect (seq label))
+                   (expect (every? #(contains? (:style %) :dim) chrome))
+                   (expect (every? #(and (contains? (:style %) :code)
+                                         (not (contains? (:style %) :dim)))
+                                   label))))
+             (it "a fence the renderer does not own stays verbatim"
+                 (let [lines
+                       (layout/ast->lines
+                         [:ast [:code {:lang "mermaid"} "sequenceDiagram\n  Alice->>Bob: hi\n"]]
+                         60)
+
+                       joined
+                       (str/join "\n" (texts lines))]
+
+                   (expect (str/includes? joined "sequenceDiagram") joined))))
+
 ;; tables
 
 (defdescribe repeated-table-header-test

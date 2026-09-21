@@ -34,6 +34,7 @@
      :code-fence?     bool   ; render ``` lines around code blocks (default false)
      :max-lines       int    ; hard cap (default unlimited)"
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.mermaid :as mermaid]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir]))
 
@@ -380,11 +381,51 @@
           (.put folded-code-cache key lines)
           lines))))
 
+(def ^:private ^java.util.Map mermaid-cache
+  "Bounded access-order cache for rendered mermaid diagrams. A diagram costs a
+   full rank / order / place pass, which must not repeat on every repaint; an
+   empty result caches the DECISION not to draw one, so an unsupported fence is
+   parsed once."
+  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [64 0.75 true]
+                                           (removeEldestEntry [_eldest]
+                                             (> (.size ^java.util.LinkedHashMap this) 64)))))
+
+(defn- mermaid-lines
+  "Diagram rows for a `mermaid` fence, or nil when the renderer does not own it
+   and the source should be painted verbatim."
+  [^String content ^long budget]
+  (let [key
+        [content budget]
+
+        hit
+        (.get ^java.util.Map mermaid-cache key)]
+
+    (if (some? hit)
+      (seq hit)
+      (let [rows (vec (mermaid/diagram content budget))]
+        (.put ^java.util.Map mermaid-cache key rows)
+        (seq rows)))))
+
+(def ^:private diagram-glyphs
+  "Box-drawing and arrow glyphs a diagram paints. They carry the SHAPE, so they
+   are dimmed and the labels inside the boxes keep the foreground."
+  (set "─│┌┐└┘├┤┬┴┼━┃┏┓┗┛┣┫┳┻╋╭╮╯╰╱╲╌╎▼▲▶◀"))
+
+(defn- diagram-runs
+  "Split one diagram row into dim chrome runs and foreground label runs."
+  [^String row node]
+  (mapv (fn [chunk]
+          {:text (apply str chunk)
+           :style (if (contains? diagram-glyphs (first chunk)) #{:code :dim} #{:code})
+           :node node})
+        (partition-by #(contains? diagram-glyphs %) row)))
+
 (defn- code-block->lines
-  "Code blocks preserve source indentation. Diff fences stay COMPACT: the
-   unified patch is rendered as-is, one row per patch line, coloured by kind.
-   Plain output may still soft-wrap. `:code-spacing? false` omits generated
-   padding; source blank lines remain unchanged."
+  "Code blocks preserve source indentation. A `mermaid` fence becomes a
+   box-drawing diagram when the renderer understands it. Diff fences stay
+   COMPACT: the unified patch is rendered as-is, one row per patch line,
+   coloured by kind. Plain output may still soft-wrap. `:code-spacing? false`
+   omits generated padding; source blank lines remain unchanged."
   [node width {:keys [code-fence? code-spacing?] :as _opts}]
   (let [src
         (raw-body node)
@@ -429,6 +470,17 @@
         (= "diff"
            (some-> lang
                    str/lower-case))
+
+        ;; A `mermaid` fence is a PICTURE: rank / order / place the flowchart and
+        ;; paint it with box-drawing glyphs. The renderer answers nil for any
+        ;; fence it does not own — another diagram type, a subgraph, a graph too
+        ;; wide for this bubble — and the source is then painted verbatim.
+        mermaid-rows
+        (when (and (not fold?)
+                   (= "mermaid"
+                      (some-> lang
+                              str/lower-case)))
+          (mermaid-lines content budget))
 
         ansi?
         (and (not fold?) (not diff?) (str/includes? content "\u001b["))
@@ -502,7 +554,10 @@
 
         body
         (vec
-          (cond fold? (mapcat fold-line (str/split-lines content))
+          (cond mermaid-rows (mapv (fn [row]
+                                     {:runs (diagram-runs row node)})
+                                   mermaid-rows)
+                fold? (mapcat fold-line (str/split-lines content))
                 wrap? (mapcat wrap-line (str/split-lines content))
                 ;; Unified patches stay compact: one row per patch line.
                 diff? (mapcat diff-line (str/split-lines content))
