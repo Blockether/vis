@@ -672,6 +672,26 @@
   (is (= :oauth (providers/auth-kind (first providers/oauth-provider-ids))))
   (is (= :none (providers/auth-kind (first providers/local-no-auth-provider-ids)))))
 
+;; Regression: the shared static-API-key shape registers an interactive
+;; `:provider/auth-fn` only to print key guidance, so inferring `:oauth` from its
+;; presence classified every key-only provider as an OAuth sign-in — and the gateway
+;; then refused the sign-in it had just advertised.
+(deftest declared-auth-kind-outranks-the-interactive-auth-fn-test
+  (with-redefs [registry/provider-by-id (constantly {:provider/auth-kind :api-key
+                                                     :provider/auth-fn (constantly
+                                                                         :no-credentials)})]
+    (is (= :api-key (providers/auth-kind :acme-coding-plan)))
+    ;; A machine-minted credential still outranks the declaration: nothing prompts.
+    (is (= :command
+           (providers/auth-kind :acme-coding-plan
+                                {:id :acme-coding-plan :api-key-command "mint-token"}))))
+  (with-redefs [registry/provider-by-id (constantly {:provider/auth-kind :oauth
+                                                     :provider/is-managed true})]
+    (is (= :oauth (providers/auth-kind :acme-managed-oauth))))
+  ;; Nothing declared: the inference underneath it is unchanged.
+  (with-redefs [registry/provider-by-id (constantly {:provider/auth-fn (constantly :ok)})]
+    (is (= :oauth (providers/auth-kind :acme-interactive)))))
+
 (deftest status-report-uses-the-four-state-auth-verdict
   (let [limits
         {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}

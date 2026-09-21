@@ -29,6 +29,9 @@
                                    (get-in provider [:provider/preset :default-models])))
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/auth-prompt-fn provider)))
+                   ;; A static subscription key the user pastes: an app or TUI sign-in
+                   ;; collects it instead of refusing with `no headless auth flow`.
+                   (expect (= :api-key (:provider/auth-kind provider)))
                    (expect (ifn? (:provider/limits-fn provider))))))
 
 (defdescribe session-provider-kickoff-hook-test

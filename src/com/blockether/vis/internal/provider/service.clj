@@ -61,6 +61,12 @@
    interactive `:provider/auth-fn`), `:managed` (the extension owns configuration
    and exposes no interactive flow), `:none` (local, no credentials), or `:api-key`.
 
+   A descriptor may DECLARE `:provider/auth-kind`, and that declaration outranks
+   every inference below except a machine-minted credential. An interactive
+   `:provider/auth-fn` is NOT proof of OAuth: the shared static-API-key shape
+   registers one to print key guidance for `vis-agent providers auth`, and reading
+   that as OAuth left those providers unable to collect a key over the wire at all.
+
    Ownership never overrides authentication: a managed provider with `auth-fn` is
    OAuth-capable while remaining automatically bound and absent from Add Provider.
    The 1-arity classifies by id alone and therefore can never see a command-minted
@@ -70,6 +76,7 @@
   ([pid provider]
    (let [registered (registry/provider-by-id pid)]
      (cond (command-minted? provider) :command
+           (:provider/auth-kind registered) (:provider/auth-kind registered)
            (:provider/auth-fn registered) :oauth
            (:provider/is-managed registered) :managed
            (contains? oauth-provider-ids pid) :oauth

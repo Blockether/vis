@@ -250,7 +250,48 @@
   (it "refuses an api-key flow for a provider that is not registered at all"
       (with-redefs [registry/provider-by-id (constantly nil)]
         (expect (= false (pauth/supported? :ghost)))
-        (expect (= :unknown-provider (:error (pauth/start-auth! :ghost)))))))
+        (expect (= :unknown-provider (:error (pauth/start-auth! :ghost))))))
+  ;; Regression: the shared static-API-key shape (`provider.key-store`) registers an
+  ;; interactive `:provider/auth-fn` only to PRINT key guidance for
+  ;; `vis-agent providers auth`. Inferring OAuth from its presence answered every app
+  ;; and TUI sign-in for OpenCode Go, OpenRouter, Z.ai and Alibaba with `has no
+  ;; headless auth flow` instead of asking for the key.
+  (it
+    "mints an api-key flow for a static-key provider that declares its kind"
+    (let [saved
+          (atom nil)
+
+          descriptor
+          {:provider/auth-kind :api-key
+           :provider/auth-fn (constantly :no-credentials)
+           :provider/auth-prompt-fn (constantly ["Create a key at acme.test"])}]
+
+      (with-redefs [registry/provider-by-id
+                    (constantly descriptor)
+
+                    providers/configured-providers-cached
+                    (constantly [{:id :acme-coding-plan}])
+
+                    providers/save-provider-api-key!
+                    (fn [pid k]
+                      (reset! saved [pid k]))
+
+                    providers/rebuild-shared-router!
+                    (constantly nil)]
+
+        ;; The real classifier, not a redefined one: this is what the bug turned
+        ;; into `:oauth`.
+        (expect (= :api-key (providers/auth-kind :acme-coding-plan)))
+        (expect (= true (pauth/supported? :acme-coding-plan)))
+        (let [{:keys [ok? flow]} (pauth/start-auth! :acme-coding-plan)]
+          (expect (= true ok?))
+          (expect (= "api-key" (:kind flow)))
+          (expect (nil? (:url flow)))
+          (expect (= ["Create a key at acme.test"] (:instructions flow)))
+          (let [done (pauth/complete-auth! (:flow-id flow) "sk-acme")]
+            (expect (= true (:ok? done)))
+            (expect (= "ok" (:status done)))
+            (expect (= [:acme-coding-plan "sk-acme"] @saved))))))))
 
 (defdescribe
   provider-auth-abuse-test

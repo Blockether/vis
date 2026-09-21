@@ -98,6 +98,7 @@
        (every? #(optional-valid? x % ifn?) provider-function-keys)
        (optional-valid? x :provider/preset map?)
        (optional-valid? x :provider/is-managed boolean?)
+       (optional-valid? x :provider/auth-kind #(or (nil? %) (#{:api-key :oauth :none} %)))
        (optional-valid? x :provider/limits-cache-ms pos-int?)))
 
 (defn provider

@@ -268,7 +268,12 @@
 (defn provider-entries
   "One `:ext/providers` entry per plan in the book, in plan order.
    `limits-fn` is `(fn [plan-tag] (fn [] report))` because a quota endpoint -
-   or the absence of one - is the vendor's own business."
+   or the absence of one - is the vendor's own business.
+
+   `:provider/auth-kind :api-key` is DECLARED, never inferred: the
+   `:provider/auth-fn` below is only the terminal helper that prints key guidance,
+   and a channel that read it as an OAuth flow answered a sign-in with `no headless
+   auth flow` instead of asking for the key."
   [book limits-fn]
   (mapv (fn [plan-tag]
           (let [{:keys [provider-id label base-url default-models]} (plan-of book plan-tag)]
@@ -278,6 +283,7 @@
              :provider/status-fn #(status-report book plan-tag)
              :provider/logout-fn #(logout-plan! book plan-tag)
              :provider/detect-fn #(detect-key book plan-tag)
+             :provider/auth-kind :api-key
              :provider/auth-fn #(auth! book plan-tag %)
              :provider/auth-prompt-fn #(auth-instruction-lines book plan-tag)
              :provider/get-token-fn #(token-envelope book plan-tag)

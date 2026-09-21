@@ -136,3 +136,14 @@
       (let [thrown
             (try (store/token-envelope book :coding) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (re-find #"No Acme API key for plan :coding\." (ex-message thrown))))))
+
+(defdescribe provider-entries-test
+             ;; A book's credential is a static key the user pastes, and the entry DECLARES that:
+             ;; its interactive `:provider/auth-fn` only prints key guidance, and a channel that
+             ;; read that as an OAuth flow refused to collect the key at all.
+             (it "declares the api-key auth kind for every plan"
+                 (let [entries (store/provider-entries book (constantly (constantly {})))]
+                   (expect (= [:acme-coding-plan :acme-token-plan] (mapv :provider/id entries)))
+                   (expect (every? #(= :api-key (:provider/auth-kind %)) entries))
+                   (expect (every? #(ifn? (:provider/auth-fn %)) entries))
+                   (expect (every? #(ifn? (:provider/auth-prompt-fn %)) entries)))))

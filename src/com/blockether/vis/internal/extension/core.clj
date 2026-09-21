@@ -547,6 +547,7 @@
                   :provider/consume-reset-credit-fn :provider/enrich-models-fn
                   :provider/on-selected-fn])
          (optional-field? x :provider/is-managed boolean?)
+         (optional-field? x :provider/auth-kind #(or (nil? %) (#{:api-key :oauth :none} %)))
          (optional-field? x :provider/limits-cache-ms pos-int?))))
 
 (defn- sandbox-shim?

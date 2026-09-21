@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sign in to a provider that authenticates with a plain API key — OpenCode Go, OpenRouter, Z.ai
+  or Alibaba: the app and the terminal now ask for the key, instead of refusing the sign-in with
+  a message about a missing headless authentication flow.
+
 ## [v0.2.17] - 2026-09-21
 
 ### Added
