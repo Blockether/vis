@@ -60,7 +60,12 @@ function machine(overrides: Machine = {}) {
   };
 }
 
-function mount(client: Machine = machine(), creation?: ProjectCreation, needle = '') {
+function mount(
+  client: Machine = machine(),
+  creation?: ProjectCreation,
+  needle = '',
+  rows: Session[] = ROWS,
+) {
   const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
   render(
     <ProjectGroup
@@ -68,10 +73,10 @@ function mount(client: Machine = machine(), creation?: ProjectCreation, needle =
         root: ROOT,
         label: STORY_NEWER_PROJECT.name,
         projectId: STORY_NEWER_PROJECT.projectId,
-        tally: { count: ROWS.length, live: 0, awaiting: 0, unread: 0 },
-        sessions: ROWS,
+        tally: { count: rows.length, live: 0, awaiting: 0, unread: 0 },
+        sessions: rows,
       }}
-      machine={{ conn, sessions: ROWS }}
+      machine={{ conn, sessions: rows }}
       context={{
         getClient: () => client as unknown as GatewayClient,
         drafts: {},
@@ -144,6 +149,34 @@ describe('ProjectGroup groups', () => {
       row.getAttribute('data-session-id'),
     );
     expect(painted).toEqual([ROWS[0].id, ROWS[1].id, ROWS[2].id, ROWS[3].id]);
+  });
+
+  // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
+  // some of the rows and left the others alone): the gateway stamps a group's colour onto
+  // each session row as it reads it, so rows fetched before a recolour still carry the old
+  // token while the band above them, painted from the groups, already wears the new one.
+  it('paints every filed row in the colour its group wears now', async () => {
+    const stale = ROWS.map((row) =>
+      row.group_id === WALLET ? { ...row, group_color: 'violet' } : row,
+    );
+    const page = {
+      rows: [stale[2], stale[3]],
+      total: 2,
+      awaiting: [],
+      grouped: [stale[0], stale[1]],
+      nextCursor: '',
+    };
+    mount(
+      machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }),
+      undefined,
+      '',
+      stale,
+    );
+    const wallet = await band('Wallet work');
+
+    expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(0);
+    // The band's rail, and one down each of the two rows filed under it.
+    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(3);
   });
 
   // Requested in this Vis session (paraphrased: the groups and the sessions should be two

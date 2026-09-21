@@ -737,6 +737,27 @@ export const ProjectGroup = memo(function ProjectGroup({
       }));
     return [...known, ...unread];
   }, [groups, filed]);
+  // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The gateway stamps the group's
+  // name and palette token onto every session row it answers, at the moment it READS the
+  // row — so a window fetched before a recolour keeps painting the old token. The band
+  // over those rows does not: it is painted from `groups`, which is re-read after every
+  // group verb, so the band took the new colour the instant the picker answered while the
+  // rows under it kept the old one.
+  // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
+  // some of the rows and left the others alone).
+  // The GROUP owns its colour and its name; a row naming a group this device has not read
+  // yet keeps what it arrived with, which is the fallback the bands above use too.
+  const repainted = useMemo(() => {
+    const known = new Map(groups.map((group) => [group.id, group]));
+    const fresh = new Map<string, Session>();
+    for (const session of painted) {
+      const group = known.get(typeof session.group_id === 'string' ? session.group_id : '');
+      if (!group) continue;
+      if (session.group_color === group.color && session.group_name === group.name) continue;
+      fresh.set(session.id, { ...session, group_color: group.color, group_name: group.name });
+    }
+    return fresh;
+  }, [groups, painted]);
   // A GROUP FOLDS ON ITS OWN, out of the store the project's fold lives in, so a band
   // this reader shut stays shut on the next screen. A group nobody shut is open: a
   // name and a count with nothing under them say less than the rows do.
@@ -823,7 +844,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       // drop, so filing by hand needs no menu at all.
       <SessionRow
         key={session.id}
-        session={session}
+        session={repainted.get(session.id) ?? session}
         draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
         conn={conn}
         match={matches?.get(session.id) ?? null}
