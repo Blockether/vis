@@ -85,6 +85,16 @@
   (provider-limits/auth-changed! provider-id)
   nil)
 
+(defn- signed-in!
+  "A credential just landed. Settle the cached views, then pull this provider's
+   LIVE model catalog in the background: for most vendors the key is what makes
+   `/models` answerable at all, and the models CONFIG carries are what routing
+   and every picker read. Off-thread — the flow answers now."
+  [provider-id]
+  (settle! provider-id)
+  (providers/refresh-models-async! provider-id :provider-auth)
+  nil)
+
 (defn- provider-view
   [result]
   (if-let [flow (:flow result)]
@@ -136,7 +146,7 @@
                                       (fn [_ value]
                                         (providers/save-provider-api-key! provider-id value)))
                           :await await
-                          :settle #(settle! provider-id)}))
+                          :settle #(signed-in! provider-id)}))
                      (catch Throwable _
                        {:ok? false
                         :error :auth-start-failed

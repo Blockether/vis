@@ -1477,6 +1477,104 @@
                         (mapv #(if (= provider-id (:id %)) (f %) %) current))
                       source)))
 
+(defonce ^:private models-refreshing
+  ;; Provider ids whose catalog probe is in flight — ONE `/models` call per
+  ;; provider, however many triggers fire at once.
+  (atom #{}))
+
+(defonce ^:private last-models-refresh
+  ;; {provider-id <epoch-ms>} — when a probe last ANSWERED. A probe that failed
+  ;; is not stamped: signing in right after a logout must still refresh.
+  (atom {}))
+
+(def ^:private models-refresh-window-ms
+  ;; Shortest gap between two catalog probes of one provider. Adding a provider
+  ;; and signing into it are two taps apart, and a status recheck is a button.
+  300000)
+
+(defn- claim-models-refresh!
+  "Take `provider-id`'s single-flight refresh slot. False when a probe is already
+   in flight or one answered inside `models-refresh-window-ms`."
+  [provider-id]
+  (let [at
+        (get @last-models-refresh provider-id)
+
+        fresh?
+        (and at (< (- (util/now-ms) (long at)) (long models-refresh-window-ms)))]
+
+    (and (not fresh?)
+         (not (contains? (first (swap-vals! models-refreshing conj provider-id)) provider-id)))))
+
+(defn- release-models-refresh!
+  "Free the slot. Only a probe that ANSWERED stamps the window — a failed one
+   leaves the next trigger free to try again."
+  [provider-id answered?]
+  (when answered? (swap! last-models-refresh assoc provider-id (util/now-ms)))
+  (swap! models-refreshing disj provider-id)
+  nil)
+
+(defn refresh-models!
+  "Persist every model `provider-id`'s LIVE catalog serves and config does not name.
+
+   ONE `svar/models!` probe, then a merge. A configured model keeps its place and
+   its map verbatim — the order a user wrote in vis.yml is the order pickers
+   render — and each live id config misses is appended, carrying the PRESET's
+   entry when the preset declares one so a vendor's `:api-style` / `:context`
+   survives. Nothing is ever removed: a name the catalog stopped listing may
+   still be someone's pinned default, and a failed probe must not empty a fleet.
+
+   This is what keeps a fleet from advertising the catalog of the build that
+   added it: `:default-models` is frozen at BUILD time (see the OpenCode Go
+   vendor note), and every `/v1/router` row serves `:models` from CONFIG, so a
+   model released after the build was unreachable until config learned about it.
+
+   Returns the appended names, empty when config was already current, nil when
+   the probe failed. BLOCKS on the network — UI paths call
+   [[refresh-models-async!]]."
+  ([provider-id] (refresh-models! provider-id nil))
+  ([provider-id source]
+   (when-let [provider (some #(when (= provider-id (:id %)) %) (configured-providers))]
+     (when-let [live (seq (fetch-models provider))]
+       (let [preset (into {}
+                          (map (juxt :name identity))
+                          (default-model-configs (config/provider-template provider-id)))
+             unknown (fn [entry]
+                       (let [known (into #{} (keep config/model-name) (:models entry))]
+                         (into [] (comp (distinct) (remove known)) live)))]
+
+         (if (empty? (unknown provider))
+           []
+           (let [added (volatile! [])]
+             ;; Re-derive under the machine-store lock. The read above only
+             ;; decides whether a write is worth taking it at all.
+             (update-config-provider!
+               provider-id
+               (fn [entry]
+                 (vreset! added (unknown entry))
+                 (if (seq @added)
+                   (assoc entry
+                     :models (into (vec (:models entry)) (map #(or (preset %) {:name %})) @added))
+                   entry))
+               source)
+             @added)))))))
+
+(defn refresh-models-async!
+  "Background [[refresh-models!]]: the caller answers now, the catalog lands after.
+
+   Every trigger is a UI path — a provider added, a sign-in landing, a status
+   recheck — so the probe must NEVER join the response that fired it. One probe
+   per provider at a time, at most one per `models-refresh-window-ms`, and errors
+   are swallowed: a catalog one build old is a poor picker, never a failed
+   request. Returns nil immediately."
+  ([provider-id] (refresh-models-async! provider-id nil))
+  ([provider-id source]
+   (when (and provider-id (claim-models-refresh! provider-id))
+     (future (let [answered (volatile! false)]
+               (try (vreset! answered (some? (refresh-models! provider-id source)))
+                    (catch Throwable _ nil)
+                    (finally (release-models-refresh! provider-id @answered))))))
+   nil))
+
 (defn save-provider-api-key!
   "Persist `api-key` for `provider-id` in THIS process' config — the headless
    twin of a channel's API-key dialog, so a phone (or a TUI attached to a remote

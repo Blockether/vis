@@ -48,19 +48,30 @@
 
 (def ^:private DEFAULT_MODELS
   "The catalog this build ships: a bare string rides svar's default OpenAI chat
-   wire, a `{:name … :api-style :anthropic}` map routes to `/messages`.
+   wire, a `{:name … :api-style :anthropic}` map routes to `/messages`. Head of
+   the list is what a fresh install routes to, so `kimi-k2.7-code` stays first;
+   inside each family the newest model leads.
 
    Nothing is fetched here. `native-image` (graal-build-time) initializes this
    namespace at BUILD time, so a `/models` call at load ran on the BUILDER — it
    froze that machine's catalog into the binary and left its `HttpClient` in the
    image heap, which failed every native build after v0.1.32. The LIVE catalog
    still reaches the picker, at runtime, through `providers/fetch-models` (svar
-   `/models!` against this same public endpoint), and `enrich-models` below
-   stamps the wire on whatever comes back."
-  ["kimi-k2.7-code" "glm-5.2" "deepseek-v4-flash" "deepseek-v4-pro" "kimi-k2.6" "mimo-v2.5-pro"
-   "mimo-v2.5" "hy3" "ox-alpha-free" {:name "minimax-m3" :api-style :anthropic}
-   {:name "minimax-m2.7" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
-   {:name "qwen3.7-plus" :api-style :anthropic}])
+   `/models!` against this same public endpoint); `providers/refresh-models!`
+   appends what that probe finds to the provider's CONFIG after an add, a
+   sign-in or a status recheck, so a model released after this release is
+   routable without a new build; and `enrich-models` below stamps the wire on
+   whatever comes back."
+  ["kimi-k2.7-code" "kimi-k3" "kimi-k2.6" "kimi-k2.5" "glm-5.3" "glm-5.3-flash" "glm-5.2" "glm-5.1"
+   "glm-5" "deepseek-v4.1-flash" "deepseek-v4-pro" "deepseek-v4-flash" "deepseek-flash"
+   "deepseek-v4-flash-vision-exp" "longcat-2.0" "mimo-v2-pro" "mimo-v2-omni" "mimo-v2.5-pro"
+   "mimo-v2.5" "hy4-preview" "hy3" "hy3-preview" "gpt-5.6-luna" "grok-4.6" "grok-4.5" "omen-alpha"
+   "muse-spark-1.3-contributor" "muse-spark-1.2-contributor"
+   {:name "minimax-m3" :api-style :anthropic} {:name "minimax-m2.7" :api-style :anthropic}
+   {:name "minimax-m2.5" :api-style :anthropic} {:name "qwen3.8-max" :api-style :anthropic}
+   {:name "qwen3.8-flash" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
+   {:name "qwen3.7-plus" :api-style :anthropic} {:name "qwen3.6-plus" :api-style :anthropic}
+   {:name "qwen3.5-plus" :api-style :anthropic}])
 
 (defn- enrich-models
   "`:provider/enrich-models-fn`: `(svar-provider router-opts) -> models-vec`, run

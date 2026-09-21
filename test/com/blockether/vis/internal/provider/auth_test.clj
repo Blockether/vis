@@ -247,6 +247,45 @@
             (expect (= [:fake-key "sk-secret"] @saved)))
           ;; Consumed: a captured flow id cannot be replayed.
           (expect (= :unknown-flow (:error (pauth/complete-auth! (:flow-id flow) "sk-secret"))))))))
+  ;; The models a provider serves come from CONFIG, and config was written from the
+  ;; catalog the BUILD shipped. A landed key is the first moment the live catalog is
+  ;; answerable, so it is pulled THEN — off-thread, never inside the flow's answer.
+  (it
+    "pulls the provider's live catalog in the background once a key lands"
+    (let [refreshed
+          (atom [])
+
+          descriptor
+          {:provider/auth-prompt-fn (constantly ["paste your key"])}]
+
+      (with-redefs [registry/provider-by-id
+                    (constantly descriptor)
+
+                    providers/auth-kind
+                    (constantly :api-key)
+
+                    providers/save-provider-api-key!
+                    (constantly nil)
+
+                    providers/clear-provider-api-key!
+                    (constantly true)
+
+                    providers/rebuild-shared-router!
+                    (constantly nil)
+
+                    providers/refresh-models-async!
+                    (fn [provider-id source]
+                      (swap! refreshed conj [provider-id source])
+                      nil)]
+
+        (let [{:keys [flow]} (pauth/start-auth! :fake-key)]
+          (expect (= true (:ok? (pauth/complete-auth! (:flow-id flow) "sk-secret"))))
+          (expect (= [[:fake-key :provider-auth]] @refreshed)))
+        ;; Logging out forgets a credential. It learns nothing about the catalog,
+        ;; and a probe with no key would only burn the refresh window.
+        (reset! refreshed [])
+        (expect (= "logged-out" (:status (pauth/logout! :fake-key))))
+        (expect (= [] @refreshed)))))
   (it "refuses an api-key flow for a provider that is not registered at all"
       (with-redefs [registry/provider-by-id (constantly nil)]
         (expect (= false (pauth/supported? :ghost)))

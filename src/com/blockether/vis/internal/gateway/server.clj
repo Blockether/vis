@@ -1400,6 +1400,11 @@
   [request]
   (let [provider-id (some-> (get-in request [:path-params :provider-id])
                             keyword)]
+    ;; A recheck is the user looking straight at this provider, which is the
+    ;; moment to pull its live catalog too — off-thread, so a fleet configured by
+    ;; an older build stops advertising that build's models without this answer
+    ;; ever waiting for a `/models` call.
+    (providers/refresh-models-async! provider-id :gateway)
     (json-response {:status (providers/provider-status (configured-provider provider-id))})))
 
 (defn- provider-limits-handler
@@ -1792,6 +1797,11 @@
 
               (providers/add-config-provider! (providers/provider-config-with-models preset models)
                                               :gateway)
+              ;; The preset's catalog is the one this BUILD shipped. Pull the
+              ;; vendor's live list off-thread, so a model released since then is
+              ;; selectable moments later instead of never — and the key dialog
+              ;; this answer opens still paints immediately.
+              (providers/refresh-models-async! provider-id :gateway)
               (json-response (router-fleet-json false))))))
 
 (defn- remove-provider-handler
@@ -3138,6 +3148,33 @@
           (error-response 400 :invalid-request "group_id must be a session group id or null")
           (and gid (nil? (state/get-session-group gid))) (group-404 (str raw))
           :else (json-response (state/assign-session-group! sid gid)))))
+
+(defn- mark-session-read-handler
+  "PUT /v1/sessions/:sid/read {seen_answers} — how far this reader has read the
+   conversation. An absent or null `seen_answers` means ALL of it, which is what a
+   surface opening the session reports. The watermark never moves backwards, and
+   the receipt carries the count the gateway now holds, so a caller repaints the
+   row from the gateway's own answer instead of counting answers itself."
+  [request]
+  (let [sid-str
+        (get-in request [:path-params :sid])
+
+        sid
+        (path-sid request)
+
+        raw
+        (get (body-json request) "seen_answers")
+
+        seen
+        (cond (number? raw) (max 0 (long raw))
+              (and (string? raw) (re-matches #"\d+" (str/trim (str raw))))
+              (parse-long (str/trim (str raw)))
+              :else nil)]
+
+    (cond (or (nil? sid) (nil? (state/soul sid))) (session-404 sid-str)
+          (and (some? raw) (nil? seen))
+          (error-response 400 :invalid-request "seen_answers must be a whole number of answers")
+          :else (json-response (state/mark-session-read! sid {:seen-answers seen})))))
 
 (defn- configured-reasoning-level
   "The shared `reasoning_level` toggle as a plain wire string (`quick` /
@@ -5064,6 +5101,7 @@
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         [(sid-route "/group") {:put set-session-group-handler}]
+        [(sid-route "/read") {:put mark-session-read-handler}]
         [(sid-route "/client-extensions")
          {:put (client-extension-handler :register) :delete (client-extension-handler :detach)}]
         [(sid-route "/client-calls") {:get (client-extension-handler :pending)}]

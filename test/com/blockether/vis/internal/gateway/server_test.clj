@@ -3208,7 +3208,8 @@
                    #'providers/provider-status (constantly {:is-authenticated false})
                    #'providers/provider-limits-safe (constantly nil)
                    #'providers/provider-status-cached (constantly {:is-authenticated false})
-                   #'provider-limits/limits-without-fetching (constantly nil)}
+                   #'provider-limits/limits-without-fetching (constantly nil)
+                   #'providers/refresh-models-async! (constantly nil)}
     f))
 
 (deftest provider-presets-handler-lists-what-can-still-be-added
@@ -3346,6 +3347,9 @@
         cached
         (atom 0)
 
+        refreshed
+        (atom [])
+
         fleet
         [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]]
 
@@ -3376,14 +3380,19 @@
                      #'providers/add-config-provider! (fn [& _]
                                                         nil)
                      #'providers/remove-provider! (fn [& _]
-                                                    true)}
+                                                    true)
+                     #'providers/refresh-models-async! (fn [provider-id source]
+                                                         (swap! refreshed conj [provider-id source])
+                                                         nil)}
       (fn []
         (testing "POST /v1/providers"
           (let [resp ((rv 'add-provider-handler) (json-body {:id "lmstudio"}))]
             (is (= 200 (:status resp)))
             (is (= ["zai-coding-plan"]
                    (mapv #(get % "id") (get (wire/parse-json (:body resp)) "providers")))
-                "the answer is still the whole fleet the caller repaints from")))
+                "the answer is still the whole fleet the caller repaints from"))
+          (is (= [[:lmstudio :gateway]] @refreshed)
+              "the live catalog is pulled off-thread, never inside this answer"))
         (testing "DELETE /v1/providers/:provider-id"
           (is (= 200
                  (:status ((rv 'remove-provider-handler)
@@ -3394,6 +3403,23 @@
         (testing "GET /v1/router is the read that still asks live"
           (is (= 200 (:status ((rv 'router-handler) {}))))
           (is (= 2 @probes)))))))
+
+(deftest a-provider-recheck-also-refreshes-its-catalog
+  ;; A fleet added by an older build keeps advertising that build's models:
+  ;; config is what every `/v1/router` row reads and nothing ever rewrote it.
+  ;; A recheck is the user looking straight at the provider, so the live catalog
+  ;; is pulled then — off-thread, so this answer is still one cached verdict.
+  (let [asked (atom [])]
+    (with-redefs-fn {#'providers/refresh-models-async! (fn [provider-id source]
+                                                         (swap! asked conj [provider-id source])
+                                                         nil)
+                     #'providers/configured-providers (constantly [{:id :opencode-go}])
+                     #'providers/provider-status (constantly {:is-authenticated true})}
+      (fn []
+        (let [resp ((rv 'provider-status-handler) {:path-params {:provider-id "opencode-go"}})]
+          (is (= 200 (:status resp)))
+          (is (true? (get-in (wire/parse-json (:body resp)) ["status" "is_authenticated"])))
+          (is (= [[:opencode-go :gateway]] @asked)))))))
 
 (deftest delete-project-blast-radius-is-explicit-on-the-wire-test
   ;; The default DELETE only ever scattered members back to project-less, and no

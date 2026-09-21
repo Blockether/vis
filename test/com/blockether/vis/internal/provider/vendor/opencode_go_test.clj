@@ -66,12 +66,16 @@
                        bare
                        (filter string? models)]
 
-                   ;; GLM / Kimi / DeepSeek / MiMo / Hy3 / Ox ride the OpenAI chat wire.
+                   ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat / Omen ride the OpenAI chat wire.
                    (expect (some #(= "glm-5.2" %) bare))
                    (expect (some #(= "kimi-k2.7-code" %) bare))
                    (expect (some #(= "deepseek-v4-flash" %) bare))
                    (expect (some #(= "hy3" %) bare))
-                   (expect (some #(= "ox-alpha-free" %) bare))))
+                   (expect (some #(= "omen-alpha" %) bare))
+                   ;; The catalog a build ships is the vendor's CURRENT one, not the list
+                   ;; that froze when this provider was first written.
+                   (expect (some #(= "deepseek-v4.1-flash" %) bare))
+                   (expect (some #(= "kimi-k3" %) bare))))
              (it "declares Anthropic-wire models as maps with :api-style :anthropic"
                  (reload!)
                  (let [models

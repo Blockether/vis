@@ -545,6 +545,69 @@
       (is (= ["glm-5.2" "minimax-m3" "ox-alpha-free"]
              (:models (providers/model-options provider defaults true)))))))
 
+;; Regression: a fleet stayed frozen at the build that added it. `:default-models`
+;; is a hardcoded vendor list, adding a provider persisted exactly that list, and
+;; every `/v1/router` row reads `:models` from CONFIG — so a model the vendor
+;; released later was unreachable in the app for good.
+(deftest refreshing-models-appends-only-what-config-does-not-name
+  (let [entry
+        {:id :fake :models [{:name "glm-5.2"} {:name "kimi-k2.6"}]}
+
+        written
+        (atom nil)]
+
+    (with-redefs [providers/configured-providers
+                  (constantly [entry])
+
+                  providers/fetch-models
+                  (constantly ["glm-5.2" "glm-5.3" "minimax-m2.5" "minimax-m2.5"])
+
+                  config/provider-template
+                  (constantly {:id :fake
+                               :default-models ["glm-5.3"
+                                                {:name "minimax-m2.5" :api-style :anthropic}]})
+
+                  providers/update-config-provider!
+                  (fn [provider-id f source]
+                    (reset! written [provider-id (f entry) source]))]
+
+      (let [added (providers/refresh-models! :fake :test)]
+        (is (= ["glm-5.3" "minimax-m2.5"] added) "only the live ids config did not already name")
+        (is (= [:fake :test] [(first @written) (last @written)]))
+        (is (= [{:name "glm-5.2"} {:name "kimi-k2.6"} {:name "glm-5.3"}
+                {:name "minimax-m2.5" :api-style :anthropic}]
+               (:models (second @written)))
+            "configured models keep their order; a new one carries the preset's own map")))))
+
+(deftest a-failed-model-probe-leaves-the-fleet-alone
+  (let [writes (atom 0)]
+    (with-redefs [providers/configured-providers (constantly [{:id :fake
+                                                               :models [{:name "glm-5.2"}]}])
+                  providers/fetch-models (constantly nil)
+                  providers/update-config-provider! (fn [& _]
+                                                      (swap! writes inc))]
+
+      (is (nil? (providers/refresh-models! :fake))
+          "a probe that answered nothing is not an empty catalog")
+      (testing "a provider the fleet does not carry is not written either"
+        (is (nil? (providers/refresh-models! :ghost))))
+      (is (zero? @writes)))))
+
+(deftest a-catalog-refresh-is-single-flight-and-windowed
+  (let [claim
+        (rv 'claim-models-refresh!)
+
+        release
+        (rv 'release-models-refresh!)]
+
+    (try (is (true? (claim :fake)) "the first trigger takes the slot")
+         (is (false? (claim :fake)) "a second trigger while the probe is in flight is dropped")
+         (release :fake false)
+         (is (true? (claim :fake)) "a probe that FAILED must not burn the window")
+         (release :fake true)
+         (is (false? (claim :fake)) "an answered probe holds the window shut")
+         (finally (reset! @(rv 'models-refreshing) #{}) (reset! @(rv 'last-models-refresh) {})))))
+
 (deftest fallback-selection-is-explicit-and-always-on-another-provider
   (let [fleet
         [{:id :openai :models [{:name "gpt-5"}]}
