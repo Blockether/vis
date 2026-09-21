@@ -246,6 +246,79 @@ const SSE_CONNECT_TIMEOUT_MS = 10_000;
 const SSE_STALL_TIMEOUT_MS = 45_000;
 
 /**
+ * How long a candidate ADDRESS gets to prove it is still there.
+ *
+ * `/healthz` is answered before the gateway looks at anything, so an address
+ * that cannot produce it in a few seconds is not one the app should move onto.
+ * Spending the full request budget on each silent candidate is what made an
+ * address sweep cost half a minute per dead address, on every wake.
+ */
+const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * How many ordinary requests may be in flight to ONE gateway at once.
+ *
+ * A webview gives an HTTP/1.1 origin about six sockets, and this app holds two
+ * of them open for the live session and fleet streams. A resumed screen fires
+ * its whole poll set at once, so those bursts took every socket and the stream
+ * reopening behind them never got its headers inside `SSE_CONNECT_TIMEOUT_MS`:
+ * the app painted `Reconnecting` while the gateway was healthy and answering
+ * every poll. Diagnostics from one phone show the aborted stream opens sitting
+ * at a median of thirteen concurrent requests, against six for the ones that
+ * connected. So polls queue behind a cap that leaves the streams their sockets.
+ *
+ * Live streams do NOT pass through the gate — they are the traffic it protects.
+ */
+const MAX_INFLIGHT_PER_GATEWAY = 4;
+
+/** Requests on the wire per gateway base URL, and who is waiting for a slot. */
+type GatewaySlots = { active: number; waiting: Array<() => void> };
+const inflight = new Map<string, GatewaySlots>();
+
+function slotsOf(base: string): GatewaySlots {
+  let gate = inflight.get(base);
+  if (!gate) {
+    gate = { active: 0, waiting: [] };
+    inflight.set(base, gate);
+  }
+  return gate;
+}
+
+/**
+ * Give the slot back — handing it straight to the next waiter, so the cap holds
+ * without a gap for a newcomer to slip through. Calling it twice is harmless.
+ */
+function releaseGatewaySlot(gate: GatewaySlots): () => void {
+  let isReleased = false;
+  return () => {
+    if (isReleased) return;
+    isReleased = true;
+    const next = gate.waiting.shift();
+    if (next) next();
+    else gate.active -= 1;
+  };
+}
+
+/**
+ * Take a slot on `base` if this gateway has one free RIGHT NOW, synchronously:
+ * a request that nothing is holding up must reach the wire in the same tick it
+ * was asked for, the way a tap on `Retry` expects.
+ */
+function takeGatewaySlot(base: string): (() => void) | null {
+  const gate = slotsOf(base);
+  if (gate.active >= MAX_INFLIGHT_PER_GATEWAY) return null;
+  gate.active += 1;
+  return releaseGatewaySlot(gate);
+}
+
+/** Wait for this gateway's next free slot, then take it. */
+async function awaitGatewaySlot(base: string): Promise<() => void> {
+  const gate = slotsOf(base);
+  await new Promise<void>((resume) => gate.waiting.push(resume));
+  return releaseGatewaySlot(gate);
+}
+
+/**
  * Deadline for ONE transcription round trip, SCALED to the audio it carries.
  *
  * `transcribeVoice` bypasses `request` (it posts raw WAV bytes, not JSON), so it
@@ -1055,6 +1128,10 @@ export class GatewayClient {
       }
       if (!loopback && !this.token?.trim()) throw new GatewayOAuthError('pairing-required');
     }
+    // Queue for one of this gateway's few sockets BEFORE the clock starts: the
+    // wait is this app's own backpressure, not a slow gateway, and reporting it
+    // as a timeout would blame the machine for the app's own burst.
+    const release = takeGatewaySlot(this.base) ?? (await awaitGatewaySlot(this.base));
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
     let exchangeFailure: { cause: unknown } | undefined;
@@ -1148,6 +1225,7 @@ export class GatewayClient {
         timedOut: deadline.signal.aborted && !signal?.aborted,
       });
       window.clearTimeout(timer);
+      release();
     }
   }
 
@@ -1166,14 +1244,26 @@ export class GatewayClient {
   }
 
   async ping(signal?: AbortSignal): Promise<boolean> {
+    // A candidate address gets a SHORT question (`PROBE_TIMEOUT_MS`): this is
+    // asked of every address the app knows, including the ones that are simply
+    // not on this network any more.
+    const deadline = new AbortController();
+    const timer = window.setTimeout(() => deadline.abort(), PROBE_TIMEOUT_MS);
     try {
-      await this.request('GET', '/healthz', undefined, signal);
+      await this.request(
+        'GET',
+        '/healthz',
+        undefined,
+        anySignal(signal ? [signal, deadline.signal] : [deadline.signal]),
+      );
       return true;
     } catch (e) {
       // A token-gated gateway still answers /healthz; a 401 means "reachable
       // but unauthorized", which is a connection we should flag distinctly.
       if (e instanceof GatewayError && e.status === 401) throw e;
       return false;
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 

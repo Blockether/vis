@@ -39,6 +39,7 @@ import {
   upsertConnection,
 } from './storage';
 import { cachedNotifyVerdict, rememberNotifyVerdict } from './notify-verdict';
+import { forgetUnreachableAddresses } from './reachability';
 import type { GatewayConn, PushDevice } from './types';
 
 const makeLocalStorage = () => {
@@ -116,9 +117,18 @@ const device = (preview: string): PushDevice =>
 const requests = (calls: { read: string[]; registered: string[]; unregistered: string[] }) =>
   calls.read.length + calls.registered.length + calls.unregistered.length;
 
+/** Move the clock the app reads, without touching the timers a test awaits. */
+const afterGap = (ms: number): void => {
+  const later = Date.now() + ms;
+  vi.spyOn(Date, 'now').mockReturnValue(later);
+};
+
 beforeEach(() => {
   native.store.clear();
   globalThis.localStorage = makeLocalStorage();
+  // Which machines have gone silent is remembered per process, not per test.
+  vi.restoreAllMocks();
+  forgetUnreachableAddresses();
 });
 
 // Regression, user report ("I didn't have to click connect after I paired with
@@ -329,10 +339,35 @@ describe('forgetting a machine', () => {
     const unreachable = fleetOf({}, [BUILDBOX]);
     await drainPushRevocations('tok', unreachable.fleet.unregister);
     expect((await pendingRevocations()).map((c) => c.url)).toEqual([BUILDBOX]);
+    // A machine that said nothing is asked again after a gap, not on the very
+    // next wake — see the attempt this device owes, below.
+    afterGap(2 * 60_000);
     const back = fleetOf();
     await drainPushRevocations('tok', back.fleet.unregister);
     expect(back.calls.unregistered).toEqual([BUILDBOX]);
     expect(await pendingRevocations()).toEqual([]);
+  });
+
+  // Regression, diagnostics export: this drain runs on every launch and every
+  // wake, and it kept asking a machine that had not answered in fourteen hours.
+  // Those attempts held the few sockets this app has to that origin, which is
+  // what the live stream was waiting for.
+  it('lets a machine that answers nothing rest between attempts', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    const asked: string[] = [];
+    const silent = async (conn: GatewayConn) => {
+      asked.push(conn.url);
+      throw new Error('machine unreachable');
+    };
+    await drainPushRevocations('tok', silent);
+    await drainPushRevocations('tok', silent);
+    expect(asked).toEqual([BUILDBOX]);
+    // Still owed: resting is not forgiving.
+    expect((await pendingRevocations()).map((c) => c.url)).toEqual([BUILDBOX]);
+    afterGap(2 * 60_000);
+    await drainPushRevocations('tok', silent);
+    expect(asked).toEqual([BUILDBOX, BUILDBOX]);
   });
 
   it('owes nothing for a machine that was paired again', async () => {

@@ -4,6 +4,7 @@
 
 import { clearRevocation, getGatewayNotify, pendingRevocations, setGatewayNotify } from './storage';
 import { isHeldBy, notifyVerdict, rememberNotifyVerdict } from './notify-verdict';
+import { isProbeDue, noteReachable, noteUnreachable } from './reachability';
 import type { GatewayConn, PushDevice, PushStatus } from './types';
 
 /** One machine's answer: who it will wake, and whether it can wake anyone. */
@@ -153,12 +154,18 @@ export async function drainPushRevocations(
   const revoked: string[] = [];
   for (const conn of await pendingRevocations()) {
     if (isCancelled()) break;
+    // A machine that has been silent keeps its entry, but not the retry: this
+    // list is drained on every launch and wake, and a forgotten machine is
+    // usually forgotten because it is gone. See `lib/reachability.ts`.
+    if (!isProbeDue(conn.url)) continue;
     try {
       await unregister(conn, token);
     } catch {
       // Still holding this device. Kept, and asked again next time.
+      noteUnreachable(conn.url);
       continue;
     }
+    noteReachable(conn.url);
     await clearRevocation(conn.url);
     revoked.push(conn.url);
   }

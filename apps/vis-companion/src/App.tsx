@@ -32,7 +32,13 @@ import {
 import type { OpenSession } from './lib/storage';
 import { bestAddress, hostOf, isUpgrade, mergeAddresses, normalizeAddress } from './lib/endpoints';
 import { machineOutage } from './lib/fleet-outage';
-import { onAway, onWake } from './lib/wake';
+import { onAway, onWake, onWakeThrottled } from './lib/wake';
+import {
+  forgetUnreachableAddresses,
+  isProbeDue,
+  noteReachable,
+  noteUnreachable,
+} from './lib/reachability';
 import { hydrateReadMarks } from './lib/unread';
 import { warm } from './lib/warm';
 import { SessionSubscriptionHub } from './lib/subscriptions';
@@ -140,6 +146,14 @@ const BOOT_REVEAL_MS = 3_000;
 // pinned the WebKit process and left the session list stuck on its skeleton
 // forever. Sweep on the leading edge, then at most once per window.
 const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
+
+// Wake CHORES: sweeps whose answer cannot change between two glances at the
+// phone. Every resume used to re-enter both of them in full, so a minute of
+// ordinary use re-asked every paired machine everything it had just answered —
+// and the live streams reopened behind that traffic. A real loss of the gateway
+// still goes through `recoveryNonce` above, which is not throttled here.
+const RECOVERY_WAKE_MIN_GAP_MS = 30_000;
+const PUSH_SWEEP_WAKE_MIN_GAP_MS = 60_000;
 
 // The launch screen is the session LIST, but the transcript renderer behind it —
 // `SessionScreen` with `ChatContent`, react-markdown/remark and Prism plus a
@@ -748,16 +762,25 @@ export function App() {
       // A pinned address stays preferred while it works, but it must not turn a
       // temporary network change into a permanent dead connection.
       if (activePinned && activeResponded) return;
-      const candidates = activeResponded ? known.filter((url) => isUpgrade(url, activeUrl)) : known;
+      // An address that has gone silent is not asked again on every wake: the
+      // list holds LAN addresses from other networks and machines that were
+      // re-imaged, and each of them costs a probe (`lib/reachability.ts`).
+      const candidates = (
+        activeResponded ? known.filter((url) => isUpgrade(url, activeUrl)) : known
+      ).filter((url) => isProbeDue(url));
       if (!candidates.length) return;
       const reachable = (
         await Promise.all(
           candidates.map(async (url) => {
-            try {
-              return (await new GatewayClient({ ...creds, url }).ping(signal)) ? url : null;
-            } catch {
-              return null;
-            }
+            const answered = await new GatewayClient({ ...creds, url })
+              .ping(signal)
+              .catch(() => false);
+            // An aborted probe says nothing about the address: this effect
+            // re-runs whenever the pairing changes.
+            if (signal.aborted) return null;
+            if (answered) noteReachable(url);
+            else noteUnreachable(url);
+            return answered ? url : null;
           }),
         )
       ).filter((url): url is string => url !== null);
@@ -790,10 +813,18 @@ export function App() {
     // A resumed app is often on a different network than when it was suspended,
     // which is exactly when the durable address becomes reachable (or the LAN
     // one stops being).
-    const off = onWake(() => void run());
+    const off = onWakeThrottled(RECOVERY_WAKE_MIN_GAP_MS, () => void run());
+    // A different network is the one signal that revives every silent address
+    // at once, so it clears the backoff and sweeps immediately.
+    const onNetworkChange = () => {
+      forgetUnreachableAddresses();
+      void run();
+    };
+    window.addEventListener('online', onNetworkChange);
     return () => {
       cancelled = true;
       ctrl.abort();
+      window.removeEventListener('online', onNetworkChange);
       off();
     };
   }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
@@ -881,7 +912,7 @@ export function App() {
     void sweep();
     // A switch flipped while its machine was unreachable is stored but not yet
     // asserted, and waking is exactly when that machine tends to come back.
-    const off = onWake(() => void sweep());
+    const off = onWakeThrottled(PUSH_SWEEP_WAKE_MIN_GAP_MS, () => void sweep());
     return () => {
       cancelled = true;
       off();
@@ -907,7 +938,7 @@ export function App() {
       await syncWebPushRegistrations(notifyTargets, () => cancelled);
     };
     void sweep();
-    const off = onWake(() => void sweep());
+    const off = onWakeThrottled(PUSH_SWEEP_WAKE_MIN_GAP_MS, () => void sweep());
     return () => {
       cancelled = true;
       off();

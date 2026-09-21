@@ -117,3 +117,53 @@ describe('foreground wake signals', () => {
     expect(wake).toHaveBeenCalledExactlyOnceWith({ awayMs: 1_250 });
   });
 });
+
+// Regression, user report ("it disconnects me all the time"): a phone produces
+// wakes in handfuls — a glance at a notification, switching apps, the lock
+// screen. The diagnostics export from one phone holds forty-six of them in
+// fourteen hours, and each one re-entered the full push and address sweeps, so
+// the streams reopened behind traffic that had just been answered.
+describe('wake chores', () => {
+  async function chore(minGapMs: number) {
+    const { onWakeThrottled } = await import('./wake');
+    const run = vi.fn();
+    stops.push(onWakeThrottled(minGapMs, run));
+    return run;
+  }
+
+  function resume(): void {
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('pageshow'));
+    vi.advanceTimersByTime(250);
+  }
+
+  it('does not re-run a sweep the app has just finished', async () => {
+    const run = await chore(30_000);
+    for (let index = 0; index < 3; index += 1) {
+      resume();
+      vi.advanceTimersByTime(1_000);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('runs once the gap has passed, and once only', async () => {
+    const run = await chore(30_000);
+    vi.advanceTimersByTime(31_000);
+    resume();
+    expect(run).toHaveBeenCalledOnce();
+    resume();
+    expect(run).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(31_000);
+    resume();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('still tells the chore how long the app was away', async () => {
+    const run = await chore(1_000);
+    window.dispatchEvent(new Event('pagehide'));
+    vi.advanceTimersByTime(5_000);
+    window.dispatchEvent(new Event('pageshow'));
+    vi.advanceTimersByTime(250);
+    expect(run).toHaveBeenCalledExactlyOnceWith({ awayMs: 5_250 });
+  });
+});

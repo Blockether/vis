@@ -152,6 +152,27 @@ export function onWake(listener: WakeListener): () => void {
 }
 
 /**
+ * Run a wake CHORE — a sweep whose answer cannot change in seconds — at most
+ * once every `minGapMs`.
+ *
+ * Every resume is a wake, and a phone produces them in handfuls: a glance at a
+ * notification, switching apps, the lock screen. Each one re-entered the full
+ * push and address sweeps, so a minute of ordinary phone use re-asked every
+ * paired machine everything it had just answered, and the live streams reopened
+ * behind that traffic. The gap starts at subscription, because these callers run
+ * their chore once on mount already.
+ */
+export function onWakeThrottled(minGapMs: number, listener: WakeListener): () => void {
+  let lastRunAt = Date.now();
+  return onWake((info) => {
+    const now = Date.now();
+    if (now - lastRunAt < minGapMs) return;
+    lastRunAt = now;
+    listener(info);
+  });
+}
+
+/**
  * Run `listener` synchronously on the first signal that the app is leaving the
  * foreground. This is the last safe moment to retire WebKit network streams.
  */
