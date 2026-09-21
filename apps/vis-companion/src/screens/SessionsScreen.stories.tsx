@@ -176,7 +176,7 @@ export const Fleet: Story = {
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
-    const targets = [fold, previous, pageTarget, next, create].map((control) => {
+    const targets = [fold, create, previous, pageTarget, next].map((control) => {
       const box = control.getBoundingClientRect();
       const reach = win.getComputedStyle(control, '::after');
       const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
@@ -190,17 +190,18 @@ export const Fleet: Story = {
         height: box.height - top - bottom,
       };
     });
-    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the
-    // navigation between them takes the band's 24px step. Touch reaches 44px for all five.
+    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the page
+    // steps that trail them take the band's 24px step. Touch reaches 44px for all five.
     const railFace = pointer ? 28 : 44;
     const bandStep = pointer ? 24 : 44;
-    const minimums = [railFace, bandStep, bandStep, bandStep, railFace];
+    const minimums = [railFace, railFace, bandStep, bandStep, bandStep];
     targets.forEach((target, index) => {
       expect(target.width).toBeGreaterThanOrEqual(minimums[index]);
       expect(target.height).toBeGreaterThanOrEqual(minimums[index]);
     });
     // Paging stands above the disclosure that reaches under it, so neighbouring targets
     // may meet: what matters is their order and that each still takes its own press.
+    // BLO-167: the `+` is met before the page steps, which keep the band's trailing edge.
     for (let index = 1; index < targets.length; index += 1) {
       expect(targets[index].left).toBeGreaterThan(targets[index - 1].left);
     }
@@ -267,7 +268,10 @@ export const Fleet: Story = {
       })
     )[0];
     const before = [create, disclosure].map((control) => control.getBoundingClientRect());
-    await expect(before[0].right).toBe(before[1].right);
+    // BLO-167: a paged header hands its trailing edge to the pager, so the page steps —
+    // not the `+` — end where the row's own trailing control ends, with the `+` just inside.
+    await expect(pager.getBoundingClientRect().right).toBe(before[1].right);
+    await expect(before[0].right).toBeLessThanOrEqual(pager.getBoundingClientRect().left);
 
     for (const control of [disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;

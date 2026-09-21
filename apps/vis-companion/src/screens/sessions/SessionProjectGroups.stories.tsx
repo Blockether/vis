@@ -174,7 +174,9 @@ export const AcceptNewerSession: Story = {
       await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
       await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
       const create = header.querySelector('button:last-child')!;
-      await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
+      // BLO-167: the plus is met before the page steps — the header's controls stand
+      // just inside the pager, which keeps the band's trailing edge.
+      await expect(create.getBoundingClientRect().right).toBeLessThanOrEqual(pagerBounds.left);
       await expect(pagerBounds.right).toBeLessThanOrEqual(pendingBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();
