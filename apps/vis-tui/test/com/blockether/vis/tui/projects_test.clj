@@ -580,6 +580,29 @@
         (is (nil? (:error capture)))
         (is (= (or focused? (= cols 40)) (nil? (:ret capture))))))))
 
+(deftest project-rail-caret-in-the-render-frame-test
+  ;; The whole frame parks the terminal caret in the rail's own field while it is
+  ;; open, so a typed path has a cursor without the chat lending one.
+  (with-redefs [timg/images-protocol
+                (constantly nil)
+
+                vis/get-router
+                (constantly nil)]
+
+    (let [db
+          (assoc-in (fixture-db) [:project-sidebar :adding] {:text "/work/new" :cursor 9})
+
+          capture
+          (cap/capture! {:cols 120
+                         :rows 24
+                         :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                   (#'screen/render-frame! screen 120 24 db 1000)
+                                   (.getCursorPosition screen))})]
+
+      (is (nil? (:error capture)))
+      (is (= 12 (.getColumn ^TerminalPosition (:ret capture))))
+      (is (= 3 (.getRow ^TerminalPosition (:ret capture)))))))
+
 (deftest project-chat-pointer-surface-test
   (with-redefs [timg/images-protocol
                 (constantly nil)
