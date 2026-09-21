@@ -72,6 +72,14 @@ MAX_CONSECUTIVE_POLL_FAILURES = 3
 LOG_TAIL_LINES = 120
 FAILED_TAIL_LINES = 40
 
+# A watch that ends before its run does still owes the model the failure it already saw.
+# GitHub publishes a job's log the moment THAT job ends, so a job which has already failed
+# can be read while the rest of the matrix is still running. The person who pressed Stop is
+# owed a stop, so this closing read is bounded on both sides: this many failed jobs, inside
+# this many seconds, and never a single one the retained logs already carry.
+CLOSING_LOGS_MAX = 3
+CLOSING_LOGS_S = 30.0
+
 _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
 
 # CLI calls belong to the invoking watch, never to another concurrent caller.
@@ -788,6 +796,22 @@ def _watch_commands(view):
         _watch_view.reset(token)
 
 
+@contextmanager
+def _closing_commands():
+    """Free the CLI from a view that has ended, so the closing summary can still be read.
+
+    `_shell` refuses to start anything the moment the human stops watching — that is what
+    makes Stop immediate, and it must stay that way for the loop. The summary that answers
+    the MODEL is gathered after the view is already closed and owns no pane on anybody's
+    screen, so it runs outside that veto rather than being cancelled by it.
+    """
+    token = _watch_view.set(None)
+    try:
+        yield
+    finally:
+        _watch_view.reset(token)
+
+
 def _shell(command, seconds=120):
     """Wait for a terminal CLI result, stopping the owned process on timeout or Stop."""
     view = _watch_view.get()
@@ -1174,8 +1198,43 @@ def superseded_shape(shape):
     return settled
 
 
+def _harvest_failed_logs(payload, log_of, cache):
+    """Read the tail of every failed job the retained logs do not already carry.
+
+    Regression, session 25a3245c-0c51-4464-a507-2a2a98baa55d: a run whose tests had already
+    failed on two platforms was stopped by hand while one job still ran, and the verdict came
+    back with `failed_logs` EMPTY — the live selection follows running jobs, so nothing had
+    ever asked GitHub for the failures. The model was handed a stopped watch and no reason
+    for it, and could only open a second watch. A run that ends on its own archives every
+    job's log on the way out; a watch that ends early owes the same answer for what broke.
+    """
+    if not log_of:
+        return
+    jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
+    deadline = time.monotonic() + CLOSING_LOGS_S
+    taken = 0
+    with _closing_commands():
+        for index, job in enumerate(jobs):
+            if taken >= CLOSING_LOGS_MAX or time.monotonic() >= deadline:
+                return
+            if tone_of(job.get("status"), job.get("conclusion")) != "error":
+                continue
+            job_id = _job_id(job, index)
+            if cache.get((job_id, LOG_TAIL_LINES)) or cache.get(
+                (job_id, FAILED_TAIL_LINES)
+            ):
+                continue
+            taken += 1
+            try:
+                _job_log_tail(job_id, FAILED_TAIL_LINES, log_of, cache)
+            except (vis.Interrupted, OSError, RuntimeError, TimeoutError):
+                # The CLI is in no state to answer any more. The verdict still goes out,
+                # carrying whatever was gathered before it stopped answering.
+                return
+
+
 def _watch_outcome(payload, cache, superseded=None, failure=None, view=None):
-    """One typed CI verdict using retained logs only; closing never starts more IO."""
+    """One typed CI verdict using retained logs only; `_harvest_failed_logs` fills them."""
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     failed = []
     for index, job in enumerate(jobs):
@@ -1568,6 +1627,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             )
         else:
             view.close(selection_snapshots=selection_snapshots)
+        # The view is closed, so the person watching already has their stop. What the MODEL
+        # is owed is the reason the run broke, and a watch that ended early never asked.
+        _harvest_failed_logs(published, log_of, log_cache)
         return _watch_outcome(published, log_cache, superseded, terminal_failure, view)
 
 

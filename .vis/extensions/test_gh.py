@@ -733,6 +733,45 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     assert node(picture, "progress")["done"] == 4
 
 
+def test_a_stop_answers_the_failure_the_run_already_had(recorder):
+    class Stopping(Recorder):
+        """A human pressing stop while one job of the matrix is still running."""
+
+        def live(self, envelope_json):
+            envelope = json.loads(envelope_json)
+            if envelope.get("op") == "patch" and not getattr(self, "stopped", False):
+                self.stopped = True
+                self.close(reason="interrupted", note="Continue")
+            return super().live(envelope_json)
+
+    stopping = Stopping(recorder)
+    vis._host = stopping
+    polls = [fixture("run-mid.json"), fixture("run-final.json")]
+    asked = []
+
+    def log_of(job_id, lines):
+        asked.append((job_id, lines))
+        return failing_log()
+
+    # Regression, session 25a3245c-0c51-4464-a507-2a2a98baa55d: a watch stopped by hand
+    # answered `failed_logs` empty. The live selection follows RUNNING jobs, so nothing
+    # had ever asked GitHub about the job that failed, and the model was told only that
+    # the watch had been stopped.
+    verdict = gh.watch(
+        TITLE,
+        DESCRIPTION,
+        lambda: polls.pop(0) if len(polls) > 1 else polls[0],
+        log_of,
+    )
+
+    assert verdict.ending == "interrupted"
+    assert verdict.human_note == "Continue"
+    # Nothing was asked while the view was live; closing asks for the failure exactly once.
+    assert asked == [("95742028770", gh.FAILED_TAIL_LINES)]
+    assert [one.job_id for one in verdict.failed_logs] == ["95742028770"]
+    assert verdict.failed_logs[0].lines == tuple(failing_log())
+
+
 @pytest.mark.parametrize("already_cancelled", [False, True])
 @pytest.mark.parametrize("has_jobs", [False, True])
 def test_cancelled_run_ends_watch_without_a_replacement(
@@ -964,7 +1003,7 @@ def test_capture_does_not_accept_partial_output_from_a_timed_out_process(monkeyp
     assert all(not path.exists() for path in output_paths)
 
 
-def test_stop_during_a_cli_request_releases_the_process_without_more_io(
+def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
     recorder, monkeypatch
 ):
     operations = []
@@ -1008,7 +1047,9 @@ def test_stop_during_a_cli_request_releases_the_process_without_more_io(
     assert outcome.human_note == "Stop watching"
     assert operations == ["logs", "stop"]
     assert waits and max(waits) <= 200
-    assert requested_logs == []
+    # The stop releases the running CLI process; the job that had already failed is
+    # still asked for, once, after the view is closed.
+    assert requested_logs == ["95742028770"]
     assert len(polls) == 2
 
 
