@@ -325,13 +325,14 @@ export const Groups: Story = {
     await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(2);
     await userEvent.click(page.getByRole('button', { name: 'Expand Wallet work' }));
     await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(4);
-    // The sheet on the project's own name lists every group inside it.
+    // The sheet on the project's own name carries the VERB. The bands under that
+    // header are the inventory, and the menu no longer repeats them back.
     await userEvent.click(page.getByRole('button', { name: `Groups in ${fixture.name}` }));
     const sheet = within(canvasElement.ownerDocument.body).getByRole('dialog', {
       name: `Groups in ${fixture.name}`,
     });
-    await expect(within(sheet).getByText('Wallet work')).toBeVisible();
-    await expect(within(sheet).getByText('Receipts')).toBeVisible();
     await expect(within(sheet).getByText('New group')).toBeVisible();
+    await expect(within(sheet).queryByText('Wallet work')).toBeNull();
+    await expect(within(sheet).queryByText('Receipts')).toBeNull();
   },
 };

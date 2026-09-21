@@ -643,8 +643,8 @@ export const ProjectGroup = memo(function ProjectGroup({
 
   // THE GROUPS INSIDE THIS PROJECT, and they are the GATEWAY's rather than this
   // device's: the TUI files a session under one with the same call, so a band that
-  // exists here is a band every client of the machine paints. Read while the project
-  // is FOLDED too — the ⋮ beside its name manages groups without opening the list.
+  // exists here is a band every client of the machine paints. Read as soon as the
+  // project is on screen, so a project that opens paints its bands already named.
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [groupsRead, setGroupsRead] = useState(0);
   useEffect(() => {
@@ -934,10 +934,15 @@ export const ProjectGroup = memo(function ProjectGroup({
         <Menu label={`Groups in ${project}`} at={menu.at} onDismiss={() => setMenu(null)}>
           {(() => {
             const step = menu.step;
+            // THE PROJECT'S SHEET IS A VERB, NOT A TABLE OF CONTENTS. It hangs under
+            // the ⋮ it was opened from, so a band repeating the project's name only
+            // tells a reader where they already are, and the groups it used to list
+            // are painted as bands directly under that header — each wearing its own
+            // colour, count and ⋮. Reported: this menu opened by announcing that a
+            // group is what gets made here, before it offered anything.
             if (step.kind === 'root')
               return (
                 <>
-                  <MenuHeading>Groups in {project}</MenuHeading>
                   <MenuItem
                     title="New group"
                     hint="File some of this project's sessions under a name of your own."
@@ -946,19 +951,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                       goTo({ kind: 'new' });
                     }}
                   />
-                  {bands.length === 0 ? (
-                    <MenuNote>Nothing in this project is grouped yet.</MenuNote>
-                  ) : (
-                    bands.map((band) => (
-                      <MenuItem
-                        key={band.id}
-                        title={band.name}
-                        meta={`${band.count}`}
-                        icon={<Swatch color={band.color} />}
-                        onSelect={() => goTo({ kind: 'group', id: band.id })}
-                      />
-                    ))
-                  )}
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );

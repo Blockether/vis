@@ -242,6 +242,21 @@ describe('ProjectGroup groups', () => {
     await waitFor(() => expect(client.createSessionGroup).toHaveBeenCalledWith(ROOT, 'Receipts'));
   });
 
+  // Reported (paraphrased: the project's own menu should not open by announcing that
+  // a group is what gets made here): the sheet under that ⋮ carries the verb and
+  // nothing else. The groups it used to list are the bands right below the header,
+  // and each band's own ⋮ holds that group's verbs.
+  it('offers the verb without naming the project back or listing its groups', async () => {
+    const { user } = mount();
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: `Groups in ${ROOT}` }));
+    const menu = sheet(`Groups in ${ROOT}`);
+
+    expect(within(menu).getByText('New group')).toBeInTheDocument();
+    expect(within(menu).queryByText(`Groups in ${ROOT}`)).toBeNull();
+    expect(within(menu).queryByText(WALLET_GROUP.name)).toBeNull();
+  });
+
   it('says so when the project already has that name', async () => {
     const { user } = mount(
       machine({

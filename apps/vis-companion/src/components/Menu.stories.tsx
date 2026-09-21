@@ -166,25 +166,26 @@ export const Empty: Story = {
  */
 export const StandingOnItsAnchor: Story = {
   args: {
-    label: 'Groups in vis',
+    label: 'Projects on tower',
     at: { left: 360, bottom: 240 },
     onDismiss: noop,
     children: (
       <>
-        <MenuHeading>Groups in vis</MenuHeading>
+        <MenuHeading>Projects on tower</MenuHeading>
         <MenuItem
-          title="New group"
-          hint="File some of this project's sessions under a name of your own."
+          title="vis"
+          meta="42 sessions"
+          icon={<ProjectsIcon className="size-3.5" />}
           onSelect={noop}
         />
-        <MenuItem title="0.2.16" badge="3" onSelect={noop} />
+        <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
       </>
     ),
   },
   play: async ({ canvasElement }) => {
     const win = canvasElement.ownerDocument.defaultView!;
     const panel = within(canvasElement.ownerDocument.body).getByRole('dialog', {
-      name: 'Groups in vis',
+      name: 'Projects on tower',
     });
     const paint = win.getComputedStyle(panel);
     // ONE vertical edge is pinned, and a panel standing above its anchor pins its
