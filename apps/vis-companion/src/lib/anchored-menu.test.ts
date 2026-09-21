@@ -85,32 +85,55 @@ describe('menuPosition', () => {
       expect(menuPosition(header, 320, tall, 120)).toEqual({ top: 1019, left: 645 });
     });
 
-    it('sits below the anchor and clamps when neither side has the full budget', () => {
-      // Mid-window: 254px above, 582px below. Below is roomier, so it stays below
-      // and its FOOT — not its head — is what gets pinned inside the margin.
+    it('hangs below the anchor, capped, when neither side has the full budget', () => {
+      // Mid-window: 254px above, 582px below. Below is roomier, so the panel's head
+      // stays under the anchor it came from and its HEIGHT is what gives way — 582px,
+      // which stands its foot exactly on the bottom margin.
       expect(menuPosition({ top: 272, bottom: 300, right: 1400 }, 384, DESKTOP)).toEqual({
-        top: 258,
+        top: 306,
         left: 1016,
+        maxHeight: 582,
       });
     });
 
     it('never places a panel whose head or foot would leave the window', () => {
       // 70vh is what an unmeasured panel reserves, so that is the band every
-      // placement has to keep inside the window, head and foot alike.
+      // placement has to keep inside the window, head and foot alike — unless the
+      // placement capped the panel, in which case the cap is the band.
       const reserved = DESKTOP.height * 0.7;
       for (const bottom of [100, 300, 500, 700, 880]) {
         const at = menuPosition({ top: bottom - 28, bottom, right: 1400 }, 384, DESKTOP)!;
-        const head = at.top ?? DESKTOP.height - at.bottom! - reserved;
+        const height = at.maxHeight ?? reserved;
+        const head = at.top ?? DESKTOP.height - at.bottom! - height;
         expect(head).toBeGreaterThanOrEqual(12);
-        expect(head + reserved).toBeLessThanOrEqual(DESKTOP.height - 12);
+        expect(head + height).toBeLessThanOrEqual(DESKTOP.height - 12);
       }
     });
 
-    it('clamps rather than flips when neither side can hold the whole panel', () => {
+    it('stands on its anchor and gives up height when neither side can hold it', () => {
       // A short window: 70vh is 280px and neither 158px above nor 92px below fits.
+      // Above is the roomier side, so the panel stands on the anchor and takes the
+      // 152px there is room for, head on the top margin.
       const short = { width: 1440, height: 400 };
       const at = menuPosition({ top: 170, bottom: 280, right: 1400 }, 384, short);
-      expect(at).toEqual({ top: 12, left: 1016 });
+      expect(at).toEqual({ bottom: 400 - 170 + 6, left: 1016, maxHeight: 152 });
+    });
+
+    // Regression, user report (paraphrased: the menu is STILL misplaced). A project
+    // band two thirds of the way down a tall window has room for the 70vh reserve on
+    // neither side, and the squeezed placement used to drop the anchor and clamp the
+    // panel to the top margin: a three-row menu opened in the CORNER of the window,
+    // over the app's own header, while the glyph that dropped it sat 470px below.
+    it('keeps a squeezed menu on the glyph that opened it', () => {
+      const pane = { width: 1400, height: 700 };
+      const glyph = { top: 484, bottom: 512, right: 486 };
+      const at = menuPosition(glyph, 320, pane)!;
+
+      expect(at).toEqual({ bottom: 700 - 484 + 6, left: 166, maxHeight: 466 });
+      // Foot six pixels over the glyph, head on the top margin: the whole menu is on
+      // the screen AND touching the control it came from.
+      expect(pane.height - at.bottom!).toBe(glyph.top - 6);
+      expect(pane.height - at.bottom! - at.maxHeight!).toBe(12);
     });
 
     it('falls back to the plain drop where there is no viewport to measure', () => {

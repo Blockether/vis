@@ -17,8 +17,17 @@ export type AnchorBox = { top: number; bottom: number; right: number };
  * panel standing above one pins its foot (`bottom`, measured up from the foot of the
  * viewport), because the foot is the end that has to touch the control — and how far
  * the other end reaches is not known until the panel has been painted.
+ *
+ * `maxHeight` appears only when neither side of the anchor has room for a whole
+ * panel: the panel keeps its place against the control and gives up HEIGHT instead,
+ * scrolling inside itself. Without it the panel wears the `70vh` cap it paints.
  */
-export type MenuPosition = { left: number; top?: number; bottom?: number };
+export type MenuPosition = {
+  left: number;
+  top?: number;
+  bottom?: number;
+  maxHeight?: number;
+};
 
 /** Air between the anchor and the menu it drops. */
 const ANCHOR_GAP = 6;
@@ -28,9 +37,9 @@ const EDGE_MARGIN = 12;
 
 /**
  * How tall an anchored panel is allowed to be, as a fraction of the viewport.
- * It must stay equal to the `sm:max-h-[70vh]` the panels paint, because the
- * placement below decides whether the panel FITS before it has ever been
- * measured — a popover is positioned on the frame it mounts.
+ * It must stay equal to the `70vh` fallback in the `sm:max-h-[…]` the panels
+ * paint, because the placement below decides whether the panel FITS before it
+ * has ever been measured — a popover is positioned on the frame it mounts.
  */
 const MAX_HEIGHT_FRACTION = 0.7;
 
@@ -58,12 +67,16 @@ function currentViewport(): Viewport {
  * whole sheet exists to reach was simply not on the screen.
  *
  * So a panel that does not fit below its anchor FLIPS above it and STANDS on it,
- * foot pinned just clear of the anchor's head; one that fits in neither direction is
- * clamped to the taller side. A measured panel uses its real height, capped at
- * `70vh`; an unmeasured panel reserves that maximum — and that reserve chooses the
- * DIRECTION only. Pinning a flipped panel's HEAD to it instead put a three-row menu
- * hundreds of pixels above the glyph that dropped it, beside another project's name
- * (reported: pressing one project's menu opened the menu somewhere else).
+ * foot pinned just clear of the anchor's head; one that fits in neither direction
+ * takes the roomier side, hangs off the anchor there too, and gives up HEIGHT — it
+ * scrolls inside a `maxHeight` instead of leaving the control it came from. A
+ * measured panel uses its real height, capped at `70vh`; an unmeasured panel reserves
+ * that maximum — and that reserve chooses the DIRECTION only. Letting it choose the
+ * PLACE instead put menus where their anchor is not: pinning a flipped panel's HEAD
+ * to the reserve floated a three-row menu hundreds of pixels above the glyph that
+ * dropped it (reported: pressing one project's menu opened the menu somewhere else),
+ * and clamping a squeezed panel to the top margin parked that same menu in the corner
+ * of the window, under the app's own header (reported again: still misplaced).
  *
  * `null` — close the menu — means only ONE thing: there is no anchor to hang from
  * any more. A live anchor always yields a position, including across a resize: a
@@ -86,21 +99,20 @@ export function menuPosition(
   const budget = Math.min(panelHeight ?? Infinity, viewport.height * MAX_HEIGHT_FRACTION);
   const below = viewport.height - EDGE_MARGIN - (anchor.bottom + ANCHOR_GAP);
   const above = anchor.top - ANCHOR_GAP - EDGE_MARGIN;
+  const head = Math.round(anchor.bottom + ANCHOR_GAP);
+  const foot = Math.round(viewport.height - anchor.top + ANCHOR_GAP);
 
   // Below is the natural reading direction and wins whenever the panel fits there.
-  if (below >= budget) return { top: Math.round(anchor.bottom + ANCHOR_GAP), left };
+  if (below >= budget) return { top: head, left };
   // Flipping is only worth the disorientation if it actually buys the whole panel,
   // and a flipped panel STANDS on its anchor: the reserve above chose the side, the
   // anchor itself sets the foot, so a short menu still touches the control it left.
-  if (above >= budget)
-    return { bottom: Math.round(viewport.height - anchor.top + ANCHOR_GAP), left };
-  // Neither side fits: take the taller one and sit flush against its margin, so the
-  // panel is short but WHOLE rather than tall and beheaded.
-  if (above > below) return { top: EDGE_MARGIN, left };
-  return {
-    top: Math.round(Math.max(EDGE_MARGIN, viewport.height - EDGE_MARGIN - budget)),
-    left,
-  };
+  if (above >= budget) return { bottom: foot, left };
+  // Neither side holds the whole panel: it stays with its anchor on the roomier side
+  // and is capped to the room that side has, so it is short but WHOLE — never
+  // beheaded above the window, never hanging past the fold with its footer on it.
+  if (above > below) return { bottom: foot, left, maxHeight: Math.round(above) };
+  return { top: head, left, maxHeight: Math.round(below) };
 }
 
 /**

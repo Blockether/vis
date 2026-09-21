@@ -92,15 +92,17 @@ export function AnchoredPanel({
         role={role}
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={label}
-        className={`absolute inset-x-0 bottom-[var(--sheet-bottom,0px)] flex max-h-[calc(82vh-var(--sheet-bottom,0px))] flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-[var(--menu-bottom,auto)] sm:left-[var(--menu-left)] sm:top-[var(--menu-top,auto)] sm:max-h-[70vh] sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-float ${PANEL_SIZES[size].className}`}
+        className={`absolute inset-x-0 bottom-[var(--sheet-bottom,0px)] flex max-h-[calc(82vh-var(--sheet-bottom,0px))] flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-[var(--menu-bottom,auto)] sm:left-[var(--menu-left)] sm:top-[var(--menu-top,auto)] sm:max-h-[var(--menu-max-height,70vh)] sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-float ${PANEL_SIZES[size].className}`}
         style={
           {
             '--sheet-bottom': `${keyboardInset}px`,
             // ONE vertical edge is pinned, and which one says where the panel
-            // hangs: a head under the anchor, or a foot standing on top of it.
+            // hangs: a head under the anchor, or a foot standing on top of it. A
+            // panel with room for neither keeps its place and wears a tighter cap.
             ...(at ? { '--menu-left': `${at.left}px` } : {}),
             ...(at?.top === undefined ? {} : { '--menu-top': `${at.top}px` }),
             ...(at?.bottom === undefined ? {} : { '--menu-bottom': `${at.bottom}px` }),
+            ...(at?.maxHeight === undefined ? {} : { '--menu-max-height': `${at.maxHeight}px` }),
           } as CSSProperties
         }
         onClick={(event) => event.stopPropagation()}

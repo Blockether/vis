@@ -196,3 +196,34 @@ export const StandingOnItsAnchor: Story = {
     await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
   },
 };
+
+/**
+ * A window with room on neither side of the anchor: the panel still hangs off the
+ * control that opened it and gives up HEIGHT instead of its place, scrolling inside
+ * the cap the placement hands it.
+ */
+export const SqueezedAgainstItsAnchor: Story = {
+  args: {
+    label: 'Projects on relay',
+    at: { left: 360, bottom: 240, maxHeight: 180 },
+    onDismiss: noop,
+    children: (
+      <>
+        <MenuHeading>Projects on relay</MenuHeading>
+        <MenuItem title="vis" meta="42 sessions" onSelect={noop} />
+        <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
+      </>
+    ),
+  },
+  play: async ({ canvasElement }) => {
+    const win = canvasElement.ownerDocument.defaultView!;
+    const panel = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: 'Projects on relay',
+    });
+    const paint = win.getComputedStyle(panel);
+    // Same caveat as above: this project runs at phone width, where the sheet ignores
+    // `at`, so what is held to account here is the cap the panel PAINTS.
+    await expect(paint.getPropertyValue('--menu-max-height').trim()).toBe('180px');
+    await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
+  },
+};
