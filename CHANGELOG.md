@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.2.20] - 2026-09-21
+## [v0.2.21] - 2026-09-21
 
 ### Added
 - Read a session once and it is read everywhere: unread lives in the gateway now, not on each
