@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { act, render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // jsdom cannot build a `Touch`, so the same dispatch helpers the pull gesture
 // uses carry these fingers too.
 import { drag, fireTouch } from './pull-to-search.fixture';
 import {
   EDGE_BACK_PX,
+  EDGE_EASING,
+  EDGE_PARALLAX,
+  EDGE_SETTLE_MS,
+  EDGE_UNDER_DIM,
   EDGE_ZONE_PX,
   edgeIsFree,
   edgeMove,
@@ -119,11 +123,19 @@ function OpenSession({
   open?: boolean;
   enabled?: boolean;
 }) {
-  const pane = useEdgeBack(enabled ? onBack : null);
-  if (!open) return <p data-testid="list">sessions</p>;
+  const { pane, under } = useEdgeBack(enabled ? onBack : null);
+  // The same two panes `App` mounts inside the shell: the list is up behind the
+  // transcript the whole time it is open, which is what the stroke uncovers.
   return (
-    <div ref={pane} data-testid="pane">
-      <p data-testid="line">transcript</p>
+    <div data-viewport-shell>
+      <div ref={under} data-testid="list">
+        sessions
+      </div>
+      {open && (
+        <div ref={pane} data-testid="pane">
+          <p data-testid="line">transcript</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -134,12 +146,32 @@ function swipeIn(element: Element, distance: number, ending: 'lift' | 'cancel' =
   drag(element, AT, steps, ending);
 }
 
+/** Let the pop finish itself, however fast the finger was going. */
+function settle(): void {
+  act(() => {
+    vi.advanceTimersByTime(EDGE_SETTLE_MS);
+  });
+}
+
+/** Where a pane has been carried, in px. */
+const xOf = (element: HTMLElement): number =>
+  Number(/translateX\((-?[\d.]+)px\)/.exec(element.style.transform)?.[1] ?? NaN);
+
 describe('swiping back to the session list', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('leaves the session on the lift that ends an armed swipe', () => {
     const onBack = vi.fn();
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
 
     expect(onBack).toHaveBeenCalledTimes(1);
   });
@@ -149,6 +181,7 @@ describe('swiping back to the session list', () => {
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX - 20));
+    settle();
 
     expect(onBack).not.toHaveBeenCalled();
   });
@@ -158,6 +191,7 @@ describe('swiping back to the session list', () => {
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20, 'cancel'));
+    settle();
 
     expect(onBack).not.toHaveBeenCalled();
   });
@@ -168,6 +202,7 @@ describe('swiping back to the session list', () => {
     const from = { x: 200, y: 300 };
 
     act(() => drag(getByTestId('line'), from, [{ x: from.x + 200, y: from.y }]));
+    settle();
 
     expect(onBack).not.toHaveBeenCalled();
   });
@@ -177,6 +212,7 @@ describe('swiping back to the session list', () => {
     const { getByTestId } = render(<OpenSession onBack={onBack} enabled={false} />);
 
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
 
     expect(onBack).not.toHaveBeenCalled();
   });
@@ -188,6 +224,7 @@ describe('swiping back to the session list', () => {
 
     rerender(<OpenSession onBack={onBack} open />);
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
 
     expect(onBack).toHaveBeenCalledTimes(1);
   });
@@ -203,7 +240,102 @@ describe('swiping back to the session list', () => {
       fireTouch(line, 'touchmove', [across(EDGE_BACK_PX + 20)]);
       fireTouch(line, 'touchend', []);
     });
+    settle();
 
     expect(onBack).not.toHaveBeenCalled();
+  });
+});
+
+// Reported as "the swipe back has no iOS animation at all": the stroke used to
+// read the finger and do nothing until the lift, so the transcript stood still
+// and the list appeared in one jump. The way back is now the pop iOS
+// draws — the transcript rides the finger, the list waits a third of the width
+// behind it, dimmed, and the lift carries both the rest of the way.
+describe('the pop the stroke draws', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('drags the transcript with the finger and stands the list behind it', () => {
+    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+      fireTouch(getByTestId('line'), 'touchmove', [across(60)]);
+    });
+
+    // The transcript is lifted onto the shell so the bar coming back cannot push
+    // it down, and it follows the finger one for one.
+    expect(pane.style.position).toBe('absolute');
+    expect(xOf(pane)).toBe(60);
+    // The list waits a third of the width back, dimmed, and has already begun to
+    // come home.
+    const parked = window.innerWidth * EDGE_PARALLAX;
+    expect(xOf(list)).toBeGreaterThan(-parked);
+    expect(xOf(list)).toBeLessThan(0);
+    expect(Number(list.style.opacity)).toBeGreaterThan(EDGE_UNDER_DIM);
+    expect(Number(list.style.opacity)).toBeLessThan(1);
+  });
+
+  it("carries the rest of the way on iOS' own curve, and only then takes the step", () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+
+    expect(pane.style.transition).toContain(EDGE_EASING);
+    expect(xOf(pane)).toBe(window.innerWidth);
+    expect(xOf(list)).toBe(0);
+    expect(list.style.opacity).toBe('1');
+    // The transcript is off the glass BEFORE it is off the shell, or the list
+    // would appear under a pane that is still sliding.
+    expect(onBack).not.toHaveBeenCalled();
+
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the transcript home again when the stroke is taken back', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX - 30));
+
+    expect(xOf(pane)).toBe(0);
+    expect(xOf(list)).toBe(-window.innerWidth * EDGE_PARALLAX);
+    expect(list.style.opacity).toBe(`${EDGE_UNDER_DIM}`);
+
+    settle();
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('keeps the plain step for a reader who asked for less motion', () => {
+    const onBack = vi.fn();
+    const asked = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...asked(query),
+      matches: query.includes('prefers-reduced-motion'),
+    })) as typeof window.matchMedia;
+
+    try {
+      const { getByTestId } = render(<OpenSession onBack={onBack} />);
+
+      act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+
+      expect(getByTestId('pane').style.transform).toBe('');
+      expect(onBack).toHaveBeenCalledTimes(1);
+    } finally {
+      window.matchMedia = asked;
+    }
   });
 });

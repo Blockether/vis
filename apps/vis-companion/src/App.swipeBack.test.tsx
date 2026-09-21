@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderApp } from './app-harness';
 import { listSession } from './screens/sessions-screen-harness';
-import { drag } from './lib/pull-to-search.fixture';
+import { drag, fireTouch } from './lib/pull-to-search.fixture';
 import { EDGE_BACK_PX } from './lib/edge-back';
 
 let restore = () => {};
@@ -70,6 +70,36 @@ describe('swiping in from the edge of a transcript', () => {
     swipe(pane, 200, EDGE_BACK_PX + 120);
 
     expect(screen.getByLabelText('Message Vis')).toBeVisible();
+    view.unmount();
+  });
+
+  // Mid-stroke the screen holds both pages at once: the list and the app bar the
+  // gesture is uncovering stand behind the transcript, and the transcript is the
+  // one that moves.
+  it('uncovers the list and the app bar under the moving transcript', async () => {
+    window.location.hash = '';
+    const view = renderApp({ machines: fleet() });
+    restore = view.restore;
+    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    fireEvent.click(screen.getByText('Alpha one'));
+    await screen.findByLabelText('Message Vis');
+    const pane = (view.baseElement.querySelector('main') as HTMLElement)
+      .lastElementChild as HTMLElement;
+    // A phone's transcript is the whole screen, so the app bar is away until the
+    // stroke starts bringing it back.
+    expect(screen.queryByLabelText('Vis')).toBeNull();
+
+    act(() => {
+      fireTouch(pane, 'touchstart', [{ x: 6, y: 300 }]);
+      fireTouch(pane, 'touchmove', [{ x: 6 + EDGE_BACK_PX, y: 300 }]);
+    });
+
+    expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
+    expect(screen.getByLabelText('Vis')).toBeVisible();
+    expect(screen.getByLabelText('Message Vis')).toBeVisible();
+    expect(pane.style.transform).toContain('translate');
+
+    act(() => fireTouch(pane, 'touchcancel', []));
     view.unmount();
   });
 });

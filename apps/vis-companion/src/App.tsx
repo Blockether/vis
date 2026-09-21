@@ -1087,7 +1087,12 @@ export function App() {
   // nowhere to come back to and the gesture stands down. Where the system owns
   // that edge itself — Android's own back gesture — the web view is sent a
   // cancel rather than a lift, and a stroke taken away was never released here.
-  const sessionPaneRef = useEdgeBack(!isDesk && openTarget ? leaveSession : null);
+  //
+  // The stroke DRAGS the transcript off the glass, so whatever it uncovers has to
+  // be standing there already: while one is in flight the list and the app bar it
+  // comes back to are put on the shell, behind the pane that is still covering
+  // them, and the gesture slides the two past each other the way iOS does.
+  const edgeBack = useEdgeBack(!isDesk && openTarget ? leaveSession : null);
 
   if (!ready) return <Splash />;
 
@@ -1120,11 +1125,12 @@ export function App() {
   // Changing tabs should change visibility, never the list's component identity: its cached
   // rows, scope, scroll position, and expanded projects are already the user's frame.
   const sessionsMounted = conns.length > 0 && !!active;
-  const sessionsVisible = isSplit || (shellView === 'sessions' && (!isDesk || isSidebarShown));
+  const sessionsVisible =
+    isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
   return (
     <Shell>
-      {isChromeVisible && (
+      {(isChromeVisible || edgeBack.isSwiping) && (
         <Header
           query={query}
           onQuery={setQuery}
@@ -1146,7 +1152,7 @@ export function App() {
       )}
 
       <main
-        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' && !edgeBack.isSwiping ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
         {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
             on a desk it uses 33% of the width with a 20rem minimum, so the list
@@ -1154,6 +1160,7 @@ export function App() {
             width — its scroll, scope and folds are the reader's frame either way. */}
         {sessionsMounted && (
           <div
+            ref={edgeBack.under}
             className={
               !sessionsVisible
                 ? 'hidden'
@@ -1204,7 +1211,7 @@ export function App() {
           <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
         )}
         {shellView === 'session' && openTarget && client && subscriptions && (
-          <div ref={sessionPaneRef} className="h-full min-h-0 min-w-0 flex-1">
+          <div ref={edgeBack.pane} className="h-full min-h-0 min-w-0 flex-1 bg-ink">
             <SessionScreen
               key={`${openTarget.conn.url}:${openTarget.sid}`}
               client={client}
