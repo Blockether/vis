@@ -991,7 +991,9 @@ export function AddProviderButton({
  * The rows are COMPACT and the band is one step of paper up from the panel:
  * these are offers standing above the accounts that already exist, not the
  * subject of the panel, and they read as work in progress between the verb that
- * opened them and the list they are about to join.
+ * opened them and the list they are about to join. It explains itself to nobody
+ * — the column this panel stands in already names the machine whose config an
+ * add is written into, so the offers open straight into the list.
  */
 export function AddProviderPicker({ auth, onClose }: { auth: ProviderAuth; onClose: () => void }) {
   const { presets, pending } = auth;
@@ -1053,9 +1055,6 @@ export function AddProviderPicker({ auth, onClose }: { auth: ProviderAuth; onClo
 
   return (
     <div className="space-y-2 bg-panel-2 p-3">
-      <Text as="p" variant="description">
-        Written into the gateway machine’s own config, next to its own credentials.
-      </Text>
       {presets.map((preset) => {
         const adding = pending === `add:${preset.id}`;
         return (
