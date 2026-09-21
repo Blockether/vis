@@ -443,6 +443,16 @@
     {
       "audience": "sdk",
       "operations": {
+        "put": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/read"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "json",
           "response": "json"
