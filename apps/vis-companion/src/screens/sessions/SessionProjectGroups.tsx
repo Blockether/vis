@@ -207,15 +207,6 @@ function GroupBand({
         </HeaderMeta>
       </button>
       <HeaderActions align="center">
-        <IconButton
-          label={`Actions for ${name}`}
-          variant="quiet"
-          density="band"
-          aria-haspopup="dialog"
-          onClick={(event) => onActions(event.currentTarget)}
-        >
-          <DotsIcon className="size-3.5" />
-        </IconButton>
         {onNewSession && (
           <NewSessionButton
             machine={machine}
@@ -225,6 +216,15 @@ function GroupBand({
             onPress={() => onNewSession()}
           />
         )}
+        <IconButton
+          label={`Actions for ${name}`}
+          variant="quiet"
+          density="band"
+          aria-haspopup="dialog"
+          onClick={(event) => onActions(event.currentTarget)}
+        >
+          <DotsIcon className="size-3.5" />
+        </IconButton>
       </HeaderActions>
     </div>
   );
@@ -879,6 +879,12 @@ export const ProjectGroup = memo(function ProjectGroup({
             }
           />
           <HeaderActions align="center">
+            <NewSessionButton
+              machine={machineLabel(conn)}
+              where={project}
+              isBusy={creating?.at === creationKey(base, root)}
+              onPress={() => void onNewSession(conn, root)}
+            />
             <IconButton
               label={`Groups in ${project}`}
               variant="quiet"
@@ -889,12 +895,6 @@ export const ProjectGroup = memo(function ProjectGroup({
             >
               <DotsIcon className="size-3.5" />
             </IconButton>
-            <NewSessionButton
-              machine={machineLabel(conn)}
-              where={project}
-              isBusy={creating?.at === creationKey(base, root)}
-              onPress={() => void onNewSession(conn, root)}
-            />
           </HeaderActions>
         </SectionHeader>
         {/* Rows own their internal dividers; the wrapper closes the final session. */}

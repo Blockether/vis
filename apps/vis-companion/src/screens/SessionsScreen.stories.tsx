@@ -176,7 +176,8 @@ export const Fleet: Story = {
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
-    const targets = [fold, create, previous, pageTarget, next].map((control) => {
+    const menu = within(header).getByRole('button', { name: /^Groups in / });
+    const targets = [fold, previous, pageTarget, next, create, menu].map((control) => {
       const box = control.getBoundingClientRect();
       const reach = win.getComputedStyle(control, '::after');
       const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
@@ -191,27 +192,30 @@ export const Fleet: Story = {
       };
     });
     // The rail's own marks — the fold and `+` — keep the 28px pointer face; the page
-    // steps that trail them take the band's 24px step. Touch reaches 44px for all five.
+    // steps between them and the band's own menu take the 24px step. Touch reaches 44px
+    // for all six.
     const railFace = pointer ? 28 : 44;
     const bandStep = pointer ? 24 : 44;
-    const minimums = [railFace, railFace, bandStep, bandStep, bandStep];
+    const minimums = [railFace, bandStep, bandStep, bandStep, railFace, bandStep];
     targets.forEach((target, index) => {
       expect(target.width).toBeGreaterThanOrEqual(minimums[index]);
       expect(target.height).toBeGreaterThanOrEqual(minimums[index]);
     });
     // Paging stands above the disclosure that reaches under it, so neighbouring targets
     // may meet: what matters is their order and that each still takes its own press.
-    // BLO-167: the `+` is met before the page steps, which keep the band's trailing edge.
+    // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
+    // the three dots belong on the right): the band's own controls hold its trailing
+    // edge, the page steps stand inside them, and the menu is the last of all.
     for (let index = 1; index < targets.length; index += 1) {
       expect(targets[index].left).toBeGreaterThan(targets[index - 1].left);
     }
-    for (const control of [fold, previous, pageTarget, next, create]) {
+    for (const control of [fold, previous, pageTarget, next, create, menu]) {
       const box = control.getBoundingClientRect();
       expect(
         control.contains(doc.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)),
       ).toBe(true);
     }
-    expect(targets[4].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
+    expect(targets[5].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
     const firstPageRows = [...project.querySelectorAll('[data-session-id]')].map((row) =>
@@ -268,10 +272,18 @@ export const Fleet: Story = {
       })
     )[0];
     const before = [create, disclosure].map((control) => control.getBoundingClientRect());
-    // BLO-167: a paged header hands its trailing edge to the pager, so the page steps —
-    // not the `+` — end where the row's own trailing control ends, with the `+` just inside.
-    await expect(pager.getBoundingClientRect().right).toBe(before[1].right);
-    await expect(before[0].right).toBeLessThanOrEqual(pager.getBoundingClientRect().left);
+    const rowMenu = within(disclosure.closest<HTMLElement>('[data-swipe-track]')!).getByRole(
+      'button',
+      { name: /^Actions for/ },
+    );
+    // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
+    // the three dots belong on the right): the band's menu ends where the row's own menu
+    // ends, the `+` and the row's disclosure stand one slot inside them, and the page
+    // steps stand inside the `+`.
+    await expect(menu.getBoundingClientRect().right).toBe(rowMenu.getBoundingClientRect().right);
+    await expect(before[0].right).toBeLessThanOrEqual(menu.getBoundingClientRect().left);
+    await expect(before[1].right).toBeLessThanOrEqual(rowMenu.getBoundingClientRect().left);
+    await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(before[0].left);
 
     for (const control of [disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;

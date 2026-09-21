@@ -196,6 +196,32 @@ describe('ProjectGroup groups', () => {
     expect(screen.getByRole('button', { name: 'New session on tower' })).toBeEnabled();
   });
 
+  // Regression, user report (paraphrased: a plus standing on the left is unacceptable,
+  // the three dots belong on the right): every band ends with its own menu, and the
+  // plus that starts a session stands one slot inside it.
+  it('ends a band with its menu, the plus one slot inside', async () => {
+    mount();
+    const wallet = await band('Wallet work');
+    const cluster = within(wallet).getByRole('button', { name: 'Actions for Wallet work' })
+      .parentElement as HTMLElement;
+
+    expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
+      'New session in Wallet work',
+      'Actions for Wallet work',
+    ]);
+  });
+
+  it('ends the project header with its menu, the plus one slot inside', async () => {
+    mount();
+    const cluster = (await screen.findByRole('button', { name: `Groups in ${ROOT}` }))
+      .parentElement as HTMLElement;
+
+    expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
+      'New session on tower',
+      `Groups in ${ROOT}`,
+    ]);
+  });
+
   it('folds one group without folding the project', async () => {
     const { user } = mount();
     const wallet = await band('Wallet work');

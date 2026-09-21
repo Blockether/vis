@@ -98,6 +98,28 @@ describe('a mouse never slides', () => {
     expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
+  // Regression, user report (paraphrased: a plus standing on the left is unacceptable,
+  // the three dots belong on the right): a CSS reorder used to pull the menu trigger in
+  // front of the row's permanent control on a pointer, so the dots of a row and the dots
+  // of the header above it stood in different columns. Source order is the painted order
+  // now: the permanent control first, the menu last.
+  it('ends a pointer row with its menu, the permanent control one slot inside', () => {
+    const html = renderToStaticMarkup(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
+        trailing={<button type="button">Show details</button>}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+
+    expect(html.indexOf('Show details')).toBeLessThan(
+      html.indexOf('aria-label="Actions for a session"'),
+    );
+    expect(html).not.toContain('order-last');
+  });
+
   // Regression, user report right after BLO-167 shipped: the kebab on a session row still
   // ran across the row. The trigger turned its mark a quarter turn, which was right while
   // `DotsIcon` drew a horizontal ellipsis and laid the vertical one on its side once the

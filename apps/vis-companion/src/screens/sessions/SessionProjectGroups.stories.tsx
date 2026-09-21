@@ -173,11 +173,16 @@ export const AcceptNewerSession: Story = {
       const pagerBounds = pager.getBoundingClientRect();
       await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
       await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
-      const create = header.querySelector('button:last-child')!;
-      // BLO-167: the plus is met before the page steps — the header's controls stand
-      // just inside the pager, which keeps the band's trailing edge.
-      await expect(create.getBoundingClientRect().right).toBeLessThanOrEqual(pagerBounds.left);
-      await expect(pagerBounds.right).toBeLessThanOrEqual(pendingBounds.right);
+      const menu = within(header).getByRole('button', { name: /^Groups in / });
+      const create = within(header).getByRole('button', { name: /^New session on / });
+      // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
+      // the three dots belong on the right): the header's own controls hold the band's
+      // trailing edge and the page steps stand just inside them.
+      await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
+      await expect(create.getBoundingClientRect().right).toBeLessThanOrEqual(
+        menu.getBoundingClientRect().left,
+      );
+      await expect(menu.getBoundingClientRect().right).toBeLessThanOrEqual(pendingBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();
         await expect(

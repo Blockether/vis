@@ -221,10 +221,11 @@ describe('project pages', () => {
     expect(onPage).toHaveBeenCalledExactlyOnceWith(7);
   });
 
-  // Reported over the project header (paraphrased: "the plus should simply sit on the
-  // left of the pager"): the pages stood between the project's name and the header's
-  // own controls, so the plus that starts a session was the last thing on the band.
-  it('stands a header’s own controls before the pager, which keeps the trailing edge', () => {
+  // Reported over the project header, once the pager took that edge (paraphrased: a plus
+  // standing on the left is unacceptable, the three dots belong on the right): a paged
+  // project stood its own controls in the middle of the band while an unpaged one kept
+  // them flush right. The controls hold the edge; the pager stands just inside them.
+  it('gives a header’s own controls the trailing edge, the pager just inside', () => {
     render(
       <SectionHeader
         navigation={<Pager page={2} pageCount={9} label="vis sessions" onPage={vi.fn()} />}
@@ -243,9 +244,9 @@ describe('project pages', () => {
     expect(header.tagName).toBe('HEADER');
     // The band's rule reaches the cluster through its LAST child, so the cluster is it.
     expect(header.lastElementChild).toBe(actions);
-    expect(header.className).toContain('[&>:last-child]:col-start-2');
-    expect(pages.className).toContain('col-start-3');
-    // And the pager, now on the edge, takes the inset every trailing cell in the list has.
+    expect(header.className).toContain('[&>:last-child]:col-start-3');
+    expect(pages.className).toContain('col-start-2');
+    // The page steps keep the inset that spaces them from the controls beside them.
     expect(pages.className).toContain('pr-2');
   });
 });

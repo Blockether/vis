@@ -224,7 +224,7 @@ export function SwipeActions({
   actions: SwipeAction[];
   children: ReactNode;
   label?: string;
-  /** Permanent row controls: inside the touch panel, after the desktop menu trigger. */
+  /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
   trailing?: ReactNode;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -355,7 +355,8 @@ export function SwipeActions({
       className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${ROW_PRESS_PAPER}`}
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
-          Desktop reserves just one menu trigger before the permanent trailing edge. */}
+          Desktop ends the row with its menu trigger and stands the permanent controls
+          one slot inside it, the two cells every header in the list uses. */}
       <div
         className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents bg-panel ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
@@ -368,10 +369,10 @@ export function SwipeActions({
         }}
       >
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] mouse:flex-1">{children}</div>
-        {trailing && <div className="flex shrink-0 mouse:order-last">{trailing}</div>}
+        {trailing && <div className="flex shrink-0">{trailing}</div>}
       </div>
       <div
-        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2' : LIST_EDGE_END}`}
+        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2 mouse:pr-2.5' : LIST_EDGE_END}`}
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
