@@ -102,6 +102,9 @@ label input {
 .search-field input {
   padding-right: 2.5rem;
 }
+.sort-field {
+  justify-self: end;
+}
 kbd {
   position: absolute;
   right: 0.625rem;

@@ -247,6 +247,24 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
+test('the sort control stays at the end of the toolbar on every width', () => {
+  const style = document.createElement('style');
+  style.textContent = readFileSync('web/style.css', 'utf8');
+  document.body.append(style);
+  const rules = [...style.sheet.cssRules],
+    declaration = (selector) => rules.find((rule) => rule.selectorText === selector).style;
+  expect(declaration('.toolbar').getPropertyValue('grid-template-columns')).toBe(
+    'minmax(0, 1fr) auto',
+  );
+  // The toolbar collapses to a single column on narrow screens, so the sort control carries
+  // its own alignment instead of wrapping to the left edge under the search field.
+  expect(declaration('.sort-field').getPropertyValue('justify-self')).toBe('end');
+  const narrow = [...rules.find((rule) => rule.conditionText === '(max-width: 820px)').cssRules],
+    narrowToolbar = narrow.find((rule) => rule.selectorText === '.toolbar').style;
+  expect(narrowToolbar.getPropertyValue('grid-template-columns')).toBe('minmax(0, 1fr)');
+  expect(narrow.some((rule) => rule.selectorText.includes('.sort-field'))).toBe(false);
+});
+
 test('release controls retain pointer and touch targets, including native no-JS fallbacks', () => {
   const style = document.createElement('style');
   style.textContent = readFileSync('web/style.css', 'utf8');
