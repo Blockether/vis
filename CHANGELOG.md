@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.17] - 2026-09-21
+
+### Added
+- Read a diagram instead of its source: a fenced `mermaid` block in a message is drawn as a
+  flowchart, both in the app and in the terminal. A diagram neither surface can lay out stays a
+  plain code block.
+
+### Fixed
+- Stop the app reconnecting over and over when you come back to it: ordinary requests now wait
+  behind a four-per-gateway cap so the live session stream keeps its socket, a candidate address
+  gets five seconds instead of the whole request budget, an address that stays silent backs off
+  until it is worth another try — and is tried again at once when the network returns — and the
+  sweeps that run on resume run at most once per gap.
+- Press a session row anywhere and the whole row lights up, instead of the press stopping at the
+  disclosure chevron and the row reading as half selected.
+- Reach a project's **+** without stretching your thumb: the button that starts a session now
+  stands with the header's other controls, immediately before the pager.
+- Trust a `grep` page you continued: `offset` belongs to the query it came from, so carrying it
+  onto a different search no longer skips hits that search does have.
+
+## [v0.2.16] - 2026-09-21
+
+### Fixed
+- File a session under a group again: filing answered "cannot reach the gateway" because the
+  browser refused the request before it ever left the app. A group now also holds the sessions
+  that sit outside the page you are looking at, a row and its band carry the group's colour, and
+  a sheet opened over a raised keyboard lifts above it so its name field stays visible.
+- Know when a `grep` page starts past the end of the results: the answer says so instead of
+  reporting that nothing matched.
+- Run `vis-agent upgrade` and it updates: the spelling is an alias of `update`, instead of falling
+  through to a model turn that answers the word while nothing is updated.
+
 ## [v0.2.15] - 2026-09-21
 
 ### Added
@@ -6481,7 +6513,9 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.15...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.2.17...HEAD
+[v0.2.17]: https://github.com/Blockether/vis/compare/v0.2.16...v0.2.17
+[v0.2.16]: https://github.com/Blockether/vis/compare/v0.2.15...v0.2.16
 [v0.2.15]: https://github.com/Blockether/vis/compare/v0.2.14...v0.2.15
 [v0.2.14]: https://github.com/Blockether/vis/compare/v0.2.13...v0.2.14
 [v0.2.13]: https://github.com/Blockether/vis/compare/v0.2.12...v0.2.13
