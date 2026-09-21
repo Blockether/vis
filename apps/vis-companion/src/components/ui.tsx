@@ -2205,13 +2205,15 @@ export function Modal({
   size?: 'full' | 'fit' | 'wide';
   /**
    * WHAT THE DIALOG STANDS OVER. `app` is every dialog that belongs to the whole
-   * application — settings, the model picker, a confirmation — and it covers the
+   * application — settings, the machine fleet, a confirmation — and it covers the
    * shell.
    *
    * `session` is a dialog about ONE session, and it stands in that session's pane
-   * instead. On a desk that is a list and a transcript side by side, an opened run
-   * has no business dimming the list beside it. Inside that pane it takes every pixel:
-   * the pane is already the bound the desktop box exists to impose.
+   * instead. On a desk that is a list and a transcript side by side, an opened run,
+   * a parked question and the pick of the model THIS session runs on have no business
+   * dimming the list beside them. A `full` or `wide` one takes every pixel of that pane —
+   * the pane is already the bound the desktop box exists to impose — while a `fit` one
+   * still stops at its content, centred in the pane it belongs to.
    */
   within?: 'app' | 'session';
   children: ReactNode;

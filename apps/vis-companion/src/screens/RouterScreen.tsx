@@ -94,7 +94,12 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
     // as tall as it needs and no taller. It used to hand-roll its own scrim around a
     // panel pinned at 92% of the glass, which put half a phone of empty paper between
     // the last provider and the two verbs welded to its foot.
-    <Modal size="fit" onDismiss={onClose}>
+    //
+    // The pin it writes belongs to ONE session (`setSessionModel`), so the sheet stands
+    // in THAT session's pane (`within="session"`). Reported on a wide window: centred on
+    // the whole application it straddled the session list beside the transcript, dimming
+    // and covering a list this pick has nothing to do with.
+    <Modal size="fit" within="session" onDismiss={onClose}>
       <DialogFrame
         title="Model"
         // The pin, and only the pin: `Current: ` said what standing under the title of a
