@@ -26,6 +26,7 @@ import {
   FolderPlusIcon,
   PaletteIcon,
   PencilIcon,
+  ProjectsIcon,
   TrashIcon,
 } from '../../components/icons';
 import { Button, IconButton, Input, TextButton } from '../../components/ui';
@@ -1072,6 +1073,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {session.group_id ? (
                     <MenuItem
                       title="Take out of its group"
+                      icon={<ProjectsIcon className="size-3.5" />}
                       onSelect={() => fileSession(session, null, 'close')}
                     />
                   ) : null}
@@ -1107,7 +1109,10 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </>
               );
             // DELETING ASKS. A group is a folder to some people and a batch of work to
-            // others, so both answers are spelled out and the destructive one is second.
+            // others, so both answers are offered and the destructive one is second, in
+            // the app's red behind the bin. Like the verbs this step was chosen from, it
+            // wears no band spelling the name the reader just pressed, and no sentence
+            // under a title that already says what the row does.
             if (step.kind === 'delete') {
               const drop = (sessions: 'detach' | 'with-sessions') =>
                 void attempt(async () => {
@@ -1123,20 +1128,15 @@ export const ProjectGroup = memo(function ProjectGroup({
                 }, { kind: 'root' });
               return (
                 <>
-                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
-                    Delete {band.name}
-                  </MenuBack>
                   <MenuItem
                     title="Keep its sessions"
-                    hint="They stay in this project and go back to ungrouped."
+                    icon={<ProjectsIcon className="size-3.5" />}
                     onSelect={() => drop('detach')}
                   />
                   <MenuItem
                     title="Delete its sessions too"
                     tone="danger"
-                    hint={`Deletes ${band.count} ${
-                      band.count === 1 ? 'session' : 'sessions'
-                    } with the group. This cannot be undone.`}
+                    icon={<TrashIcon className="size-3.5" />}
                     onSelect={() => drop('with-sessions')}
                   />
                   {failure && <MenuNote>{failure}</MenuNote>}

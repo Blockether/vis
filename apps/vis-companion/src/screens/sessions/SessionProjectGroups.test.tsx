@@ -411,11 +411,21 @@ describe('ProjectGroup groups', () => {
     await band('Wallet work');
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
     await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Delete group'));
-    // BOTH answers are spelled out; nothing has reached the machine yet.
-    expect(screen.getByText('Keep its sessions')).toBeInTheDocument();
-    expect(screen.getByText('Delete its sessions too')).toBeInTheDocument();
+    // BOTH answers are offered, each behind its own mark and nothing else: no band
+    // repeating the name the reader just pressed, and no sentence under either title.
+    // Nothing has reached the machine yet.
+    expect(
+      within(sheet(`Groups in ${ROOT}`)).queryByText(`Delete ${WALLET_GROUP.name}`),
+    ).toBeNull();
+    const keep = screen.getByText('Keep its sessions').closest('button') as HTMLElement;
+    const wipe = screen.getByText('Delete its sessions too').closest('button') as HTMLElement;
+    expect(keep.textContent).toBe('Keep its sessions');
+    expect(wipe.textContent).toBe('Delete its sessions too');
+    // One mark each, and nothing else beside the title.
+    expect(keep.querySelectorAll('svg')).toHaveLength(1);
+    expect(wipe.querySelectorAll('svg')).toHaveLength(1);
     expect(client.deleteSessionGroup).not.toHaveBeenCalled();
-    await user.click(screen.getByText('Keep its sessions'));
+    await user.click(keep);
     await waitFor(() =>
       expect(client.deleteSessionGroup).toHaveBeenCalledWith(WALLET, 'detach'),
     );
