@@ -25,6 +25,20 @@
 
 (def project-b {"id" "b" "name" "Companion" "workspace_root" "/work/companion" "session_count" 1})
 
+(def browse-listing
+  "One `GET /v1/fs` answer: two git working trees and a plain folder beside them."
+  {"path" "/work"
+   "parent" "/"
+   "home" "/work"
+   "is_truncated" false
+   "entries" [{"name" "vis" "path" "/work/vis" "entry_count" 12 "is_repo" true "branch" "main"}
+              {"name" "vis-python-runtime"
+               "path" "/work/vis-python-runtime"
+               "entry_count" 8
+               "is_repo" true
+               "branch" "release"}
+              {"name" "notes" "path" "/work/notes" "entry_count" 3 "is_repo" false "branch" nil}]})
+
 (defn fixture-db
   "Deterministic production-screen fixture, shared with live HTML review."
   []
@@ -228,6 +242,7 @@
                      #'vis/worker-future (fn [_ f]
                                            (f))
                      #'vis/gateway-list-projects (constantly [project-a project-b])
+                     #'vis/gateway-browse-directories (constantly browse-listing)
                      #'vis/gateway-ensure-project-for-root! (fn [path]
                                                               (swap! calls conj path)
                                                               project-b)}
@@ -244,14 +259,17 @@
                 (fn [_])))]
          ;; Adding a project is a rail action, not a dialog: `+` opens the field in
          ;; place, the path is typed into it and Enter files it.
-         (press! \+) (is (= {:text "" :cursor 0} (get-in @state/app-db [:project-sidebar :adding])))
-         (doseq [c " /work/new "]
-           (press! c)) (is (= " /work/new "
-                              (get-in @state/app-db [:project-sidebar :adding :text]))) (press!
-                                                                                          :enter)
-         (is (nil? (get-in @state/app-db [:project-sidebar :adding]))) (is (= ["/work/new"
-                                                                               project-b]
-                                                                              @calls))))))
+         (press! \+) (is (= {:text "" :cursor 0}
+                            (select-keys (get-in @state/app-db [:project-sidebar :adding])
+                                         [:text :cursor]))) (doseq [c " /work/new "]
+                                                              (press! c)) (is (= " /work/new "
+                                                                                 (get-in
+                                                                                   @state/app-db
+                                                                                   [:project-sidebar
+                                                                                    :adding
+                                                                                    :text])))
+         (press! :enter) (is (nil? (get-in @state/app-db [:project-sidebar :adding])))
+         (is (= ["/work/new" project-b] @calls))))))
 
 (deftest project-sidebar-input-test
   (let [db (fixture-db)]
@@ -277,7 +295,11 @@
            (projects/key-action typing (cap/key-stroke :left))))
     (is (= [:add-commit "/work/vi"] (projects/key-action typing (cap/key-stroke :enter))))
     (is (= [:adding nil] (projects/key-action typing (cap/key-stroke :esc))))
-    (is (= [:noop] (projects/key-action typing (cap/key-stroke :down))))
+    ;; Nothing is listed yet, so there is no completion to highlight or fill in:
+    ;; the field is left exactly as it was.
+    (is (= [:adding {:text "/work/vi" :cursor 8}]
+           (projects/key-action typing (cap/key-stroke :down))))
+    (is (= [:noop] (projects/key-action typing (cap/key-stroke :tab))))
     ;; C-x still reaches global navigation from inside the field.
     (is (nil? (projects/key-action typing (KeyStroke. \x true false))))
     ;; A pasted path arrives as one line: newlines and paste markers never enter it.
@@ -367,12 +389,27 @@
 (deftest project-rail-takes-a-pasted-path-test
   ;; A path pasted while the field is open belongs to the field — not to the chat
   ;; composer, and not to attachment intake.
-  (with-redefs [state/app-db (atom (assoc-in (fixture-db)
-                                     [:project-sidebar :adding]
-                                     {:text "/work/" :cursor 6}))]
-    (let [before (:input @state/app-db)]
+  (with-redefs [state/app-db
+                (atom (assoc-in (fixture-db) [:project-sidebar :adding] {:text "/work/" :cursor 6}))
+
+                vis/worker-future
+                (fn [_ f]
+                  (f))
+
+                vis/gateway-browse-directories
+                (constantly browse-listing)]
+
+    (let [before
+          (:input @state/app-db)
+
+          field
+          #(get-in @state/app-db [:project-sidebar :adding])]
+
       (#'screen/insert-pasted-text! "vis")
-      (is (= {:text "/work/vis" :cursor 9} (get-in @state/app-db [:project-sidebar :adding])))
+      (is (= {:text "/work/vis" :cursor 9} (select-keys (field) [:text :cursor])))
+      ;; The paste lands with the directories it completes to already read.
+      (is (= ["vis" "vis-python-runtime"]
+             (mapv #(get % "name") (#'projects/add-field-matches (field)))))
       (is (= before (:input @state/app-db)))))
   ;; With no field open the composer keeps the paste.
   (with-redefs [state/app-db (atom (fixture-db))]
@@ -380,6 +417,149 @@
       (#'screen/insert-pasted-text! "vis")
       (is (nil? (get-in @state/app-db [:project-sidebar :adding])))
       (is (not= before (:input @state/app-db))))))
+
+(deftest project-rail-completes-a-typed-path-test
+  ;; The field is a path completer: ONE listing per directory, narrowed locally,
+  ;; and Enter adds whichever directory is highlighted.
+  (is (= "/work/" (projects/add-field-dir "/work/vi")))
+  (is (= "/work/" (projects/add-field-dir "/work/")))
+  (is (= "" (projects/add-field-dir "work")))
+  (let [field
+        (projects/add-field-listing {:text "/work/vis" :cursor 9}
+                                    "/work/"
+                                    (get browse-listing "entries"))
+
+        db
+        #(assoc-in (fixture-db) [:project-sidebar :adding] %)
+
+        action
+        (fn [f key]
+          (projects/key-action (db f) (cap/key-stroke key)))]
+
+    ;; The last typed segment narrows the listing without another round trip.
+    (is (= ["vis" "vis-python-runtime"]
+           (mapv #(get % "name") (#'projects/add-field-matches field))))
+    (let [[verb filled] (action field :tab)]
+      (is (= :adding verb))
+      (is (= {:text "/work/vis/" :cursor 10} (select-keys filled [:text :cursor]))))
+    (let [[_ first-row]
+          (action field :down)
+
+          [_ second-row]
+          (action first-row :down)
+
+          [_ released]
+          (action second-row \s)]
+
+      (is (= 0 (:index first-row)))
+      (is (= 1 (:index second-row)))
+      (is (= [:add-commit "/work/vis-python-runtime"] (action second-row :enter)))
+      ;; Typing releases the highlight, so Enter adds the typed path again.
+      (is (nil? (:index released)))
+      (is (= [:add-commit "/work/viss"] (action released :enter)))
+      ;; Stepping above the first row hands the keyboard back to the text.
+      (is (nil? (:index (second (action first-row :up))))))
+    ;; Enter with nothing highlighted still adds what the human typed.
+    (is (= [:add-commit "/work/vis"] (action field :enter)))
+    ;; A read still in flight says so instead of claiming there is no match.
+    (is (true? (:loading? (projects/add-field-listing field "/other/" nil))))
+    (is (= [] (:rows (projects/add-field-listing field "/other/" nil))))))
+
+(deftest project-rail-paints-its-completions-test
+  ;; While the field is open the rows area belongs to the directories it offers,
+  ;; and a git working tree shows the branch that tells it apart from a folder.
+  (let [field
+        (projects/add-field-listing {:text "/work/" :cursor 6}
+                                    "/work/"
+                                    (get browse-listing "entries"))
+
+        db
+        (assoc-in (fixture-db) [:project-sidebar :adding] field)
+
+        capture
+        (cap/capture! {:cols 120
+                       :rows 18
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 120 18))})
+
+        text
+        (cap/frame-text capture)
+
+        lines
+        (str/split-lines text)]
+
+    (is (nil? (:error capture)))
+    (is (str/includes? (nth lines 4) "vis/"))
+    (is (str/includes? (nth lines 4) "main"))
+    (is (str/includes? (nth lines 6) "notes/"))
+    ;; The project list yields its rows to the open field.
+    (is (not (str/includes? text "Companion")))
+    (is (str/includes? (nth lines 16) "Esc cancel")))
+  ;; An empty directory answers in words rather than with a blank rail.
+  (let [db
+        (assoc-in (fixture-db)
+          [:project-sidebar :adding]
+          (projects/add-field-listing {:text "/work/zz" :cursor 8} "/work/" []))
+
+        capture
+        (cap/capture! {:cols 120
+                       :rows 18
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 120 18))})]
+
+    (is (nil? (:error capture)))
+    (is (str/includes? (cap/frame-text capture) "No matching directory"))))
+
+(deftest project-rail-suggests-directories-from-the-gateway-test
+  ;; The directories come off the GATEWAY host, one listing per directory, and a
+  ;; highlighted row is what Enter adds.
+  (let [asked
+        (atom [])
+
+        added
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-browse-directories
+                  (fn [dir]
+                    (swap! asked conj dir)
+                    browse-listing)]
+
+      (let [press!
+            (fn [key]
+              (#'screen/project-sidebar-key!
+               (cap/key-stroke key)
+               (fn [_])
+               #(swap! added conj %)
+               (fn [_])
+               (fn [_])))
+
+            field
+            #(get-in @state/app-db [:project-sidebar :adding])]
+
+        (press! \+)
+        ;; A blank field asks for the gateway user's own home.
+        (is (= [""] @asked))
+        (is (= 3 (count (:rows (field)))))
+        (is (false? (:loading? (field))))
+        ;; Typing inside the SAME directory reuses the listing it already has.
+        (press! \v)
+        (press! \i)
+        (is (= [""] @asked))
+        ;; Tab fills the obvious match in and reads the directory it opened.
+        (press! :tab)
+        (is (= "/work/vis/" (:text (field))))
+        (is (= ["" "/work/vis/"] @asked))
+        (press! :down)
+        (press! :enter)
+        (is (= ["/work/vis"] @added))
+        (is (nil? (field)))))))
 
 (deftest project-sidebar-footer-error-test
   (let [db
@@ -513,6 +693,7 @@
   (let [added (atom [])]
     (with-redefs [state/app-db (atom (fixture-db))
                   vis/gateway-list-projects (constantly [project-a project-b])
+                  vis/gateway-browse-directories (constantly browse-listing)
                   vis/worker-future (fn [_ f]
                                       (f))
                   timg/images-protocol (constantly nil)]
@@ -529,7 +710,8 @@
         (is (= "b" (:active-project-id @state/app-db)))
         (is (= "background-turn" (:gateway-turn-id @state/app-db)))
         (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh! menu!)
-        (is (= {:text "" :cursor 0} (get-in @state/app-db [:project-sidebar :adding])))
+        (is (= {:text "" :cursor 0}
+               (select-keys (get-in @state/app-db [:project-sidebar :adding]) [:text :cursor])))
         (#'screen/project-sidebar-key! (cap/key-stroke \/) select! add! refresh! menu!)
         (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu!)
         (is (= ["/"] @added))

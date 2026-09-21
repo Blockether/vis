@@ -191,7 +191,8 @@
 
 (defn add-field-insert
   "Insert `s` at the caret and return the field's next state. Control characters
-   and bracketed-paste markers are dropped, so a pasted path arrives as one line."
+   and bracketed-paste markers are dropped, so a pasted path arrives as one line.
+   Typing releases a highlighted completion: what Enter adds is the text again."
   [field s]
   (let [text
         (str (:text field))
@@ -202,7 +203,10 @@
         s
         (str/replace (str s) #"[\p{Cntrl}\uE200\uE201]" "")]
 
-    {:text (str (subs text 0 cursor) s (subs text cursor)) :cursor (+ cursor (count s))}))
+    (-> field
+        (assoc :text (str (subs text 0 cursor) s (subs text cursor))
+               :cursor (+ cursor (count s)))
+        (dissoc :index))))
 
 (defn- add-field-erase
   "Delete the character before (`-1`) or under (`1`) the caret."
@@ -211,14 +215,20 @@
         (str (:text field))
 
         cursor
-        (max 0 (min (long (or (:cursor field) 0)) (count text)))]
+        (max 0 (min (long (or (:cursor field) 0)) (count text)))
 
-    (cond (neg? (long delta)) (if (zero? cursor)
-                                {:text text :cursor 0}
-                                {:text (str (subs text 0 (dec cursor)) (subs text cursor))
-                                 :cursor (dec cursor)})
-          (>= cursor (count text)) {:text text :cursor cursor}
-          :else {:text (str (subs text 0 cursor) (subs text (inc cursor))) :cursor cursor})))
+        [erased caret]
+        (cond (neg? (long delta)) (if (zero? cursor)
+                                    [text 0]
+                                    [(str (subs text 0 (dec cursor)) (subs text cursor))
+                                     (dec cursor)])
+              (>= cursor (count text)) [text cursor]
+              :else [(str (subs text 0 cursor) (subs text (inc cursor))) cursor])]
+
+    (-> field
+        (assoc :text erased
+               :cursor caret)
+        (dissoc :index))))
 
 (defn- add-field-caret
   "Move the caret by a delta, or to `:home`/`:end`."
@@ -229,19 +239,110 @@
         cursor
         (max 0 (min (long (or (:cursor field) 0)) (count text)))]
 
-    {:text text
-     :cursor (case where
-               :home
-               0
+    (-> field
+        (assoc :text text
+               :cursor (case where
+                         :home
+                         0
 
-               :end
-               (count text)
+                         :end
+                         (count text)
 
-               (max 0 (min (count text) (+ cursor (long where)))))}))
+                         (max 0 (min (count text) (+ cursor (long where))))))
+        (dissoc :index))))
+
+(defn add-field-dir
+  "The directory part of a typed path - everything through its last `/`. Text
+   with no separator yet completes inside the gateway host's own home, which is
+   what a blank query asks the daemon for."
+  [text]
+  (let [text (str text)]
+    (if-let [slash (str/last-index-of text "/")]
+      (subs text 0 (inc (long slash)))
+      "")))
+
+(defn add-field-listing
+  "Record the directory listing the field completes against: `dir` is the query
+   it answers and `rows` its wire entries, or nil while the read is still in
+   flight. The typed text and caret are left alone."
+  [field dir rows]
+  (-> field
+      (assoc :dir dir
+             :rows (vec rows)
+             :loading? (nil? rows))
+      (dissoc :index)))
+
+(defn- add-field-matches
+  "The directories the typed text completes to: every listed child of its
+   directory whose name matches the last segment, prefix matches first so the
+   obvious answer is the one `Tab` fills in."
+  [field]
+  (let [rows
+        (vec (:rows field))
+
+        text
+        (str (:text field))
+
+        leaf
+        (str/lower-case (subs text (count (add-field-dir text))))
+
+        row-name
+        (fn [row]
+          (str/lower-case (str (get row "name"))))]
+
+    (if (str/blank? leaf)
+      rows
+      (into (filterv (fn [row]
+                       (str/starts-with? (row-name row) leaf))
+              rows)
+            (filterv (fn [row]
+                       (and (not (str/starts-with? (row-name row) leaf))
+                            (str/includes? (row-name row) leaf)))
+              rows)))))
+
+(defn- add-field-selected
+  "The completion row the human has highlighted, or nil while the typed text
+   itself is what Enter would add."
+  [field]
+  (when-let [index (:index field)]
+    (nth (add-field-matches field) (long index) nil)))
+
+(defn- add-field-move
+  "Walk the completions. Stepping above the first row releases the highlight, so
+   the typed text is reachable again; stepping up from the text wraps to the last
+   row."
+  [field delta]
+  (let [total
+        (count (add-field-matches field))
+
+        index
+        (some-> (:index field)
+                long)
+
+        moved
+        (cond (zero? total) nil
+              (nil? index) (if (neg? (long delta)) (dec total) 0)
+              :else (+ (long index) (long delta)))]
+
+    (if (and moved (<= 0 (long moved) (dec total)))
+      (assoc field :index (long moved))
+      (dissoc field :index))))
+
+(defn- add-field-fill
+  "Fill a completion into the field and keep going deeper: the row's own path,
+   with the separator that starts the next segment."
+  [field row]
+  (let [text (str (get row "path") "/")]
+    (-> field
+        (assoc :text text
+               :cursor (count text))
+        (dissoc :index))))
 
 (defn- add-field-action
-  "Keys while the inline add field is open. Enter submits the trimmed path, Esc
-   closes the field without leaving the rail, and everything else is typing."
+  "Keys while the inline add field is open. Enter adds the highlighted directory
+   or else the trimmed text, `Tab` fills the highlighted completion in, `up`/`down`
+   walk the completions, Esc closes the field without leaving the rail, and
+   everything else is typing."
   [field ^KeyStroke key]
   (let [kind
         (.getKeyType key)
@@ -250,7 +351,16 @@
         (.getCharacter key)]
 
     (cond (= KeyType/Escape kind) [:adding nil]
-          (= KeyType/Enter kind) [:add-commit (str/trim (str (:text field)))]
+          (= KeyType/Enter kind) [:add-commit
+                                  (str/trim (str (or (some-> (add-field-selected field)
+                                                             (get "path"))
+                                                     (:text field))))]
+          (= KeyType/Tab kind) (if-let [row (or (add-field-selected field)
+                                                (first (add-field-matches field)))]
+                                 [:adding (add-field-fill field row)]
+                                 [:noop])
+          (= KeyType/ArrowUp kind) [:adding (add-field-move field -1)]
+          (= KeyType/ArrowDown kind) [:adding (add-field-move field 1)]
           (= KeyType/Backspace kind) [:adding (add-field-erase field -1)]
           (= KeyType/Delete kind) [:adding (add-field-erase field 1)]
           (= KeyType/ArrowLeft kind) [:adding (add-field-caret field -1)]
@@ -260,20 +370,94 @@
           (and (= KeyType/Character kind) ch) [:adding (add-field-insert field ch)]
           :else [:noop])))
 
+(defn- paint-suggestions!
+  "Draw the directories the open field completes to on the rows the project list
+   normally holds: the folder's name, and the branch of one that is already a git
+   working tree. `capacity` is how many rows the rail can spare - the highlight
+   scrolls inside it."
+  [g field left width capacity]
+  (let [left
+        (long left)
+
+        width
+        (long width)
+
+        capacity
+        (long capacity)
+
+        matches
+        (add-field-matches field)
+
+        index
+        (some-> (:index field)
+                long)
+
+        start
+        (if (and index (>= (long index) capacity)) (inc (- (long index) capacity)) 0)
+
+        shown
+        (vec (take capacity (drop start matches)))]
+
+    (if (seq shown)
+      (doseq [[offset row]
+              (map-indexed vector shown)
+
+              :let [line
+                    (+ 4 (long offset))
+
+                    branch
+                    (let [branch (str (get row "branch"))]
+                      (when-not (str/blank? branch)
+                        (p/truncate-cols branch (max 0 (quot width 3)))))
+
+                    hint-col
+                    (- (+ left width) 2 (long (p/display-width (str branch))))]]
+
+        (dlg/draw-selectable-row! g
+                                  left
+                                  line
+                                  (max 0 (- hint-col left 1))
+                                  (= (+ (long start) (long offset)) index)
+                                  (str (get row "name") "/"))
+        (when branch
+          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/put-str! g hint-col line branch)
+          (p/set-colors! g t/dialog-fg t/dialog-bg))
+        (.register interactions/hit-map
+                   {:kind :project-suggest
+                    :path (str (get row "path"))
+                    :bounds {:col (inc left) :row line :width (max 0 (- width 2)) :height 1}}))
+      (when (pos? capacity)
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
+        (p/put-str! g
+                    (+ left 2)
+                    4
+                    (p/truncate-cols
+                      (if (:loading? field) "Reading directories…" "No matching directory")
+                      (max 0 (- width 4))))))))
+
 (defn- paint-add-field!
-  "Paint the inline add field on the rail's spare header row, returning the
-   position its caret sits at — or nil when no field is open."
+  "Paint the inline add field on the rail's spare header row, and the directories
+   it completes to below, returning the position its caret sits at - or nil when
+   no field is open."
   [g db cols rows]
   (when-let [field (get-in db [:project-sidebar :adding])]
     (when-let [{:keys [left width]} (geometry db cols rows)]
       (when (and (> (long width) 8) (> (long rows) 6))
-        (dlg/draw-text-input-field! g
-                                    (long left)
-                                    3
-                                    (long width)
-                                    (str (:text field))
-                                    (long (or (:cursor field) 0))
-                                    "/absolute/directory")))))
+        (let [cursor (dlg/draw-text-input-field! g
+                                                 (long left)
+                                                 3
+                                                 (long width)
+                                                 (str (:text field))
+                                                 (long (or (:cursor field) 0))
+                                                 "/absolute/directory")]
+          (paint-suggestions! g
+                              field
+                              left
+                              width
+                              (max 0
+                                   (- (long rows) (if (get-in db [:project-sidebar :error]) 8 7))))
+          cursor)))))
 
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
@@ -313,7 +497,9 @@
                                                           (zero? (long (or (:index sidebar) 0))))})
           (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide))
         (doseq [[offset {:keys [index project kind label] :as entry}]
-                (map-indexed vector (visible-entries db rows))
+                ;; An open add field owns the rows area: its completions are drawn
+                ;; there in place of the project list.
+                (map-indexed vector (if (:adding sidebar) [] (visible-entries db rows)))
                 :let [row (+ 4 (long offset))
                       child? (not= :project-select kind)
                       alert? (contains? #{:project-input :project-unread} kind)
@@ -385,8 +571,10 @@
           (let [available (max 0 (- width 4))
                 hints (if (:adding sidebar)
                         ;; The field owns the keyboard while it is open, so the rail
-                        ;; spells only what ends it.
-                        ["↵ add project · Esc cancel" "↵ add · Esc cancel" "↵ add · Esc"]
+                        ;; spells what fills it in and what ends it.
+                        ["↵ add · ⇥ complete · ↑↓ pick · Esc cancel"
+                         "↵ add · ⇥ fill · ↑↓ pick · Esc cancel" "↵ add · ⇥ fill · Esc cancel"
+                         "↵ add project · Esc cancel" "↵ add · Esc cancel" "↵ add · Esc"]
                         ["↑↓ select · ↵ open · g menu · C-x w hide · Esc chat"
                          "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
                          ;; The narrowest rail still spells every verb: tighter
@@ -424,15 +612,23 @@
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
-                 :project-add :project-hide}
+                 :project-add :project-hide :project-suggest}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
-                  [:move (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
+                  (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
+                    ;; While the add field is open the wheel walks its completions:
+                    ;; the project list is not what the rail is showing.
+                    (if-let [field (:adding sidebar)]
+                      [:adding (add-field-move field delta)]
+                      [:move delta]))
                   (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
                        (= 1 (.getButton mouse)))
                   (case (:kind hit)
                     (:project-select :project-group :project-input :project-unread)
                     (:action hit)
+
+                    :project-suggest
+                    [:add-commit (:path hit)]
 
                     :project-add
                     [:add]

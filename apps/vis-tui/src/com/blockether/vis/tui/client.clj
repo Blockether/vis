@@ -2311,12 +2311,21 @@
                    "/suggest?kind=file&q=" (enc (or query ""))
                    "&limit=" (long limit))))
 
+(defn browse-directories
+  "The directories inside `path` on the GATEWAY HOST, straight from `GET /v1/fs`:
+   a workspace root belongs to the machine the daemon runs on, not to the one
+   the terminal runs on. A blank `path` means that machine's home."
+  [path]
+  (send-json! "GET" (str "/v1/fs?path=" (enc (or path "")))))
+
 ;; Names consumed by the terminal application. The transport API itself keeps route-oriented names.
 (def gateway-assign-project! assign-project!)
 
 (def gateway-assign-session-group! assign-session-group!)
 
 (def gateway-attach-turn-sync! attach-turn-sync!)
+
+(def gateway-browse-directories browse-directories)
 
 (def gateway-cancel-current-turn! cancel-current-turn!)
 

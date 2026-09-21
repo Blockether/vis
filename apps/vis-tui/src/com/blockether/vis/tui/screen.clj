@@ -2298,12 +2298,40 @@
       (vis/notify! (str/join "; " rejected) :level :warn :ttl-ms status-error-ttl-ms))
     true))
 
+(defn- suggest-directories!
+  "Keep the rail field's completions in step with the path being typed. ONE
+   listing per directory: narrowing inside it is filtered locally, so a keystroke
+   costs no round trip. The listing comes off the GATEWAY host's disk - the
+   machine a workspace root belongs to - and an answer the typing has already
+   left behind is dropped."
+  [field]
+  (let [dir (projects/add-field-dir (:text field))]
+    (when-not (= dir (:dir field))
+      (state/dispatch [:project-sidebar {:adding (projects/add-field-listing field dir nil)}])
+      (vis/worker-future "tui-project-suggest"
+                         (fn []
+                           (let [rows (try (get (vis/gateway-browse-directories dir) "entries")
+                                           (catch Throwable _ nil))]
+                             (when-let [open (get-in @state/app-db [:project-sidebar :adding])]
+                               (when (= dir (projects/add-field-dir (:text open)))
+                                 (state/dispatch
+                                   [:project-sidebar
+                                    {:adding
+                                     (projects/add-field-listing open dir (or rows []))}])))))))))
+
+(defn- store-add-field!
+  "Store the rail's add field and follow it with the completions its text asks
+   for. A nil field closes it."
+  [field]
+  (state/dispatch [:project-sidebar {:adding field}])
+  (when field (suggest-directories! field)))
+
 (defn- insert-pasted-text!
   [text]
   (when-not (empty? text)
     (if-let [field (get-in @state/app-db [:project-sidebar :adding])]
       ;; The rail's own add field is a text input: a pasted path belongs in it.
-      (state/dispatch [:project-sidebar {:adding (projects/add-field-insert field text)}])
+      (store-add-field! (projects/add-field-insert field text))
       (if (input/use-placeholder? text)
         (do (state/dispatch [:add-paste text])
             (let [{:keys [paste-counter pastes] :as db} @state/app-db
@@ -5842,14 +5870,12 @@
       :add
       ;; Adding happens IN the rail: `+` opens its own field on the row under the
       ;; header instead of taking the screen away for a modal.
-      (state/dispatch [:project-sidebar
-                       {:adding (or (get-in @state/app-db [:project-sidebar :adding])
-                                    (projects/add-field))
-                        :focused? true
-                        :index 0}])
+      (do (state/dispatch [:project-sidebar {:focused? true :index 0}])
+          (store-add-field! (or (get-in @state/app-db [:project-sidebar :adding])
+                                (projects/add-field))))
 
       :adding
-      (state/dispatch [:project-sidebar {:adding value}])
+      (store-add-field! value)
 
       :add-commit
       (do (state/dispatch [:project-sidebar {:adding nil}]) (add! value))
