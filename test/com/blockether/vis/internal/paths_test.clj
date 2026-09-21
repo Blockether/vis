@@ -157,3 +157,33 @@
                         (finally (if previous
                                    (System/setProperty "vis.log.role" previous)
                                    (System/clearProperty "vis.log.role")))))))
+
+(defdescribe
+  claim-dir-test
+  (it "tells a directory this process serves from one a dead process left behind"
+      (let [held
+            (.toFile (Files/createTempDirectory "vis-claim-held" (make-array FileAttribute 0)))
+
+            free
+            (.toFile (Files/createTempDirectory "vis-claim-free" (make-array FileAttribute 0)))
+
+            bare
+            (.toFile (Files/createTempDirectory "vis-claim-bare" (make-array FileAttribute 0)))]
+
+        (try (expect (= :none (paths/claim-state bare)))
+             (expect (= held (paths/claim-dir! held)))
+             (expect (= :held (paths/claim-state held)))
+             (expect (.isFile (io/file held ".vis-live")))
+             ;; Claiming twice is the same claim, not a second descriptor.
+             (expect (= :held (paths/claim-state (paths/claim-dir! held))))
+             ;; What a killed process leaves behind: the token, held by nobody.
+             (spit (io/file free ".vis-live") "")
+             (expect (= :free (paths/claim-state free)))
+             (expect (= :none (paths/claim-state (io/file bare "gone"))))
+             (finally (doseq [^File dir
+                              [held free bare]
+
+                              ^File entry
+                              (reverse (file-seq dir))]
+
+                        (.delete entry)))))))

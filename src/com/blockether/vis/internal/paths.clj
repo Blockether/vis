@@ -2,7 +2,8 @@
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
   (:import [java.io File]
-           [java.nio.file Files Path Paths]
+           [java.nio.channels FileChannel FileLock]
+           [java.nio.file Files OpenOption Path Paths StandardOpenOption]
            [java.time Instant LocalDate ZoneOffset]
            [java.time.format DateTimeFormatter DateTimeParseException]
            [java.util Locale]))
@@ -141,6 +142,58 @@
    pid into the installed binary."
   ^long []
   (.pid (java.lang.ProcessHandle/current)))
+
+(defonce ^:private held-claims
+  ;; Claims THIS process holds, by absolute path: `{path [channel lock]}`. The
+  ;; channel stays open deliberately — the OS drops its lock when the process
+  ;; dies, including a kill that runs no shutdown hook, and that is what makes a
+  ;; claim a liveness signal instead of one more stale marker file.
+  (atom {}))
+
+(def ^:private claim-file-name
+  "Lock token inside a claimed directory. It carries no content: holding the lock
+   is the whole signal."
+  ".vis-live")
+
+(defn- claim-file ^File [^File dir] (File. dir ^String claim-file-name))
+
+(defn claim-dir!
+  "Claim `dir` as in use by this process for as long as it runs, so cleanup in
+   another process can tell a directory that is still served from one a dead
+   process left behind. Idempotent per directory and never throws: a directory
+   that cannot be claimed is simply left to be judged by age. Answers `dir`."
+  ^File [^File dir]
+  (let [path (.getAbsolutePath dir)]
+    (when-not (contains? @held-claims path)
+      (try (let [channel (FileChannel/open (.toPath (claim-file dir))
+                                           (into-array OpenOption
+                                                       [StandardOpenOption/CREATE
+                                                        StandardOpenOption/READ
+                                                        StandardOpenOption/WRITE]))]
+             (if-let [^FileLock lock (.tryLock channel 0 Long/MAX_VALUE true)]
+               (swap! held-claims assoc path [channel lock])
+               (.close channel)))
+           (catch Throwable _ nil)))
+    dir))
+
+(defn claim-state
+  "How `dir`'s in-use claim stands right now: `:held` while some process still
+   serves it, `:free` once every claimant is gone, and `:none` for a directory
+   that carries no claim at all — one written before claims existed, or one
+   nobody ever used. Never throws; a claim that cannot be tested reads as
+   `:held`, because being wrong about a live directory deletes work in use."
+  [^File dir]
+  (let [file (claim-file dir)]
+    (cond (contains? @held-claims (.getAbsolutePath dir)) :held
+          (not (.isFile file)) :none
+          :else (try (with-open [channel (FileChannel/open (.toPath file)
+                                                           (into-array OpenOption
+                                                                       [StandardOpenOption/READ
+                                                                        StandardOpenOption/WRITE]))]
+                       (if-let [^FileLock lock (.tryLock channel 0 Long/MAX_VALUE false)]
+                         (do (.release lock) :free)
+                         :held))
+                     (catch Throwable _ :held)))))
 
 (def ^:private process-roles
   "What a vis PROCESS may call itself: the TUI, the gateway daemon, or the

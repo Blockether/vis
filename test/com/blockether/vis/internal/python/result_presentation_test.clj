@@ -19,30 +19,43 @@
 (defdescribe
   guest-source-version-isolation-test
   ;; A mixed-version suite reproduced a worker importing another engine's old discovery module.
-  (it "keeps each engine's guest sources intact when another version starts"
-      (let [root
-            (.toFile (java.nio.file.Files/createTempDirectory
-                       "vis-guest-source-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (it
+    "keeps each engine's guest sources intact when another version starts"
+    (let [root
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-guest-source-"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
 
-            sources
-            {"vis_introspection.py" "VERSION = 1\n" "vis_results.py" "VERSION = 1\n"}]
+          sources
+          {"vis_introspection.py" "VERSION = 1\n" "vis_results.py" "VERSION = 1\n"}]
 
-        (try (let [first-dir
-                   (#'worker/materialize-guest-sources! root sources)
+      (try (let [first-dir
+                 (#'worker/materialize-guest-sources! root sources)
 
-                   second-dir
-                   (#'worker/materialize-guest-sources!
-                    root
-                    (assoc sources "vis_introspection.py" "VERSION = 2\n"))]
+                 second-dir
+                 (#'worker/materialize-guest-sources!
+                  root
+                  (assoc sources "vis_introspection.py" "VERSION = 2\n"))]
 
-               (expect (not= first-dir second-dir))
-               (expect (= "VERSION = 1\n" (slurp (io/file first-dir "vis_introspection.py"))))
-               (expect (= "VERSION = 2\n" (slurp (io/file second-dir "vis_introspection.py"))))
-               (expect (= first-dir (#'worker/materialize-guest-sources! root (reverse sources))))
-               (expect (= "VERSION = 2\n" (slurp (io/file second-dir "vis_introspection.py")))))
-             (finally (doseq [file (reverse (file-seq root))]
-                        (io/delete-file file true)))))))
+             (expect (not= first-dir second-dir))
+             ;; `<release>-<digest>`: a person reading `~/.vis/python/vis-guest`
+             ;; sees which build left a tree there, and the digest keeps the NAME
+             ;; the identity, so one build's edit never rewrites the modules a
+             ;; live worker imports.
+             (let [[_ first-release first-digest]
+                   (re-matches #"(.+)-([0-9a-f]{12})" (.getName (io/file first-dir)))
+
+                   [_ second-release second-digest]
+                   (re-matches #"(.+)-([0-9a-f]{12})" (.getName (io/file second-dir)))]
+
+               (expect (= first-release second-release))
+               (expect (not= first-digest second-digest)))
+             (expect (= "VERSION = 1\n" (slurp (io/file first-dir "vis_introspection.py"))))
+             (expect (= "VERSION = 2\n" (slurp (io/file second-dir "vis_introspection.py"))))
+             (expect (= first-dir (#'worker/materialize-guest-sources! root (reverse sources))))
+             (expect (= "VERSION = 2\n" (slurp (io/file second-dir "vis_introspection.py")))))
+           (finally (doseq [file (reverse (file-seq root))]
+                      (io/delete-file file true)))))))
 
 (defdescribe
   compact-shell-result-test

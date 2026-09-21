@@ -41,6 +41,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -63,9 +64,24 @@
 (set! *warn-on-reflection* true)
 
 (defn- materialize-guest-sources!
-  "Publish complete modules atomically under their content identity, even during concurrent starts."
+  "Publish complete modules atomically under their content identity, even during concurrent starts.
+
+   The directory is named `<release>-<digest>`: the release so a person reading
+   `~/.vis/python/vis-guest` sees which build left it there, the digest because
+   the NAME is the identity. Two builds shipping different guest modules never
+   share a directory, so a live worker's modules are never rewritten under it.
+   This process CLAIMS the directory it uses, which is what lets another
+   process' cleanup tell a served generation from an abandoned one."
   [root sources]
-  (let [dir (io/file root (util/sha256-hex (pr-str (into (sorted-map) sources))))]
+  (let [digest
+        (util/sha256-hex (pr-str (into (sorted-map) sources)))
+
+        release
+        (str/replace (gateway-runtime/release-version) #"[^A-Za-z0-9._-]" "_")
+
+        dir
+        (io/file root (str release "-" (subs digest 0 12)))]
+
     (.mkdirs dir)
     (doseq [[name source] sources]
       (let [target (io/file dir name)]
@@ -81,6 +97,7 @@
                                          [StandardCopyOption/ATOMIC_MOVE
                                           StandardCopyOption/REPLACE_EXISTING]))
                  (finally (Files/deleteIfExists staged)))))))
+    (paths/claim-dir! dir)
     (.getCanonicalPath dir)))
 
 (defonce ^:private guest-sources

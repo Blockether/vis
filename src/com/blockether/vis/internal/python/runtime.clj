@@ -24,6 +24,7 @@
             [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [com.blockether.vispython Interpreter Locations]
@@ -128,6 +129,33 @@
 
 (defonce ^:private library-provisioning-lock (Object.))
 
+(defn- store-version-dir
+  "The `~/.vis/python/<kind>/<version>` tree `path` belongs to, or nil when it
+   sits outside this machine's store — a staged native distribution or a built
+   checkout, neither of which anything here installs or reclaims."
+  ^File [^String kind ^String path]
+  (let [root (.getAbsolutePath (io/file (System/getProperty "user.home") ".vis" "python" kind))]
+    (loop [^File dir (some-> path
+                             io/file)]
+      (when dir
+        (if (= root
+               (some-> (.getParentFile dir)
+                       .getAbsolutePath))
+          dir
+          (recur (.getParentFile dir)))))))
+
+(defn- claim-store-trees!
+  "Claim the interpreter and source trees this process boots from, so cleanup in
+   another Vis process can tell an older install that still serves somebody from
+   one nothing runs against any more. Best effort, and the claim is the ONLY
+   liveness signal there is: an install's age says nothing, because a daemon
+   that has served one for a month never touches its files. Answers `library`."
+  [library]
+  (doseq [[kind path] [["runtime" library] ["sources" (Locations/sourcesDir)]]]
+    (when-let [dir (store-version-dir kind path)]
+      (when (.isDirectory dir) (paths/claim-dir! dir))))
+  library)
+
 (defn ensure-library!
   "Make the interpreter for this platform resolvable, answering the library path.
 
@@ -135,38 +163,39 @@
    installation is used, or the platform archive is fetched into it first. Concurrent
    cold callers share one installation and recheck resolution after acquiring the lock."
   []
-  (or (resolved-library)
-      (locking library-provisioning-lock
-        (or (resolved-library)
-            (let [version
-                  runtime/version
+  (claim-store-trees!
+    (or (resolved-library)
+        (locking library-provisioning-lock
+          (or (resolved-library)
+              (let [version
+                    runtime/version
 
-                  platform
-                  (runtime/platform)
+                    platform
+                    (runtime/platform)
 
-                  home
-                  (io/file (Locations/runtimeDir version platform))
+                    home
+                    (io/file (Locations/runtimeDir version platform))
 
-                  library
-                  (io/file home (runtime/library-name platform))]
+                    library
+                    (io/file home (runtime/library-name platform))]
 
-              (when-not (.isFile library)
-                (let [url
-                      (archive-url version platform)
+                (when-not (.isFile library)
+                  (let [url
+                        (archive-url version platform)
 
-                      archive
-                      (io/file
-                        (str (.getAbsolutePath home) ".tar.gz." (.pid (ProcessHandle/current))))]
+                        archive
+                        (io/file
+                          (str (.getAbsolutePath home) ".tar.gz." (.pid (ProcessHandle/current))))]
 
-                  (tel/log! {:level :info :id ::fetching-runtime :url url :home (str home)})
-                  (try (download! url archive)
-                       (install-archive! archive home)
-                       (finally (.delete archive)))))
-              (when-not (.isFile library)
-                (throw (ex-info "The embedded CPython installation holds no runtime library."
-                                {:home (str home) :platform platform :version version})))
-              (runtime/use-library! (str home))
-              (.getAbsolutePath library))))))
+                    (tel/log! {:level :info :id ::fetching-runtime :url url :home (str home)})
+                    (try (download! url archive)
+                         (install-archive! archive home)
+                         (finally (.delete archive)))))
+                (when-not (.isFile library)
+                  (throw (ex-info "The embedded CPython installation holds no runtime library."
+                                  {:home (str home) :platform platform :version version})))
+                (runtime/use-library! (str home))
+                (.getAbsolutePath library)))))))
 
 (defn- configured-index-url
   []

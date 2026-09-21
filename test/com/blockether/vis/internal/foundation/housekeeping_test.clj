@@ -10,6 +10,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -489,7 +490,8 @@
                                #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :gateway-events :display :tui-attachments :python-archives]
+        (expect (= [:logs :gateway-events :display :tui-attachments :python-archives :python-guest
+                    :python-runtime :python-sources]
                    (mapv :id (:targets report))))))
   (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
       ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
@@ -572,38 +574,41 @@
                    (expect (>= @log-calls 2))
                    (finally (.interrupt thread) (.join thread 5000)))
               (expect (not (.isAlive thread))))))))
-  (it "retains installed runtimes and sources regardless of age while removing stale archives"
-      (let [python
-            (tmp-dir "vis-hk-python")
+  (it
+    "reclaims a stale unclaimed version while keeping the pinned, newest, recent and unrecognized stores"
+    (let [python
+          (tmp-dir "vis-hk-python")
 
-            versions
-            [[runtime/version 400] ["0.0.0" 400] ["9.9.9" 400] ["0.0.1" 2] ["dev" 400]]
+          versions
+          [[runtime/version 400] ["0.0.0" 400] ["9.9.9" 400] ["0.0.1" 2] ["dev" 400]]
 
-            archive
-            (touch! python "archives/old-runtime.tar.gz" 40 "tar")]
+          archive
+          (touch! python "archives/old-runtime.tar.gz" 40 "tar")]
 
-        ;; An install timestamp and this process's pin cannot prove that another
-        ;; process has finished using a version, even after the retention window.
-        (doseq [kind
-                ["runtime" "sources"]
+      ;; The pin, the newest install and an unrecognized name are never candidates,
+      ;; and a candidate no process claims still needs the retention window to pass.
+      (doseq [kind
+              ["runtime" "sources"]
 
-                [version days]
-                versions]
+              [version days]
+              versions]
 
-          (touch! python (str kind "/" version "/lib/x.py") days "runtime")
-          (.setLastModified (io/file python kind version) (age-ms days)))
-        (let [report (with-homes {:python python} #(housekeeping/sweep-stale! nil))]
-          (expect (= 1 (:deleted report)))
-          (expect (= 1 (:deleted (target report :python-archives))))
-          (expect (not (.exists archive)))
-          (expect (not-any? #{:python-runtimes :python-sources} (map :id (:targets report)))))
-        (doseq [kind
-                ["runtime" "sources"]
+        (touch! python (str kind "/" version "/lib/x.py") days "runtime")
+        (.setLastModified (io/file python kind version) (age-ms days)))
+      (let [report (with-homes {:python python} #(housekeeping/sweep-stale! nil))]
+        (expect (= 1 (:deleted (target report :python-archives))))
+        (expect (not (.exists archive)))
+        (expect (pos? (long (:deleted (target report :python-runtime)))))
+        (expect (pos? (long (:deleted (target report :python-sources))))))
+      (doseq [kind
+              ["runtime" "sources"]
 
-                [version]
-                versions]
+              [version]
+              versions]
 
-          (expect (.isFile (io/file python kind version "lib/x.py"))))))
+        (if (= "0.0.0" version)
+          (expect (not (.exists (io/file python kind version))))
+          (expect (.isFile (io/file python kind version "lib/x.py")))))))
   (it "does not sweep through linked runtime or source stores"
       (let [python
             (tmp-dir "vis-hk-python-links")
@@ -641,7 +646,8 @@
         (with-homes
           {:python python}
           (fn []
-            ;; The advisory plan does not authorize startup deletion.
+            ;; Fresh candidates survive: nothing claims them, but the sweep only
+            ;; reclaims an unclaimed tree once it is past the retention window.
             (let [swept
                   (housekeeping/sweep-stale! nil)
 
@@ -683,3 +689,76 @@
                         (expect (nil? (:latest-version sources)))
                         (expect (false? (:unavailable? sources)))
                         (expect (not (.exists (io/file python "sources"))))))))))
+
+(defdescribe
+  sweep-python-stores-test
+  (it
+    "keeps the guest generation this process claims and reclaims what nothing holds"
+    (let [python
+          (tmp-dir "vis-hk-guest")
+
+          guest
+          (io/file python "vis-guest")
+
+          served-name
+          "0.2.19-aaaaaaaaaaaa"
+
+          abandoned-name
+          "0.2.18-bbbbbbbbbbbb"
+
+          legacy-name
+          "7cf47097c39cf1afcee8b1d0c2a5f6e4d3b2a1908f7e6d5c4b3a291807f6e5d40"
+
+          recent-name
+          "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8090"]
+
+      ;; Every tree here is OLD on purpose. Age was the only signal this sweep
+      ;; could have used, and it is the wrong one: a generation a daemon has
+      ;; served for a month is untouched by definition.
+      (touch! guest (str served-name "/vis_sdk.py") 30 "SDK = 1\n")
+      (touch! guest (str served-name "/vis-ext-code7/gh.py") 30 "orphaned snapshot")
+      (touch! guest (str abandoned-name "/vis_sdk.py") 30 "SDK = 0\n")
+      (touch! guest (str legacy-name "/vis_results.py") 30 "before claims existed")
+      (touch! guest (str recent-name "/vis_results.py") 1 "before claims, still recent")
+      (touch! guest "vis_autoinstall.py" 30 "a release before content identity")
+      (paths/claim-dir! (io/file guest served-name))
+      ;; What a killed process leaves: the token file, with nobody holding it.
+      (spit (io/file guest abandoned-name ".vis-live") "")
+      (spit (io/file guest served-name "vis-ext-code7" ".vis-live") "")
+      (with-homes {:python python}
+                  (fn []
+                    (let [row (target (housekeeping/sweep-stale! nil) :python-guest)]
+                      (expect (pos? (long (:deleted row))))
+                      (expect (pos? (long (:bytes row))))
+                      (expect (.isFile (io/file guest served-name "vis_sdk.py")))
+                      (expect (not (.exists (io/file guest served-name "vis-ext-code7"))))
+                      (expect (not (.exists (io/file guest abandoned-name))))
+                      (expect (not (.exists (io/file guest legacy-name))))
+                      (expect (.isFile (io/file guest recent-name "vis_results.py")))
+                      (expect (not (.exists (io/file guest "vis_autoinstall.py")))))))))
+  (it "reclaims interpreter versions nothing claims, keeping the pinned, the newest and the served"
+      (let [python
+            (tmp-dir "vis-hk-runtime-claims")
+
+            version-dir
+            (fn [version]
+              (io/file python "runtime" version))]
+
+        (doseq [version ["0.4.0" "0.4.1" "0.5.9" runtime/version "9.9.9"]]
+          (touch! python
+                  (str "runtime/" version "/darwin-arm64/libvispython.dylib")
+                  30
+                  "interpreter"))
+        (touch! python (str "sources/" runtime/version "/vis-python") 30 "sources")
+        (paths/claim-dir! (version-dir "0.4.1"))
+        (spit (io/file (version-dir "0.4.0") ".vis-live") "")
+        (with-homes {:python python}
+                    (fn []
+                      (let [report (housekeeping/sweep-stale! nil)]
+                        (expect (not (.exists (version-dir "0.4.0"))))
+                        (expect (.isDirectory (version-dir "0.4.1")))
+                        (expect (not (.exists (version-dir "0.5.9"))))
+                        (expect (.isDirectory (version-dir runtime/version)))
+                        (expect (.isDirectory (version-dir "9.9.9")))
+                        (expect (pos? (long (:bytes (target report :python-runtime)))))
+                        (expect (zero? (long (:deleted (target report :python-sources)))))))))))

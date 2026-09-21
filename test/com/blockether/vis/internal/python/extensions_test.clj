@@ -64,6 +64,19 @@
                  (expect (str/includes? pyx/bootstrap-python " / 1000"))
                  (expect (not (str/includes? pyx/bootstrap-python "\\/")))))
 
+(defonce ^:private temp-dirs
+  ;; Every throwaway extension directory this JVM makes, removed when it exits.
+  ;; `target/` used to keep one tree per test RUN, forever.
+  (let [dirs (atom [])]
+    (.addShutdownHook (Runtime/getRuntime)
+                      (Thread. ^Runnable
+                               (fn []
+                                 (doseq [^java.io.File dir @dirs
+                                         ^java.io.File entry (reverse (file-seq dir))]
+
+                                   (.delete entry)))))
+    dirs))
+
 (defn- temp-dir
   "A throwaway extension directory INSIDE the working directory, which is what
    the sandbox confines the interpreter to.
@@ -73,10 +86,16 @@
    later session's roots too, so an extension written there is one the loader
    genuinely may not read."
   ^java.io.File []
-  (let [target (doto (java.io.File. "target") .mkdirs)]
-    (.getAbsoluteFile (.toFile (Files/createTempDirectory (.toPath target)
-                                                          "vis-pyext-test"
-                                                          (make-array FileAttribute 0))))))
+  (let [target
+        (doto (java.io.File. "target") .mkdirs)
+
+        dir
+        (.getAbsoluteFile (.toFile (Files/createTempDirectory (.toPath target)
+                                                              "vis-pyext-test"
+                                                              (make-array FileAttribute 0))))]
+
+    (swap! temp-dirs conj dir)
+    dir))
 
 (defn- write-ext!
   [^java.io.File dir fname source]

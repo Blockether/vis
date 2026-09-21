@@ -55,6 +55,7 @@
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -2031,9 +2032,14 @@
   ;; Workers already admit the staged guest-module directory as boot-time read-only
   ;; code. Keep snapshots there too, not in an unrelated system temp directory
   ;; that a session worker's OS jail cannot read.
+  ;;
+  ;; The shutdown hook is the tidy exit and a kill never runs one, so the tree is
+  ;; also CLAIMED for this process' lifetime: `housekeeping/sweep-stale!` reclaims
+  ;; the snapshot trees whose claim no living process holds.
   (delay (let [d (.toFile (Files/createTempDirectory (.toPath (io/file (pyext/guest-source-dir)))
                                                      "vis-ext-code"
                                                      (make-array FileAttribute 0)))]
+           (paths/claim-dir! d)
            (.addShutdownHook (Runtime/getRuntime)
                              (Thread. ^Runnable
                                       (fn []

@@ -21,9 +21,14 @@
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
 
-   Versioned Python runtime and source trees are never age-swept. An older install
-   may still serve another process; neither its age nor this binary's pin proves
-   it is unused. `runtime-retention-plan` previews candidates without deleting them.
+   Versioned Python runtime and source trees, and the frozen guest trees under
+   `python/vis-guest`, are reclaimed by CLAIM rather than by age. Every process
+   claims the trees it boots from (`internal.paths/claim-dir!`), so an older
+   install still serving another Vis process is kept however old it is, while the
+   tree a killed process left behind is free the moment it dies. The pinned and
+   the newest install are never candidates at all, and a tree from a build before
+   claims existed still waits out the retention window.
+   `runtime-retention-plan` previews that classification without deleting.
 
    `purge!` routes draft rows, including discarded-root retries, through
    `workspace/abandon!` so backend bookkeeping owns primary and extra-root release.
@@ -31,6 +36,7 @@
    and journal files are removed directly, confined to the drafts or events store."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
@@ -297,8 +303,9 @@
 
    Returns `{:is-dry-run true :runtime-version :targets}`, with `:latest-version`,
    `:retained` and `:candidates` for each runtime/source store. Candidates are NOT
-   safe-to-delete findings: their process liveness is unverified. No files are
-   changed. Startup cleanup also leaves runtime and source trees untouched.
+   safe-to-delete findings: this preview tests no claim and changes no file. The
+   startup sweep reclaims a candidate only once its in-use claim is free — or, for
+   a tree from a build before claims existed, only after the retention window.
 
    Numeric three-part releases are ordered numerically, not by mtime or string.
    Unknown version names and symlinked directories are retained. `:runtime-version`
@@ -347,6 +354,100 @@
                       :candidates (filterv #(= :liveness-unverified (:reason %)) rows)}))
                  ["runtime" "sources"])})))
 
+(defn- reclaimable?
+  "True when a store directory is nobody's to keep. A CLAIM decides it whenever
+   there is one: a tree a process still boots from stays no matter how old it is,
+   because nothing writes to a tree while serving it and age would call it dead.
+   Only an UNCLAIMED directory — one written before claims existed, or one that
+   nothing ever used — falls back to `cutoff`."
+  [^File dir ^long cutoff]
+  (case (paths/claim-state dir)
+    :held
+    false
+
+    :free
+    true
+
+    (< (long (:newest-ms (tree-stats dir))) cutoff)))
+
+(defn- reclaim-dir!
+  "Delete one unused directory tree, answering `{:deleted :bytes}`. The `under?`
+   guard is the one `purge!` uses: a store root that resolved to something
+   unexpected removes nothing."
+  [^File dir ^String canon]
+  (if-not (under? canon (canonical dir))
+    {:deleted 0 :bytes 0}
+    (let [{:keys [bytes]}
+          (tree-stats dir)
+
+          removed
+          (delete-tree! dir)]
+
+      {:deleted removed :bytes (if (pos? removed) (long bytes) 0)})))
+
+(defn- add-counts
+  [a b]
+  {:deleted (+ (long (:deleted a)) (long (:deleted b)))
+   :bytes (+ (long (:bytes a)) (long (:bytes b)))})
+
+(defn- sweep-guest-store!
+  "Reclaim the frozen Python guest trees nobody serves any more.
+
+   `~/.vis/python/vis-guest/<release>-<digest>` holds the guest modules ONE build
+   publishes, and every `<generation>/vis-ext-code*` inside it the frozen
+   extension snapshots of ONE engine process. Both are claimed while they are in
+   use, and a process that dies without running its shutdown hook — a kill, a
+   crash, a hard native exit — is exactly what strands them. Loose files in the
+   store root are what a release before content identity staged there.
+
+   Returns `{:deleted :bytes}`."
+  [^File root ^String canon ^long cutoff]
+  (reduce (fn [acc ^File child]
+            (let [dot? (.startsWith (.getName child) ".")]
+              (cond (.isFile child) (if (and (not dot?)
+                                             (< (.lastModified child) cutoff)
+                                             (under? canon (canonical child)))
+                                      (let [size (.length child)]
+                                        (if (delete-quietly! (.toPath child))
+                                          (add-counts acc {:deleted 1 :bytes size})
+                                          acc))
+                                      acc)
+                    (or dot? (not (.isDirectory child))) acc
+                    (reclaimable? child cutoff) (add-counts acc (reclaim-dir! child canon))
+                    :else (reduce (fn [acc ^File snapshot]
+                                    (if (and (.isDirectory snapshot)
+                                             (.startsWith (.getName snapshot) "vis-ext-code")
+                                             (reclaimable? snapshot cutoff))
+                                      (add-counts acc (reclaim-dir! snapshot canon))
+                                      acc))
+                                  acc
+                                  (or (.listFiles child) (make-array File 0))))))
+          {:deleted 0 :bytes 0}
+          (or (.listFiles root) (make-array File 0))))
+
+(defn- prune-version-stores!
+  "Reclaim installed interpreter and source versions no process serves any more.
+   [[runtime-retention-plan]] decides which versions are candidates at all — the
+   pinned one, the newest install, a symlink and an unrecognized name never are —
+   and the claim decides whether a candidate is actually free. Returns one report
+   row per store."
+  [^long cutoff]
+  (mapv (fn [{:keys [kind root candidates]}]
+          (let [canon
+                (canonical (io/file root))
+
+                counts
+                (reduce (fn [acc candidate]
+                          (let [^File dir (io/file (:root candidate))]
+                            (if (and (.isDirectory dir) (reclaimable? dir cutoff))
+                              (add-counts acc (reclaim-dir! dir canon))
+                              acc)))
+                        {:deleted 0 :bytes 0}
+                        candidates)]
+
+            (merge {:id (keyword (str "python-" kind)) :root canon} counts)))
+        (:targets (runtime-retention-plan))))
+
 (def ^:private sweep-targets
   "Every directory Vis fills on its own that holds nothing anyone can recover —
    the one list, so a new producer is bounded by being added here rather than by
@@ -370,10 +471,12 @@
    {:id :python-archives :dir #(python-dir "archives") :retention-days default-retention-days}])
 
 (defn sweep-stale!
-  "Delete the aged-out derived state of every `sweep-targets` entry. Returns
+  "Delete the aged-out derived state of every `sweep-targets` entry, then the
+   Python store trees no process claims any more. Returns
    `{:targets [{:id :root :days :cutoff-ms :file-count :deleted :bytes
    :dirs-removed :over-budget-deleted}…] :deleted :bytes}` — `:deleted` counts
-   entries actually removed and `:bytes` the space reclaimed.
+   entries actually removed and `:bytes` the space reclaimed. The claim-based
+   rows are `:python-guest`, `:python-runtime` and `:python-sources`.
 
    Never throws: a missing directory is zero work, and a permission-denied
    subtree is skipped rather than allowed to take startup down.
@@ -384,6 +487,12 @@
   ([{:keys [days now-ms] budget-override :budget-bytes}]
    (let [now
          (long (or now-ms (util/now-ms)))
+
+         store-window
+         (long (or days default-retention-days))
+
+         store-cutoff
+         (- now (* store-window (long day-ms)))
 
          reports
          (mapv (fn [{:keys [id dir retention-days budget-bytes]}]
@@ -417,11 +526,28 @@
                                 {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
                                  :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
                                  :over-budget-deleted (:deleted trimmed)}))))))
-               sweep-targets)]
+               sweep-targets)
 
-     {:targets reports
-      :deleted (reduce + 0 (map :deleted reports))
-      :bytes (reduce + 0 (map :bytes reports))})))
+         ^File guest-root
+         (python-dir "vis-guest")
+
+         guest
+         (merge {:id :python-guest
+                 :root (canonical guest-root)
+                 :days store-window
+                 :cutoff-ms store-cutoff}
+                (if (.isDirectory guest-root)
+                  (sweep-guest-store! guest-root (canonical guest-root) store-cutoff)
+                  {:deleted 0 :bytes 0}))
+
+         versions
+         (mapv #(merge {:days store-window :cutoff-ms store-cutoff} %)
+               (prune-version-stores! store-cutoff))
+
+         all
+         (into (conj reports guest) versions)]
+
+     {:targets all :deleted (reduce + 0 (map :deleted all)) :bytes (reduce + 0 (map :bytes all))})))
 
 (defn- sweep-logs!
   "Repeat only diagnostic retention; other derived-state rules remain startup-only."
