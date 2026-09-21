@@ -88,6 +88,56 @@
         (is (true? (:is-authenticated status)))
         (is (= :unverified (:auth-state status)))))))
 
+(deftest cached-provider-status-never-touches-the-network
+  ;; Adding a provider answered only after re-probing every OTHER provider's
+  ;; status and quota endpoints, so the API-key box appeared seconds after the
+  ;; tap that asked for it. The non-probing read repeats what is already known.
+  (let [probes
+        (atom 0)
+
+        registered
+        {:provider/status-fn (fn []
+                               (swap! probes inc)
+                               {:is-authenticated true :source :config})
+         :provider/limits-fn (constantly nil)}]
+
+    (with-redefs [registry/provider-by-id
+                  (constantly registered)
+
+                  provider-limits/provider-limits
+                  (fn [_]
+                    (swap! probes inc)
+                    {:provider-id :cached-status-test
+                     :status :ok
+                     :static {}
+                     :dynamic {:limits []}})]
+
+      (providers/forget-provider-status! :cached-status-test)
+      (testing "nothing known yet: config alone decides, and no callback runs"
+        (let [status (providers/provider-status-cached {:id :cached-status-test})]
+          (is (false? (:is-authenticated status)))
+          (is (= :unverified (:auth-state status)) "unchecked is neither verified nor rejected")
+          (is (zero? @probes))))
+      (testing "a configured key is trusted without a call, exactly as the live read trusts it"
+        (let [status (providers/provider-status-cached {:id :cached-status-test
+                                                        :api-key "sk-test"})]
+          (is (true? (:is-authenticated status)))
+          (is (= :unverified (:auth-state status)))
+          (is (zero? @probes))))
+      (testing "the last live verdict stands in for the probe"
+        (is (= :verified (:auth-state (providers/provider-status {:id :cached-status-test}))))
+        (let [calls @probes]
+          (is (pos? calls))
+          (is (= :verified
+                 (:auth-state (providers/provider-status-cached {:id :cached-status-test}))))
+          (is (= calls @probes) "repeating it costs nothing")))
+      (testing "an auth change drops it instead of repeating a verdict that is now a lie"
+        (providers/forget-provider-status! :cached-status-test)
+        (let [calls @probes]
+          (is (= :unverified
+                 (:auth-state (providers/provider-status-cached {:id :cached-status-test}))))
+          (is (= calls @probes)))))))
+
 (deftest initial-provider-status-is-neutral-until-a-live-check
   (let [saved
         (providers/initial-provider-status {:id :remote :api-key "saved"})

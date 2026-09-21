@@ -269,6 +269,33 @@
           provider (base-report provider-id :unsupported "Provider does not expose limit metadata.")
           :else (base-report provider-id :unknown-provider "Provider is not registered."))))
 
+(defn cached-limits-report
+  "The limits report already computed for `provider-id`, or `nil` when the cache
+   holds none.
+
+   Reads the cache and NEVER fetches. `provider-limits` is an upstream HTTP call
+   per provider, and a caller answering a fleet MUTATION must not pay one: the
+   person who just added or removed a provider is waiting on the next screen,
+   not on every provider's usage endpoint. A report past its budget still
+   answers here — it is what the surface is already painting — and the next live
+   read through `provider-limits` refreshes it."
+  [provider-id]
+  (when-let [d (:value (get @limits-cache provider-id))]
+    (when (realized? d) (:report @d))))
+
+(defn limits-without-fetching
+  "A valid report for `provider-id` that costs NO upstream call: the cached one,
+   else everything `provider-limits` can answer without its `:provider/limits-fn`
+   — static catalog RPM / TPM and no quota rows.
+
+   For payloads a human is BLOCKED on. Anything that reports a quota reads
+   `provider-limits` instead."
+  [provider-id]
+  (or (cached-limits-report provider-id)
+      (if (:provider/limits-fn (registry/provider-by-id provider-id))
+        (base-report provider-id :ok "Provider limits have not been checked yet.")
+        (provider-limits provider-id))))
+
 (defn all-provider-limits
   "Return normalized limits reports for every registered provider in
    registration order."

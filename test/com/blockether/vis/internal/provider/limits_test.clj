@@ -7,6 +7,7 @@
    must drop it immediately."
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.registry :as registry]))
 
@@ -44,6 +45,35 @@
       (provider-limits/provider-limits :limits-cache-test)
       (testing "sign-in / sign-out must not leave a stale :unauthenticated report"
         (is (= 2 @calls))))))
+
+(deftest a-non-fetching-read-answers-only-what-is-already-known
+  ;; A fleet mutation (adding or removing a provider) repaints from what the
+  ;; daemon already holds: the human behind it is waiting on the next screen, so
+  ;; no row of that payload may call a provider's usage endpoint.
+  (let [calls (atom 0)]
+    (with-redefs [registry/provider-by-id (fn [_]
+                                            (counting-provider calls))]
+      (provider-limits/flush-limits-cache! :limits-cache-test)
+      (testing "nothing cached: no report, and nothing fetched"
+        (is (nil? (provider-limits/cached-limits-report :limits-cache-test)))
+        (is (zero? @calls)))
+      (testing "the padded read still answers a contract-valid report, still without fetching"
+        (let [report (provider-limits/limits-without-fetching :limits-cache-test)]
+          (is (contract-provider/report-valid? report))
+          (is (= :limits-cache-test (:provider-id report)))
+          (is (= :ok (:status report)))
+          (is (= [] (get-in report [:dynamic :limits])) "an unchecked quota is reported as none")
+          (is (zero? @calls))))
+      (testing "one live read later, both answer from the cache"
+        (is (= :ok (:status (provider-limits/provider-limits :limits-cache-test))))
+        (is (= 1 @calls))
+        (is (= :ok (:status (provider-limits/cached-limits-report :limits-cache-test))))
+        (is (= :ok (:status (provider-limits/limits-without-fetching :limits-cache-test))))
+        (is (= 1 @calls)))
+      (testing "a flush takes the answer away instead of serving a verdict auth just changed"
+        (provider-limits/flush-limits-cache! :limits-cache-test)
+        (is (nil? (provider-limits/cached-limits-report :limits-cache-test)))
+        (is (= 1 @calls))))))
 
 (deftest a-thrown-auth-rejection-is-an-unauthenticated-report
   (with-redefs [registry/provider-by-id (constantly {:provider/id :rejected-limits-test

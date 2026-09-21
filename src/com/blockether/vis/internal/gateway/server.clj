@@ -1571,8 +1571,12 @@
 
 (defn- router-provider-entry
   "One row of the unified router payload, carrying both explicit tags: the
-   PRIMARY pair every turn starts on and the FALLBACK pair on another provider."
-  [provider primary fallback]
+   PRIMARY pair every turn starts on and the FALLBACK pair on another provider.
+
+   `probe?` decides what this row's `:status` and `:limits` COST: true asks the
+   provider live, false answers from what the daemon already knows. Everything
+   else in the row is config, and free either way."
+  [provider primary fallback probe?]
   (let [id
         (:id provider)
 
@@ -1609,8 +1613,11 @@
      :default-model (when is-default (:model primary))
      :is-fallback is-fallback
      :fallback-model (when is-fallback (:model fallback))
-     :status (providers/provider-status provider)
-     :limits (providers/provider-limits-safe provider)}))
+     :status
+     (if probe? (providers/provider-status provider) (providers/provider-status-cached provider))
+     :limits (if probe?
+               (providers/provider-limits-safe provider)
+               (provider-limits/limits-without-fetching id))}))
 
 (defn- router-selection-json
   "Both router tags as one payload, `null` where a role is untagged. Answered by
@@ -1638,27 +1645,34 @@
    Every fleet MUTATION answers with this exact payload, so a client that just
    added or removed a provider repaints from the response it already holds —
    no second read, and no window where the phone shows a fleet the daemon no
-   longer has."
-  []
-  (let [fleet
-        (providers/picker-fleet)
+   longer has.
 
-        primary
-        (providers/default-selection fleet)
+   `probe?` is what that costs. `GET /v1/router` asks every provider live. A
+   MUTATION passes false: adding a provider used to re-probe the auth and quota
+   endpoints of every OTHER provider before answering, so tapping Add sat on a
+   spinner for seconds before the API-key box — which needs neither — appeared.
+   The payload shape is identical either way."
+  ([] (router-fleet-json true))
+  ([probe?]
+   (let [fleet
+         (providers/picker-fleet)
 
-        fallback
-        (providers/fallback-selection fleet primary)]
+         primary
+         (providers/default-selection fleet)
 
-    ;; One row costs a LIVE auth (and limits) probe against that provider —
-    ;; seconds each. Serially, a fleet of eight took ~60s, past the companion's
-    ;; 30s request bound, so the Providers screen sat on "Checking provider
-    ;; sign-in…" forever. Probing the fleet in parallel makes the payload cost
-    ;; the SLOWEST provider instead of their sum; each row already answers a
-    ;; report rather than throwing.
-    {:providers (->> fleet
-                     (mapv (fn [provider]
-                             (future (router-provider-entry provider primary fallback))))
-                     (mapv deref))}))
+         fallback
+         (providers/fallback-selection fleet primary)]
+
+     ;; One PROBING row costs a LIVE auth (and limits) probe against that
+     ;; provider — seconds each. Serially, a fleet of eight took ~60s, past the
+     ;; companion's 30s request bound, so the Providers screen sat on "Checking
+     ;; provider sign-in…" forever. Probing the fleet in parallel makes the
+     ;; payload cost the SLOWEST provider instead of their sum; each row already
+     ;; answers a report rather than throwing.
+     {:providers (->> fleet
+                      (mapv (fn [provider]
+                              (future (router-provider-entry provider primary fallback probe?))))
+                      (mapv deref))})))
 
 (defn- router-handler
   "GET /v1/router — the whole provider catalog and both explicit tags."
@@ -1778,7 +1792,7 @@
 
               (providers/add-config-provider! (providers/provider-config-with-models preset models)
                                               :gateway)
-              (json-response (router-fleet-json))))))
+              (json-response (router-fleet-json false))))))
 
 (defn- remove-provider-handler
   "DELETE /v1/providers/:provider-id — remove a user-owned provider and its credential.
@@ -1788,7 +1802,7 @@
   (let [provider-id (some-> (get-in request [:path-params :provider-id])
                             keyword)]
     (try (when provider-id (providers/remove-provider! provider-id :gateway))
-         (let [fleet (router-fleet-json)
+         (let [fleet (router-fleet-json false)
                survivor (some #(= provider-id
                                   (some-> (:id %)
                                           keyword))

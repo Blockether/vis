@@ -77,9 +77,11 @@
   (try (providers/rebuild-shared-router!) (catch Throwable _ nil)))
 
 (defn- settle!
-  "Auth landed: drop cached fleet and limits views once, before publishing success."
+  "Auth landed: drop the cached fleet, status and limits views once, before
+   publishing success."
   [provider-id]
   (refresh-fleet!)
+  (providers/forget-provider-status! provider-id)
   (provider-limits/auth-changed! provider-id)
   nil)
 

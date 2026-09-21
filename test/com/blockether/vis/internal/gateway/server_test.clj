@@ -17,6 +17,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.persistance.core]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -2633,7 +2634,7 @@
                :responses-path "/responses"
                :models [{:name "gpt-6-astra"}]} ["openai-text"]]
              [{:id :openai :models [{:name "gpt-4o"}]} [nil]] [{:id :openai-codex :models []} []]]]
-      (let [row (wire/->wire ((rv 'router-provider-entry) provider nil nil))
+      (let [row (wire/->wire ((rv 'router-provider-entry) provider nil nil true))
             details (get row "model_details")]
 
         (is (= expected (mapv #(get % "verbosity_style") details)))
@@ -3198,13 +3199,16 @@
 ;; the companion could never grow a fleet.
 
 (defn- with-stub-fleet!
-  "Router payload stubs so a mutation handler can echo the fleet back."
+  "Router payload stubs so a mutation handler can echo the fleet back: the PROBING
+   reads `GET /v1/router` pays, and the cached ones a mutation answers with."
   [fleet f]
   (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
                    #'providers/default-selection (constantly nil)
                    #'providers/fallback-selection (constantly nil)
                    #'providers/provider-status (constantly {:is-authenticated false})
-                   #'providers/provider-limits-safe (constantly nil)}
+                   #'providers/provider-limits-safe (constantly nil)
+                   #'providers/provider-status-cached (constantly {:is-authenticated false})
+                   #'provider-limits/limits-without-fetching (constantly nil)}
     f))
 
 (deftest provider-presets-handler-lists-what-can-still-be-added
@@ -3331,6 +3335,65 @@
               (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "ghost"}})]
                 (is (= 200 (:status resp)))
                 (is (true? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
+
+(deftest fleet-mutations-answer-without-probing-any-provider
+  ;; Tapping Add used to answer only after re-probing EVERY configured provider's
+  ;; auth and quota endpoints — seconds of spinner before the API-key box, which
+  ;; needs neither. A mutation repaints from what the daemon already knows.
+  (let [probes
+        (atom 0)
+
+        cached
+        (atom 0)
+
+        fleet
+        [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]]
+
+    (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
+                     #'providers/default-selection (constantly nil)
+                     #'providers/fallback-selection (constantly nil)
+                     #'providers/provider-status (fn [_]
+                                                   (swap! probes inc)
+                                                   {:is-authenticated true :auth-state :verified})
+                     #'providers/provider-limits-safe (fn [_]
+                                                        (swap! probes inc)
+                                                        nil)
+                     #'providers/provider-status-cached (fn [_]
+                                                          (swap! cached inc)
+                                                          {:is-authenticated true
+                                                           :auth-state :verified})
+                     #'provider-limits/limits-without-fetching (fn [_]
+                                                                 (swap! cached inc)
+                                                                 nil)
+                     #'config/provider-template (fn [pid]
+                                                  (when (= :lmstudio pid)
+                                                    {:id :lmstudio
+                                                     :label "LM Studio"
+                                                     :base-url "http://localhost:1234/v1"
+                                                     :api-style :openai
+                                                     :default-models ["local-model"]}))
+                     #'providers/configured-providers (constantly [])
+                     #'providers/add-config-provider! (fn [& _]
+                                                        nil)
+                     #'providers/remove-provider! (fn [& _]
+                                                    true)}
+      (fn []
+        (testing "POST /v1/providers"
+          (let [resp ((rv 'add-provider-handler) (json-body {:id "lmstudio"}))]
+            (is (= 200 (:status resp)))
+            (is (= ["zai-coding-plan"]
+                   (mapv #(get % "id") (get (wire/parse-json (:body resp)) "providers")))
+                "the answer is still the whole fleet the caller repaints from")))
+        (testing "DELETE /v1/providers/:provider-id"
+          (is (= 200
+                 (:status ((rv 'remove-provider-handler)
+                            {:path-params {:provider-id "lmstudio"}})))))
+        (is (zero? @probes) "no fleet mutation may wait on a provider's network")
+        (is (= 4 @cached)
+            "every row still carries its status and limits, from what is already known")
+        (testing "GET /v1/router is the read that still asks live"
+          (is (= 200 (:status ((rv 'router-handler) {}))))
+          (is (= 2 @probes)))))))
 
 (deftest delete-project-blast-radius-is-explicit-on-the-wire-test
   ;; The default DELETE only ever scattered members back to project-less, and no

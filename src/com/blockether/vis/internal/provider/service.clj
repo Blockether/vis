@@ -380,6 +380,121 @@
   [limits fallback]
   (or (get-in limits [:dynamic :note]) (get-in limits [:error :message]) fallback))
 
+(defonce ^:private last-provider-status
+  ;; provider id -> {:status … :at-ms …}: what the last LIVE `provider-status`
+  ;; concluded for it, so a non-probing read can repeat a recent verdict instead
+  ;; of greying out a fleet the human is already looking at.
+  (atom {}))
+
+(def status-memo-ms
+  "How long the last live verdict stands in for the probe a non-probing caller
+   refuses to pay. Short on purpose: it only has to bridge the seconds between
+   the fleet a client is showing and the mutation it just made."
+  30000)
+
+(defn forget-provider-status!
+  "Drop the remembered verdict for one provider (or all of them) so the next
+   non-probing read stops repeating it. Auth changes call this: a credential that
+   just signed in or out makes the last verdict a lie."
+  ([] (reset! last-provider-status {}))
+  ([provider-id] (swap! last-provider-status dissoc provider-id)))
+
+(defn- config-only-status
+  "The verdict a configured provider earns from its CONFIG alone, or `::probe`
+   when only a live check can decide. Shared by the probing and non-probing
+   paths so one credential is never read two ways."
+  [provider credential-gap]
+  (cond
+    ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
+    ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
+    ;; would otherwise read as authenticated from config.
+    credential-gap
+    (let [{:keys [reason env-vars]} credential-gap]
+      (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
+        env-vars
+        (assoc :needs-env (str/join ", " env-vars))))
+    ;; Local no-auth providers are verified by their live `/models` probe.
+    (contains? local-no-auth-provider-ids (:id provider)) ::probe
+    (some? (:api-key provider))
+    {:is-authenticated true :source :config :config-path (config/state-path)}
+    ;; No gap above means the helper produced a token just now.
+    (some? (:api-key-command provider)) {:is-authenticated true :source :command}
+    :else ::probe))
+
+(defn- limits-verdict
+  "Fold a limits report into a status map.
+
+   A provider-specific live limits endpoint is also the shared auth probe. Its
+   result upgrades a merely-present credential without making a transient quota
+   outage look like a rejected token."
+  [status limits]
+  (case (:status limits)
+    :ok
+    (assoc status :auth-state :verified)
+
+    :unauthenticated
+    (assoc status
+      :is-authenticated false
+      :auth-state :rejected
+      :error (limits-status-message limits "Provider rejected the current credentials."))
+
+    :error
+    (assoc status
+      :auth-state :degraded
+      :warning (limits-status-message limits "Provider limits could not be checked."))
+
+    :unsupported
+    (assoc status :auth-state :unverified)
+
+    (assoc status :auth-state :unverified)))
+
+(defn- status-of
+  "One classifier behind `provider-status` and `provider-status-cached`. `probe?`
+   decides whether the cases config cannot settle pay an upstream call or answer
+   `:unverified`."
+  [provider probe?]
+  (let [registered
+        (registry/provider-by-id (:id provider))
+
+        credential-gap
+        (config/provider-credential-gap provider)
+
+        from-config
+        (config-only-status provider credential-gap)
+
+        unproven?
+        (and (identical? ::probe from-config) (not probe?))
+
+        status
+        (cond (not (identical? ::probe from-config)) from-config
+              unproven? {:is-authenticated false}
+              (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
+              registered (or (safe-provider-status registered) {:is-authenticated false})
+              :else {:is-authenticated false})
+
+        base-state
+        (cond credential-gap :rejected
+              ;; Nothing was checked, so nothing is proven either way.
+              unproven? :unverified
+              (contains? local-no-auth-provider-ids (:id provider))
+              (if (:is-authenticated status) :verified :degraded)
+              (:is-authenticated status) :unverified
+              (:error status) :degraded
+              :else :unverified)
+
+        status*
+        (assoc status :auth-state base-state)
+
+        limits
+        (when (and (:is-authenticated status*) (:provider/limits-fn registered))
+          (if probe?
+            (provider-limits-safe provider)
+            ;; Only what the limits cache already holds: never a fetch, and never
+            ;; a padded report — an unchecked quota must not read as proof.
+            (provider-limits/cached-limits-report (:id provider))))]
+
+    (if limits (limits-verdict status* limits) status*)))
+
 (defn provider-status
   "Auth/liveness status for a CONFIGURED provider map, with one explicit
    `:auth-state` every channel paints:
@@ -392,69 +507,34 @@
 
    `:is-authenticated` remains the independent usability bit: a degraded or
    unverified entry can still route only when it is true; rejection forces it false.
-   Never throws."
+   Never throws.
+
+   PROBES the provider, so it belongs off the render path. Every verdict is
+   remembered for `provider-status-cached`."
   [provider]
-  (let [registered
-        (registry/provider-by-id (:id provider))
+  (let [status (status-of provider true)]
+    (swap! last-provider-status assoc (:id provider) {:status status :at-ms (util/now-ms)})
+    status))
 
-        credential-gap
-        (config/provider-credential-gap provider)
+(defn provider-status-cached
+  "The same verdict WITHOUT any upstream call: the one a live `provider-status`
+   reached within `status-memo-ms`, else what config alone proves — `:unverified`
+   wherever only a probe could decide.
 
-        status
-        (cond
-          ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
-          ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
-          ;; would otherwise read as authenticated from config.
-          credential-gap
-          (let [{:keys [reason env-vars]} credential-gap]
-            (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
-              env-vars
-              (assoc :needs-env (str/join ", " env-vars))))
-          ;; Local no-auth providers are verified by their live `/models` probe.
-          (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
-          (some? (:api-key provider))
-          {:is-authenticated true :source :config :config-path (config/state-path)}
-          ;; No gap above means the helper produced a token just now.
-          (some? (:api-key-command provider)) {:is-authenticated true :source :command}
-          registered (or (safe-provider-status registered) {:is-authenticated false})
-          :else {:is-authenticated false})
+   Fleet MUTATIONS answer with this. Adding a provider used to re-probe every
+   configured provider's auth and quota endpoints before its response, so the tap
+   that should open an API-key box waited seconds on OTHER providers' networks.
+   `GET /v1/router` still reads live."
+  [provider]
+  (let [now
+        (util/now-ms)
 
-        base-state
-        (cond credential-gap :rejected
-              (contains? local-no-auth-provider-ids (:id provider))
-              (if (:is-authenticated status) :verified :degraded)
-              (:is-authenticated status) :unverified
-              (:error status) :degraded
-              :else :unverified)
+        {:keys [status at-ms]}
+        (get @last-provider-status (:id provider))]
 
-        status*
-        (assoc status :auth-state base-state)]
-
-    ;; A provider-specific live limits endpoint is also the shared auth probe.
-    ;; Its result upgrades a merely-present credential without making a transient
-    ;; quota outage look like a rejected token.
-    (if (and (:is-authenticated status*) (:provider/limits-fn registered))
-      (let [limits (provider-limits-safe provider)]
-        (case (:status limits)
-          :ok
-          (assoc status* :auth-state :verified)
-
-          :unauthenticated
-          (assoc status*
-            :is-authenticated false
-            :auth-state :rejected
-            :error (limits-status-message limits "Provider rejected the current credentials."))
-
-          :error
-          (assoc status*
-            :auth-state :degraded
-            :warning (limits-status-message limits "Provider limits could not be checked."))
-
-          :unsupported
-          (assoc status* :auth-state :unverified)
-
-          (assoc status* :auth-state :unverified)))
-      status*)))
+    (if (and status (< (- now (long at-ms)) (long status-memo-ms)))
+      status
+      (status-of provider false))))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /
