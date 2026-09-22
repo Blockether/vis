@@ -1075,6 +1075,69 @@
                                 (select-keys @sent [:request :attachments])))
                      (expect (not (str/includes? (:request @sent) "screen.png")))))))
 
+;; Issue #278 (second cause of the repeated scroll bounce): a session opens on its
+;; NEWEST turns, so the oldest loaded turn is rarely turn 0 — and with the gateway's
+;; byte cap that cursor can sit closer to the start than one older page is wide.
+;; Asking for a whole page from there reached back PAST the cursor and re-sent turns
+;; the transcript already had. The duplicates gave two rows the same semantic scroll
+;; anchor, and input-free frames flipped between the copies.
+(defn- transcript-window
+  "`state/transcript-page`'s window arithmetic over a session of `total` turns."
+  [total {:keys [limit offset]}]
+  (let [total
+        (long total)
+
+        lim
+        (if limit (max 0 (min (long limit) total)) total)
+
+        start
+        (if offset (max 0 (min (long offset) total)) (max 0 (- total lim)))
+
+        end
+        (min total (+ start lim))]
+
+    {"turns" (mapv (fn [i]
+                     {"turn_id" (str "t" i) "status" "completed" "request" (str "turn " i)})
+                   (range start end))
+     "total" total
+     "offset" start
+     "has_more" (pos? start)}))
+
+(defn- page-turn-ids
+  "Gateway turn ids of the user rows one history page projected."
+  [page]
+  (into [] (comp (filter #(= :user (:role %))) (map :session-turn-id)) (:messages page)))
+
+(defdescribe older-history-test
+             (it "asks only for the turns above the oldest loaded cursor"
+                 (let [asked (atom [])]
+                   (with-redefs [vis/gateway-transcript-page (fn [_ opts]
+                                                               (swap! asked conj opts)
+                                                               (transcript-window 11 opts))]
+                     (let [opened (chat/history-page "sid" {:limit chat/resume-tail-turns})
+                           older (chat/older-history "sid" (:offset opened))]
+
+                       (expect (= 1 (:offset opened)))
+                       (expect (= {:limit 1 :offset 0} (peek @asked)))
+                       (expect (= ["t0"] (page-turn-ids older)))
+                       (expect (= 0 (:offset older)))
+                       (expect (false? (:has-more older)))))))
+             (it "pages a whole window when a whole window is older"
+                 (let [asked (atom [])]
+                   (with-redefs [vis/gateway-transcript-page (fn [_ opts]
+                                                               (swap! asked conj opts)
+                                                               (transcript-window 40 opts))]
+                     (let [older (chat/older-history "sid" 30)]
+                       (expect (= {:limit chat/older-page-turns :offset 20} (peek @asked)))
+                       (expect (= (mapv #(str "t" %) (range 20 30)) (page-turn-ids older)))))))
+             (it "asks for nothing once the oldest turn is loaded"
+                 (let [asked (atom [])]
+                   (with-redefs [vis/gateway-transcript-page (fn [_ opts]
+                                                               (swap! asked conj opts)
+                                                               (transcript-window 40 opts))]
+                     (expect (nil? (chat/older-history "sid" 0)))
+                     (expect (empty? @asked))))))
+
 ;; Issue #212: the Activity band used to DROP operations at its row cap. The record
 ;; keeps them all, so the TUI reads windows of it — and a broken read has to look
 ;; different from an empty one, or a retry would look like nothing left to show.

@@ -926,12 +926,21 @@
 
 (defn older-history
   "The page of turns immediately ABOVE `offset` (the current oldest loaded
-   window start). `nil` when there is nothing older left to fetch."
+   window start). `nil` when there is nothing older left to fetch.
+
+   The window ENDS at `offset`. A session opens on its NEWEST turns and the
+   gateway caps a page in BYTES as well, so the oldest loaded turn can sit less
+   than one page above the start; asking for a whole page from there serves
+   turns the transcript already holds. Duplicated turns give the layout two rows
+   per semantic anchor, and the viewport then flips between the copies (#278)."
   [session-id offset]
-  (let [offset (long (or offset 0))]
-    (when (pos? offset)
-      (history-page session-id
-                    {:limit older-page-turns :offset (max 0 (- offset (long older-page-turns)))}))))
+  (let [offset
+        (long (or offset 0))
+
+        limit
+        (min (long older-page-turns) offset)]
+
+    (when (pos? limit) (history-page session-id {:limit limit :offset (- offset limit)}))))
 
 (def activity-page-rows
   "Rows ONE Activity window asks for. The contract caps every history-bearing
