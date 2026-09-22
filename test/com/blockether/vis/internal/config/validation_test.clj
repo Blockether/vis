@@ -535,3 +535,26 @@
                    (expect (true? (:disabled? policy)))
                    (expect (= [".env"] (:deny-read policy)))
                    (expect (= ["vendor"] (:deny-write policy))))))
+
+(defdescribe
+  provider-model-budget-schema-test
+  (it "validates explicit limits and an isolated, credential-free learned snapshot"
+      (let [model
+            {"name" "m"
+             "context" 100000
+             "input_limit" 70000
+             "output_limit" 20000
+             "tokenizer" "cl100k_base"}
+
+            config
+            {"providers" [{"id" "custom"
+                           "models" [model]
+                           "model_metadata" {"identity" "digest" "models" [model]}}]}]
+
+        (expect (config-validation/valid? config))
+        (doseq [[field value] [["input_limit" 0] ["input_limit" -1] ["input_limit" "70000"]
+                               ["tokenizer" ""]]]
+          (expect (not (config-validation/valid?
+                         (assoc-in config ["providers" 0 "models" 0 field] value)))))
+        (expect (not (config-validation/valid?
+                       (assoc-in config ["providers" 0 "model_metadata" "api_key"] "test")))))))

@@ -1119,22 +1119,23 @@ read-only by default: enable commentable=True only for material the human should
     parts))
 
 (defn request-token-counter
-  "Create one iteration's exact Svar message counter. Reuse each model/message's
-   marginal count across budgeting and health without retaining a cross-request
-   cache. Keep this function local to the iteration, not in persisted state."
-  []
-  (let [priming
-        (memoize #(svar-router/count-messages % []))
+  "Create one iteration's tokenizer-aware Svar estimate. Reuse each model/message's
+   marginal count across budgeting and health without retaining a cross-request cache.
+   Provider usage remains the authority for an accepted request."
+  ([] (request-token-counter {}))
+  ([opts]
+   (let [priming
+         (memoize #(svar-router/count-messages % [] opts))
 
-        message-tokens
-        (memoize (fn [model message]
-                   (- (svar-router/count-messages model [message]) (long (priming model)))))]
+         message-tokens
+         (memoize (fn [model message]
+                    (- (svar-router/count-messages model [message] opts) (long (priming model)))))]
 
-    (fn ^long [model messages]
-      (long (reduce (fn [^long total message]
-                      (+ total (long (message-tokens model message))))
-                    (long (priming model))
-                    messages)))))
+     (fn ^long [model messages]
+       (long (reduce (fn [^long total message]
+                       (+ total (long (message-tokens model message))))
+                     (long (priming model))
+                     messages))))))
 
 (defn request-health
   "Content-free provenance for one request. Prefer Svar's final :request-accounting

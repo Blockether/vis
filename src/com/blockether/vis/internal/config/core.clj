@@ -22,6 +22,7 @@
   (:require [clojure+.error]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.provider.credential-command :as cred]
@@ -480,6 +481,12 @@
          (:context m)
          (assoc :context (:context m))
 
+         (:input-limit m)
+         (assoc :input-limit (:input-limit m))
+
+         (:tokenizer m)
+         (assoc :tokenizer (:tokenizer m))
+
          (:output-limit m)
          (assoc :output-limit (:output-limit m))
 
@@ -596,6 +603,21 @@
   [provider-id reason]
   (str "can't use " (if (keyword? provider-id) (name provider-id) (str provider-id)) ": " reason))
 
+(defn apply-model-metadata
+  "Merge learned budgets only into the matching account/endpoint. Explicit model
+   settings win. Learned data remains separate in config so a refresh can update it."
+  [provider metadata]
+  (if (= (:identity metadata) (svar/model-catalog-identity provider))
+    (let [by-name (into {} (map (juxt :name identity)) (:models metadata))]
+      (-> provider
+          (assoc ::configured-models (:models provider)
+                 ::model-catalog-identity (:identity metadata))
+          (update :models
+                  #(mapv (fn [model]
+                           (merge (by-name (:name model)) model))
+                         %))))
+    provider))
+
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
@@ -710,37 +732,65 @@
           (some-> (registry/provider-by-id pid)
                   :provider/get-token-fn))]
 
-    (if get-token-fn
-      (let [{:keys [token api-url llm-headers responses-path api-style]}
-            (with-boot-token-timeout pid get-token-fn)
+    (apply-model-metadata
+      (if get-token-fn
+        (let [{:keys [token api-url llm-headers responses-path api-style]}
+              (with-boot-token-timeout pid get-token-fn)
 
+              url
+              (provider-token-base-url pid static-url api-url)
+
+              merged-headers
+              (or explicit-headers llm-headers (:llm-headers template))
+
+              merged-response
+              (or explicit-responses responses-path (:responses-path template))
+
+              resolved-api-style
+              (effective-api-style {:declared declared-api-style
+                                    :runtime api-style
+                                    :template (:api-style template)
+                                    :responses-path merged-response})]
+
+          ;; Remember the token this router bakes in, so a later 401 can hand the
+          ;; single-flight refresh the EXACT token that failed as `rejected`.
+          (swap! router-baked-tokens assoc pid token)
+          (cond-> {:id pid :models models :api-key token}
             url
-            (provider-token-base-url pid static-url api-url)
-
-            merged-headers
-            (or explicit-headers llm-headers (:llm-headers template))
-
-            merged-response
-            (or explicit-responses responses-path (:responses-path template))
+            (assoc :base-url url)
 
             resolved-api-style
-            (effective-api-style {:declared declared-api-style
-                                  :runtime api-style
-                                  :template (:api-style template)
-                                  :responses-path merged-response})]
+            (assoc :api-style resolved-api-style)
 
-        ;; Remember the token this router bakes in, so a later 401 can hand the
-        ;; single-flight refresh the EXACT token that failed as `rejected`.
-        (swap! router-baked-tokens assoc pid token)
-        (cond-> {:id pid :models models :api-key token}
-          url
-          (assoc :base-url url)
+            merged-response
+            (assoc :responses-path merged-response)
 
-          resolved-api-style
-          (assoc :api-style resolved-api-style)
+            (some? explicit-stateless)
+            (assoc :stateless-items? (boolean explicit-stateless))
 
-          merged-response
-          (assoc :responses-path merged-response)
+            (some? explicit-image-input)
+            (assoc :image-input? (boolean explicit-image-input))
+
+            merged-headers
+            (assoc :llm-headers merged-headers)
+
+            merged-extra-body
+            (assoc :extra-body merged-extra-body)
+
+            merged-network
+            (assoc :network merged-network)))
+        (cond-> {:id pid :models models}
+          (or api-key catalog-api-key)
+          (assoc :api-key (or api-key catalog-api-key))
+
+          static-url
+          (assoc :base-url static-url)
+
+          static-api-style
+          (assoc :api-style static-api-style)
+
+          static-responses
+          (assoc :responses-path static-responses)
 
           (some? explicit-stateless)
           (assoc :stateless-items? (boolean explicit-stateless))
@@ -748,41 +798,15 @@
           (some? explicit-image-input)
           (assoc :image-input? (boolean explicit-image-input))
 
-          merged-headers
-          (assoc :llm-headers merged-headers)
+          static-headers
+          (assoc :llm-headers static-headers)
 
           merged-extra-body
           (assoc :extra-body merged-extra-body)
 
           merged-network
           (assoc :network merged-network)))
-      (cond-> {:id pid :models models}
-        (or api-key catalog-api-key)
-        (assoc :api-key (or api-key catalog-api-key))
-
-        static-url
-        (assoc :base-url static-url)
-
-        static-api-style
-        (assoc :api-style static-api-style)
-
-        static-responses
-        (assoc :responses-path static-responses)
-
-        (some? explicit-stateless)
-        (assoc :stateless-items? (boolean explicit-stateless))
-
-        (some? explicit-image-input)
-        (assoc :image-input? (boolean explicit-image-input))
-
-        static-headers
-        (assoc :llm-headers static-headers)
-
-        merged-extra-body
-        (assoc :extra-body merged-extra-body)
-
-        merged-network
-        (assoc :network merged-network)))))
+      (:model-metadata provider))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
@@ -828,20 +852,20 @@
                (map (juxt (comp #(str/replace % "-" "_") name) identity))
                #{:providers :default-provider :default-model :fallback-provider :fallback-model
                  :router :system-prompt :workspace :enabled :filesystem :jail :network :environment
-                 :db-spec :grep :toggles :tui-settings :mcp :name :context :output-limit :id
-                 :api-key :api-key-command :models :base-url :api-style :compatibility
-                 :responses-path :llm-headers :extra-body :rate-limit :budget :tokens
-                 :same-provider-delays-ms :fallback-after-ms :timeout-ms :ttft-timeout-ms
-                 :first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
-                 :initial-delay-ms :multiplier :max-tokens :max-cost :pricing :context-limits
-                 :output-reserve :failure-threshold :recovery-ms :transient-status-codes :window-ms
-                 :cooldown-ms :max-wait-ms :allow-read-write :allow-read :deny-read :deny-write
-                 :path :access :description :inbound-ports :deny-exec :allowed-domains
-                 :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
-                 :method :text :is-replace :include-gitignored-paths :always-exclude :backend
-                 :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
-                 :url :headers :python :source-paths :index-url :tls-strict :titling :mode :provider
-                 :gateway :advertise})
+                 :db-spec :grep :toggles :tui-settings :mcp :name :context :input-limit
+                 :output-limit :tokenizer :model-metadata :identity :id :api-key :api-key-command
+                 :models :base-url :api-style :compatibility :responses-path :llm-headers
+                 :extra-body :rate-limit :budget :tokens :same-provider-delays-ms :fallback-after-ms
+                 :timeout-ms :ttft-timeout-ms :first-byte-timeout-ms :idle-timeout-ms
+                 :semantic-timeout-ms :max-retries :initial-delay-ms :multiplier :max-tokens
+                 :max-cost :pricing :context-limits :output-reserve :failure-threshold :recovery-ms
+                 :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write
+                 :allow-read :deny-read :deny-write :path :access :description :inbound-ports
+                 :deny-exec :allowed-domains :denied-domains :exclude-domains :allow-private :rules
+                 :host :methods :allow :method :text :is-replace :include-gitignored-paths
+                 :always-exclude :backend :theme-name :contributors-disabled :servers :transport
+                 :command :args :cwd :env :url :headers :python :source-paths :index-url :tls-strict
+                 :titling :mode :provider :gateway :advertise})
          svar-wire->runtime))
 
 (defn runtime-config

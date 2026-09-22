@@ -146,6 +146,14 @@
           "type": "integer",
           "minimum": 1
         },
+        "input_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tokenizer": {
+          "type": "string",
+          "minLength": 1
+        },
         "output_limit": {
           "type": "integer",
           "minimum": 1
@@ -188,6 +196,26 @@
               }
             ]
           }
+        },
+        "model_metadata": {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/model"
+              }
+            }
+          },
+          "required": [
+            "identity",
+            "models"
+          ],
+          "additionalProperties": false
         },
         "base_url": {
           "type": "string",

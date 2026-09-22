@@ -4684,11 +4684,20 @@
             messages
             (cache-breakpoint-indexes messages))))
 
+(defn- model-accounting-routing
+  "Inspect this resolved route, even when inference is allowed to fall back elsewhere."
+  [routing {:keys [provider name model]}]
+  (cond-> (or routing {})
+    (and provider (or name model))
+    (assoc :provider
+      provider :model
+      (or name model))))
+
 (defn- resolved-prompt-cache-context
   "Ask Svar for the opaque fixed-prefix/cache-namespace identity of one pinned route."
   [environment resolved-model routing extra-body]
   (svar/prompt-cache-context (:router environment)
-                             (cond-> {:routing (pin-routing-to-model (or routing {}) resolved-model)
+                             (cond-> {:routing (model-accounting-routing routing resolved-model)
                                       ;; There is exactly ONE model-facing tool. Sandbox capabilities alter
                                       ;; this Python schema, so they alter the context id rather than being
                                       ;; mistaken for an append-only provider prefix.
@@ -5433,7 +5442,7 @@
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
             llm-headers active-extensions answer-validation-context request-context on-response
-            message-token-counter]}]]
+            message-token-counter input-token-estimator]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -5606,6 +5615,7 @@
                      :prompt-cache-policy (prompt-cache-policy (:provider resolved-model))
                      :routing sticky-routing
                      :check-context? true
+                     :input-token-estimator input-token-estimator
                      :preserved-thinking? true
                      :on-empty-reply-resend
                      (fn [{:keys [attempt max-resends delay-ms]}]
@@ -6600,17 +6610,13 @@
                t))))
 
 (defn build-router
-  "Build a router and retain Vis provider network policy after svar normalization."
+  "Build a router, retaining network policy and account-scoped model metadata provenance."
   [config]
   (try (let [providers
              (runtime-router-providers config)
 
-             network-by-id
-             (into {}
-                   (keep (fn [p]
-                           (when-let [policy (:network p)]
-                             [(:id p) policy])))
-                   providers)
+             by-id
+             (into {} (map (juxt :id identity)) providers)
 
              router
              (svar/make-router providers (config/router-opts config))]
@@ -6619,11 +6625,32 @@
                  :providers
                  (fn [normalized]
                    (mapv (fn [provider]
-                           (if-let [policy (get network-by-id (:id provider))]
-                             (assoc provider :network policy)
-                             provider))
+                           (let [source
+                                 (by-id (:id provider))
+
+                                 catalog-id
+                                 (::config/model-catalog-identity source)]
+
+                             (cond-> (merge provider (select-keys source [:network]))
+                               catalog-id
+                               (assoc ::model-catalog
+                                 {:identity catalog-id
+                                  :learned (into {} (map (juxt :name identity)) (:models provider))
+                                  :fallback (into {}
+                                                  (map (juxt :name identity))
+                                                  (:models (svar-router/normalize-provider
+                                                             (:priority provider)
+                                                             (assoc source
+                                                               :models (::config/configured-models
+                                                                         source)))))}))))
                          normalized))))
        (catch Throwable t (throw (env-gap-router-error config t)))))
+
+(defn- refresh-router-models!
+  "Schedule catalog discovery after the router is published; never block its caller."
+  [router]
+  (doseq [{:keys [id]} (:providers router)]
+    (providers/refresh-models-async! id ::model-metadata)))
 
 (defn get-router
   "Get or create the shared LLM router.
@@ -6647,6 +6674,7 @@
                 (honor-config-roots! cfg))]
 
         (reset! router-atom r)
+        (refresh-router-models! r)
         r)))
 
 (defn router-initialized?
@@ -6666,6 +6694,7 @@
   (let [r (-> (build-router config)
               (honor-config-roots! config))]
     (reset! router-atom r)
+    (refresh-router-models! r)
     r))
 
 ;; ── OAuth credential hydration + 401 recovery ────────────────────────────
@@ -7246,6 +7275,20 @@
           envelope
           (run-managed-auth-flight! pid provider nil))))))
 
+(defn- hydrate-model-metadata
+  "Select learned or fallback model facts for this attempt's account, preserving order."
+  [provider]
+  (if-let [catalog (::model-catalog provider)]
+    (let [models (if (= (:identity catalog) (svar/model-catalog-identity provider))
+                   (:learned catalog)
+                   (:fallback catalog))]
+      (update provider
+              :models
+              #(mapv (fn [model]
+                       (get models (:name model) model))
+                     %)))
+    provider))
+
 (defn- hydrate-router-credentials
   "Return an attempt-local copy of `router` with every provider's current
    credential fields resolved immediately before request dispatch.
@@ -7312,7 +7355,10 @@
               (if-let [token (config/command-token id)]
                 (assoc provider-entry :api-key token)
                 provider-entry)))
-          provider-entries)]
+          provider-entries)
+
+        hydrated
+        (mapv hydrate-model-metadata hydrated)]
 
     (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
 
@@ -7639,31 +7685,34 @@
         (when (and (not (Double/isNaN d)) (not (Double/isInfinite d)) (pos? d)) (long d))))))
 
 (defn- iteration-context-limit
-  "Per-call input ceiling the pressure hint and `session_utilization` measure
-   against. Walks four sources in priority order:
-     1. caller-supplied `:max-context-tokens` (turn-level override; rarely set
-        today — TUI `vis/send!` does not pass it).
-     2. the model that ACTUALLY served the last request, then
-     3. the session's pinned model — `:input-limit` (models.dev input cap, e.g.
-        Copilot Claude-sonnet-4.6 = 128K) before `:context` (input+output budget,
-        used when models.dev exposes no separate input cap).
-     4. 200_000 for unknown models, matching the historical advisory ceiling.
+  "Input ceiling shared by CTX and folding. The routed Svar budget already accounts
+   for the requested output and independent input cap; never subtract output again.
+   An optional caller ceiling may only reduce it. Without a resolved request, retain
+   the served-model, pinned-model, then historical advisory fallback."
+  [max-context-tokens served-model pinned-model & [request-budget]]
+  (let [caller
+        (token-limit max-context-tokens)
 
-   Without (1)-(3) the hint fired off a uniform 200K baseline and either pestered
-   the model too early on a 1M-context Anthropic call or, worse, under-warned on
-   a 128K Copilot call. The SERVED model outranks the pin because a rescued turn
-   keeps talking to the peer for the rest of the turn: measuring it against the
-    window it left is how a session reads `90% headroom` into a hard rejection.
+        routed
+        (when (integer? (:max-input-tokens request-budget))
+          (max 1 (long (:max-input-tokens request-budget))))]
 
-   Every candidate is coerced by `token-limit`: a source that cannot name a positive
-   number is skipped, never published."
-  [max-context-tokens served-model pinned-model]
-  (or (token-limit max-context-tokens)
-      (token-limit (:input-limit served-model))
-      (token-limit (:context served-model))
-      (token-limit (:input-limit pinned-model))
-      (token-limit (:context pinned-model))
-      200000))
+    (if routed
+      (if caller (min (long caller) (long routed)) routed)
+      (or caller
+          (token-limit (:input-limit served-model))
+          (token-limit (:context served-model))
+          (token-limit (:input-limit pinned-model))
+          (token-limit (:context pinned-model))
+          200000))))
+
+(defn- resolved-context-budget
+  "Resolve the same routed generation controls Svar will use for preflight."
+  [environment resolved-model routing extra-body]
+  (when (and (:provider resolved-model) (seq (get-in environment [:router :providers])))
+    (svar/context-budget (:router environment)
+                         {:routing (model-accounting-routing routing resolved-model)
+                          :extra-body extra-body})))
 
 (defn- context-fold-budget
   "Soft folding threshold for a known input window. Windows below the normal 200K
@@ -8104,17 +8153,10 @@
             :scopes (:scopes chosen)
             :summary (:summary chosen)}))))))
 
-(defn- request-context-estimator
-  "Estimate pending input from this route's exact accepted prefix plus its new tail.
-   Usage includes cached tokens and the provider's fixed prefix. Add the assistant
-   replay/tool/user tail once, not the previous response's output usage as well.
-   Rewrites or changed tools/account/model invalidate the anchor. Measured usage
-   replaces the local prefix estimate; cache hits never discount input tokens."
-  [history provider model prompt-cache-context & [message-token-counter]]
-  (let [count-messages
-        (or message-token-counter svar-router/count-messages)
-
-        entry
+(defn- measured-request-estimator
+  "Return a measured-prefix estimate, or nil when this route/prefix has no valid anchor."
+  [history provider model prompt-cache-context count-messages]
+  (let [entry
         (get history [provider (str model)])
 
         prior
@@ -8133,15 +8175,44 @@
         (long (count-messages model []))]
 
     (fn [messages]
-      (if-some [tail (when (and anchored?
-                                (<= (count prior) (count messages))
-                                (= prior
-                                   (:fingerprints (message-cache-data
-                                                    entry
-                                                    (subvec (vec messages) 0 (count prior))))))
-                       (subvec (vec messages) (count prior)))]
-        (+ (long input) (- (long (count-messages model tail)) priming))
-        (long (count-messages model messages))))))
+      (when-some [tail (when (and anchored?
+                                  (<= (count prior) (count messages))
+                                  (= prior
+                                     (:fingerprints (message-cache-data
+                                                      entry
+                                                      (subvec (vec messages) 0 (count prior))))))
+                         (subvec (vec messages) (count prior)))]
+        (+ (long input) (- (long (count-messages model tail)) priming))))))
+
+(defn- request-context-estimator
+  "Estimate pending input from an exact accepted prefix plus its new tail. Cached
+   input is included once. Rewrites and changed tools/account/model invalidate usage."
+  [history provider model prompt-cache-context & [message-token-counter]]
+  (let [count-messages
+        (or message-token-counter svar-router/count-messages)
+
+        measured
+        (measured-request-estimator history provider model prompt-cache-context count-messages)]
+
+    (fn [messages]
+      (or (measured messages) (long (count-messages model messages))))))
+
+(defn- request-input-token-estimator
+  "Validate calibration against the actual Svar route. Nil keeps Svar's prepared-wire
+   fallback, rather than replacing it with a canonical-message estimate."
+  [history-atom]
+  (fn [{:keys [provider-id model messages prompt-cache-context tokenizer]}]
+    (let [counter
+          (prompt/request-token-counter {:tokenizer tokenizer})
+
+          estimate
+          (measured-request-estimator (when history-atom @history-atom)
+                                      provider-id
+                                      model
+                                      prompt-cache-context
+                                      counter)]
+
+      (estimate messages))))
 
 (defn- history-fold-projection
   "Return a strictly smaller, fitting projection; never mutate canonical history.
@@ -9024,6 +9095,7 @@
                                (assoc environment
                                  :router (agents/restrict-router environment (get-router)))
                                environment)
+                 environment (hydrate-environment-router environment)
                  routing (if route-change
                            (merge (dissoc routing :provider :model)
                                   (some-> (:preference route-change)
@@ -9040,8 +9112,15 @@
                  ;; the rescued peer's when this turn moved, else the pin's.
                  ;; Priority and history live on `iteration-context-limit`.
                  served-model (when-not route-change (turn-served-model environment))
-                 effective-context-limit
-                 (iteration-context-limit max-context-tokens served-model pre-resolved-model)
+                 request-budget-atom (atom (resolved-context-budget environment
+                                                                    (or served-model
+                                                                        pre-resolved-model)
+                                                                    routing
+                                                                    iteration-extra-body))
+                 effective-context-limit (iteration-context-limit max-context-tokens
+                                                                  served-model
+                                                                  pre-resolved-model
+                                                                  @request-budget-atom)
                  effective-fold-budget (context-fold-budget effective-context-limit)
                  _llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
                                                                   (some-> (:name pre-resolved-model)
@@ -9084,7 +9163,8 @@
                                                       summarized-trailer-iters
                                                       replay-target
                                                       conversation-options)
-                 message-token-counter (prompt/request-token-counter)
+                 message-token-counter (prompt/request-token-counter (select-keys pre-resolved-model
+                                                                                  [:tokenizer]))
                  council-active (when (council/enabled? environment)
                                   (get (council/runtime (:db-info environment)
                                                         (str (:session-id environment)))
@@ -9249,6 +9329,8 @@
                               {:iteration iteration
                                :request-context request-context
                                :message-token-counter message-token-counter
+                               :input-token-estimator (request-input-token-estimator
+                                                        (:prompt-cache-history-atom environment))
                                :reasoning-level reasoning-level
                                :reasoning-effort reasoning-effort
                                :routing @iteration-routing
@@ -9258,11 +9340,20 @@
                                  (stamp-served-route! environment response)
                                  (when-let [ca (:ctx-atom environment)]
                                    (swap! ca record-provider-input response))
+                                 (let [served (resolve-model-info (:router attempt-env)
+                                                                  (:llm-provider response)
+                                                                  (:llm-model response))]
+                                   (reset! request-budget-atom (resolved-context-budget
+                                                                 attempt-env
+                                                                 served
+                                                                 @iteration-routing
+                                                                 current-extra-body)))
                                  (when-let [input (get-in response [:api-usage :input-tokens])]
                                    (let [window (iteration-context-limit max-context-tokens
                                                                          (turn-served-model
                                                                            environment)
-                                                                         pre-resolved-model)]
+                                                                         pre-resolved-model
+                                                                         @request-budget-atom)]
                                      (stamp-utilization! (:ctx-atom environment)
                                                          (ctx-engine/utilization
                                                            input
@@ -9630,6 +9721,12 @@
                         ;; provider that answered, so the model budgets against the
                         ;; window it is now talking to instead of the pin's.
                         _ (stamp-served-route! environment iteration-result)
+                        effective-context-limit (iteration-context-limit max-context-tokens
+                                                                         (turn-served-model
+                                                                           environment)
+                                                                         pre-resolved-model
+                                                                         @request-budget-atom)
+                        effective-fold-budget (context-fold-budget effective-context-limit)
                         ;; Publish this response's measurement before rendering its
                         ;; context delta. Stamping at the next loop head made the
                         ;; next model request read usage from TWO requests ago.
@@ -9637,7 +9734,8 @@
                             (let [u @usage-atom
                                   window (iteration-context-limit max-context-tokens
                                                                   (turn-served-model environment)
-                                                                  pre-resolved-model)]
+                                                                  pre-resolved-model
+                                                                  @request-budget-atom)]
 
                               (stamp-utilization! ca
                                                   (ctx-engine/utilization (:last-iter-input u)

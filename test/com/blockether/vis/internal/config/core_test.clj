@@ -1825,3 +1825,30 @@
              (it "keywordizes the gateway pairing address off the YAML surface"
                  (expect (= {:gateway {:advertise "10.0.0.5"}}
                             (config/runtime-config {"gateway" {"advertise" "10.0.0.5"}})))))
+
+(defdescribe
+  model-budget-config-test
+  (it
+    "carries explicit input limits and tokenizer through the Svar boundary"
+    (expect
+      (= {:name "m" :context 100000 :input-limit 70000 :output-limit 20000 :tokenizer "cl100k_base"}
+         (config/->svar-model {:name "m"
+                               :context 100000
+                               :input-limit 70000
+                               :output-limit 20000
+                               :tokenizer "cl100k_base"}))))
+  (it "decodes learned metadata separately from explicit model configuration"
+      (let [wire
+            {"providers" [{"id" "custom"
+                           "models" [{"name" "m" "input_limit" 50000}]
+                           "model_metadata" {"identity" "account-digest"
+                                             "models" [{"name" "m"
+                                                        "input_limit" 70000
+                                                        "tokenizer" "cl100k_base"}]}}]}
+
+            provider
+            (first (:providers (config/runtime-config wire)))]
+
+        (expect (= 50000 (get-in provider [:models 0 :input-limit])))
+        (expect (= 70000 (get-in provider [:model-metadata :models 0 :input-limit])))
+        (expect (= "account-digest" (get-in provider [:model-metadata :identity]))))))

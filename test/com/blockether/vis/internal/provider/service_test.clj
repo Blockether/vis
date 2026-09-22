@@ -7,6 +7,7 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.session.cancellation :as cancel]
             [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -559,8 +560,10 @@
     (with-redefs [providers/configured-providers
                   (constantly [entry])
 
-                  providers/fetch-models
-                  (constantly ["glm-5.2" "glm-5.3" "minimax-m2.5" "minimax-m2.5"])
+                  providers/fetch-model-catalog
+                  (constantly {:identity "test-account"
+                               :models [{:name "glm-5.2"} {:name "glm-5.3"} {:name "minimax-m2.5"}
+                                        {:name "minimax-m2.5"}]})
 
                   config/provider-template
                   (constantly {:id :fake
@@ -583,7 +586,7 @@
   (let [writes (atom 0)]
     (with-redefs [providers/configured-providers (constantly [{:id :fake
                                                                :models [{:name "glm-5.2"}]}])
-                  providers/fetch-models (constantly nil)
+                  providers/fetch-model-catalog (constantly nil)
                   providers/update-config-provider! (fn [& _]
                                                       (swap! writes inc))]
 
@@ -1042,3 +1045,71 @@
   (let [label @#'providers/status-entry-label]
     (is (= "Plan name" (label "plan_name")))
     (is (= "Plan name" (label :plan-name)))))
+
+(deftest refresh-updates-existing-model-metadata-without-overwriting-config
+  (let [entry
+        {:id :custom
+         :api-key "test"
+         :base-url "https://gateway.example.com/v1"
+         :models [{:name "m" :input-limit 50000}]}
+
+        written
+        (atom nil)]
+
+    (with-redefs [providers/configured-providers
+                  (constantly [entry])
+
+                  svar/models!
+                  (constantly [{:id "m"
+                                :context 100000
+                                :input-limit 70000
+                                :output-limit 20000
+                                :tokenizer "cl100k_base"}])
+
+                  providers/update-config-provider!
+                  (fn [_ f _]
+                    (reset! written (f entry)))]
+
+      (is (= [] (providers/refresh-models! :custom :test)))
+      (is (= (:models entry) (:models @written)))
+      (is (= 70000 (get-in @written [:model-metadata :models 0 :input-limit])))
+      (is (= "cl100k_base" (get-in @written [:model-metadata :models 0 :tokenizer])))
+      (is (string? (get-in @written [:model-metadata :identity]))))))
+
+(deftest metadata-refresh-retains-last-good-fields-only-for-the-same-account
+  (let [entry
+        (atom {:id :custom
+               :models [{:name "m" :input-limit 50000}]
+               :model-metadata
+               {:identity "a"
+                :models [{:name "m" :context 100000 :input-limit 70000 :tokenizer "cl100k_base"}]}})
+
+        catalog
+        (atom {:identity "a" :models [{:name "m" :input-limit 60000}]})
+
+        writes
+        (atom 0)]
+
+    (with-redefs [providers/configured-providers
+                  #(vector @entry)
+
+                  providers/fetch-model-catalog
+                  (fn [_]
+                    @catalog)
+
+                  providers/update-config-provider!
+                  (fn [_ f _]
+                    (swap! writes inc)
+                    (swap! entry f))]
+
+      (providers/refresh-models! :custom)
+      (is (= {:name "m" :context 100000 :input-limit 60000 :tokenizer "cl100k_base"}
+             (get-in @entry [:model-metadata :models 0])))
+      (reset! catalog nil)
+      (is (nil? (providers/refresh-models! :custom)))
+      (is (= 1 @writes))
+      (is (= 100000 (get-in @entry [:model-metadata :models 0 :context])))
+      (reset! catalog {:identity "b" :models [{:name "m" :input-limit 80000}]})
+      (providers/refresh-models! :custom)
+      (is (= {:name "m" :input-limit 80000} (get-in @entry [:model-metadata :models 0])))
+      (is (= [{:name "m" :input-limit 50000}] (:models @entry))))))

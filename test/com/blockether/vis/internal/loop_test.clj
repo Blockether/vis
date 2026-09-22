@@ -69,11 +69,14 @@
                                              router)
                          #'lp/honor-config-roots! (fn [r _]
                                                     (swap! order conj :roots)
-                                                    r)}
+                                                    r)
+                         #'providers/refresh-models-async! (fn [id _]
+                                                             (expect (= :fixture id))
+                                                             (swap! order conj :catalog))}
           (fn []
             (expect (= router (lp/get-router)))
             (expect (= router (lp/get-router)))
-            (expect (= [:extensions :config :build :roots] @order)))))))
+            (expect (= [:extensions :config :build :roots :catalog] @order)))))))
 
 (defdescribe
   auto-bound-provider-precedence-test
@@ -9544,32 +9547,35 @@
             counted
             (atom [])]
 
-        (try (with-redefs [svar-router/count-messages
-                           (fn ^long [model messages]
-                             (swap! counted into
-                               (for [message
-                                     messages
+        (try
+          (with-redefs [svar-router/count-messages
+                        (fn (^long [model messages] (count-messages model messages {}))
+                          (^long [model messages opts] (swap! counted into (for [message
+                                                                                 messages
 
-                                     :when (str/includes? (str (:content message)) probe)]
+                                                                                 :when
+                                                                                 (str/includes?
+                                                                                   (str (:content
+                                                                                          message))
+                                                                                   probe)]
 
-                                 [model message]))
-                             (count-messages model messages))
+                                                                             [model message]))
+                           (count-messages model messages opts)))
 
-                           svar/ask-code!
-                           (fn [_ _]
-                             {:stop-reason :end
-                              :content "Done"
-                              :provider :fixture
-                              :model "gpt-4o"
-                              :api-usage {:input-tokens 2000 :output-tokens 1}})]
+                        svar/ask-code!
+                        (fn [_ _]
+                          {:stop-reason :end
+                           :content "Done"
+                           :provider :fixture
+                           :model "gpt-4o"
+                           :api-usage {:input-tokens 2000 :output-tokens 1}})]
 
-               (let [result (lp/run-turn! environment
-                                          probe
-                                          {:routing {:provider :fixture :model "gpt-4o"}})]
-                 (expect (= "Done" (get-in result [:answer :answer])))
-                 (expect (seq @counted))
-                 (expect (= #{1} (set (vals (frequencies @counted)))))))
-             (finally (lp/dispose-environment! environment))))))
+            (let [result
+                  (lp/run-turn! environment probe {:routing {:provider :fixture :model "gpt-4o"}})]
+              (expect (= "Done" (get-in result [:answer :answer])))
+              (expect (seq @counted))
+              (expect (= #{1} (set (vals (frequencies @counted)))))))
+          (finally (lp/dispose-environment! environment))))))
 
 (defdescribe
   request-context-estimator-test
@@ -11474,7 +11480,8 @@
       (expect false "Council has not been implemented")
       (let
         [router
-         (helper-router :lmstudio nil)
+         ;; This history fixture needs space for the full system prompt plus Council input.
+         (assoc-in (helper-router :lmstudio nil) [:providers 0 :models 0 :context] 200000)
 
          a
          (lp/create-environment router {:db :memory})
@@ -11888,3 +11895,161 @@
             (expect (str/includes? (pr-str (last @requests)) "t2/i1/f1"))
             (expect (str/includes? (pr-str (last @requests)) "autocomplain #"))))
         (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
+  provider-context-contract-test
+  (it "drops learned limits when credentials change, retaining explicit limits and router state"
+      (let [provider
+            {:id :custom
+             :api-key "account-a"
+             :base-url "https://gateway.example.com/v1"
+             :models [{:name "m" :context 100000 :output-limit 20000}]}
+
+            catalog
+            {:identity (svar/model-catalog-identity (config/->svar-provider provider))
+             :models [{:name "m" :input-limit 70000 :tokenizer "cl100k_base"}]}
+
+            router
+            (lp/build-router {:providers [(assoc provider :model-metadata catalog)]})]
+
+        (expect (= 70000 (get-in router [:providers 0 :models 0 :input-limit])))
+        (with-redefs [registry/provider-by-id (constantly {:provider/get-token-fn
+                                                           (constantly {:token "account-b"})})]
+          (let [hydrated (hydrate-router-credentials router)
+                model (get-in hydrated [:providers 0 :models 0])]
+
+            (expect (identical? (:state router) (:state hydrated)))
+            (expect (nil? (:input-limit model)))
+            (expect (nil? (:tokenizer model)))
+            (expect (= 100000 (:context model)))
+            (expect (= 20000 (:output-limit model)))))))
+  (it "uses the routed input budget once, bounded by an optional caller ceiling"
+      (let [limit
+            @#'lp/iteration-context-limit
+
+            budget
+            {:max-input-tokens 70000 :output-reserve 20000}]
+
+        (expect (= 70000 (limit nil nil {:context 100000} budget)))
+        (expect (= 50000 (limit 50000 nil {:context 100000} budget)))
+        (expect (= 70000 (limit 200000 nil {:context 100000} budget)))))
+  (it
+    "calibrates the actual routed preflight and declines mismatched prefixes"
+    (let [messages
+          [{:role "user" :content "accepted request"}]
+
+          context
+          {:id "account-and-tools" :fixed-prefix-weight 20}
+
+          history
+          (atom {[:custom "m"]
+                 (#'lp/compact-prompt-cache-entry
+                  {:messages messages :input-tokens 12000 :prompt-cache-context context})})
+
+          factory
+          (ns-resolve 'com.blockether.vis.internal.loop 'request-input-token-estimator)]
+
+      (expect (some? factory))
+      (when factory
+        (let [estimate
+              (factory history)
+
+              request
+              {:provider-id :custom
+               :model "m"
+               :messages messages
+               :prompt-cache-context context
+               :tokenizer "cl100k_base"}]
+
+          (expect (= 12000 (estimate request)))
+          (doseq [changed [(assoc request :provider-id :peer) (assoc request :model "other")
+                           (assoc request :prompt-cache-context (assoc context :id "other-account"))
+                           (assoc request :messages [{:role "user" :content "rewritten"}])]]
+            (expect (nil? (estimate changed))))
+          (let [tail
+                [{:role "assistant" :content "new answer"}]
+
+                opts
+                {:tokenizer "cl100k_base"}]
+
+            (expect (= (+ 12000
+                          (- (svar-router/count-messages "m" tail opts)
+                             (svar-router/count-messages "m" [] opts)))
+                       (estimate (update request :messages into tail)))))
+          (reset! history {})
+          (expect (nil? (estimate request))))))))
+
+(defdescribe
+  calibrated-svar-preflight-boundary-test
+  (it
+    "uses the Vis usage anchor in actual Svar preflight across all wire dialects"
+    (doseq [style [:openai-compatible-chat :openai-compatible-responses :anthropic :gemini]]
+      (let [router (svar/make-router [{:id :fixture
+                                       :api-key "test"
+                                       :base-url "https://gateway.example.com/v1"
+                                       :api-style style
+                                       :models [{:name "m"
+                                                 :context 2000
+                                                 :input-limit 1000
+                                                 :output-limit 200
+                                                 :tokenizer "cl100k_base"}]}])
+            messages [{:role "user" :content (apply str (repeat 3000 "accepted prefix "))}]
+            opts {:messages messages :routing {:provider :fixture :model "m"}}
+            context (svar/prompt-cache-context router opts)
+            history (atom {[:fixture "m"]
+                           (#'lp/compact-prompt-cache-entry
+                            {:messages messages :input-tokens 800 :prompt-cache-context context})})
+            estimate (#'lp/request-input-token-estimator history)
+            calls (atom 0)]
+
+        (expect (> (svar-router/count-messages "m" messages) 1000))
+        (with-redefs-fn {#'svar-llm/chat-completion
+                         (fn [& _]
+                           (swap! calls inc)
+                           {:content "ok" :api-usage {:input-tokens 811 :output-tokens 1}})}
+          (fn []
+            (let [result (svar/ask-code! router (assoc opts :input-token-estimator estimate))]
+              (expect (= 811 (get-in result [:api-usage :input-tokens])))
+              (expect (= 1 @calls)))
+            (reset! history {})
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(svar/ask-code! router
+                                              (assoc opts :input-token-estimator estimate))))))))))
+
+(defdescribe
+  final-utilization-budget-test
+  (it
+    "reports the served route's request budget in both live CTX and the final answer"
+    (let [router
+          (svar/make-router
+            [{:id :fixture
+              :api-key "test"
+              :base-url "http://127.0.0.1:1/v1"
+              :models [{:name "large" :context 200000 :input-limit 150000 :output-limit 10000}]}
+             {:id :peer
+              :api-key "test"
+              :base-url "http://127.0.0.1:1/v1"
+              :models [{:name "small" :context 100000 :input-limit 70000 :output-limit 20000}]}])
+
+          environment
+          (lp/create-environment router {:db :memory})]
+
+      (try (with-redefs [svar/ask-code! (fn [_ _]
+                                          {:stop-reason :end
+                                           :content "Done"
+                                           :routed/provider-id :peer
+                                           :routed/model "small"
+                                           :api-usage {:input-tokens 1000 :output-tokens 1}})]
+             (let [result (lp/iteration-loop environment
+                                             "Return the result"
+                                             {:routing {:provider :fixture :model "large"}
+                                              :session-turn-id
+                                              (persistance/db-store-session-turn!
+                                                (:db-info environment)
+                                                {:parent-session-id (:session-id environment)
+                                                 :user-request "Return the result"})})]
+               (expect (= 70000
+                          (get-in @(:ctx-atom environment)
+                                  ["engine_utilization" "model_input_limit"])))
+               (expect (= 70000 (get-in result [:utilization "model_input_limit"])))))
+           (finally (lp/dispose-environment! environment))))))

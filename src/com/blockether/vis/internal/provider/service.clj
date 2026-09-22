@@ -97,28 +97,13 @@
 
 (defn- chat-model? [id] (not (re-find non-chat-pattern id)))
 
-(defn fetch-models
-  "List models for a vis provider via `svar/models!`.
-
-   Returns vec of chat model id strings, or nil on failure. Filters
-   out TTS / embedding / speech / image and provider-excluded models.
-
-   Routing through svar means the call automatically picks up
-   provider-specific OAuth headers (`anthropic-version`,
-   `anthropic-beta` for the Anthropic Claude subscription;
-   `chatgpt-account-id` for OpenAI Codex; bare Bearer for everyone
-   else).
-
-   `provider` is a vis-shaped provider map. We coerce to svar shape
-   (resolving OAuth tokens via the provider's `:provider/get-token-fn`
-   when `:api-key` is absent) and ask svar."
+(defn fetch-model-catalog
+  "Fetch normalized live models and their credential-safe account/endpoint identity.
+   Missing fields stay missing. No raw provider response or credential is persisted."
   [provider]
   (try (let [provider-id
              (:id provider)
 
-             ;; ->svar-provider needs at least one model on the provider
-             ;; for `normalize-provider` not to throw. The concrete model
-             ;; doesn't matter for `/models`.
              probe
              (cond-> provider
                (empty? (:models provider))
@@ -127,24 +112,32 @@
              svar-provider
              (config/->svar-provider probe)
 
-             ;; Honor `:router` opts (retry/network/budget) so the probe
-             ;; respects the same policy a real turn would.
              router
              (svar/make-router [svar-provider] (config/router-opts (config/current-config)))
 
-             raw
-             (svar/models! router)]
+             models
+             (->> (svar/models! router)
+                  (keep (fn [m]
+                          (let [id (if (string? m) m (or (:id m) (:name m)))]
+                            (when (and (string? id)
+                                       (chat-model? id)
+                                       (config/provider-model-visible? provider-id id))
+                              (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
+                  (reduce (fn [acc m]
+                            (assoc acc (:name m) m))
+                          (sorted-map))
+                  vals
+                  vec)]
 
-         (->> raw
-              (map (fn [m]
-                     (or (:id m) (:name m) (str m))))
-              (filter string?)
-              (filter chat-model?)
-              (filter #(config/provider-model-visible? provider-id %))
-              distinct
-              sort
-              vec))
+         (when (seq models) {:identity (svar/model-catalog-identity svar-provider) :models models}))
        (catch Exception _ nil)))
+
+(defn fetch-models
+  "List visible chat model ids from the live catalog, or nil on failure."
+  [provider]
+  (some->> (fetch-model-catalog provider)
+           :models
+           (mapv :name)))
 
 (def ^:private dated-variant-pattern
   "Matches model IDs that are dated snapshots, e.g. gpt-4o-2024-08-06."
@@ -1514,55 +1507,54 @@
   nil)
 
 (defn refresh-models!
-  "Persist every model `provider-id`'s LIVE catalog serves and config does not name.
-
-   ONE `svar/models!` probe, then a merge. A configured model keeps its place and
-   its map verbatim — the order a user wrote in vis.yml is the order pickers
-   render — and each live id config misses is appended, carrying the PRESET's
-   entry when the preset declares one so a vendor's `:api-style` / `:context`
-   survives. Nothing is ever removed: a name the catalog stopped listing may
-   still be someone's pinned default, and a failed probe must not empty a fleet.
-
-   This is what keeps a fleet from advertising the catalog of the build that
-   added it: `:default-models` is frozen at BUILD time (see the OpenCode Go
-   vendor note), and every `/v1/router` row serves `:models` from CONFIG, so a
-   model released after the build was unreachable until config learned about it.
-
-   Returns the appended names, empty when config was already current, nil when
-   the probe failed. BLOCKS on the network — UI paths call
-   [[refresh-models-async!]]."
+  "Refresh existing model metadata and append new live ids, preserving explicit config
+   and order. The learned snapshot is account/endpoint-scoped and stored separately.
+   Partial replies retain last good fields for that identity; failure changes nothing.
+   Returns appended names, [] for metadata-only/no change, nil for a failed probe."
   ([provider-id] (refresh-models! provider-id nil))
   ([provider-id source]
    (when-let [provider (some #(when (= provider-id (:id %)) %) (configured-providers))]
-     (when-let [live (seq (fetch-models provider))]
+     (when-let [catalog (fetch-model-catalog provider)]
        (let [preset (into {}
                           (map (juxt :name identity))
                           (default-model-configs (config/provider-template provider-id)))
+             live (vec (distinct (map :name (:models catalog))))
              unknown (fn [entry]
                        (let [known (into #{} (keep config/model-name) (:models entry))]
-                         (into [] (comp (distinct) (remove known)) live)))]
+                         (filterv (complement known) live)))
+             merge-catalog
+             (fn [entry]
+               (let [prior (:model-metadata entry)
+                     old (when (= (:identity prior) (:identity catalog)) (:models prior))
+                     models (reduce (fn [acc m]
+                                      (update acc (:name m) merge m))
+                                    (into (sorted-map) (map (juxt :name identity)) old)
+                                    (:models catalog))]
 
-         (if (empty? (unknown provider))
-           []
-           (let [added (volatile! [])]
-             ;; Re-derive under the machine-store lock. The read above only
-             ;; decides whether a write is worth taking it at all.
-             (update-config-provider!
-               provider-id
-               (fn [entry]
-                 (vreset! added (unknown entry))
-                 (if (seq @added)
-                   (assoc entry
-                     :models (into (vec (:models entry)) (map #(or (preset %) {:name %})) @added))
-                   entry))
-               source)
-             @added)))))))
+                 (assoc catalog :models (vec (vals models)))))
+             update-entry (fn [entry]
+                            (-> entry
+                                (assoc :model-metadata (merge-catalog entry))
+                                (update :models
+                                        #(into (vec %)
+                                               (map (fn [id]
+                                                      (or (preset id) {:name id})))
+                                               (unknown entry)))))
+             added (volatile! [])]
+
+         (when (not= provider (update-entry provider))
+           (update-config-provider! provider-id
+                                    (fn [entry]
+                                      (vreset! added (unknown entry))
+                                      (update-entry entry))
+                                    source))
+         @added)))))
 
 (defn refresh-models-async!
   "Background [[refresh-models!]]: the caller answers now, the catalog lands after.
 
-   Every trigger is a UI path — a provider added, a sign-in landing, a status
-   recheck — so the probe must NEVER join the response that fired it. One probe
+   Router startup/rebuild and UI actions schedule discovery without joining the
+   response that triggered it. One probe
    per provider at a time, at most one per `models-refresh-window-ms`, and errors
    are swallowed: a catalog one build old is a poor picker, never a failed
    request. Returns nil immediately."
