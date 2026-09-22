@@ -491,7 +491,7 @@
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
         (expect (= [:logs :gateway-events :display :tui-attachments :python-archives :python-guest
-                    :python-runtime :python-sources]
+                    :python-pycache :python-runtime :python-sources]
                    (mapv :id (:targets report))))))
   (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
       ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
@@ -761,4 +761,45 @@
                         (expect (.isDirectory (version-dir runtime/version)))
                         (expect (.isDirectory (version-dir "9.9.9")))
                         (expect (pos? (long (:bytes (target report :python-runtime)))))
-                        (expect (zero? (long (:deleted (target report :python-sources)))))))))))
+                        (expect (zero? (long (:deleted (target report :python-sources))))))))))
+  (it
+    "reclaims compiled bytecode whose source is gone and keeps what a live source still needs"
+    (let [python
+          (tmp-dir "vis-hk-pycache")
+
+          sources
+          (tmp-dir "vis-hk-pycache-src")
+
+          mirror
+          (fn [^File dir]
+            (str "pycache/" (subs (.getCanonicalPath dir) 1)))
+
+          live
+          (io/file sources "live")
+
+          emptied
+          (io/file sources "emptied")
+
+          vanished
+          (io/file sources "vanished")]
+
+      (touch! live "kept.py" 0 "SOURCE = 1\n")
+      (.mkdirs emptied)
+      ;; The entry a live source still wants is deliberately the OLDEST file here:
+      ;; bytecode is not re-stamped when it is imported, so age judges it backwards.
+      (touch! python (str (mirror live) "/kept.cpython-314.pyc") 90 "bytecode")
+      (touch! python (str (mirror live) "/removed.cpython-314.opt-1.pyc") 0 "bytecode")
+      (touch! python (str (mirror emptied) "/only.cpython-314.pyc") 0 "bytecode")
+      (touch! python (str (mirror vanished) "/gone.cpython-314.pyc") 0 "bytecode")
+      (with-homes
+        {:python python}
+        (fn []
+          (let [row (target (housekeeping/sweep-stale! nil) :python-pycache)]
+            (expect (pos? (long (:deleted row))))
+            (expect (pos? (long (:bytes row))))
+            (expect (.isFile (io/file python (str (mirror live) "/kept.cpython-314.pyc"))))
+            (expect (not (.exists (io/file python
+                                           (str (mirror live) "/removed.cpython-314.opt-1.pyc")))))
+            (expect (not (.exists (io/file python (mirror emptied)))))
+            (expect (not (.exists (io/file python (mirror vanished)))))
+            (expect (.isDirectory (io/file sources "live")))))))))

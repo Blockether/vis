@@ -30,6 +30,10 @@
    claims existed still waits out the retention window.
    `runtime-retention-plan` previews that classification without deleting.
 
+   Compiled bytecode under `python/pycache` is judged by EXISTENCE instead: the
+   prefix mirrors absolute source paths, so an entry whose source is gone is garbage
+   whatever its age, and one whose source is live is a cache the next import wants.
+
    `purge!` routes draft rows, including discarded-root retries, through
    `workspace/abandon!` so backend bookkeeping owns primary and extra-root release.
    A failed release never falls back to raw deletion. Only directories with no row
@@ -425,6 +429,72 @@
           {:deleted 0 :bytes 0}
           (or (.listFiles root) (make-array File 0))))
 
+(defn- pycache-source
+  "The source path a bytecode entry mirrors. The prefix mirrors ABSOLUTE source
+   paths, so an entry's path below the root, rooted again, IS its source."
+  ^File [^File root ^File entry]
+  (io/file File/separator (str (.relativize (.toPath root) (.toPath entry)))))
+
+(defn- pycache-source-present?
+  "Whether the module a `.pyc` caches still exists. CPython names an entry after the
+   source stem and its own tag — `c.py` becomes `c.cpython-314.pyc`, with an `.opt-N`
+   infix for an optimized build — so the stem ends where the tag begins."
+  [^File root ^File pyc]
+  (let [entry-name
+        (.getName pyc)
+
+        tag
+        (.indexOf entry-name ".cpython-")
+
+        stem
+        (if (neg? tag) entry-name (subs entry-name 0 tag))
+
+        dir
+        (pycache-source root (.getParentFile pyc))]
+
+    (or (.isFile (io/file dir (str stem ".py"))) (.isFile (io/file dir (str stem ".pyw"))))))
+
+(defn- sweep-pycache!
+  "Reclaim compiled bytecode whose source is gone.
+
+   The interpreter starts with its `pycache_prefix` at `~/.vis/python/pycache`, so an
+   import never writes a `__pycache__` beside a tree that ships read-only and shared.
+   The prefix MIRRORS the absolute source path, which makes the store self-describing
+   — `<prefix>/tmp/x/c.cpython-314.pyc` caches `/tmp/x/c.py` — and unbounded: every
+   temp directory, deleted checkout and interpreter version this sweep reclaims leaves
+   its bytecode behind, and nothing ever reads it again.
+
+   Bytecode is pure cache, so the rule is EXISTENCE, not age. Age would be actively
+   wrong here: an entry is not re-stamped when it is used, so the hottest caches — the
+   interpreter's own stdlib — are the oldest files in the store. A mirrored directory
+   whose source directory is gone is reclaimed whole, without descending; under a
+   source that still exists entries are judged one by one, and a directory the sweep
+   emptied is removed.
+
+   Returns `{:deleted :bytes}`."
+  [^File root ^String canon]
+  (letfn
+    [(visit [acc ^File dir]
+       (reduce (fn [acc ^File child]
+                 (cond (Files/isSymbolicLink (.toPath child)) acc
+                       (.isDirectory child) (if-not (.isDirectory (pycache-source root child))
+                                              (add-counts acc (reclaim-dir! child canon))
+                                              (let [swept (visit acc child)]
+                                                (if (delete-quietly! (.toPath child))
+                                                  (add-counts swept {:deleted 1 :bytes 0})
+                                                  swept)))
+                       (and (.endsWith (.getName child) ".pyc")
+                            (not (pycache-source-present? root child))
+                            (under? canon (canonical child)))
+                       (let [size (.length child)]
+                         (if (delete-quietly! (.toPath child))
+                           (add-counts acc {:deleted 1 :bytes size})
+                           acc))
+                       :else acc))
+               acc
+               (or (.listFiles dir) (make-array File 0))))]
+    (visit {:deleted 0 :bytes 0} root)))
+
 (defn- prune-version-stores!
   "Reclaim installed interpreter and source versions no process serves any more.
    [[runtime-retention-plan]] decides which versions are candidates at all — the
@@ -476,7 +546,8 @@
    `{:targets [{:id :root :days :cutoff-ms :file-count :deleted :bytes
    :dirs-removed :over-budget-deleted}…] :deleted :bytes}` — `:deleted` counts
    entries actually removed and `:bytes` the space reclaimed. The claim-based
-   rows are `:python-guest`, `:python-runtime` and `:python-sources`.
+   rows are `:python-guest`, `:python-runtime` and `:python-sources`;
+   `:python-pycache` answers to the source a bytecode entry mirrors, not to age.
 
    Never throws: a missing directory is zero work, and a permission-denied
    subtree is skipped rather than allowed to take startup down.
@@ -540,12 +611,21 @@
                   (sweep-guest-store! guest-root (canonical guest-root) store-cutoff)
                   {:deleted 0 :bytes 0}))
 
+         ^File pycache-root
+         (python-dir "pycache")
+
+         pycache
+         (merge {:id :python-pycache :root (canonical pycache-root)}
+                (if (.isDirectory pycache-root)
+                  (sweep-pycache! pycache-root (canonical pycache-root))
+                  {:deleted 0 :bytes 0}))
+
          versions
          (mapv #(merge {:days store-window :cutoff-ms store-cutoff} %)
                (prune-version-stores! store-cutoff))
 
          all
-         (into (conj reports guest) versions)]
+         (into (conj reports guest pycache) versions)]
 
      {:targets all :deleted (reduce + 0 (map :deleted all)) :bytes (reduce + 0 (map :bytes all))})))
 
