@@ -63,6 +63,9 @@ describe('a desk keeps the list beside the conversation', () => {
     // Regression: the desktop rail must fit project names and numbered pages together.
     expect(sidebar.className).toContain('w-[33%]');
     expect(sidebar.className).toContain('min-w-80');
+    // The rail that is up carries the ride it will take when it is put away.
+    expect(sidebar.className).toContain('transition-[margin-left,visibility,border-color]');
+    expect(sidebar.className).toContain('motion-reduce:transition-none');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     // The shell's own bar stays over both columns.
     expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
@@ -106,7 +109,13 @@ describe('a desk keeps the list beside the conversation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Hide the session list' }));
     // With nothing open, putting the list away leaves the empty pane and the
     // bar's explicit way back; it never relabels a list that is still visible.
-    expect((main.firstElementChild as HTMLElement).className).toBe('hidden');
+    const away = main.firstElementChild as HTMLElement;
+    // It slides under the pane instead of vanishing: same width, margin pulled
+    // off the seam, the seam's rule faded, out of the tab order once gone.
+    expect(away.className).toContain('ml-[min(-20rem,-33%)]');
+    expect(away.className).toContain('invisible');
+    expect(away.className).toContain('border-transparent');
+    expect(away.className).toContain('transition-[margin-left,visibility,border-color]');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Show the session list' })).toBeVisible();
     expect(localStorage.getItem('vis.sidebar')).toBe('hidden');
@@ -119,7 +128,7 @@ describe('a desk keeps the list beside the conversation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide the session list' }));
     // The transcript stands alone, still under the shell's bar, still with no arrow.
-    expect((main.firstElementChild as HTMLElement).className).toBe('hidden');
+    expect((main.firstElementChild as HTMLElement).className).toContain('ml-[min(-20rem,-33%)]');
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
     expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();

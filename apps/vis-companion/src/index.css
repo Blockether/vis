@@ -357,30 +357,6 @@
   }
 }
 
-/* The desk's sidebar toggle answers its tap with the direction the list went:
-   putting it away leans the glyph toward the seam and lets it settle; bringing
-   it back arrives from where the list came from. The mark is re-keyed on the
-   state, so the keyframe replays on the tap — `backwards` fill for the same
-   WebKit reason as above. Both frames move `translate` and `opacity` only, so
-   the work stays on the compositor. */
-@theme {
-  --animate-sidebar-away: sidebar-away 240ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-  --animate-sidebar-return: sidebar-return 180ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-
-  @keyframes sidebar-away {
-    45% {
-      translate: -2px 0;
-    }
-  }
-
-  @keyframes sidebar-return {
-    from {
-      opacity: 0.5;
-      translate: -2px 0;
-    }
-  }
-}
-
 /* The Braille spinner. It used to be React state: FOUR copies of
    `setInterval(() => setNow(Date.now()), 100)` (sessions skeleton, session
    loading veil, live-progress line, QR scanner) each swapping ONE glyph inside

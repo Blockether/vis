@@ -1168,6 +1168,18 @@ export function App() {
   const sessionsVisible =
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
+  // Putting the list away slides it under the pane that takes its place: the box's
+  // width stands still, so the rows never rewrap and the reader's scroll, scope and
+  // folds survive the round trip; only the margin pulls it off the seam. `visibility`
+  // rides the same transition, so the list leaves the tab order only once the ride
+  // is over, and the seam's rule fades away with it. The collapse margin mirrors
+  // `min-w-80` and `w-[33%]` exactly, so the box lands flush off the edge. A phone
+  // keeps its plain `hidden` cut, and a motion-reduce reader gets the instant move.
+  const sidebarTravelClass =
+    'transition-[margin-left,visibility,border-color] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none';
+  const sidebarUpClass = `h-full min-w-80 w-[33%] shrink-0 border-r border-dialog-edge ${sidebarTravelClass}`;
+  const sidebarAwayClass = `h-full ml-[min(-20rem,-33%)] invisible border-transparent ${sidebarTravelClass}`;
+
   return (
     <Shell>
       {(isChromeVisible || edgeBack.isSwiping) && (
@@ -1203,9 +1215,11 @@ export function App() {
             ref={edgeBack.under}
             className={
               !sessionsVisible
-                ? 'hidden'
+                ? canSplit
+                  ? sidebarAwayClass
+                  : 'hidden'
                 : isSplit
-                  ? 'h-full min-w-80 w-[33%] shrink-0 border-r border-dialog-edge'
+                  ? sidebarUpClass
                   : 'h-full'
             }
           >

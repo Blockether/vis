@@ -806,18 +806,6 @@ describe('the way back and the desk', () => {
       'false',
     );
   });
-
-  it('SidebarToggle answers the tap with the way the list went', () => {
-    const { rerender } = render(<SidebarToggle isShown={false} />);
-    expect(
-      screen.getByRole('button', { name: 'Show the session list' }).querySelector('svg'),
-    ).toHaveClass('animate-sidebar-away', 'motion-reduce:animate-none');
-
-    rerender(<SidebarToggle isShown />);
-    expect(
-      screen.getByRole('button', { name: 'Hide the session list' }).querySelector('svg'),
-    ).toHaveClass('animate-sidebar-return');
-  });
 });
 
 // The browser paints a password field's mask its own way; the vocabulary only
