@@ -539,7 +539,12 @@
               :modified-at modified-at
               :turn-count (count turns)}
        (:external-id session)
-       (assoc :external-id (:external-id session))))))
+       (assoc :external-id (:external-id session))
+
+       ;; The human's STAR, exactly as the gateway keeps it: a rank, absent when
+       ;; the session carries no star, so a row never claims one it does not have.
+       (:favorite-rank session)
+       (assoc :favorite-rank (:favorite-rank session))))))
 
 (defn- recency-key
   "Newest-first sort key over `:created-at` (inst or epoch millis)."
@@ -1464,6 +1469,7 @@
                "String-keyed row `{id, channel, title, goal, turn_count, created_at, modified_at, "
                "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
                "(`{id, outcome, user_request}`) when known. `goal` is the persisted goal or None. "
+               "A starred session adds `favorite_rank` — the human's star order, lowest first. "
                "None when nothing matches.")}))
 
 (def list-sessions-symbol
@@ -1482,7 +1488,8 @@
           "stringify or slice blindly.")
      :result
      (str "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`; "
-          "`goal` is the persisted goal or None. A matched "
+          "`goal` is the persisted goal or None. A starred session adds `favorite_rank`, the "
+          "human's star order, lowest first. A matched "
           "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
           "`request_snippet`/`reply_snippet` windows.")}))
 

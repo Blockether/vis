@@ -1429,11 +1429,39 @@ therapy line 2"
              "modified_at" #inst "2024-01-03T00:00:00.000-00:00"
              "created_at" #inst "2024-01-01T00:00:00.000-00:00"}]
 
-        (expect (= [1 1704240000000 2] (session-sort-key latest-with-turns)))
+        (expect (= [Long/MIN_VALUE 1 1704240000000 2] (session-sort-key latest-with-turns)))
         (expect (= [:more-turns :latest :old :empty]
                    (mapv #(get % "id")
                          (latest-modified-first [old-with-turns latest-empty latest-with-turns
                                                  same-latest-more-turns]))))))
+  ;; The star is the one piece of ordering a human typed in themselves, and this
+  ;; picker ignored it: a session pinned on top in the app sank here among cold rows.
+  (it "pins starred sessions above everything else, oldest star first"
+      (let [starred-late
+            {"id" :starred-late
+             "turn_count" 9
+             "favorite_rank" 7
+             "modified_at" #inst "2024-01-02T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
+
+            starred-early
+            {"id" :starred-early
+             "turn_count" 0
+             "favorite_rank" 2
+             "modified_at" #inst "2024-01-01T00:00:00.000-00:00"
+             "created_at" #inst "2024-01-01T00:00:00.000-00:00"}
+
+            newest-plain
+            {"id" :plain
+             "turn_count" 4
+             "modified_at" #inst "2024-06-01T00:00:00.000-00:00"
+             "created_at" #inst "2024-06-01T00:00:00.000-00:00"}]
+
+        (expect (= -2 (first (session-sort-key starred-early))))
+        (expect (= Long/MIN_VALUE (first (session-sort-key newest-plain))))
+        (expect (= [:starred-early :starred-late :plain]
+                   (mapv #(get % "id")
+                         (latest-modified-first [newest-plain starred-late starred-early]))))))
   (it
     "copies transcript content without role labels, answer separators, or model metadata"
     (let [ranges

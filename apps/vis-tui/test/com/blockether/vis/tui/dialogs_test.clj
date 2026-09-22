@@ -2509,6 +2509,64 @@
                    (expect (= "● live" (:status (row nil live))))
                    (expect (= "● focused · live" (:status (row "s-live" live)))))))
 
+;; The star is the GATEWAY's mark (`session_soul.favorite_rank`), and this terminal
+;; painted none of it: a session starred on the phone stood here unmarked, sunk
+;; among cold rows, with no way to star one from the keyboard at all.
+(defdescribe
+  navigator-favorite-test
+  "The session list wears the human's star and leads each band with it."
+  (it "carries the gateway's rank onto the row"
+      (let [row
+            (fn [session]
+              ((var-get #'dlg/navigator-session-row) nil {} session))
+
+            starred
+            (row {"id" "s-star" "title" "Deploy" "favorite_rank" 3})]
+
+        (expect (true? (:favorite? starred)))
+        (expect (= 3 (:favorite-rank starred)))
+        (expect (not (:favorite? (row {"id" "s-plain" "title" "Deploy"}))))))
+  (it "leads a band with the starred rows, oldest star first"
+      (let [group-rows
+            (var-get #'dlg/group-rows-by-dir)
+
+            rows
+            [{:id "plain" :dir "/w" :position 0}
+             {:id "late-star" :dir "/w" :position 1 :favorite-rank 5}
+             {:id "early-star" :dir "/w" :position 2 :favorite-rank 1}]]
+
+        (expect (= ["early-star" "late-star" "plain"] (mapv :id (group-rows rows))))))
+  (it "paints the star on the starred row alone"
+      (let [{:keys [^TerminalScreen screen]}
+            (term/virtual-screen)
+
+            draw-session
+            (var-get #'dlg/draw-navigator-session!)
+
+            entry
+            {:focused? false :status "idle" :title "Deploy" :session "abc1234" :modified "now"}
+
+            line
+            (fn [row]
+              (apply str
+                (for [column (range 40)]
+                  (.getCharacterString (.getBackCharacter screen (int column) (int row))))))]
+
+        (try (let [g (.newTextGraphics screen)]
+               (draw-session g
+                             0
+                             0
+                             40
+                             (assoc entry
+                               :favorite? true
+                               :favorite-rank 1)
+                             false)
+               (draw-session g 0 4 40 entry false)
+               (expect (str/includes? (line 0) "★"))
+               (expect (str/includes? (line 0) "Deploy"))
+               (expect (not (str/includes? (line 4) "★"))))
+             (finally (.stopScreen screen))))))
+
 (defdescribe
   navigator-input-needed-test
   "The session list's own answer to \"which of these is waiting on ME\". The row

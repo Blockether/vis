@@ -801,6 +801,13 @@
   [sid pid]
   (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:project_id (when pid (str pid))}))
 
+(defn set-session-favorite!
+  "Star or unstar a session. The GATEWAY owns the mark: it allocates the rank
+   (`session_soul.favorite_rank`) and echoes the soul, so this terminal and the
+   app cannot disagree about which sessions a human starred. Returns the soul."
+  [sid is-favorite]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:is_favorite (boolean is-favorite)}))
+
 (defn reorder-project-sessions!
   "Persist a project's manual session order in one gateway call. Loose named
    sessions are adopted atomically; guests owned by another project are not moved."
@@ -2479,6 +2486,8 @@
 (def gateway-set-router-default! set-router-default!)
 
 (def gateway-set-router-fallback! set-router-fallback!)
+
+(def gateway-set-session-favorite! set-session-favorite!)
 
 (def gateway-set-session-model! set-session-model!)
 

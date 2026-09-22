@@ -884,6 +884,26 @@
                (expect (every? #(not (contains? % :rank)) index)))
              (finally (vis/db-dispose-connection! s))))))
 
+;; The star lives in the gateway's own soul row, and every client of a machine reads
+;; that one copy. This index dropped it, so an agent reading the fleet could not tell
+;; a session the human pinned from any other row, while the app painted it on top.
+(defdescribe list-sessions-favorite-test
+             (it "carries the human's star into the index row"
+                 (let [s (vis/db-create-connection! :memory)]
+                   (try (let [starred (h/store-session! s {:channel :tui :title "starred"})
+                              _ (h/store-session! s {:channel :tui :title "plain"})
+                              rank (persistance/db-set-session-favorite! s starred true)
+                              by-title (into {}
+                                             (map (juxt :title identity))
+                                             (@#'introspection/foundation-sessions-data
+                                              {:db-info s}))]
+
+                          (expect (some? rank))
+                          (expect (= rank (:favorite-rank (get by-title "starred"))))
+                          ;; An unstarred row says nothing, instead of claiming a rank it lacks.
+                          (expect (not (contains? (get by-title "plain") :favorite-rank))))
+                        (finally (vis/db-dispose-connection! s))))))
+
 (defdescribe
   get-session-descriptor-test
   (it "answers ONE row - identity, counts and the last turn - with no transcript"

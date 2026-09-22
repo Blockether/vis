@@ -5140,6 +5140,11 @@
      :session-group (not-empty (str (get group "name")))
      :session-group-color (not-empty (str (get group "color")))
      :position (get session "project_position")
+     ;; The human's STAR, as the gateway keeps it (`session_soul.favorite_rank`,
+     ;; nil = unstarred). A rank, never a display value: rows only compare it, so
+     ;; the starred band paints in the same order here as in the app.
+     :favorite-rank (get session "favorite_rank")
+     :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
      :work-dir work-dir
      :status (cond awaiting-input? (if (> awaiting-count 1)
@@ -5187,7 +5192,11 @@
                   (mapcat (fn [group]
                             (let [group-rows (filter #(= group (:session-group-id %)) dir-rows)]
                               (concat (filter :focused? group-rows)
-                                      (sort-by #(or (:position %) Long/MAX_VALUE)
+                                      ;; A star is the one piece of ordering a human typed in
+                                      ;; themselves, so it leads its band, oldest star first.
+                                      (sort-by (juxt #(if (:favorite-rank %) 0 1)
+                                                     #(long (or (:favorite-rank %) 0))
+                                                     #(long (or (:position %) Long/MAX_VALUE)))
                                                (remove :focused? group-rows)))))
                           (concat group-order [nil]))))
               order))))
@@ -5586,7 +5595,7 @@
         (max 1 (- (long width) 2 status-w 2))
 
         title
-        (p/ellipsize (:title entry) title-w)
+        (p/ellipsize (str (when (:favorite? entry) "★ ") (:title entry)) title-w)
 
         status-x
         (+ (long x) (max 2 (- (long width) status-w)))
@@ -5956,7 +5965,7 @@
                               hint-row
                               inner-w
                               [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
-                               ["C-d" "delete"] ["C-b" "project"]
+                               ["C-s" "star"] ["C-d" "delete"] ["C-b" "project"]
                                [(keymap/chord \u)
                                 (if @show-empty-untitled? "hide empty" "show empty")]
                                ["Esc" "cancel"]])
@@ -6022,6 +6031,15 @@
                   (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                     {:action :fork :id id}
                     (recur))
+                  (and (input/ctrl-modifier? key)
+                       (= KeyType/Character (key-type key))
+                       (= (lower-key-character key) \s))
+                  ;; Ctrl+S toggles the human's star. The row already carries the
+                  ;; gateway's rank, so the intent is simply its opposite.
+                  (let [entry (and (pos? total) (nth visible-rows @selected))]
+                    (if-let [id (:id (:target entry))]
+                      {:action :favorite :id id :favorite? (not (:favorite? entry))}
+                      (recur)))
                   (and (input/ctrl-modifier? key)
                        (= KeyType/Character (key-type key))
                        (= (lower-key-character key) \d))

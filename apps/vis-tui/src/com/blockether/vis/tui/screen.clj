@@ -5327,7 +5327,11 @@
 (defn- session-sort-key
   "Default session picker ordering.
 
-   Prefer sessions with real turns, then newest latest-turn/modified time,
+   A STAR is the one piece of ordering a human typed in themselves, so it outranks
+   every heuristic below it: starred sessions lead, oldest star first. The gateway
+   allocates `favorite_rank` as max + 1, so two stars can never tie.
+
+   Then prefer sessions with real turns, then newest latest-turn/modified time,
    then higher turn count. This keeps the latest active session first while
    still pushing empty/new shells behind sessions with history."
   [s]
@@ -5338,9 +5342,15 @@
         (get s "modified_at")
 
         created-at
-        (get s "created_at")]
+        (get s "created_at")
 
-    [(if (pos? (long (or turn-count 0))) 1 0)
+        favorite-rank
+        (get s "favorite_rank")]
+
+    ;; `latest-modified-first` compares DESCENDING, so the starred band needs the
+    ;; LARGER key: negate the rank, and leave every unstarred row underneath it.
+    [(if favorite-rank (- (long favorite-rank)) Long/MIN_VALUE)
+     (if (pos? (long (or turn-count 0))) 1 0)
      (or (dlg/date->millis modified-at) (dlg/date->millis created-at) 0) (long (or turn-count 0))]))
 
 (defn- latest-modified-first
@@ -6671,6 +6681,23 @@
                                 (vis/notify! (str "Could not delete session: " (ex-message t))
                                              :level :warn
                                              :ttl-ms copy-success-ttl-ms)))))
+                     ;; Ctrl+S in the navigator → the human's STAR. The gateway owns
+                     ;; the mark and allocates its rank, so the PATCH is the whole
+                     ;; write: reopening the list paints the row the gateway echoed.
+                     (= :favorite (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (let [favorite? (boolean (:favorite? choice))]
+                         (try (vis/gateway-set-session-favorite! target-id favorite?)
+                              (vis/notify! (if favorite? "Starred session" "Unstarred session")
+                                           :level :success
+                                           :ttl-ms copy-success-ttl-ms)
+                              (catch Throwable t
+                                (vis/notify! (str (if favorite?
+                                                    "Could not star session: "
+                                                    "Could not unstar session: ")
+                                                  (ex-message t))
+                                             :level :warn
+                                             :ttl-ms copy-success-ttl-ms)))))
                      ;; Ctrl+O in the navigator → move a session into a GROUP
                      ;; inside its project. Pick an existing group, make a new
                      ;; one, or leave the session ungrouped.
@@ -6787,7 +6814,8 @@
                                 (show-session-picker! screen (current-session-id) @state/app-db)]
                        (switch-session! choice)
                        ;; Refresh after mutations so pruning can continue.
-                       (when (#{:delete :project :reorder} (:action choice)) (show-sessions!)))))
+                       (when (#{:delete :favorite :project :reorder} (:action choice))
+                         (show-sessions!)))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every
                  ;; configured model (active one marked) plus a "★ router
