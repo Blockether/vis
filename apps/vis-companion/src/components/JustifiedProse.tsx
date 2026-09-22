@@ -3,7 +3,7 @@ import {
   cloneElement,
   Fragment,
   isValidElement,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,6 +11,13 @@ import {
   type ReactNode,
 } from 'react';
 import type { Prepared } from '@kitlangton/justice';
+
+// Load before prose can mount, not after native text has already painted. Justice
+// constructs a segmenter at module evaluation, so unsupported browsers skip it.
+const engine =
+  typeof Intl.Segmenter === 'function'
+    ? await import('@kitlangton/justice').catch(() => null)
+    : null;
 
 type InlineProps = { children?: ReactNode; node?: { tagName?: string } };
 type InlineContent = {
@@ -189,7 +196,7 @@ type Composition = { content: InlineContent; lines: ProseLine[]; spaceFont: CSSP
  */
 const SETTLE_MS = 80;
 
-/** Progressive paragraph composition; React keeps ownership of all visible text. */
+/** Compose opening prose before paint; React keeps ownership of all visible text. */
 export function JustifiedProse({
   as: Tag = 'p',
   children,
@@ -205,10 +212,11 @@ export function JustifiedProse({
   const content = useMemo(() => (enabled ? inlineContent(children) : null), [children, enabled]);
   const [composition, setComposition] = useState<Composition | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = ref.current;
     if (
       !element ||
+      !engine ||
       content === null ||
       typeof Intl.Segmenter !== 'function' ||
       typeof ResizeObserver !== 'function'
@@ -219,12 +227,11 @@ export function JustifiedProse({
     let prepared: Prepared | undefined;
     let fontKey = '';
     let lastWidth = 0;
-    /** The width the last resize reported, and the wait for the box to stop moving. */
-    let seenWidth = 0;
+    /** Seed the initial width so the observer's first delivery is not a resize. */
+    let seenWidth = parseFloat(getComputedStyle(element).width) || 0;
     let settleTimer = 0;
     /** True while the box is moving and the paragraph is left to wrap natively. */
     let riding = false;
-    let engine: typeof import('@kitlangton/justice') | undefined;
     const { text } = content;
     const words = [...content.measured.matchAll(/[^ \t\r\n\f]+/g)];
     // Snapshot only the original markup, never a previous composition's line spans.
@@ -351,18 +358,19 @@ export function JustifiedProse({
         },
       });
     };
+    const compose = () => {
+      // Measurement may be unavailable in an embedded or hidden document.
+      try {
+        fit();
+      } catch {
+        setComposition(null);
+      }
+    };
     const schedule = () => {
       // Nothing is composed while the box is moving; `rest` comes back for it.
       if (riding) return;
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        // Measurement may be unavailable in an embedded or hidden document.
-        try {
-          fit();
-        } catch {
-          setComposition(null);
-        }
-      });
+      frame = requestAnimationFrame(compose);
     };
     /** The box has come to rest: compose for the width it stopped at. */
     const rest = () => {
@@ -401,6 +409,8 @@ export function JustifiedProse({
       prepared = undefined;
       schedule();
     };
+    // Commit the first line layout synchronously, before the browser can paint it.
+    compose();
     const observer = new ResizeObserver(resized);
     observer.observe(element);
     window.addEventListener('resize', schedule);
@@ -409,15 +419,6 @@ export function JustifiedProse({
     void document.fonts?.ready.then(() => {
       if (!disposed) fontsChanged();
     });
-    void import('@kitlangton/justice')
-      .then((loaded) => {
-        if (disposed) return;
-        engine = loaded;
-        schedule();
-      })
-      .catch(() => {
-        if (!disposed) setComposition(null);
-      });
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);

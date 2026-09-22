@@ -71,7 +71,8 @@ export const StableHighlight: Story = {
     text: '# Delivery plan\n\nThis passage wraps on a phone and must keep exactly the same layout when selected or commented.\n\n- Keep the next step in place.',
   },
   play: async ({ canvas, canvasElement }) => {
-    const passage = canvas.getByText(
+    const passage = canvas.getByRole('paragraph');
+    expect(passage).toHaveTextContent(
       'This passage wraps on a phone and must keep exactly the same layout when selected or commented.',
     );
     // Take the baseline after fonts and paragraph composition have settled.

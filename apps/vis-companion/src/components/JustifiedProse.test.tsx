@@ -72,6 +72,37 @@ function resized() {
 }
 
 describe('Justice prose', () => {
+  // #282 follow-up: opening Markdown must not paint native text, then reflow it.
+  it('composes the opening render without waiting for an animation frame', () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose.children.length).toBeGreaterThan(1);
+    expect(prose.textContent).toBe(paragraph);
+  });
+
+  it('keeps the initial composition on the first ResizeObserver delivery', async () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    const markup = prose.innerHTML;
+    resized();
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose.innerHTML).toBe(markup);
+  });
+
+  it('keeps readable native text when the initial measurement fails', () => {
+    measure.mockImplementation(() => {
+      throw new Error('Measurement unavailable');
+    });
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    expect(measure).toHaveBeenCalled();
+    expect(prose).not.toHaveAttribute('data-justice');
+    expect(prose.textContent).toBe(paragraph);
+    expect(prose.querySelector('[aria-hidden]')).toBeNull();
+  });
+
   it('preserves the source text and paragraph semantics, including soft whitespace', async () => {
     const text = paragraph.replace('should choose', 'should\nchoose');
     const view = render(<JustifiedProse>{text}</JustifiedProse>);

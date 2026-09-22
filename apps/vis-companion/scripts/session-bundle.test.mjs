@@ -36,7 +36,8 @@ it('loads the production session bundle on a cold mobile launch', async () => {
       });
     });
     await page.goto('http://127.0.0.1/');
-    const imported = await page.evaluate(`(async () => {
+    const importSession = () =>
+      page.evaluate(`(async () => {
       try {
         await import(${JSON.stringify(`/${sessionChunk.fileName}`)});
         return { loaded: true };
@@ -44,7 +45,7 @@ it('loads the production session bundle on a cold mobile launch', async () => {
         return { loaded: false, error: String(error) };
       }
     })()`);
-    expect(imported).toEqual({ loaded: true });
+    expect(await importSession()).toEqual({ loaded: true });
     const highlighted = await page.evaluate(() => {
       const examples = {
         bash: 'echo "$HOME"',
@@ -64,14 +65,25 @@ it('loads the production session bundle on a cold mobile launch', async () => {
       };
       return Object.entries(examples).map(([language, code]) => ({
         language,
-        highlighted: window.Prism.highlight(code, window.Prism.languages[language], language)
-          .includes('class="token '),
+        highlighted: window.Prism.highlight(
+          code,
+          window.Prism.languages[language],
+          language,
+        ).includes('class="token '),
       }));
     });
     expect(highlighted).toHaveLength(14);
     for (const { language, highlighted: hasTokens } of highlighted) {
       expect(hasTokens, language).toBe(true);
     }
+    // #282 follow-up: eager prose loading must retain the native-text fallback.
+    // Justice constructs its segmenter at module evaluation, not on prepare().
+    await page.addInitScript(() => {
+      Object.defineProperty(Intl, 'Segmenter', { value: undefined });
+    });
+    await page.reload();
+    expect(await page.evaluate(() => typeof Intl.Segmenter)).toBe('undefined');
+    expect(await importSession()).toEqual({ loaded: true });
     expect(errors).toEqual([]);
   } finally {
     await browser.close();

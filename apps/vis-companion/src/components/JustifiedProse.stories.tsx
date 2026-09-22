@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { Markdown } from './ChatContent';
+import type { GatewayClient } from '../lib/gateway';
+import { MarkdownArtifact } from './MarkdownArtifact';
 
 const paragraph =
   'A paragraph reads more evenly when its line breaks are chosen together. Justice considers the whole paragraph, balancing the spaces between words instead of stretching each line independently. The same prose should remain readable when you resize the window or open a document on a narrow phone.';
@@ -123,6 +125,84 @@ export const NativeFallbacks: Story = {
     for (const prose of canvasElement.querySelectorAll('p')) {
       expect(prose).not.toHaveAttribute('data-justice');
       expect(prose.scrollWidth).toBeLessThanOrEqual(prose.clientWidth + 1);
+    }
+  },
+};
+
+const openingSource = new Blob(
+  [
+    `# Opening Markdown
+
+${paragraph}
+
+- ${paragraph}
+
+## Next section`,
+  ],
+  { type: 'text/markdown' },
+);
+const openingClient = { base: 'http://127.0.0.1:7777' } as GatewayClient;
+
+function OpeningArtifact() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="p-3 text-body text-white">
+      <button onClick={() => setOpen(!open)}>{open ? 'Close Markdown' : 'Open Markdown'}</button>
+      <div data-opening-column style={{ width: 600, maxWidth: '100%' }}>
+        {open && (
+          <MarkdownArtifact
+            client={openingClient}
+            sid="s1"
+            iterationId="i1"
+            name="opening.md"
+            mediaType="text/markdown"
+            source={openingSource}
+            chrome={({ body }) => <>{body}</>}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** #282 follow-up: opening a document must not reveal a second, justified layout. */
+export const StableOpening: Story = {
+  render: () => <OpeningArtifact />,
+  play: async ({ canvasElement }) => {
+    await document.fonts.ready;
+    const canvas = within(canvasElement);
+    const column = canvasElement.querySelector<HTMLElement>('[data-opening-column]')!;
+    for (const width of [600, 300]) {
+      column.style.width = `${width}px`;
+      const frames: { composed: boolean; geometry: number[][] }[] = [];
+      let frame = 0;
+      const capture = () => {
+        const prose = [...column.querySelectorAll('p, li')];
+        if (prose.length > 0) {
+          frames.push({
+            composed: prose.every((element) => element.hasAttribute('data-justice')),
+            geometry: [...column.querySelectorAll('p, li, h2')].map((element) => {
+              const box = element.getBoundingClientRect();
+              return [box.x, box.y, box.width, box.height];
+            }),
+          });
+        }
+        frame = requestAnimationFrame(capture);
+      };
+      frame = requestAnimationFrame(capture);
+      try {
+        await userEvent.click(canvas.getByRole('button', { name: 'Open Markdown' }));
+        await waitFor(() => {
+          expect(frames.length).toBeGreaterThanOrEqual(12);
+          expect(frames.at(-1)?.composed).toBe(true);
+        });
+        expect(frames.every((sample) => sample.composed)).toBe(true);
+        for (const sample of frames) expect(sample.geometry).toEqual(frames[0].geometry);
+        for (const prose of column.querySelectorAll<HTMLElement>('p, li')) expectFitted(prose);
+      } finally {
+        cancelAnimationFrame(frame);
+      }
+      await userEvent.click(canvas.getByRole('button', { name: 'Close Markdown' }));
     }
   },
 };
