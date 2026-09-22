@@ -46,13 +46,13 @@
             code
             (str "text = ls(\"src/com/blockether/vis/internal/foundation\")\n"
                  "lines = text.split(\"\\n\")\n"
-                 "head, body = lines[0], lines[1:]\n" "labels = [l[2:] for l in body]\n"
+                 "head, body = lines[0], lines[1:]\n" "labels = body\n"
                  "dirs = [l for l in labels if l.endswith(\"/\")]\n"
                  "files = [l for l in labels if not l.endswith(\"/\")]\n"
                  "print(head.endswith(\"d %sf\" % len(files)) and \"foundation\" in head,\n"
                  "      labels[:len(dirs)] == dirs, dirs == sorted(dirs),\n"
-                 "      \"editing/\" in dirs, any(f.startswith(\"core.clj  \") for f in files),\n"
-                 "      body[-1].startswith(\"\\u2514 \"), body[0].startswith(\"\\u251c \"))")]
+                 "      \"editing/\" in dirs, any(f.startswith(\"core.clj \") for f in files),\n"
+                 "      \"\\u251c\" not in text, not body[0].startswith(\" \"))")]
 
         (expect (= "True True True True True True True\n" (out ctx code)))))
   (it "batches a LIST of paths into one blank-line separated section per directory"
@@ -66,24 +66,22 @@
            "           {\"path\": \"src/com/blockether/vis/internal/foundation\", \"depth\": 1}])\n"
            "first, second = text.split(\"\\n\\n\")\n"
            "print(first.split(\"\\n\")[0].split(\"  \")[0].endswith(\"vis-shims\"),\n"
-           "      \"ls.py  \" in first, \"editing/\" in second, \"ls.py\" not in second)")]
+           "      \"ls.py \" in first, \"editing/\" in second, \"ls.py\" not in second)")]
 
         (expect (= "True True True True\n" (out ctx code)))))
   (it "indents children at depth, counts them on the directory, and hides dotfiles"
-      (let
-        [ctx
-         (sandbox)
+      (let [ctx
+            (sandbox)
 
-         code
-         (str
-           "text = ls(\"src/com/blockether/vis/internal/foundation\", depth=2)\n"
-           "editing = [l for l in text.split(\"\\n\") if l[2:].startswith(\"editing/ \")][0]\n"
-           "nested = [l for l in text.split(\"\\n\") if l[2:4] in (\"\\u251c \", \"\\u2514 \")]\n"
-           "hidden = ls(\".\", is_hidden=True)\n" "plain = ls(\".\")\n"
-           "print(int(editing.split(\"/ \")[1]) > 0,\n"
-           "      any(\"core.clj  \" in l for l in nested),\n"
-           "      \".gitignore  \" in hidden, \".gitignore\" in plain,\n"
-           "      \"target/\" in plain)")]
+            code
+            (str "text = ls(\"src/com/blockether/vis/internal/foundation\", depth=2)\n"
+                 "editing = [l for l in text.split(\"\\n\") if l.startswith(\"editing/ \")][0]\n"
+                 "nested = [l for l in text.split(\"\\n\") if l.startswith(\"  \")]\n"
+                 "hidden = ls(\".\", is_hidden=True)\n" "plain = ls(\".\")\n"
+                 "print(int(editing.split(\"/ \")[1]) > 0,\n"
+                 "      any(\"core.clj \" in l for l in nested),\n"
+                 "      \".gitignore \" in hidden, \".gitignore\" in plain,\n"
+                 "      \"target/\" in plain)")]
 
         ;; gitignored entries are never listed, on either axis
         (expect (= "True True True False False\n" (out ctx code)))))
@@ -110,12 +108,12 @@
                  "batch = ls([p, {'path': p, 'pattern': None}], pattern='l?.py').split('\\n\\n')\n"
                  "tree = ls('resources', depth=2, pattern='ls.py')\n"
                  "print(ls(p, pattern=None) == plain, ls(p, pattern='*') == plain,\n"
-                 "      '  0d 1f\\n' in filtered, 'ls.py  ' in filtered,\n"
+                 "      '  0d 1f\\n' in filtered, 'ls.py ' in filtered,\n"
                  "      batch == [filtered, plain], 'vis-shims/ 1' in tree,\n"
-                 "      'ls.py  ' in tree, 'attach.py  ' not in tree,\n"
+                 "      'ls.py ' in tree, 'attach.py ' not in tree,\n"
                  "      ls(p, pattern='__no_match__').endswith('  empty'),\n"
-                 "      '.gitignore  ' not in ls('.', pattern='.git*'),\n"
-                 "      '.gitignore  ' in ls('.', pattern='.git*', hidden=True))")]
+                 "      '.gitignore ' not in ls('.', pattern='.git*'),\n"
+                 "      '.gitignore ' in ls('.', pattern='.git*', hidden=True))")]
 
         (expect (= "True True True True True True True True True True True\n" (out ctx code)))))
   (it "rejects malformed patterns and filters case-sensitively within the requested depth"
@@ -138,7 +136,7 @@
 
             code
             (str "text = ls(\"resources/vis-shims\")\n"
-                 "sizes = [l.rsplit(\"  \", 1)[1] for l in text.split(\"\\n\")[1:]]\n"
+                 "sizes = [l.rsplit(\" \", 1)[1] for l in text.split(\"\\n\")[1:]]\n"
                  "print(all(len(s) <= 4 for s in sizes),\n"
                  "      all(s[-1].isdigit() or s[-1] in \"kMGT\" for s in sizes))")]
 
@@ -169,8 +167,8 @@
          "root = Path(\"src/com/blockether/vis/internal/foundation\")\n"
          "text = ls(root)\n"
          "batch = ls([Path(\"resources/vis-shims\"), {\"path\": root, \"depth\": 1}]).split(\"\\n\\n\")\n"
-         "print(\"core.clj  \" in text, len(batch) == 2,\n"
-         "      \"ls.py  \" in batch[0], \"editing/\" in batch[1])")]
+         "print(\"core.clj \" in text, len(batch) == 2,\n"
+         "      \"ls.py \" in batch[0], \"editing/\" in batch[1])")]
 
       (expect (= "True True True True\n" (out ctx code))))))
 
@@ -199,8 +197,8 @@
                          "text = ls(Path('.'), depth=2)\n"
                          "batch = ls([Path('resources/vis-shims'), "
                          "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
-                         "print('AGENTS.md  ' in text, 'vis-shims/' in text, "
-                         "'ls.py  ' in batch and 'core.clj  ' in batch, "
+                         "print('AGENTS.md ' in text, 'vis-shims/' in text, "
+                         "'ls.py ' in batch and 'core.clj ' in batch, "
                          "'  0d 1f\\n' in ls(Path('resources/vis-shims'), pattern='ls.py'))"))))))))
 
 (defdescribe
@@ -442,10 +440,10 @@
       ;; row now ships its absolute path; directories and relative entries ship "".
       (let [view
             (#'shim-ls/listing-presentation
-              [{"path" "/w/src"
-                "entries" [{"name" "core.clj" "path" "/w/src/core.clj" "type" "file" "size" 12}
-                           {"name" "util" "path" "/w/src/util" "type" "dir"}
-                           {"name" "loose.clj" "path" "loose.clj" "type" "file" "size" 3}]}])
+             [{"path" "/w/src"
+               "entries" [{"name" "core.clj" "path" "/w/src/core.clj" "type" "file" "size" 12}
+                          {"name" "util" "path" "/w/src/util" "type" "dir"}
+                          {"name" "loose.clj" "path" "loose.clj" "type" "file" "size" 3}]}])
 
             table
             (get-in view ["content" 0])]
@@ -486,7 +484,7 @@
           code
           (str "d = \"src/com/blockether/vis/internal/foundation\"\n" "tree = ls(d)\n"
                "paths = ls(d, as_paths=True)\n"
-               "labels = [l[2:].split(\" \")[0] for l in tree.split(\"\\n\")[1:]]\n"
+               "labels = [l.split(\" \")[0] for l in tree.split(\"\\n\")[1:]]\n"
                "names = [(p[:-1].split(\"/\")[-1] + \"/\") if p.endswith(\"/\")\n"
                "         else p.split(\"/\")[-1] for p in paths]\n"
                "print(isinstance(paths, list),\n"

@@ -38,20 +38,22 @@ def __vis_install_ls__():
                 return ("%.1f%s" % (n, unit)) if n < 10 else ("%d%s" % (round(n), unit))
         return "%dT" % round(n)
 
+    # Indentation, not box-drawing branches: this tree is read by a MODEL, where a
+    # branch glyph costs a token of its own and says nothing the two spaces of
+    # indent do not already say.
     def _render(entries, prefix, out):
-        """Append one tree line per entry, recursing into listed children."""
-        last = len(entries) - 1
-        for index, entry in enumerate(entries):
+        """Append one tree line per entry, indenting children two spaces per level."""
+        for entry in entries:
             children = entry.get("children")
             if entry.get("type") == "dir":
                 label = entry.get("name", "") + "/"
                 if children is not None:
                     label += " %d" % len(children)
             else:
-                label = entry.get("name", "") + "  " + _size(entry.get("size"))
-            out.append(prefix + ("\u2514 " if index == last else "\u251c ") + label)
+                label = entry.get("name", "") + " " + _size(entry.get("size"))
+            out.append(prefix + label)
             if children:
-                _render(children, prefix + ("  " if index == last else "\u2502 "), out)
+                _render(children, prefix + "  ", out)
 
     def _paths(root, entries, out):
         """Append every entry as a full path; a directory keeps a trailing `/`."""
@@ -102,8 +104,8 @@ def __vis_install_ls__():
         ls(dir) returns a ready-to-print tree: a `path  Nd Nf` header, then one
         line per entry with directories first then alphabetical. A directory is
         `name/` (plus its child count once depth expanded it), a file is
-        `name  size` with the size in at most four characters (`812`, `7.2k`,
-        `2.1M`). Branches are two characters wide, so depth costs little width.
+        `name size` with the size in at most four characters (`812`, `7.2k`,
+        `2.1M`). Children indent two spaces per level, so depth costs little width.
         ls([dir, ...]) renders one such section per directory, in request order,
         separated by a blank line; an entry may be a dict
         {"path": dir, "depth": 2} whose own options override the shared ones. A
@@ -161,8 +163,9 @@ def __vis_install_ls__():
         "host's ignore-aware walk, rendered as a compact printable STRING. "
         "ls(dir) -> a `path  Nd Nf` header then one tree line per entry, "
         "directories first then alphabetical: a directory is `name/` (with its "
-        "child count once depth expanded it), a file is `name  size` "
-        "(`812`, `7.2k`, `2.1M`); ls([dir, ...]) -> one such section per "
+        "child count once depth expanded it), a file is `name size` "
+        "(`812`, `7.2k`, `2.1M`), children indented two spaces per level; "
+        "ls([dir, ...]) -> one such section per "
         "directory in request order, blank-line separated. Optional pattern=None "
         "leaves the listing unchanged; a string is a case-sensitive basename glob "
         "(*, ?, [abc], {a,b}), not a regex. Applied at every requested depth, keeping "
