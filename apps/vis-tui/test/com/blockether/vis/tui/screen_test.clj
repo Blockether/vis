@@ -481,6 +481,63 @@
                    (release-wheel-momentum! mom at :live-view)
                    (expect (zero? (long @mom))))))
 
+;; Reported in https://github.com/Blockether/vis/issues/278 (Vis session
+;; ea312aff-eb1d-4942-89c7-6377b39d7ffb): scrolling up through a long transcript, the
+;; gesture's sign-flipped inertia tail braked the stored direction down to zero, and the
+;; next tail tick then read as a fresh DOWNWARD gesture - re-arming follow and snapping
+;; the viewport back to the bottom over and over.
+(defdescribe wheel-momentum-lock-test
+             (it "absorbs a whole sign-flipped inertia tail without spending the lock"
+                 (let [mom
+                       (volatile! 0)
+
+                       at
+                       (volatile! 0)]
+
+                   (expect (= -3 (:eff (smooth-wheel! mom at -3))))
+                   (expect (= (vec (repeat 8 nil))
+                              (mapv (fn [_]
+                                      (:eff (smooth-wheel! mom at 1)))
+                                    (range 8))))
+                   (expect (= -3 (long @mom)))))
+             (it "keeps an absorbed tick from extending the hold window"
+                 (let [mom
+                       (volatile! 0)
+
+                       at
+                       (volatile! 0)]
+
+                   (smooth-wheel! mom at -3)
+                   (let [stale (- (System/currentTimeMillis)
+                                  (quot (long MouseAction/WHEEL_MOMENTUM_HOLD_MILLIS) 2))]
+                     (vreset! at stale)
+                     (expect (nil? (:eff (smooth-wheel! mom at 1))))
+                     (expect (= stale (long @at)))
+                     (expect (neg? (long @mom))))))
+             (it "accepts a new direction once the hold window expired"
+                 (let [mom
+                       (volatile! 0)
+
+                       at
+                       (volatile! 0)]
+
+                   (smooth-wheel! mom at -3)
+                   (vreset! at
+                            (- (System/currentTimeMillis)
+                               (* 2 (long MouseAction/WHEEL_MOMENTUM_HOLD_MILLIS))))
+                   (expect (= 1 (:eff (smooth-wheel! mom at 1))))
+                   (expect (pos? (long @mom)))))
+             (it "reverses at once on opposition beyond the stored momentum"
+                 (let [mom
+                       (volatile! 0)
+
+                       at
+                       (volatile! 0)]
+
+                   (smooth-wheel! mom at -3)
+                   (expect (= 7 (:eff (smooth-wheel! mom at 10))))
+                   (expect (= 7 (long @mom))))))
+
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
 ;; accelerated when it crossed into the live table, its rows had no TUI action, and
 ;; the live transient had no minimize/restore action.

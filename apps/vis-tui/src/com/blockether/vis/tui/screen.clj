@@ -342,7 +342,12 @@
 
 (defn- smooth-wheel!
   "Store one surface's wheel momentum while Lanterna owns the smoothing protocol.
-   Returns `{:old-mom :new-mom :eff}`; `:eff` is nil when inertia-tail jitter was absorbed."
+   Returns `{:old-mom :new-mom :eff}`; `:eff` is nil when inertia-tail jitter was absorbed.
+
+   An absorbed tick neither spends the stored direction nor refreshes its hold, so a
+   sign-flipped inertia tail cannot brake the lock down to zero and then slip the next
+   tail tick through as a fresh gesture. Only opposition beyond the stored momentum, or
+   the idle window since the last effective tick, releases the direction."
   [mom-vol at-vol delta]
   (let [now-ms
         (System/currentTimeMillis)
@@ -353,14 +358,14 @@
         ^MouseAction$WheelMomentum merged
         (MouseAction/mergeWheelDelta (int old-mom) (int delta))
 
-        new-mom
-        (long (.momentum merged))
-
         eff
-        (.delta merged)]
+        (.delta merged)
+
+        new-mom
+        (if eff (long (.momentum merged)) old-mom)]
 
     (vreset! mom-vol new-mom)
-    (vreset! at-vol now-ms)
+    (when eff (vreset! at-vol now-ms))
     {:old-mom old-mom
      :new-mom new-mom
      :eff (some-> eff
