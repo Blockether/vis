@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import type { SessionRowCommands } from '../../components/SessionList';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import type { GatewayClient } from '../../lib/gateway';
-import type { ArchiveView, Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -109,7 +110,11 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
   };
 }
 
-function mount(client: Machine = machine(), held: Session[] = [ACTIVE]) {
+function mount(
+  client: Machine = machine(),
+  held: Session[] = [ACTIVE],
+  archive?: SessionRowCommands['archive'],
+) {
   const creation: ProjectCreation = { state: null, start: vi.fn(async () => {}) };
   const view = render(
     <ProjectGroup
@@ -133,6 +138,7 @@ function mount(client: Machine = machine(), held: Session[] = [ACTIVE]) {
             rename: vi.fn(async () => {}),
             requestDelete: vi.fn(),
             toggleStar: vi.fn(),
+            archive,
           },
           deletion: {
             target: null,
@@ -220,6 +226,26 @@ describe('a project shows the sessions it archived', () => {
     // and inventing a band here would file it under a shelf this view does not have.
     expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull();
     expect(painted()).not.toContain(AWAY_IN_ACTIVE.id);
+});
+
+  it('lets go of a row the moment its own archive verb answers', async () => {
+    // The verb belongs to the screen; the BAND is what paints its answer. The row the
+    // gateway stamped is held here until the list's window catches up, so the band the
+    // reader is looking at lets it go on the press, not on the next poll.
+    const archive = vi.fn(async (session: Session, _conn: GatewayConn, _away: boolean) => ({
+      ...session,
+      archived_at: 1730000400,
+    }));
+    const { user } = mount(machine(), [ACTIVE], archive);
+    const wallet = await band('Wallet work');
+    expect(painted(wallet)).toEqual([ACTIVE.id]);
+
+    const actions = within(wallet).getByRole('group', { name: `${ACTIVE.title} actions` });
+    await user.click(within(actions).getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(painted()).not.toContain(ACTIVE.id));
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(archive.mock.calls[0][2]).toBe(true);
   });
 
   it('says where the reader is standing, and counts what the archive holds', async () => {

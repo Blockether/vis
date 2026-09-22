@@ -13,9 +13,9 @@ import {
   RowDisclosure,
   SectionHeader,
 } from './SessionNavigator';
-import { SwipeActions } from './SwipeActions';
-import { FolderPlusIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
-import { GatewayClient, type SessionMatch } from '../lib/gateway';
+import { SwipeActions, type SwipeAction } from './SwipeActions';
+import { ArchiveIcon, FolderPlusIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
+import { GatewayClient, GatewayError, type SessionMatch } from '../lib/gateway';
 import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
@@ -46,6 +46,24 @@ const SKELETON_GROUPS = [
 // number only decides when the panel may leave the tree.
 const STATS_MOTION_MS = 200;
 
+// What a row says when the archive is aimed at work a human is still waiting on: an archived
+// session takes no new turns, so putting a running one away would bury the turn it is holding.
+const STILL_WORKING = 'This session is still active. Archive it once its turn is done.';
+
+/**
+ * Why the archive was refused, in the row's own words where it has them. A session that
+ * started a turn between the press and the PATCH is refused by the GATEWAY for the reason
+ * the row refuses it itself, so both answers read the same.
+ */
+function archiveRefusal(cause: unknown, wasAway: boolean): string {
+  const busy =
+    cause instanceof GatewayError &&
+    cause.status === 409 &&
+    (cause.body as { error?: { type?: string } } | null)?.error?.type === 'session-busy';
+  if (busy) return STILL_WORKING;
+  if (cause instanceof Error && cause.message) return cause.message;
+  return wasAway ? 'Session could not be unarchived.' : 'Session could not be archived.';
+}
 export type SessionRowAction = {
   mode: 'delete';
   session: Session;
@@ -53,6 +71,12 @@ export type SessionRowAction = {
 };
 
 export type SessionRowCommands = {
+  /**
+   * Put the session away, or take it back — `away` says which — and answer the row the
+   * gateway echoed. OPTIONAL: a row painted only because the GROUP holding it is archived
+   * has nothing of its own to put away, so the band that paints it passes no verb.
+   */
+  archive?: (session: Session, conn: GatewayConn, away: boolean) => Promise<Session>;
   /**
    * File the session into a group, or take it out of one. OPTIONAL: only a grouped
    * project list offers it, and the anchor is the element the menu hangs under.
@@ -269,6 +293,38 @@ export const SessionRow = memo(function SessionRow({
     () => commands.toggleStar(session, conn),
     [commands, session, conn],
   );
+  // WHICH SIDE OF THE ARCHIVE THIS ROW IS ON, and the verb that moves it to the other one.
+  // A session still working keeps its row and is told so here, with nothing sent: archiving
+  // it would hide work a human is waiting on, and the gateway refuses it for that same
+  // reason (409 `session-busy`), which the row reads back the same way.
+  const isPutAway = sessionIsArchived(session);
+  const [archiveError, setArchiveError] = useState('');
+  const toggleArchive = useCallback(() => {
+    const archive = commands.archive;
+    if (!archive) return;
+    if (!isPutAway && (sessionIsLive(session) || sessionNeedsInput(session))) {
+      setArchiveError(STILL_WORKING);
+      return;
+    }
+    setArchiveError('');
+    void (async () => {
+      try {
+        await archive(session, conn, !isPutAway);
+      } catch (cause) {
+        setArchiveError(archiveRefusal(cause, isPutAway));
+      }
+    })();
+  }, [commands, conn, isPutAway, session]);
+  const archiving: SwipeAction[] = commands.archive
+    ? [
+        {
+          key: 'archive',
+          label: isPutAway ? 'Unarchive' : 'Archive',
+          icon: <ArchiveIcon className="size-4" />,
+          onSelect: toggleArchive,
+        },
+      ]
+    : [];
   // WHAT THIS ROW STANDS, measured as the question is asked. The two answers carry
   // a 48px floor of their own, and this row is TALLER than that floor whenever its
   // metadata stacks under the title — 52px on a phone — so the list lost those
@@ -342,6 +398,7 @@ export const SessionRow = memo(function SessionRow({
                         },
                       ]
                     : []),
+                  ...archiving,
                   {
                     key: 'delete',
                     label: 'Delete',
@@ -524,9 +581,9 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </SwipeActions>
       )}
-      {(renameError || deletion?.error) && (
+      {(renameError || archiveError || deletion?.error) && (
         <div className="px-3 pb-2">
-          <Banner kind="err">{renameError || deletion?.error}</Banner>
+          <Banner kind="err">{renameError || archiveError || deletion?.error}</Banner>
         </div>
       )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to

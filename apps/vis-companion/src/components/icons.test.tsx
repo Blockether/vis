@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   AlertIcon,
+  ArchiveIcon,
   ArrowDownIcon,
   ArrowOutIcon,
   CameraIcon,
@@ -64,6 +65,7 @@ it('keeps status rings unfilled so their symbols survive without colour', () => 
 
 const ICONS = {
   AlertIcon: <AlertIcon />,
+  ArchiveIcon: <ArchiveIcon />,
   ArrowDownIcon: <ArrowDownIcon />,
   ArrowOutIcon: <ArrowOutIcon />,
   CameraIcon: <CameraIcon />,

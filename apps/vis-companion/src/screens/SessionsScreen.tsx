@@ -1506,6 +1506,27 @@ export function SessionsScreen({
     [patchMachine],
   );
 
+  const archiveSession = useCallback(
+    async (session: Session, conn: GatewayConn, away: boolean) => {
+      const sid = session.id;
+      // The gateway stamps the row and echoes it back, so the band that paints the
+      // other side of the archive lets the row go on the next paint, without a refetch.
+      const moved = await clientFor(conn).setSessionArchived(sid, away);
+      patchMachine(machineKey(conn), (machine) => {
+        const rows = machine.sessions;
+        if (!rows || !rows.some((row) => row.id === sid)) return machine;
+        return {
+          ...machine,
+          sessions: rows.map((row) =>
+            row.id === sid ? { ...row, ...moved, id: sid } : row,
+          ),
+        };
+      });
+      return moved;
+    },
+    [patchMachine],
+  );
+
   async function commitDelete() {
     if (rowAction?.mode !== 'delete') return;
     const action = rowAction;
@@ -1536,10 +1557,11 @@ export function SessionsScreen({
     () => ({
       open: onOpen,
       rename: renameSession,
+      archive: archiveSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, renameSession, startDelete, toggleStar],
+    [onOpen, renameSession, archiveSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({

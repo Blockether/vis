@@ -8,7 +8,7 @@
 // paint the next test's first frame.
 import { render } from '@testing-library/react';
 
-import { projectPath, sessionIsLive } from '../lib/fleet';
+import { projectPath, sessionIsArchived, sessionIsLive } from '../lib/fleet';
 import { SessionsScreen } from './SessionsScreen';
 import type { GatewayConn, ProjectOverview, Session } from '../lib/types';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -190,7 +190,12 @@ export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverv
   // The device sends the ONE fact this gateway cannot know: which of its sessions
   // are holding words typed here. Everything else about the order is answered.
   const dirty = new Set((url.searchParams.get('dirty') ?? '').split(',').filter((id) => id !== ''));
-  const ranked = rankSessions(rows, dirty);
+  // WHICH SIDE OF THE ARCHIVE this read asks for (`archived=`): a list leaves out the rows
+  // a human put away, a reveal reads ONLY those, and `include` answers the whole project.
+  const view = url.searchParams.get('archived') ?? 'exclude';
+  const standing =
+    view === 'include' ? rows : rows.filter((row) => sessionIsArchived(row) === (view === 'only'));
+  const ranked = rankSessions(standing, dirty);
   const root = url.searchParams.get('root');
   const listed = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
   // A real gateway answers a WINDOW, and a machine with more history than one page
@@ -351,8 +356,8 @@ export function renderSessionsScreen({
       return answer({ id: project.project_id });
     }
     // PATCH /v1/sessions/:sid — the gateway OWNS what this changes: it applies the
-    // star (or the rename) to its own row, echoes the row back, and every later list
-    // read from this machine tells the same story.
+    // star (the rename, the archive) to its own row, echoes the row back, and every
+    // later list read from this machine tells the same story.
     const one = /^\/v1\/sessions\/([^/]+)$/.exec(url.pathname);
     if (one && (init?.method ?? 'GET') === 'PATCH') {
       const rows = machine.sessions ?? [];
@@ -366,6 +371,7 @@ export function renderSessionsScreen({
       if ('is_favorite' in body)
         row.favorite_rank = body.is_favorite ? Math.max(...ranks) + 1 : null;
       if (typeof body.title === 'string') row.title = body.title;
+      if (typeof body.archived === 'boolean') row.archived_at = body.archived ? Date.now() : null;
       rows[index] = row;
       return answer(row);
     }

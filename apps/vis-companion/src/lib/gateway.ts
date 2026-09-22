@@ -3645,6 +3645,22 @@ export class GatewayClient {
   }
 
   /**
+   * Put a session away, or take it back. The stamp is the GATEWAY's: the reply carries the
+   * `archived_at` it wrote, both snapshots take it, and every other client of the machine
+   * reads the same decision — nothing local is kept that could disagree.
+   *
+   * A session still holding work is refused with 409 `session-busy`; taking one back is never
+   * refused.
+   */
+  async setSessionArchived(sid: string, archived: boolean): Promise<Session> {
+    return this.absorbSessionRow(
+      sid,
+      await this.request<Session>('PATCH', `/v1/sessions/${encodeURIComponent(sid)}`, {
+        archived,
+      }),
+    );
+  }
+  /**
    * The GROUPS one project is divided into, addressed by workspace ROOT.
    *
    * This app groups its list by root and never holds a project id, so the gateway

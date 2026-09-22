@@ -41,6 +41,7 @@ import { isFavorite } from '../../lib/favorites';
 import {
   machineKey,
   machineLabel,
+  sessionIsArchived,
   sessionMillis,
   sessionRowKey,
   type FleetMachine,
@@ -79,7 +80,8 @@ type GroupBandView = { id: string; name: string; color: string | null; count: nu
 
 /**
  * The row to paint for one session: what the list holds, unless this band has just
- * re-filed it and the list's own window has not caught up yet (`ProjectGroup`).
+ * re-filed it or put it away and the list's own window has not caught up yet
+ * (`ProjectGroup`).
  */
 function settled(
   session: Session,
@@ -88,7 +90,11 @@ function settled(
 ): Session {
   const current = local.get(session.id) ?? session;
   const held = refiled.get(session.id);
-  return held && held.group_id !== current.group_id ? held : current;
+  if (!held) return current;
+  const moved =
+    held.group_id !== current.group_id ||
+    sessionIsArchived(held) !== sessionIsArchived(current);
+  return moved ? held : current;
 }
 
 /** What a session is called in a list of choices. */
@@ -594,6 +600,13 @@ export const ProjectGroup = memo(function ProjectGroup({
   // next poll — 5.5s later. Until then the move is held here, or a row would sit in
   // the band it just left for a whole cycle after the tap that moved it.
   const [refiled, setRefiled] = useState<ReadonlyMap<string, Session>>(() => new Map());
+  // A BAND PAINTS ONE SIDE OF THE ARCHIVE: the reveal paints what was put away, the list
+  // paints what still stands. The stamp the gateway echoed is the only copy of that answer,
+  // so a row put away from under the thumb leaves this band on the very next paint.
+  const paints = useCallback(
+    (session: Session) => sessionIsArchived(session) === isRevealing,
+    [isRevealing],
+  );
   // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (`lib/order-epoch`). The list
   // of projects is held by the screen; a page read from the gateway is held HERE,
   // or a turn finishing on another machine would slide this page under the thumb on
@@ -603,7 +616,8 @@ export const ProjectGroup = memo(function ProjectGroup({
     const api = getClient(conn);
     const shown = painting
       .filter((session) => !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled));
+      .map((session) => settled(session, local, refiled))
+      .filter(paints);
     if (searching) return shown;
     const held = holdOrder(
       epoch,
@@ -620,9 +634,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     const onPage = new Set(held.map((session) => session.id));
     const parked = (paged?.awaiting ?? NO_ROWS)
       .filter((session) => !onPage.has(session.id) && !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled));
+      .map((session) => settled(session, local, refiled))
+      .filter(paints);
     return parked.length === 0 ? held : [...parked, ...held];
-  }, [searching, painting, local, refiled, epoch, admitted, paged, getClient, conn, list]);
+  }, [searching, painting, local, refiled, paints, epoch, admitted, paged, getClient, conn, list]);
   // THE GROUPS ARE NOT PAGED. The gateway answers a project's FILED sessions complete
   // and beside the window (`?grouped=aside`), because a group is a shelf a reader reads
   // whole: bands cut from the current page printed a name with `none on this page`
@@ -634,8 +649,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     if (searching) return NO_ROWS;
     return (paged?.grouped ?? NO_ROWS)
       .filter((session) => !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled));
-  }, [searching, paged, local, refiled, getClient, conn]);
+      .map((session) => settled(session, local, refiled))
+      .filter(paints);
+  }, [searching, paged, local, refiled, paints, getClient, conn]);
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
   const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
@@ -862,6 +878,18 @@ export const ProjectGroup = memo(function ProjectGroup({
       const moved = await getClient(conn).assignSessionGroup(session.id, gid);
       setRefiled((held) => new Map(held).set(moved.id, moved));
     }, back);
+  // PUTTING A ROW AWAY RIDES THE SAME BRIDGE FILING DOES: the screen's verb answers with the
+  // row the gateway stamped, and it is held here until the list's window catches up, so the
+  // band it left stops painting it without waiting for a poll.
+  const archiveSession = useMemo(() => {
+    const putAway = rowActions.commands.archive;
+    if (!putAway) return undefined;
+    return async (session: Session, rowConn: GatewayConn, away: boolean) => {
+      const moved = await putAway(session, rowConn, away);
+      setRefiled((held) => new Map(held).set(moved.id, moved));
+      return moved;
+    };
+  }, [rowActions.commands.archive]);
   // One session's row, wherever it stands: inside a group's band, or under the
   // project itself with everything nobody filed.
   // A ROW DROPPED ON A BAND RUNS THE SAME FILING VERB the sheet's `Move to...` does.
@@ -875,9 +903,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
+      archive: archiveSession,
       moveToGroup: (session, _conn, anchor) => openMenu(anchor, { kind: 'move', sid: session.id }),
     }),
-    [openMenu, rowActions.commands],
+    [archiveSession, openMenu, rowActions.commands],
   );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;
