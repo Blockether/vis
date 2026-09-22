@@ -133,8 +133,11 @@ describe('the order the reader is looking at', () => {
     const updates = within(header).getByRole('button', { name: 'Show 2 newer sessions' });
     expect(updates).toHaveTextContent(/^2 new$/);
     const count = within(header).getByText('4 sessions');
-    expect(count.parentElement).toContainElement(updates);
-    expect(count.parentElement).toHaveTextContent('4 sessions | 2 new');
+    // The arrival is the caption's LAST word — after the total and after any state the
+    // project reports — never wedged between them.
+    const caption = updates.parentElement!;
+    expect(caption).toContainElement(count);
+    expect(caption).toHaveTextContent('4 sessions | 2 new');
     expect(updates.closest('button[aria-expanded]')).toBeNull();
 
     await act(async () => {

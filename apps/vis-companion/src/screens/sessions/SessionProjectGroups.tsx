@@ -879,9 +879,22 @@ export const ProjectGroup = memo(function ProjectGroup({
       )}
       {/* THE COUNT GIVES WAY, NOT WHAT STANDS BESIDE IT. On the narrowest phone a
         paged project's caption is fuller than its column, and a clipped `1 new` is an
-        arrival the reader cannot reach; the total ellipsises instead and keeps it whole. */}
+        arrival the reader cannot reach; the total ellipsises instead and keeps it whole.
+
+        AN ARRIVAL STANDS AFTER THE STATES IT INTERRUPTS. Reported over this band
+        (paraphrased: the count of sessions that just landed belongs to the RIGHT of
+        live, not its left): the caption read `1662 sessions | 2 new · 4 live`, so the
+        one thing on the line that is a VERB sat between the total and the states that
+        qualify it, and the reader's eye had to cross it to reach `4 live`. */}
       <span className="flex min-w-0 items-center">
-        <HeaderTally count={tally.count} unit="session" className="min-w-0 truncate" />
+        {/* THE TOTAL AND THE STATES ARE ONE RUN OF TEXT, and the arrival stands beside
+            that run. `text-overflow` elides TEXT and drops an atomic box whole, so this
+            is what lets the smallest phone shorten `1464 sessions · 2 live` and still
+            hold the whole of the arrival the reader has to be able to tap. */}
+        <span className="min-w-0 truncate">
+          <HeaderTally count={tally.count} unit="session" />
+          <ProjectStatusCounts live={tally.live} awaiting={tally.awaiting} unread={tally.unread} />
+        </span>
         {hasPending && (
           <>
             <span aria-hidden className="shrink-0 whitespace-pre"> | </span>
@@ -898,7 +911,6 @@ export const ProjectGroup = memo(function ProjectGroup({
             </TextButton>
           </>
         )}
-        <ProjectStatusCounts live={tally.live} awaiting={tally.awaiting} unread={tally.unread} />
       </span>
     </span>
   );

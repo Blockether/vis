@@ -120,22 +120,32 @@ export const AcceptNewerSession: Story = {
     const style = (element: Element) => getComputedStyle(element);
     const rows = header.closest('section')!.lastElementChild!;
 
-    // Arrivals sit beside the total, on its baseline, not beside the trailing actions.
+    // Arrivals sit at the END of the caption, on the total's baseline, not beside the
+    // trailing actions — and never between the total and the states it qualifies
+    // (reported: a project's arrival count belongs to the RIGHT of live, not its left).
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
     const total = within(header).getByText(`${args.group.tally.count} sessions`);
-    await expect(total.parentElement).toContainElement(updates);
-    await expect(total.parentElement).toHaveTextContent(`${args.group.tally.count} sessions | 1 new`);
+    const live = args.group.tally.live;
+    // The total and the states are one run of text; the arrival is the caption's last word.
+    const run = total.parentElement!;
+    const caption = updates.parentElement!;
+    await expect(caption).toContainElement(total);
+    await expect(caption).toHaveTextContent(
+      live > 0
+        ? `${args.group.tally.count} sessions·${live} live | 1 new`
+        : `${args.group.tally.count} sessions | 1 new`,
+    );
     const captionGap = () => total.getBoundingClientRect().top - title.getBoundingClientRect().bottom;
     const totalBounds = total.getBoundingClientRect();
+    const runBounds = run.getBoundingClientRect();
     const updateBounds = updates.getBoundingClientRect();
-    await expect(updateBounds.left).toBeGreaterThan(totalBounds.right);
-    await expect(updateBounds.left - totalBounds.right).toBeLessThan(32);
+    await expect(updateBounds.left).toBeGreaterThanOrEqual(runBounds.right);
+    await expect(updateBounds.left - runBounds.right).toBeLessThan(32);
     await expect(Math.abs(updateBounds.bottom - totalBounds.bottom)).toBeLessThanOrEqual(2);
     await expect(updateBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
     await expect(updateBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
-    await expect(updateBounds.right).toBeLessThanOrEqual(
-      total.parentElement!.getBoundingClientRect().right,
-    );
+    // Whatever the width, the run gives way and the arrival keeps its box on the line.
+    await expect(updateBounds.right).toBeLessThanOrEqual(caption.getBoundingClientRect().right);
     await expect(header.scrollWidth).toBe(header.clientWidth);
     for (const control of header.querySelectorAll('button, input')) {
       const bounds = control.getBoundingClientRect();
