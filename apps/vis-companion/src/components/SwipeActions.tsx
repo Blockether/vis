@@ -49,7 +49,9 @@ export interface SwipeAction {
    * What the action MEANS, in colour. The SLAB carries the meaning and the INK
    * carries the caption: `accent` is the amber a star wears — a yellow-tinted
    * cell around a brand-yellow glyph, so "Star" can never read as one more
-   * neutral verb beside "Rename" — and `danger` is the red one.
+   * neutral verb beside "Rename" — and `danger` is the red one. A `neutral` verb
+   * means nothing in colour, so it takes the row's own hover paper and the
+   * theme's ink, and ONE rule — the list's `edge-strong` — divides every cell.
    *
    * Neither slab lends its own colour to the 9px caption on it. `--accent`
    * (#ffc420) and `--err` (#dc2626) are FILLS: as text on their own 15% tint
@@ -396,12 +398,12 @@ export function SwipeActions({
             type="button"
             aria-label={action.name ?? action.label}
             title={action.name ?? action.label}
-            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
+            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l border-edge-strong font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
-                ? 'border-err-edge bg-err-surface text-err-ink'
+                ? 'bg-err-surface text-err-ink'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent-ink'
-                  : 'border-dialog-edge bg-panel-2 text-accent-ink'
+                  ? 'bg-accent/15 text-accent-ink'
+                  : 'bg-hover text-white'
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;

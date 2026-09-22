@@ -22,11 +22,15 @@ describe('SwipeActions tones', () => {
       </SwipeActions>,
     );
 
-  // The strip's own colour lives in the slab, so a neutral verb has none: it is
-  // the ink alone on the panel, which is what an accent action must not look like.
-  it('leaves a neutral action in the shared verb ink', () => {
+  // A neutral verb means nothing in colour, which is what an accent action must not
+  // look like. It still owes paper of its own: `panel-2` equals `surface` in every
+  // shipped palette, so the cell used to BE the row's paper, and its ink is the
+  // theme's, because amber here says "waiting on a human".
+  it('leaves a neutral action in the shared verb ink, on paper of its own', () => {
     const html = strip();
     expect(html).not.toContain('bg-accent/15');
+    expect(html).toContain('bg-hover text-white');
+    expect(html).not.toContain('bg-panel-2 text-accent-ink');
   });
 
   // The same split, in red: `--err` is a badge fill and reads 3.50:1 as a caption
@@ -36,6 +40,21 @@ describe('SwipeActions tones', () => {
   it('paints a danger action in the list-safe red, not the badge fill', () => {
     const html = strip('danger');
     expect(html).not.toContain('bg-err/15');
+  });
+
+  // Regression, user report (a screenshot of the open drawer, asking for better colours
+  // between the icons): the cells were divided by `dialog-edge`, a dialog FRAME inside a
+  // list row — 9.57:1 against the row paper in blockether-light, eight times the 1.18:1
+  // of the rule between two rows, and so the loudest line on the screen. Each tone also
+  // brought its own, so the rule left of `Delete` was red and the one left of `Rename`
+  // near-black. One rule, the list's own, divides the whole strip.
+  it('divides the strip with the list rule, not a dialog frame', () => {
+    for (const html of [strip(), strip('accent'), strip('danger')]) {
+      expect(html).toContain('border-l border-edge-strong');
+      expect(html).not.toContain('border-dialog-edge bg-panel-2');
+      expect(html).not.toContain('border-err-edge bg-err-surface');
+      expect(html).not.toContain('border-accent/40 bg-accent/15');
+    }
   });
 
   // Regression, user report ("this also has not full height of the parent"): the swipe

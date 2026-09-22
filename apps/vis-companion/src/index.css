@@ -119,6 +119,13 @@
      three of those six palettes, a band that must be LOUD takes the pair. */
   --color-accent-ink: var(--warning);
   --color-accent-surface: var(--warning-bg);
+  /* The favorite is a FILLED accent mark on its own 15% tint, and a fill has no edge
+     of its own: #ffc420 on #fcf0d3 measures 1.37:1, so the star is carried by shape
+     alone, and seven of the twelve shipped palettes leave it under the 3:1 a non-text
+     mark owes. Bent toward the theme's own ink the way --color-err-ink is, the accent
+     keeps its hue and gains that edge — 3.6:1 at worst across the shipped themes and
+     15.1:1 at best. */
+  --color-accent-edge: color-mix(in oklab, var(--primary) 55%, var(--fg));
   --color-ok: var(--ok);
   /* Green INK and a green FILL are not the same green — the same split the amber
      tokens above make. --ok is an ink: a mid green on paper (#16a34a) and a

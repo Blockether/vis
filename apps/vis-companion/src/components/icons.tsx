@@ -269,8 +269,10 @@ export function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * A filled favorite uses the accent fill, not the darker ink used for text.
- * Keep fill and stroke together, with an explicit fill for native webviews.
+ * A filled favorite uses the accent fill, not the darker ink used for text, with an
+ * explicit fill for native webviews. A fill has no edge, and brand yellow on the amber
+ * cell it sits in measures 1.37:1, so the filled mark is outlined in `accent-edge` —
+ * the same accent bent toward the theme's own ink.
  * Unstarred action icons remain outlines in their control's current color.
  */
 export function StarIcon({ filled = false, className }: { filled?: boolean; className?: string }) {
@@ -278,7 +280,7 @@ export function StarIcon({ filled = false, className }: { filled?: boolean; clas
     <Mark
       icon={Star}
       fill={filled ? 'currentColor' : 'none'}
-      className={classes(filled ? 'text-accent stroke-current' : 'stroke-current', className)}
+      className={classes(filled ? 'text-accent stroke-accent-edge' : 'stroke-current', className)}
     />
   );
 }

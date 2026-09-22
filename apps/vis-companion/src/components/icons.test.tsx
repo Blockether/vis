@@ -258,12 +258,13 @@ describe('the icon set', () => {
     expect(new Set(dots.map(({ cy }) => cy)).size).toBe(3);
   });
 
-  // Regression: text ink made filled favorites brown instead of yellow. Keep
-  // the accent fill explicit for native webviews and use the same stroke color.
+  // Regression: text ink made filled favorites brown instead of yellow. Keep the
+  // accent fill explicit for native webviews, and outline the filled mark in
+  // `accent-edge`, because the fill alone has no edge on the amber cell it sits in.
   it('paints a filled favorite with the accent fill, not the darker text ink', () => {
     const filled = renderToStaticMarkup(<StarIcon filled />);
     expect(filled).toContain('fill="currentColor"');
-    expect(filled).toContain('text-accent stroke-current');
+    expect(filled).toContain('text-accent stroke-accent-edge');
     expect(filled).not.toContain('accent-ink');
     expect(renderToStaticMarkup(<StarIcon />)).toContain('fill="none"');
   });
