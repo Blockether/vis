@@ -142,6 +142,33 @@ export const SingleMachine: Story = {
   },
 };
 
+/**
+ * PAIRING IS A BAND IN THE MACHINES COLUMN, never a dialog over the dialog: the
+ * ＋ that opens it is the × that takes it away, and the fleet stays on the same
+ * plane as the form that joins it.
+ */
+export const PairingInline: Story = {
+  args: { gateways: STORY_GATEWAYS.slice(0, 1) },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const dialog = await page.findByRole('dialog', { name: 'Settings' });
+    await userEvent.click(page.getByRole('button', { name: 'Add a machine' }));
+
+    await expect(page.getAllByRole('dialog')).toHaveLength(1);
+    const panel = within(dialog).getByRole('heading', { name: 'Add a machine' }).closest('section')!;
+    await expect(within(dialog).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
+    const machine = within(dialog).getByText('tower');
+    await expect(machine).toBeVisible();
+    // The form stands ABOVE the fleet, in the column whose band opened it.
+    await expect(panel.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      machine.getBoundingClientRect().top,
+    );
+
+    await userEvent.click(page.getByRole('button', { name: 'Cancel adding a machine' }));
+    await waitFor(() => expect(page.queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull());
+  },
+};
+
 /** Experimental workflows require a separate, explicit opt-in on each machine. */
 export const ExperimentalFeatures: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },

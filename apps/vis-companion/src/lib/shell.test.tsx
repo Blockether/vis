@@ -296,13 +296,14 @@ describe('the app bar', () => {
       }),
     ).toBeVisible();
 
-    // Pairing is one word in the band, and what it opens stands OVER this dialog
-    // rather than inside it: nothing navigates away to reach either way in.
+    // Pairing is one word in the band, and what it opens is a band in THIS dialog —
+    // never a second modal over the first: nothing navigates away to reach either way
+    // in, and nothing greys out the fleet the machine is about to join.
     expect(within(dialog).queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add a machine' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Add a machine' });
-    expect(within(sheet).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
-    expect(within(sheet).getByRole('button', { name: 'Scan QR' })).toBeVisible();
+    expect(await within(dialog).findByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Scan QR' })).toBeVisible();
+    expect(screen.queryByRole('dialog', { name: 'Add a machine' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pair a machine' })).toBeNull();
     view.unmount();
     view.restore();

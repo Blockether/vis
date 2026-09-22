@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GatewayConn, SpeechPrefs, ThemePref } from '../lib/types';
 import { applyTheme } from '../lib/theme';
 import { usePythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
 import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
 import { speechOutput } from '../lib/speech';
-import { PlusIcon } from '../components/icons';
+import { CloseIcon, PlusIcon } from '../components/icons';
 import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
 import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
@@ -75,9 +75,16 @@ export function SettingsDialog({
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // Pairing opens over this dialog rather than inside it: see the sheet at the
-  // foot of the return, and the band’s + that is its only door.
+  // Pairing opens INSIDE this dialog, as the first band of the machines column:
+  // see the panel under that column's heading, and the band's ＋ that is its only door.
   const [isAdding, setIsAdding] = useState(false);
+  const addRef = useRef<HTMLDivElement | null>(null);
+
+  // The form opens at the TOP of a column that scrolls itself, so a fleet already
+  // scrolled past its first rows would otherwise answer the ＋ off-screen.
+  useEffect(() => {
+    if (isAdding) addRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  }, [isAdding]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,9 +102,8 @@ export function SettingsDialog({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      // One Escape, one surface: the pairing sheet standing over this dialog
-      // leaves first, or adding a machine and reading its settings ended on the
-      // same keystroke.
+      // One Escape, one surface: the pairing form closes first, or adding a machine
+      // and reading its settings ended on the same keystroke.
       if (isAdding) {
         setIsAdding(false);
         return;
@@ -172,15 +178,17 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* The standard icon box, so the add mark centers on the rail the machine
-                 rows' menu marks below it center on. */
+              /* ONE DOOR THAT OPENS AND CLOSES: the ＋ becomes an × while the form is
+                 open, so the band that put the form there also takes it away. The
+                 standard icon box, so the mark centers on the rail the machine rows'
+                 menu marks below it center on. */
               <IconButton
                 variant="quiet"
-                label="Add a machine"
-                title="Add a machine"
-                onClick={() => setIsAdding(true)}
+                label={isAdding ? 'Cancel adding a machine' : 'Add a machine'}
+                title={isAdding ? 'Cancel adding a machine' : 'Add a machine'}
+                onClick={() => setIsAdding((adding) => !adding)}
               >
-                <PlusIcon className="size-4" />
+                {isAdding ? <CloseIcon className="size-4" /> : <PlusIcon className="size-4" />}
               </IconButton>
             }
           >
@@ -193,6 +201,28 @@ export function SettingsDialog({
                 now the very components that screen is made of: one object, and nothing
                 leaves this dialog to reach it. It leads the dialog because it is what
                 the cog was opened FOR — below `sm:` the columns stack in that order. */}
+            {/* PAIRING IS A BAND IN THIS COLUMN, never a second dialog over the first.
+                Reported from the settings dialog: the ＋ opened `Add a machine` as its
+                own modal ON TOP of Settings — a dialog inside a dialog, with two close
+                marks, two Escape targets, and the fleet the machine was about to join
+                greyed out behind it. It opens where it belongs instead: the first band
+                under the heading whose ＋ asked for it, carrying the same edge and
+                rhythm as every other group of settings. It stays closed until it is
+                asked for, so the cog still opens on the fleet it was pressed for. */}
+            {isAdding && (
+              <div ref={addRef}>
+                <SettingsPanel title="Add a machine">
+                  <div className="p-3 sm:p-4">
+                    <AddMachine
+                      onAdd={async (conn, makeActive) => {
+                        await onAddMachine(conn, makeActive);
+                        setIsAdding(false);
+                      }}
+                    />
+                  </div>
+                </SettingsPanel>
+              </div>
+            )}
             {gateways.length > 0 ? (
               <MachineRows
                 conns={gateways}
@@ -279,31 +309,6 @@ export function SettingsDialog({
           </SettingsColumn>
         </div>
       </DialogFrame>
-
-      {/* PAIRING IS A SHEET OVER SETTINGS, not a panel standing open inside it.
-          Both ways in — the link (or its QR) and a typed address — used to sit
-          permanently expanded under the machine list, so the column opened on
-          two forms for a machine that does not exist yet and the fleet the cog
-          was pressed FOR started below them. The band's ＋ is the door now, and
-          `fit` means the sheet is as tall as the two cards and no taller. */}
-      {isAdding && (
-        <Modal size="fit" onDismiss={() => setIsAdding(false)}>
-          <DialogFrame
-            title="Add a machine"
-            subtitle="Paste the pairing link printed by ‘vis-agent gateway pair’, scan its QR, or type the address."
-            onClose={() => setIsAdding(false)}
-          >
-            <div className="p-3 sm:p-4">
-              <AddMachine
-                onAdd={async (conn, makeActive) => {
-                  await onAddMachine(conn, makeActive);
-                  setIsAdding(false);
-                }}
-              />
-            </div>
-          </DialogFrame>
-        </Modal>
-      )}
     </Modal>
   );
 }
