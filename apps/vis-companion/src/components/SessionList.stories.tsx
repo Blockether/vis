@@ -286,6 +286,36 @@ export const Unsent: Story = {
 };
 
 /**
+ * A session the human put away. The gateway owns that stamp, so the row reads ARCHIVED
+ * wherever it is still painted — a project's reveal, a search result — and its dimmed mark
+ * stays at narrow widths, where IDLE's hides.
+ */
+const ARCHIVED_SESSION: Session = {
+  ...STORY_SESSION_ROW,
+  id: '9c4d1e02-77b3-4c1a-8f65-2d0b9a3e6c47',
+  title: 'Port the importer onto the new schema',
+  status: 'idle',
+  live: false,
+  current_turn_id: null,
+  is_awaiting_input: false,
+  favorite_rank: null,
+  was_interrupted: false,
+  archived_at: Date.UTC(2030, 0, 2, 9, 30, 0),
+};
+
+export const Archived: Story = {
+  args: { session: ARCHIVED_SESSION },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText('ARCHIVED')).toBeVisible();
+    // It REPLACES the mark the row would otherwise wear, rather than standing beside it.
+    await expect(canvas.queryByText('IDLE')).not.toBeInTheDocument();
+    const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
+    // Filled and dimmed: put away is a state the row is in, not the absence of one.
+    await expect(dot).toHaveClass('bg-muted');
+    await expect(dot).not.toHaveClass('animate-pulse');
+  },
+};
+/**
  * Regression, user report: the two answers stood their own 48px floor while the row
  * they replace stands 52 on a phone — metadata stacks under the title there — so the
  * list lost four pixels the moment the question appeared. The confirmation stands

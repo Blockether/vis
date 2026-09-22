@@ -104,6 +104,12 @@ export interface Session {
    * ONE place the mark lives, so no two clients of a machine can disagree about it.
    */
   favorite_rank?: number | null;
+  /**
+   * When the human PUT THIS SESSION AWAY, stamped by the gateway, or null while it is
+   * still in the lists. The gateway owns the decision: an archived session leaves every
+   * list this machine answers and takes no new work, and no device keeps its own copy.
+   */
+  archived_at?: number | null;
   status?: 'idle' | 'running' | 'suspended' | string;
   /** The gateway's canonical liveness verdict; never infer it from paint status. */
   live: boolean;

@@ -314,6 +314,18 @@ export function sessionIsLive(session: Session): boolean {
 }
 
 /**
+ * Whether the human has put this session away.
+ *
+ * The GATEWAY's stamp is the only copy of that decision, so a row painted here and the
+ * same row on another device cannot disagree about it. An archived session is still
+ * readable — it is the taking of new work that stops.
+ */
+export function sessionIsArchived(session: Session): boolean {
+  const at = session.archived_at;
+  return typeof at === 'number' && Number.isFinite(at);
+}
+
+/**
  * The run is parked on a human-input request nobody has answered yet.
  *
  * The one state the reader cannot infer from the row: the session is LIVE and

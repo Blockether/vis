@@ -24,6 +24,7 @@ import { isFavorite } from '../lib/favorites';
 import { groupSwatch } from '../lib/group-colors';
 import {
   sessionInputCount,
+  sessionIsArchived,
   sessionIsLive,
   sessionNeedsInput,
   sessionWasInterrupted,
@@ -857,6 +858,9 @@ export function shortId(id: string): string {
 function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
+  // PUT AWAY outranks everything below: an archived session takes no new work at the
+  // gateway, so whatever the row was doing when it was filed is no longer news.
+  if (sessionIsArchived(session)) return 'ARCHIVED';
   if (sessionNeedsInput(session)) {
     // …and HOW MANY are open: answering one of two has to show, or the badge
     // reads exactly the same as it did before the answer.
@@ -877,6 +881,7 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unr
 }
 
 function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
+  if (sessionIsArchived(session)) return 'text-muted';
   if (sessionNeedsInput(session)) return 'text-warn';
   if (sessionIsLive(session)) return 'text-ok';
   if (stopped) return 'text-err';
@@ -887,6 +892,9 @@ function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unre
 }
 
 function statusDot(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
+  // Filled and dimmed: put away is a state the row IS in, not the absence of one, so
+  // it takes a solid mark rather than IDLE's hollow square.
+  if (sessionIsArchived(session)) return 'bg-muted';
   if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   // Solid, never pulsing: an interrupted session is the opposite of live.
