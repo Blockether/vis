@@ -284,19 +284,27 @@ describe('a finished turn is skipped at its own measured size', () => {
     expect(box.style.containIntrinsicSize).toBe('auto 390px auto 4321px');
   });
 
-  it('drops the skip when the width changes under it', () => {
+  it('drops the skip when the width comes to rest somewhere else', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
     waitOut();
 
-    // A rotation (or a split view) makes the remembered height a guess again:
-    // the skip goes, the turn lays itself out at the new width, and the next
-    // measurement is taken for real.
+    // A rotation (or the desk rail riding off its seam) makes the remembered height
+    // a guess again: the skip goes, the turn lays itself out at the new width, and
+    // the next measurement is taken for real.
     box.checkVisibility = () => false;
     layout(box, 844, 4321);
     resized(box);
     flushFrames();
+
+    // Never on the first frame of that move, though: dropping there puts every turn
+    // in the session back into layout for the rest of the ride, and the transcript's
+    // height, which the placeholders were holding up, goes with it.
+    expect(box.style.contentVisibility).toBe('auto');
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 4321px');
+
+    waitOut();
 
     expect(box.style.contentVisibility).toBe('');
     expect(box.style.containIntrinsicSize).toBe('');
@@ -307,6 +315,32 @@ describe('a finished turn is skipped at its own measured size', () => {
     waitOut();
 
     expect(box.style.containIntrinsicSize).toBe('auto 844px auto 2600px');
+  });
+
+  it('holds the skip through every frame the width is still moving on', () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+    waitOut();
+
+    // The desk rail being put away reports a new width on every frame of its ride.
+    box.checkVisibility = () => false;
+    for (const width of [700, 780, 844]) {
+      layout(box, width, 4321);
+      resized(box);
+      flushFrames();
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
+    }
+
+    expect(box.style.contentVisibility).toBe('auto');
+
+    // Landed: the look scheduled on the first frame of the ride finds a width that
+    // has held still, and only now is the turn laid out again.
+    waitOut();
+
+    expect(box.style.contentVisibility).toBe('');
   });
 
   it('drops the skip when content lands under it', async () => {

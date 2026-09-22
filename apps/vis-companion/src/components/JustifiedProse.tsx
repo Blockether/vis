@@ -23,6 +23,13 @@ function plainText(children: ReactNode): string | null {
 type ProseLine = { text: string; separator: string; wordSpacing: number; tracking: number };
 type Composition = { text: string; lines: ProseLine[] };
 
+/**
+ * A width arrives as a BURST — the desk rail riding off its seam, a window dragged by
+ * its corner — and the width a paragraph is composed for is its last frame. Composing
+ * on each of the others solves and rewrites every line for a width nobody reads.
+ */
+const SETTLE_MS = 80;
+
 /** Progressive paragraph composition; React keeps ownership of all visible text. */
 export function JustifiedProse({
   as: Tag = 'p',
@@ -53,15 +60,27 @@ export function JustifiedProse({
     let prepared: Prepared | undefined;
     let fontKey = '';
     let lastWidth = 0;
+    /** The width the last resize reported, and the wait for the box to stop moving. */
+    let seenWidth = 0;
+    let settleTimer = 0;
+    /** True while the box is moving and the paragraph is left to wrap natively. */
+    let riding = false;
     let engine: typeof import('@kitlangton/justice') | undefined;
     const words = [...text.matchAll(/[^ \t\r\n\f]+/g)];
 
+    /**
+     * Replacing line nodes during a native selection would discard the range. Leave
+     * the composition exactly as it stands and refit once the range is cleared,
+     * instead of disrupting copying or annotation.
+     */
+    const isSelected = () => {
+      const selection = window.getSelection();
+      return !!selection && !selection.isCollapsed && selection.containsNode(element, true);
+    };
+
     const fit = () => {
       if (disposed || !engine) return;
-      // Replacing line nodes during a native selection would discard the range.
-      // Refit once it is cleared instead of disrupting copying or annotation.
-      const selection = window.getSelection();
-      if (selection && !selection.isCollapsed && selection.containsNode(element, true)) return;
+      if (isSelected()) return;
       const style = getComputedStyle(element);
       const width =
         parseFloat(style.width) -
@@ -147,6 +166,8 @@ export function JustifiedProse({
       setComposition({ text, lines });
     };
     const schedule = () => {
+      // Nothing is composed while the box is moving; `rest` comes back for it.
+      if (riding) return;
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         // Measurement may be unavailable in an embedded or hidden document.
@@ -157,11 +178,44 @@ export function JustifiedProse({
         }
       });
     };
+    /** The box has come to rest: compose for the width it stopped at. */
+    const rest = () => {
+      riding = false;
+      schedule();
+    };
+    /**
+     * A paragraph that already stands composed goes back to NATIVE wrapping for as
+     * long as its width keeps changing, and is composed again once it stops. One with
+     * nothing composed yet — a paragraph still streaming in, or one arriving into a
+     * column that just gained width — is composed straight away and never waits.
+     */
+    const resized = () => {
+      // A selected passage keeps the composition it was selected in, moving or not.
+      if (isSelected()) return;
+      const width = parseFloat(getComputedStyle(element).width) || 0;
+      const moved = width !== seenWidth;
+      seenWidth = width;
+      if (riding) {
+        if (moved) {
+          window.clearTimeout(settleTimer);
+          settleTimer = window.setTimeout(rest, SETTLE_MS);
+        }
+        return;
+      }
+      if (moved && lastWidth > 0) {
+        riding = true;
+        lastWidth = 0;
+        setComposition(null);
+        settleTimer = window.setTimeout(rest, SETTLE_MS);
+        return;
+      }
+      schedule();
+    };
     const fontsChanged = () => {
       prepared = undefined;
       schedule();
     };
-    const observer = new ResizeObserver(schedule);
+    const observer = new ResizeObserver(resized);
     observer.observe(element);
     window.addEventListener('resize', schedule);
     document.addEventListener('selectionchange', schedule);
@@ -181,6 +235,7 @@ export function JustifiedProse({
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
       observer.disconnect();
       window.removeEventListener('resize', schedule);
       document.removeEventListener('selectionchange', schedule);

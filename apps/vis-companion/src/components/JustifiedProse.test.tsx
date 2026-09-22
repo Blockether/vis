@@ -95,6 +95,33 @@ describe('Justice prose', () => {
     expect(prose.textContent).toBe(paragraph);
   });
 
+  it('wraps natively while its column is moving and composes where it lands', async () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    const narrowLines = prose.children.length;
+    const measurements = measure.mock.calls.length;
+
+    // The desk rail riding off its seam hands this column a new width on every frame
+    // of the ride. Solving and rewriting every line for each of them composes for a
+    // width nobody reads, and that work is what the ride stutters on.
+    for (const next of [300, 360, 420]) {
+      width = next;
+      resized();
+    }
+
+    expect(prose).not.toHaveAttribute('data-justice');
+    expect(prose.textContent).toBe(paragraph);
+
+    // The rail lands, and the paragraph is composed once, for the width it kept.
+    width = 480;
+    resized();
+    await composed(prose);
+
+    expect(prose.children.length).toBeLessThan(narrowLines);
+    expect(measure.mock.calls.length).toBe(measurements);
+  });
+
   it('shows the latest streamed text immediately and drops composition for rich markup', async () => {
     const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
     const prose = view.getByRole('paragraph');

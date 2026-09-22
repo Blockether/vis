@@ -3427,6 +3427,8 @@ function useMeasuredPaintSkip(live: boolean) {
     let armed: Size | null = null;
     /** The last size seen unarmed, and when this size was first seen. */
     let seen: (Size & { at: number }) | null = null;
+    /** The width reported under an ARMED skip while it was still moving, and when. */
+    let moving: { width: number; at: number } | null = null;
     let recheck: number | null = null;
     let content: MutationObserver | null = null;
 
@@ -3455,6 +3457,7 @@ function useMeasuredPaintSkip(live: boolean) {
       unwatch();
       armed = null;
       seen = null;
+      moving = null;
       box.style.contentVisibility = '';
       box.style.containIntrinsicSize = '';
     };
@@ -3500,7 +3503,25 @@ function useMeasuredPaintSkip(live: boolean) {
       if (isPaintSkipped(box)) {
         // Everything a skipped turn reports is the placeholder it was given —
         // except the WIDTH, which is still the layout's own answer.
-        if (!armed || Math.abs(width - armed.width) < 0.5) return;
+        if (!armed || Math.abs(width - armed.width) < 0.5) {
+          moving = null;
+          return;
+        }
+        // A width still MOVING is not a width to measure at. The desk rail rides off
+        // its seam over a fifth of a second, and dropping the skip on the first frame
+        // of that ride puts every turn in the session back into layout for the rest
+        // of it — and hands the transcript's height, which the placeholders were
+        // holding up, back a frame at a time under the reader's thumb. The
+        // placeholder stands until the width comes to rest.
+        if (!moving || Math.abs(moving.width - width) >= 0.5) {
+          moving = { width, at: Date.now() };
+          soon();
+          return;
+        }
+        if (Date.now() - moving.at < PAINT_SKIP_QUIET_MS) {
+          soon();
+          return;
+        }
         return () => {
           drop();
           scheduleBoxes([box]);

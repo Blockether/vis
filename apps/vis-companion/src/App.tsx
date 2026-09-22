@@ -214,10 +214,18 @@ function prefetchScreens() {
  * order only once the ride is over, and the seam's rule fades with it — the rule is
  * carried in BOTH states, because a border that stops existing cannot fade. A
  * motion-reduce reader gets the instant move instead of the ride.
+ *
+ * The ride is 200ms on `ease-in-out`, the pace the rest of the app moves a panel at.
+ * The 300ms ease-out it used to carry put half its distance into the first fifth of
+ * that time and then crawled through the rest, which reads as a rail that sticks
+ * rather than one that travels. Every frame of the ride also moves the seam, so the
+ * transcript beside it is laid out again on each one: `ChatContent`'s paint skip and
+ * `JustifiedProse` both refuse to learn from a width that is still moving, and wait
+ * for the rail to land before they measure anything.
  */
 export function sidebarRailClass(isUp: boolean): string {
   const box =
-    'h-full min-w-80 w-[33%] shrink-0 border-r transition-[margin-left,visibility,border-color] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none';
+    'h-full min-w-80 w-[33%] shrink-0 border-r transition-[margin-left,visibility,border-color] duration-200 ease-in-out motion-reduce:transition-none';
   return isUp
     ? `${box} border-dialog-edge`
     : `${box} ml-[min(-20rem,-33%)] invisible border-transparent`;

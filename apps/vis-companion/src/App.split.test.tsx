@@ -65,6 +65,9 @@ describe('a desk keeps the list beside the conversation', () => {
     expect(sidebar.className).toContain('min-w-80');
     // The rail that is up carries the ride it will take when it is put away.
     expect(sidebar.className).toContain('transition-[margin-left,visibility,border-color]');
+    // ...at the pace this app moves a panel at: a fifth of a second, evenly spent.
+    expect(sidebar.className).toContain('duration-200');
+    expect(sidebar.className).toContain('ease-in-out');
     expect(sidebar.className).toContain('motion-reduce:transition-none');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     // The shell's own bar stays over both columns.
