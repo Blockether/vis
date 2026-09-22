@@ -19,6 +19,7 @@ import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';
 import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
+import { JustifiedProse } from './JustifiedProse';
 import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
 import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
 import { mergeActivity, type ActivityProjection } from '../lib/activity';
@@ -652,7 +653,11 @@ export const Markdown = memo(function Markdown({
             </h6>
           ),
           hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
-          li: ({ children: item }) => <li className={`my-0.5 ${runningText}`}>{item}</li>,
+          li: ({ children: item }) => (
+            <JustifiedProse as="li" enabled={!nested} className={`my-0.5 ${runningText}`}>
+              {item}
+            </JustifiedProse>
+          ),
           ol: ({ children: list, node, start }) => {
             // The markers share one column, so the widest number in the list sizes it:
             // "9." fits three characters, "10." four and "100." five.
@@ -670,7 +675,12 @@ export const Markdown = memo(function Markdown({
             );
           },
           p: ({ children: paragraph }) => (
-            <p className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}>{paragraph}</p>
+            <JustifiedProse
+              enabled={!nested}
+              className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}
+            >
+              {paragraph}
+            </JustifiedProse>
           ),
           pre: ({ children: codeNode }) => {
             const raw = extractText(codeNode).replace(/\n$/, '');

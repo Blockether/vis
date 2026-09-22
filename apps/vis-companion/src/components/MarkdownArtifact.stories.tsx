@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, waitFor } from 'storybook/test';
 
 import { LOG_TEXT, NOTE_ANNOTATED, NOTE_MARKDOWN } from '../dev/story-data';
 import { type DocumentChrome, MarkdownAnnotator } from './MarkdownArtifact';
@@ -72,7 +72,11 @@ export const StableHighlight: Story = {
     const passage = canvas.getByText(
       'This passage wraps on a phone and must keep exactly the same layout when selected or commented.',
     );
+    // Take the baseline after fonts and paragraph composition have settled.
+    await document.fonts.ready;
+    await waitFor(() => expect(passage).toHaveAttribute('data-justice'));
     const blocks = [...canvasElement.querySelectorAll('h1, p, li')];
+    await waitFor(() => expect(canvasElement.querySelector('li')).toHaveAttribute('data-justice'));
     const geometry = () =>
       blocks.map((block) => {
         const box = block.getBoundingClientRect();
