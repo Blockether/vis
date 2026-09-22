@@ -75,7 +75,12 @@ CREATE TABLE session_group (
   -- have to show the reader the SAME colour.
   color       TEXT NOT NULL CHECK (trim(color) <> ''),
   position    INTEGER NOT NULL DEFAULT 0,  -- manual order inside the project
-  created_at  INTEGER NOT NULL
+  created_at  INTEGER NOT NULL,
+
+  -- The human's ARCHIVE of a whole division, epoch ms; NULL = active. Archiving a
+  -- group takes its sessions out of sight WITHOUT stamping them, so unarchiving it
+  -- brings back exactly the set that was visible before.
+  archived_at INTEGER
 );
 
 CREATE INDEX idx_session_group_project

@@ -13101,9 +13101,17 @@
 
 (defn session-groups
   "List the groups of `project-id`, in their manual order, each with a live
-   :session-count. `[]` when the project has none."
-  [project-id]
-  (persistance/db-list-session-groups (db-info) project-id))
+   :session-count. `opts`: :archived (:exclude, :include or :only). `[]` when
+   the project has none."
+  ([project-id] (session-groups project-id {}))
+  ([project-id opts] (persistance/db-list-session-groups (db-info) project-id opts)))
+
+(defn archived-session-group-ids
+  "The ids (strings) of every archived group, across every project. One read backs
+   the whole sessions listing: a group's archive hides its sessions without
+   stamping them."
+  []
+  (persistance/db-archived-session-group-ids (db-info)))
 
 (defn get-session-group [group-id] (persistance/db-get-session-group (db-info) group-id))
 
@@ -13114,7 +13122,7 @@
   (persistance/db-create-session-group! (db-info) project-id opts))
 
 (defn update-session-group!
-  "Patch a group: :name, :color and/or :position."
+  "Patch a group: :name, :color, :position and/or :archived?."
   [group-id opts]
   (persistance/db-update-session-group! (db-info) group-id opts))
 

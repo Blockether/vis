@@ -491,7 +491,9 @@
 ;; --- Session groups: the human's own groups inside ONE project (V8) ---
 (defdelegate db-get-session-group [db-info group-id])
 
-(defdelegate db-list-session-groups [db-info project-id])
+(defdelegate db-list-session-groups [db-info project-id opts])
+
+(defdelegate db-archived-session-group-ids [db-info])
 
 (defdelegate db-create-session-group! [db-info project-id opts])
 

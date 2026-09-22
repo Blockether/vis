@@ -3504,13 +3504,17 @@
         (atom [])
 
         minted
+        (atom [])
+
+        group-views
         (atom [])]
 
     (with-redefs-fn {#'state/get-project-by-root (fn [_owner root]
                                                    (when (= "/repo" root) {"id" (str pid)}))
                      #'state/ensure-project-for-root! (fn [_owner _root _name]
                                                         {"id" (str pid)})
-                     #'state/list-session-groups (fn [p]
+                     #'state/list-session-groups (fn [p opts]
+                                                   (swap! group-views conj (:archived opts))
                                                    (if (= pid p) [group] []))
                      #'state/get-session-group (fn [g]
                                                  (when (= gid g) group))
@@ -3567,6 +3571,21 @@
             (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"}})))]
               (is (= (str pid) (get body "project_id")))
               (is (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))))
+          ;; A group is put away like a session: this list answers the ACTIVE shelves
+          ;; unless the reader names another view, and a reveal asks for the archive alone.
+          (testing "the archive view a reader names is the view the store is asked for"
+            (reset! group-views [])
+            (list-groups {:query-params {"root" "/repo"}})
+            (list-groups {:query-params {"root" "/repo" "archived" "only"}})
+            (list-groups {:query-params {"root" "/repo" "archived" "include"}})
+            (is (= [:exclude :only :include] @group-views)))
+          (testing "a view this gateway does not have is a 400, never a silent full list"
+            (reset! group-views [])
+            (let [response (list-groups {:query-params {"root" "/repo" "archived" "sometimes"}})]
+              (is (= 400 (:status response)))
+              (is (= "invalid-archived"
+                     (get-in (wire/parse-json (:body response)) ["error" "type"])))
+              (is (= [] @group-views))))
           (testing "creating by root get-or-creates the project first"
             (let [response (create-group (json-body
                                            {:name "Release apps" :color "amber" :root "/repo"}))]
@@ -4015,6 +4034,7 @@
                    :root nil
                    :project-id nil
                    :id-prefix nil
+                   :group-id nil
                    :ids #{}
                    :dirty #{}
                    :grouped nil
@@ -4459,6 +4479,66 @@
           (is (= 400 (:status response)))
           (is (= "invalid-archived"
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
+
+;; A GROUP is a shelf: putting it away has to take its sessions out of sight WITH it and
+;; stamp none of them, so unarchiving brings back exactly the rows it hid.
+(deftest the-archive-on-a-group-hides-its-sessions-without-stamping-them
+  (let [gid
+        (random-uuid)
+
+        asked
+        (atom [])
+
+        group
+        (fn [stamp]
+          {"id" (str gid) "name" "Release apps" "archived_at" stamp})
+
+        store
+        {#'state/get-session-group (fn [g]
+                                     (when (= gid g) (group nil)))
+         #'state/update-session-group! (fn [_g opts]
+                                         (swap! asked conj opts)
+                                         (group (when (:archived? opts) 1717)))}
+
+        patch-group
+        (fn [body]
+          ((rv 'patch-session-group-handler)
+            (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
+
+    (testing "archiving a group answers the group carrying the stamp the gateway wrote"
+      (with-redefs-fn store
+        (fn []
+          (let [response (patch-group {:archived true})]
+            (is (= 200 (:status response)))
+            (is (= 1717 (get (wire/parse-json (:body response)) "archived_at")))
+            ;; No member is ever named: the SHELF is what the human put away.
+            (is (= [{:archived? true}] @asked))))))
+    (testing "unarchiving is the same route, and the stamp comes back empty"
+      (reset! asked [])
+      (with-redefs-fn store
+        (fn []
+          (let [response (patch-group {:archived false})]
+            (is (= 200 (:status response)))
+            (is (nil? (get (wire/parse-json (:body response)) "archived_at")))
+            (is (= [{:archived? false}] @asked))))))
+    (testing "a group this gateway does not know is a 404, never a silent archive"
+      (with-redefs-fn {#'state/get-session-group (constantly nil)
+                       #'state/update-session-group! (fn [& _]
+                                                       (throw (ex-info "archived an unknown group"
+                                                                       {})))}
+        (fn []
+          (is (= 404 (:status (patch-group {:archived true})))))))
+    ;; The other half of the reveal: an ACTIVE group opens its own archive by naming
+    ;; itself, so the shelf paints the sessions filed under it without the fleet.
+    (testing "a group reveal cuts the session window to that group"
+      (let [seen (atom nil)]
+        (with-redefs [state/list-sessions-page
+                      (fn [channel opts]
+                        (reset! seen [channel opts])
+                        {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
+          ((rv 'list-sessions-handler) {:query-params {"group_id" (str gid) "archived" "only"}})
+          (is (= (str gid) (:group-id (second @seen))))
+          (is (= :only (:archived (second @seen)))))))))
 
 ;; Regression: the settings mutation route answered 200 to every value it could
 ;; not store — a JSON `false` was read as "no value given" and ignored, the string

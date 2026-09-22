@@ -2318,6 +2318,10 @@
    A group is a shelf the client paints whole, so paging it was hiding rows the
    human had just filed.
 
+   `group_id` cuts the same list to ONE group's sessions: with `archived=only` it
+   answers the rows a human archived INSIDE a group that is still active, which is
+   what a group's own reveal asks for.
+
    The companion refreshes this on a timer and the payload is BIG while the
    content is identical until a turn moves. With `If-None-Match` the steady state
    collapses to a 304 with no body: nothing transferred, nothing parsed, nothing
@@ -2360,6 +2364,13 @@
                 str
                 not-empty)
 
+        ;; ONE group's sessions, so a group shelf can reveal its own archive
+        ;; without the fleet being downloaded and sliced on the device.
+        group-id
+        (some-> (get-in request [:query-params "group_id"])
+                str
+                not-empty)
+
         dirty
         (query-session-ids request "dirty")
 
@@ -2380,7 +2391,12 @@
         ;; store. The head window is what it gets, and `next_cursor` carries anyone who
         ;; wants the rest.
         window-limit
-        (if (or (given? "limit") (some? root) (seq project-id) (seq id-prefix) (seq ids))
+        (if (or (given? "limit")
+                (some? root)
+                (seq project-id)
+                (seq id-prefix)
+                (seq ids)
+                (seq group-id))
           limit
           default-session-window)
 
@@ -2409,6 +2425,7 @@
                                        :root root
                                        :project-id project-id
                                        :id-prefix id-prefix
+                                       :group-id group-id
                                        :ids ids
                                        :dirty dirty
                                        :grouped grouped
@@ -3040,12 +3057,16 @@
           parse-uuid))
 
 (defn- list-session-groups-handler
-  "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…] — the groups inside
-   ONE project, in the order the human put them in.
+  "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…&archived=exclude|include|only]
+   — the groups inside ONE project, in the order the human put them in.
 
    `root` is accepted because a client can group its list by WORKSPACE ROOT
    without ever holding a project id (the companion does). A root with no project
-   yet simply has no groups — a READ never creates one."
+   yet simply has no groups — a READ never creates one.
+
+   An archived group leaves this list the way an archived session leaves the
+   session list, and `archived=only` is the reveal that asks for the archive
+   alone."
   [request]
   (let [asked
         (not-empty (get-in request [:query-params "project"]))
@@ -3056,6 +3077,9 @@
         owner
         (or (not-empty (get-in request [:query-params "owner"])) "local")
 
+        archived
+        (query-archived request)
+
         pid
         (or (some-> asked
                     parse-uuid)
@@ -3063,10 +3087,12 @@
                     (get "id")
                     parse-uuid))]
 
-    (cond (and (nil? asked) (nil? root))
+    (cond (= :invalid archived) (archived-400)
+          (and (nil? asked) (nil? root))
           (error-response 400 :invalid-request "project or root is required")
           (nil? pid) (json-response {:project_id nil :groups []})
-          :else (json-response {:project_id (str pid) :groups (state/list-session-groups pid)}))))
+          :else (json-response {:project_id (str pid)
+                                :groups (state/list-session-groups pid {:archived archived})}))))
 
 (defn- create-session-group-handler
   "POST /v1/session-groups {name, color?, position?, project_id?|root?, owner_id?}
@@ -3114,8 +3140,13 @@
                                   :name (str name))))))
 
 (defn- patch-session-group-handler
-  "PATCH /v1/session-groups/:gid {name?, color?, position?} — rename, recolour or
-   reorder a group. `color` is a palette TOKEN, never a hex string."
+  "PATCH /v1/session-groups/:gid {name?, color?, position?, archived?} — rename,
+   recolour, reorder or archive a group. `color` is a palette TOKEN, never a hex
+   string.
+
+   Archiving a group takes its sessions out of sight WITH it and stamps none of
+   them: the shelf is what the human filed them on, so unarchiving the group
+   brings back exactly the rows it hid."
   [request]
   (let [gid-str
         (get-in request [:path-params :gid])
@@ -3135,7 +3166,10 @@
           (assoc :color (get body "color"))
 
           (contains? body "position")
-          (assoc :position (get body "position")))]
+          (assoc :position (get body "position"))
+
+          (contains? body "archived")
+          (assoc :archived? (boolean (get body "archived"))))]
 
     (cond (or (not gid) (nil? (state/get-session-group gid))) (group-404 gid-str)
           (and (contains? opts :name) (str/blank? (str (:name opts))))

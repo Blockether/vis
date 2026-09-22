@@ -2599,10 +2599,12 @@
    :color (:color row)
    :position (:position row)
    :created-at (->date (:created_at row))
+   ;; The human's ARCHIVE of this whole division; nil while the group is active.
+   :archived-at (->date (:archived_at row))
    :session-count (or (:session_count row) 0)})
 
 (def ^:private session-group-select-cols
-  [:g.id :g.project_id :g.name :g.color :g.position :g.created_at
+  [:g.id :g.project_id :g.name :g.color :g.position :g.created_at :g.archived_at
    [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.group_id :g.id]}
     :session_count]])
 
@@ -2619,16 +2621,41 @@
 (defn db-list-session-groups
   "List the `session_group`s of `project-id`, each with a live `:session-count`,
    ordered by (position, created_at). Returns `[]` when there are none - a
-   project without groups is the normal case, not an error."
-  [db-info project-id]
+   project without groups is the normal case, not an error.
+
+   `:archived` says which groups answer, in the ONE archive vocabulary sessions
+   and projects also read: `:exclude` (the default) hides the archived ones,
+   `:include` returns both, `:only` returns the archive alone."
+  [db-info project-id {:keys [archived]}]
   (if (and (ds db-info) project-id)
     (mapv row->session-group
           (query! db-info
                   {:select session-group-select-cols
                    :from [[:session_group :g]]
-                   :where [:= :g.project_id (->id project-id)]
+                   :where (into [:and [:= :g.project_id (->id project-id)]]
+                                (case (or archived :exclude)
+                                  :include
+                                  nil
+
+                                  :only
+                                  [[:not= :g.archived_at nil]]
+
+                                  [[:= :g.archived_at nil]]))
                    :order-by [[:g.position :asc] [:g.created_at :asc]]}))
     []))
+
+(defn db-archived-session-group-ids
+  "The ids (as strings) of every ARCHIVED `session_group`, across every project.
+
+   The sessions window reads this once per listing: a session inside an archived
+   group is out of sight without carrying a stamp of its own, so unarchiving the
+   group brings back exactly the set that was visible before."
+  [db-info]
+  (if (ds db-info)
+    (into #{}
+          (map (comp str :id))
+          (query! db-info {:select [:id] :from :session_group :where [:not= :archived_at nil]}))
+    #{}))
 
 (defn db-create-session-group!
   "Create a `session_group` inside `project-id`. `:name` is required (non-blank)
@@ -2667,10 +2694,11 @@
       (db-get-session-group db-info group-id))))
 
 (defn db-update-session-group!
-  "Patch a `session_group`: any of `:name` (non-blank), `:color` (palette token)
-   and `:position`. Returns the updated group (canonical shape) or nil when
-   there was nothing to change."
-  [db-info group-id {:keys [name color position] :as opts}]
+  "Patch a `session_group`: any of `:name` (non-blank), `:color` (palette token),
+   `:position` and `:archived?` (true stamps `archived_at`=now, false clears it).
+   Returns the updated group (canonical shape) or nil when there was nothing to
+   change."
+  [db-info group-id {:keys [name color position archived?] :as opts}]
   (when (and (ds db-info) group-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
       (throw (ex-info "db-update-session-group! :name must be non-blank"
@@ -2686,7 +2714,13 @@
                     (assoc :color (str/trim (str color)))
 
                     (contains? opts :position)
-                    (assoc :position position))]
+                    (assoc :position position)
+
+                    ;; Archiving a group never stamps its sessions: the members keep
+                    ;; their own state, so unarchiving brings back exactly the set
+                    ;; that was visible before.
+                    (contains? opts :archived?)
+                    (assoc :archived_at (when archived? (now-ms))))]
       (when (seq set-map)
         (sqlite-write-tx!
           db-info

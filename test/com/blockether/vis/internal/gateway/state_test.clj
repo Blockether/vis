@@ -3090,6 +3090,113 @@
         (expect (= ["filed"] (mapv #(get % "id") (:sessions page))))
         (expect (= 1 (:total page)))))))
 
+;; One visibility rule, two places it can come from: a session is out of sight when it
+;; carries its OWN stamp or when the GROUP holding it does. Archiving a shelf never
+;; stamps the conversations standing on it, so unarchiving it restores exactly the set
+;; that was visible before.
+(defdescribe
+  gateway-archived-group-hides-its-sessions-test
+  (it
+    "takes a group's sessions out of every band and gives them back under the reveal"
+    (with-redefs [lp/db-info
+                  (constantly nil)
+
+                  persistance/db-session-turn-stats
+                  (constantly nil)
+
+                  lp/archived-session-group-ids
+                  (constantly #{"shelf"})
+
+                  lp/by-channel
+                  (fn [_]
+                    [{:id "loose" :title "loose" :created-at 3000}
+                     ;; filed on the shelf the human put away, never stamped itself
+                     {:id "filed" :title "filed" :created-at 2000 :group-id "shelf"}
+                     {:id "open" :title "open" :created-at 1000 :group-id "active"}
+                     ;; archived on its own INSIDE a group that is still active
+                     {:id "stamped"
+                      :title "stamped"
+                      :created-at 500
+                      :group-id "active"
+                      :archived-at #inst "2024-05-01T10:00:00.000Z"}])
+
+                  bus/waiting-requests
+                  (constantly {"filed" [{:id "req-1" :since 1}]})
+
+                  bus/session-waiting?
+                  (fn [sid]
+                    (= "filed" (str sid)))
+
+                  state/soul
+                  (fn [sid]
+                    {"id" (str sid) "created_at" 1000 "is_awaiting_input" (= "filed" (str sid))})]
+
+      (let [ids
+            (fn [page k]
+              (mapv #(get % "id") (k page)))
+
+            page
+            (fn [opts]
+              (state/list-sessions-page :all (merge {:limit 10} opts)))]
+
+        (let [default (page {})]
+          (expect (= ["loose" "open"] (ids default :sessions)))
+          (expect (= 2 (:total default)))
+          ;; A chore nobody can reach from a list that does not show the row is not a
+          ;; chore: the shelf takes the awaiting band with it too.
+          (expect (= [] (ids default :awaiting))))
+        ;; ... and out of the group shelves a client paints beside the window
+        (let [aside (page {:grouped "aside"})]
+          (expect (= ["loose"] (ids aside :sessions)))
+          (expect (= ["open"] (ids aside :grouped))))
+        (let [revealed (page {:archived :only})]
+          (expect (= ["filed" "stamped"] (ids revealed :sessions)))
+          (expect (= 2 (:total revealed)))
+          (expect (= ["filed"] (ids revealed :awaiting))))
+        (let [both (page {:archived :include})]
+          (expect (= ["loose" "filed" "open" "stamped"] (ids both :sessions)))
+          (expect (= 4 (:total both))))
+        ;; What a GROUP's own reveal asks for: the rows archived inside a group that is
+        ;; still active, and - when the group itself is away - everything it holds.
+        (expect (= ["stamped"] (ids (page {:group-id "active" :archived :only}) :sessions)))
+        (expect (= ["open"] (ids (page {:group-id "active"}) :sessions)))
+        (expect (= ["filed"] (ids (page {:group-id "shelf" :archived :only}) :sessions)))))
+    (with-redefs [lp/db-info
+                  (constantly nil)
+
+                  persistance/db-session-turn-stats
+                  (constantly nil)
+
+                  ;; the shelf is back
+                  lp/archived-session-group-ids
+                  (constantly #{})
+
+                  lp/by-channel
+                  (fn [_]
+                    [{:id "loose" :title "loose" :created-at 3000}
+                     {:id "filed" :title "filed" :created-at 2000 :group-id "shelf"}
+                     {:id "stamped"
+                      :title "stamped"
+                      :created-at 500
+                      :group-id "active"
+                      :archived-at #inst "2024-05-01T10:00:00.000Z"}])
+
+                  bus/waiting-requests
+                  (constantly {})
+
+                  bus/session-waiting?
+                  (constantly false)
+
+                  state/soul
+                  (fn [sid]
+                    {"id" (str sid) "created_at" 1000})]
+
+      ;; Unarchiving the group brings back the member it hid and nothing else: the
+      ;; session that owns a stamp of its own stays put away.
+      (let [page (state/list-sessions-page :all {:limit 10})]
+        (expect (= ["loose" "filed"] (mapv #(get % "id") (:sessions page))))
+        (expect (= 2 (:total page)))))))
+
 ;; Regression: SDK reactivation could miss a ping between terminal state and journal cleanup.
 (defdescribe
   council-wake-after-terminal-marker-test

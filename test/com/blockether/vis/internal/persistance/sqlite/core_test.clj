@@ -3927,7 +3927,7 @@
 
           _
           (expect (= ["Release apps" "Gateway"]
-                     (mapv :name (persistance/db-list-session-groups s (:id p)))))
+                     (mapv :name (persistance/db-list-session-groups s (:id p) {}))))
 
           ;; file a session under a group
           sid
@@ -4029,7 +4029,7 @@
         (expect (= ::rejected blank))
         (expect (= ::rejected dup))
         (expect (= "Gateway" (:name twin)))
-        (expect (= 1 (count (persistance/db-list-session-groups s (:id p)))))))
+        (expect (= 1 (count (persistance/db-list-session-groups s (:id p) {}))))))
   (it "moving into another project's group adopts the session into that project too"
       (let [s
             (h/store)
@@ -4132,7 +4132,7 @@
           (persistance/db-get-session s sid)]
 
       ;; the project CASCADEs its groups away; the conversation is only scattered
-      (expect (= [] (persistance/db-list-session-groups s (:id p))))
+      (expect (= [] (persistance/db-list-session-groups s (:id p) {})))
       (expect (nil? (:group-id orphan)))
       (expect (nil? (:project-id orphan)))
       (expect (= "routes" (:title (persistance/db-get-session s sid)))))))
@@ -4561,6 +4561,50 @@
                          (persistance/db-list-sessions s :all))))
         (expect (nil? (persistance/db-set-session-archived! s (str a) false)))
         (expect (nil? (:archived-at (persistance/db-get-session s a)))))))
+
+;; The same archive, one level up: a GROUP is a shelf, so putting the shelf away has to
+;; hide it without touching the conversations standing on it.
+(defdescribe
+  the-archive-is-a-stamp-on-the-session-group-test
+  "Archiving a group stamps `session_group.archived_at` and unarchiving clears it, the
+   way an archived project leaves its own list. `db-archived-session-group-ids` answers
+   the whole archive in ONE read, so a session window inherits its group's archive
+   without a query per row."
+  (it
+    "hides an archived group from the default list and names it under the archive views"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "vis"})
+
+          release
+          (persistance/db-create-session-group! s (:id p) {:name "Release apps"})
+
+          gateway
+          (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
+
+          _
+          (expect (nil? (:archived-at release)))
+
+          archived
+          (persistance/db-update-session-group! s (:id release) {:archived? true})]
+
+      (expect (inst? (:archived-at archived)))
+      ;; the archive vocabulary sessions and projects already read
+      (expect (= ["Gateway"] (mapv :name (persistance/db-list-session-groups s (:id p) {}))))
+      (expect (= ["Release apps" "Gateway"]
+                 (mapv :name (persistance/db-list-session-groups s (:id p) {:archived :include}))))
+      (expect (= ["Release apps"]
+                 (mapv :name (persistance/db-list-session-groups s (:id p) {:archived :only}))))
+      ;; ONE read says which shelves are put away, whatever project they sit in
+      (expect (= #{(str (:id release))} (persistance/db-archived-session-group-ids s)))
+      ;; the group beside it was never touched
+      (expect (nil? (:archived-at (persistance/db-get-session-group s (:id gateway)))))
+      (expect (nil? (:archived-at
+                      (persistance/db-update-session-group! s (:id release) {:archived? false}))))
+      (expect (= [] (persistance/db-list-session-groups s (:id p) {:archived :only})))
+      (expect (= #{} (persistance/db-archived-session-group-ids s))))))
 
 ;; Regression, issue #155: session usage was summed from the rollup a turn writes
 ;; when it ENDS, so a stopped or still-running turn dropped its tokens and its

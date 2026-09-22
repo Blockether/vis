@@ -5829,19 +5829,22 @@
    with the whole fleet: a header counting one session over a pager of 128 pages,
    carrying every session the machine had filed in a group.
 
-   `:project-id`, `:id-prefix` and `:ids` answer the questions a channel used to answer
-   by downloading the fleet and filtering it locally: ONE project's tab set, the session
-   a short id names, and the ROWS a set of ids names. All three cut the ORDERING - before
-   `total`, before the window - so each answer costs the rows it returns. `:ids` is how a
-   picker that holds a WINDOW paints a search hit: the store ranks the query across every
-   session, and only the matched rows the window does not already hold cross the wire.
+   `:project-id`, `:group-id`, `:id-prefix` and `:ids` answer the questions a channel used
+   to answer by downloading the fleet and filtering it locally: ONE project's tab set, the
+   sessions ONE group holds, the session a short id names, and the ROWS a set of ids names.
+   They all cut the ORDERING - before `total`, before the window - so each answer costs the
+   rows it returns. `:ids` is how a picker that holds a WINDOW paints a search hit: the
+   store ranks the query across every session, and only the matched rows the window does
+   not already hold cross the wire.
 
    `:archived` is the ARCHIVE cut, in the one vocabulary every list route of this
    gateway reads: `:exclude` (the default) leaves archived sessions out of the
    window, out of `:awaiting` and off the group shelves alike, `:include` answers
    both and `:only` answers the archive alone - what a reveal asks for. Like the
    cuts above it lands on the ranking, so `total`, `:next-cursor` and `:has-more`
-   describe the same list the rows came from.
+   describe the same list the rows came from. A session counts as archived when its OWN
+   stamp is set or when the GROUP holding it is archived: archiving a group never stamps
+   its members, so unarchiving one brings back exactly the set that was visible before.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started in one channel
    is visible in the others and vice-versa. Pass a specific channel keyword only when a
@@ -5853,7 +5856,8 @@
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped reader archived]}]
+  ([channel
+    {:keys [limit after root project-id group-id id-prefix ids dirty grouped reader archived]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -5881,6 +5885,16 @@
          archived-mode
          (or archived :exclude)
 
+         ;; The divisions the human put away, read ONCE for the whole listing: a
+         ;; session inside an archived group is out of sight WITHOUT being stamped
+         ;; itself, so the cut below has to ask the group as well as the row.
+         archived-groups
+         (if (= :include archived-mode) #{} (lp/archived-session-group-ids))
+
+         archived-row?
+         (fn [row]
+           (or (some? (:archived-at row)) (contains? archived-groups (:group-id row))))
+
          ranked
          (cond->> (session-ranking channel stats live unsent)
            (and db (some? root))
@@ -5890,6 +5904,12 @@
            (seq (str project-id))
            (filterv (fn [row]
                       (= (str project-id) (:project-id row))))
+
+           ;; ONE group's shelf, opened on its own: the reveal a group offers asks
+           ;; for exactly the sessions it holds, archived or not.
+           (seq (str group-id))
+           (filterv (fn [row]
+                      (= (str group-id) (:group-id row))))
 
            (seq (str id-prefix))
            (filterv (fn [row]
@@ -5905,7 +5925,7 @@
            ;; window, not beside it in `awaiting`, not on a group shelf - unless
            ;; the caller asked for it by name.
            (not= :include archived-mode)
-           (filterv (if (= :only archived-mode) :archived-at (complement :archived-at))))
+           (filterv (if (= :only archived-mode) archived-row? (complement archived-row?))))
 
          aside-groups?
          (= "aside"
@@ -6278,12 +6298,19 @@
                      :color (:color g)
                      :position (:position g)
                      :session_count (:session-count g)
-                     :created_at (:created-at g)})))
+                     :created_at (:created-at g)
+                     ;; The human's ARCHIVE of this division: null while it is active,
+                     ;; a stamp once the group and everything inside it is out of
+                     ;; sight. Always PRESENT, like the session's own.
+                     :archived_at (:archived-at g)})))
 
 (defn list-session-groups
-  "Wire groups of one project, in their manual order. `[]` when it has none."
-  [pid]
-  (mapv session-group-wire (lp/session-groups pid)))
+  "Wire groups of one project, in their manual order. `[]` when it has none.
+
+   `opts`: `:archived` - the ONE archive vocabulary (`:exclude` (the default),
+   `:include` or `:only`, what a reveal asks for)."
+  ([pid] (list-session-groups pid {}))
+  ([pid opts] (mapv session-group-wire (lp/session-groups pid opts))))
 
 (defn get-session-group [gid] (session-group-wire (lp/get-session-group gid)))
 
@@ -6294,7 +6321,7 @@
   (session-group-wire (lp/create-session-group! pid opts)))
 
 (defn update-session-group!
-  "Patch a group: :name, :color and/or :position."
+  "Patch a group: :name, :color, :position and/or :archived?."
   [gid opts]
   (session-group-wire (lp/update-session-group! gid opts)))
 
