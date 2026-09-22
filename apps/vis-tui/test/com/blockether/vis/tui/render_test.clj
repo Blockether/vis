@@ -575,8 +575,9 @@
 
           (expect (= 1 (count rows)))
           (expect (str/includes? text headline))
-          (expect (str/includes? text
-                                 "Read and Patch now show their results after one disclosure."))
+          (expect (str/includes?
+                    text
+                    "Read links to the file; Patch shows its changes after one disclosure."))
           (doseq [metadata ["Activity review" "informational" "Created at" "Source" "Replies"
                             "Details truncated"]]
             (expect (not (str/includes? text metadata)))))))
@@ -742,11 +743,52 @@
           (expect (= (vec (mapcat #(get-in % [:presentation :content]) rows))
                      (get-in merged [:presentation :content])))
           (expect (= 2 (count rows)))))
-    (it "keeps changed snapshots even when their requested ranges repeat"
+    (it "opens the file rather than a caption containing one or several line ranges"
+        (doseq [read-rows
+                [[first-read] rows]
+
+                width
+                [36 100]]
+
+          (let [entries
+                (#'render/activity-detail-entries
+                 {:node-id "reads"
+                  :activity-rows read-rows
+                  :activity-expanded? (fn [_ _]
+                                        true)}
+                 width
+                 "fixture")
+
+                head
+                (first (filter #(= "read-1" (get-in % [:meta :item-id])) entries))]
+
+            (expect (= "~/vis/PLAN.md" (get-in head [:meta :path])))
+            (expect (nil? (get-in head [:meta :node-id])))
+            (expect (<= (get-in head [:meta :path-width]) (count "~/vis/PLAN.md"))))))
+    (it "does not mistake words in the actual filename for a line annotation"
+        (doseq [note ["" " · lines 583–584"]]
+          (let [target "~/vis/notes · lines 12–13"
+                row (-> first-read
+                        (assoc :summary target)
+                        (assoc-in [:presentation :summary] (str target note)))
+                entries (#'render/activity-detail-entries
+                         {:node-id "reads"
+                          :activity-rows [row]
+                          :activity-expanded? (fn [_ _]
+                                                true)}
+                         100
+                         "fixture")
+                head (first (filter #(= "read-1" (get-in % [:meta :item-id])) entries))]
+
+            (expect (= target (get-in head [:meta :path])))
+            (expect (= (p/display-width target) (get-in head [:meta :path-width]))))))
+    (it "keeps explicitly supplied snapshots even when their requested ranges repeat"
         (let [changed
-              (assoc-in second-read
-                [:presentation :summary]
-                (get-in first-read [:presentation :summary]))
+              (-> second-read
+                  (assoc-in [:presentation :summary] (get-in first-read [:presentation :summary]))
+                  (assoc-in [:presentation :content]
+                            [{:type "code" :text "First snapshot"}
+                             {:type "code" :text "Changed snapshot"}]))
 
               merged
               (get-in (grouped [first-read changed]) [0 :children 0])]
@@ -807,7 +849,7 @@
                  (assoc-in second-read [:presentation :headline] "Custom read")
                  (assoc-in second-read [:presentation :content] [{:type "text" :text "Note"}])]]
           (expect (= 2 (count (:children (first (grouped [first-read other]))))))))
-    (it "retains one disclosure for both excerpts at narrow and wide widths"
+    (it "keeps reads summary-only at narrow and wide widths"
         (doseq [width [36 100]]
           (let [entries (#'render/activity-detail-entries
                          {:node-id "reads"
@@ -818,8 +860,8 @@
                          "fixture")
                 text (str/join "\n" (map :line entries))]
 
-            (expect (str/includes? text "Verify the affected tests."))
-            (expect (str/includes? text "Plan state:"))
+            (expect (not (str/includes? text "Verify the affected tests.")))
+            (expect (not (str/includes? text "Plan state:")))
             (expect (= 1
                        (count (filter #(and (= :activity-row (get-in % [:meta :kind]))
                                             (= "read-1" (get-in % [:meta :item-id])))

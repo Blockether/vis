@@ -169,7 +169,7 @@ export const ExecutionResults: Story = {
   },
 };
 
-/** One step disclosure opens the retained result, not invocation parameters. */
+/** Read links to the file; other steps disclose their retained results. */
 export const ResultFirst: Story = {
   args: { activity: ACTIVITY_RESULTS },
   play: async ({ canvasElement }) => {
@@ -177,18 +177,23 @@ export const ResultFirst: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]'));
     const expected = [
-      'greeting',
+      'lines 12–13',
       '"Hi "',
       'greeting_test.clj',
-      'captured lines',
+      'opens the file',
       'one disclosure',
       'one disclosure',
     ];
     await expect(rows).toHaveLength(expected.length);
     for (const [index, row] of rows.entries()) {
-      const step = within(row).getByRole('button');
-      await expect(step.getBoundingClientRect().height).toBe(24);
-      await userEvent.click(step);
+      if (index === 0) {
+        await expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+        await expect(row.querySelector('[data-activity-content]')).toBeNull();
+      } else {
+        const step = within(row).getByRole('button');
+        await expect(step.getBoundingClientRect().height).toBe(24);
+        await userEvent.click(step);
+      }
       await expect(row.textContent).toContain(expected[index]);
       await expect(within(row).queryByRole('button', { name: /^Diff/ })).not.toBeInTheDocument();
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
@@ -758,20 +763,13 @@ export const SameFileReads: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await userEvent.click(canvas.getByRole('button', { name: /Read ×2/ }));
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
-    const toggle = canvas.getByRole('button', { name: /Read.*PLAN.md.*583–584, 615–616/ });
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    const row = canvasElement.querySelector<HTMLElement>('[data-activity-row]')!;
+    await expect(row.textContent).toContain('PLAN.md · lines 583–584, 615–616');
+    await expect(within(row).queryByRole('button')).not.toBeInTheDocument();
     await expect(canvas.getByLabelText('Duration 3ms')).toBeVisible();
-    toggle.focus();
-    await userEvent.keyboard('{Enter}');
-    const content = canvasElement.querySelector('[data-activity-content]')!;
-    await expect(content).toBeVisible();
-    await expect(content.textContent).toContain('583 │ Verify the affected tests.');
-    await expect(content.textContent).toContain('616 │ Review the final diff.');
-    await expect(content.children).toHaveLength(2);
-    await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
-    await userEvent.keyboard(' ');
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await userEvent.click(toggle);
+    await expect(row.querySelector('[data-activity-content]')).toBeNull();
+    await expect(row.querySelector('[data-path]')).toHaveAttribute('data-path', '~/vis/PLAN.md');
+    await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
   },
 };
 

@@ -8,7 +8,6 @@
   },
   "rows": [
     {
-      "result_summary": "\"12:abc│ (defn greeting [name]\\n13:def│   (str \\\"Hello \\\" name))\"",
       "id": "result-0",
       "summary": "src/com/blockether/vis/internal/activity/presenter.clj",
       "signal": "observation",
@@ -17,27 +16,12 @@
       "presentation": {
         "headline": "Read",
         "summary": "src/com/blockether/vis/internal/activity/presenter.clj · lines 12–13",
-        "content": [
-          {
-            "type": "code",
-            "language": "clojure",
-            "text": "12 │ (defn greeting [name]\n13 │   (str \"Hello \" name))"
-          }
-        ]
+        "content": []
       },
       "presenter": "generic",
       "duration_ms": 0,
       "state": "succeeded",
-      "evidence": [
-        {
-          "kind": "arguments",
-          "text": "[\"src/com/blockether/vis/internal/activity/presenter.clj\"]"
-        },
-        {
-          "kind": "result",
-          "text": "\"12:abc│ (defn greeting [name]\\n13:def│   (str \\\"Hello \\\" name))\""
-        }
-      ],
+      "evidence": [],
       "resources": []
     },
     {
@@ -127,7 +111,7 @@
       "resources": []
     },
     {
-      "result_summary": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read shows the captured lines.\\n- Patch shows the applied changes.\"",
+      "result_summary": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read opens the file.\\n- Patch shows the applied changes.\"",
       "id": "result-3",
       "summary": "activity",
       "signal": "observation",
@@ -139,7 +123,7 @@
         "content": [
           {
             "type": "markdown",
-            "text": "# Activity\n\nOpen an operation to read its **retained result**.\n\n- Read shows the captured lines.\n- Patch shows the applied changes."
+            "text": "# Activity\n\nOpen an operation to read its **retained result**.\n\n- Read opens the file.\n- Patch shows the applied changes."
           }
         ]
       },
@@ -153,13 +137,13 @@
         },
         {
           "kind": "result",
-          "text": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read shows the captured lines.\\n- Patch shows the applied changes.\""
+          "text": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read opens the file.\\n- Patch shows the applied changes.\""
         }
       ],
       "resources": []
     },
     {
-      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
       "id": "result-4",
       "summary": "Activity review",
       "signal": "observation",
@@ -171,7 +155,7 @@
         "content": [
           {
             "type": "markdown",
-            "text": "Read and Patch now show their **results** after one disclosure."
+            "text": "Read links to the file; Patch shows its **changes** after one disclosure."
           }
         ]
       },
@@ -185,13 +169,13 @@
         },
         {
           "kind": "result",
-          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
+          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}"
         }
       ],
       "resources": []
     },
     {
-      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
       "id": "result-5",
       "summary": "Activity review",
       "signal": "observation",
@@ -203,7 +187,7 @@
         "content": [
           {
             "type": "markdown",
-            "text": "Read and Patch now show their **results** after one disclosure."
+            "text": "Read links to the file; Patch shows its **changes** after one disclosure."
           }
         ]
       },
@@ -217,7 +201,7 @@
         },
         {
           "kind": "result",
-          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
+          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}"
         }
       ],
       "resources": []

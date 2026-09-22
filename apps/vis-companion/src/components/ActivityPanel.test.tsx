@@ -42,7 +42,7 @@ it.each([
   expect(document.querySelector('[data-activity-summary]')).toBeNull();
   openEverySettledStep();
   expect(document.body.textContent).toContain(
-    'Read and Patch now show their results after one disclosure.',
+    'Read links to the file; Patch shows its changes after one disclosure.',
   );
   expect(screen.queryByRole('table')).toBeNull();
   for (const metadata of [

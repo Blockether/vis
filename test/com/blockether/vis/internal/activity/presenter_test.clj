@@ -28,7 +28,7 @@
        "grep 'greeting'  2 hits · 2 files\nsrc/greeting.clj  (1)\n  12:abc│ (defn greeting [name]\ntest/greeting_test.clj  (1)\n  8:def│ (is (= \"Hello Ada\" (greeting \"Ada\")))"
        nil]
       [:doc "activity"
-       "# Activity\n\nOpen an operation to read its **retained result**.\n\n- Read shows the captured lines.\n- Patch shows the applied changes."
+       "# Activity\n\nOpen an operation to read its **retained result**.\n\n- Read opens the file.\n- Patch shows the applied changes."
        nil]
       [:council.publish "Activity review"
        {:title "Activity review"
@@ -36,14 +36,14 @@
         :kind "informational"
         :thread_id 42
         :ping ["reviewer"]
-        :content "Read and Patch now show their **results** after one disclosure."} nil]
+        :content "Read links to the file; Patch shows its **changes** after one disclosure."} nil]
       [:council.get "Activity review"
        {:title "Activity review"
         :entry_id 42
         :kind "informational"
         :thread_id 42
         :ping ["reviewer"]
-        :content "Read and Patch now show their **results** after one disclosure."} nil]]
+        :content "Read links to the file; Patch shows its **changes** after one disclosure."} nil]]
 
      ctx
      (event/context)
@@ -95,6 +95,46 @@
 
                    (expect (contract/valid-projection? actual))
                    (expect (= expected actual)))))
+
+(defdescribe
+  summary-only-read-test
+  (it "retains the file and range without copying arguments or file contents into Activity"
+      (doseq [[text summary] [["12:abc│ private file content\n13:def│ more file content"
+                               "src/example.clj · lines 12–13"] ["" "src/example.clj"]]]
+        (let [row (get-in (result-fixture [[:cat "src/example.clj" text nil]]) ["rows" 0])]
+          (expect (= {"headline" "Read" "summary" summary "content" []} (get row "presentation")))
+          (expect (empty? (get row "evidence")))
+          (expect (not (contains? row "result_summary")))
+          (expect (not (str/includes? (pr-str row) "file content"))))))
+  (it "declares end-only reads while preserving lifecycle, failures and cancellation"
+      (let [declared (presenter/for-tool :cat)]
+        (expect (true? (:summary-only declared)))
+        (expect (false? (:show-start declared)))
+        (doseq [outcome [:failed :cancelled]]
+          (let [ctx (event/context)
+                invocation (event/invocation ctx nil)
+                details {:operation :cat
+                         :presenter :generic
+                         :activity declared
+                         :label "src/example.clj"
+                         :args ["src/example.clj" 12 13]
+                         :classification :observation}
+                started (event/start-event ctx invocation details)
+                terminal (event/terminal-event ctx
+                                               invocation
+                                               (assoc details
+                                                 :outcome outcome
+                                                 :error (ex-info "Read refused" {})
+                                                 :started-at-ms (System/currentTimeMillis)))
+                row (first (:rows (activity/presentation (activity/replay [started terminal]))))]
+
+            (expect (= :running (:status started)))
+            (expect (false? (:show-start started)))
+            (expect (not (contains? started :argument-summary)))
+            (expect (= outcome (:status terminal)))
+            (expect (= "Read refused" (:error-summary terminal)))
+            (expect (= (name outcome) (:state row)))
+            (expect (some #(= "error" (:kind %)) (:evidence row))))))))
 
 (defdescribe
   compact-built-in-results-test

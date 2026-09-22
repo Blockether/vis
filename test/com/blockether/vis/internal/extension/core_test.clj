@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.loop :as vis-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
@@ -12,6 +13,55 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn [& _] nil)
+
+(defdescribe
+  summary-only-activity-registration-test
+  (it
+    "validates the policy and omits read bodies only from Activity, not the call result"
+    (let [result
+          "12:abc│ retained only for the caller"
+
+          entry
+          {:ext.symbol/symbol 'cat
+           :ext.symbol/tag :observation
+           :ext.symbol/doc "Read a file."
+           :ext.symbol/arglists '[[path]]
+           :ext.symbol/activity (presenter/for-tool :cat)
+           :ext.symbol/fn (fn [_]
+                            (extension/success {:result result}))}
+
+          events
+          (atom [])]
+
+      (expect (#'extension/fn-symbol-entry? entry))
+      (expect (not (#'extension/fn-symbol-entry?
+                    (assoc-in entry [:ext.symbol/activity :summary-only] "yes"))))
+      (binding [extension/*tool-event-sink*
+                #(swap! events conj %)
+
+                extension/*tool-event-context*
+                (activity-event/context)]
+
+        (expect (= result
+                   ((get (extension/wrap-extension {:ext/name "test.summary-only"
+                                                    :ext/engine {:ext.engine/symbols [entry]}}
+                                                   {})
+                         'cat)
+                     "src/example.clj"))))
+      (let [projection
+            (-> @events
+                activity/replay
+                activity/presentation)
+
+            row
+            (first (:rows projection))]
+
+        (expect (= 2 (count @events)))
+        (expect (= "succeeded" (:state row)))
+        (expect (empty? (:evidence row)))
+        (expect (empty? (get-in row [:presentation :content])))
+        (expect (not (contains? row :result-summary)))
+        (expect (not (str/includes? (pr-str @events) "retained only for the caller")))))))
 
 (defdescribe prompt-normalization-test
              (it "normalizes string and fn extension prompts"

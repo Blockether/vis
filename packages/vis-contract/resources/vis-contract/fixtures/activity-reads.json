@@ -23,13 +23,7 @@
       "presentation": {
         "headline": "Read",
         "summary": "~/vis/PLAN.md · lines 583–584",
-        "content": [
-          {
-            "type": "code",
-            "language": "markdown",
-            "text": "583 │ Verify the affected tests.\n584 │ Keep unrelated work unchanged."
-          }
-        ]
+        "content": []
       }
     },
     {
@@ -48,13 +42,7 @@
       "presentation": {
         "headline": "Read",
         "summary": "~/vis/PLAN.md · lines 615–616",
-        "content": [
-          {
-            "type": "code",
-            "language": "markdown",
-            "text": "615 │ Plan state: verification in progress.\n616 │ Review the final diff."
-          }
-        ]
+        "content": []
       }
     }
   ],

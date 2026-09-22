@@ -233,6 +233,10 @@ function activityStepDelta(row: ActivityRow): {
   );
 }
 
+function readPathCaption(id: string, caption: string): { id: string; note: string } {
+  return { id, note: caption.startsWith(id) ? caption.slice(id.length) : '' };
+}
+
 /**
  * A PATH THAT KEEPS ITS NAME.
  *
@@ -257,7 +261,7 @@ function activityStepDelta(row: ActivityRow): {
  * inside a listed directory — passes `label`; the press, the hover title and the
  * opener still carry the whole path.
  */
-function ActivityPath({ id, label }: { id: string; label?: string }) {
+function ActivityPath({ id, label, note }: { id: string; label?: string; note?: string }) {
   const roots = useWorkspaceRoots();
   const openPath = useOpenPath();
   const shown = workspaceRelativePath(id, roots) || id;
@@ -272,18 +276,16 @@ function ActivityPath({ id, label }: { id: string; label?: string }) {
       <span className="max-w-full shrink-0 truncate">{name}</span>
     </>
   );
-  if (!openPath)
-    return (
-      <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
-        {words}
-      </span>
-    );
   const press = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
     event.preventDefault();
     event.stopPropagation();
-    openPath(id);
+    openPath?.(id);
   };
-  return (
+  const path = !openPath ? (
+    <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
+      {words}
+    </span>
+  ) : (
     <span
       role="button"
       tabIndex={0}
@@ -298,6 +300,14 @@ function ActivityPath({ id, label }: { id: string; label?: string }) {
     >
       {words}
     </span>
+  );
+  return note ? (
+    <span className="flex min-w-0 max-w-full">
+      {path}
+      <span className="shrink-0 whitespace-pre text-dialog-hint">{note}</span>
+    </span>
+  ) : (
+    path
   );
 }
 
@@ -794,7 +804,9 @@ function ActivityStep({
       >
         {linkedSummary ? (
           <InlineMarkdown links>{caption}</InlineMarkdown>
-        ) : row.operation === 'cat' || row.operation === 'patch' ? (
+        ) : row.operation === 'cat' ? (
+          <ActivityPath {...readPathCaption(row.summary, caption)} />
+        ) : row.operation === 'patch' ? (
           <ActivityPath id={caption} />
         ) : (
           caption

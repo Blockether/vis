@@ -413,6 +413,7 @@
                      #(and (map? %)
                            (optional-field? % :headline non-blank-string?)
                            (optional-field? % :show-start boolean?)
+                           (optional-field? % :summary-only boolean?)
                            (optional-field? % :render fn?)))
     (optional-field? x :ext.symbol/batch-hint pos-int?)
     (every? #(optional-field? x % fn?)

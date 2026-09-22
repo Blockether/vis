@@ -148,31 +148,9 @@
         (string? value) [{"type" "text" "text" value}]
         :else [{"type" "text" "text" (scalar value)}]))
 
-(defn- code-language
-  [path]
-  (get {"clj" "clojure"
-        "cljc" "clojure"
-        "cljs" "clojure"
-        "edn" "clojure"
-        "py" "python"
-        "ts" "typescript"
-        "tsx" "tsx"
-        "js" "javascript"
-        "jsx" "jsx"
-        "json" "json"
-        "yaml" "yaml"
-        "yml" "yaml"
-        "toml" "toml"
-        "sh" "bash"
-        "md" "markdown"
-        "css" "css"
-        "html" "html"
-        "rs" "rust"
-        "java" "java"}
-       (last (str/split (str path) #"\."))
-       "text"))
-
-(defn- read-content [text] (str/replace text #"(?m)^(\d+):[0-9a-f]+│ ?" "$1 │ "))
+(def ^:private summary-only-results
+  "Built-ins whose successful Activity carries only a summary, not argument or result bodies."
+  #{"cat"})
 
 (def ^:private tool-headlines
   "Each built-in owns its start headline, settled headline and start visibility."
@@ -673,10 +651,9 @@
                 :else (str (or (field value "summary") (field value "title") "")))
 
           content
-          (cond (contains? #{"patch" "read_session"} op) []
+          (cond (contains? summary-only-results op) []
+                (contains? #{"patch" "read_session"} op) []
                 (str/starts-with? op "council.") []
-                (and (= op "cat") text)
-                [{"type" "code" "language" (code-language path) "text" (read-content text)}]
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
                                                                                "text" text}]
                 (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
@@ -703,7 +680,9 @@
   (let [op (name operation)]
     (when-not (contains? tool-headlines op)
       (throw (ex-info "Missing built-in Activity presentation" {:operation operation})))
-    {:headline (first (get tool-headlines op))
-     :show-start (nth (get tool-headlines op) 2)
-     :render (fn [details value]
-               (result-presentation (assoc details :operation operation) value))}))
+    (cond-> {:headline (first (get tool-headlines op))
+             :show-start (nth (get tool-headlines op) 2)
+             :render (fn [details value]
+                       (result-presentation (assoc details :operation operation) value))}
+      (contains? summary-only-results op)
+      (assoc :summary-only true))))

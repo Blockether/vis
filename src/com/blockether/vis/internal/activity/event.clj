@@ -728,7 +728,8 @@
               (first args)))
 
         argument
-        (when (seq args) (bounded-summary args max-summary-bytes))
+        (when (and (seq args) (not (get-in details [:activity :summary-only])))
+          (bounded-summary args max-summary-bytes))
 
         identity
         (argument-key ctx args)
@@ -844,8 +845,9 @@
 
         summary
         (if (= outcome :succeeded)
-          (some-> (displayable-result result)
-                  (bounded-summary max-detail-bytes))
+          (when-not (get-in details [:activity :summary-only])
+            (some-> (displayable-result result)
+                    (bounded-summary max-detail-bytes)))
           (bounded-rendered (compact-path-text (:workspace-root details)
                                                (util/redact-secret-text (or (some-> error*
                                                                                     ex-message)

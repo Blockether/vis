@@ -189,14 +189,15 @@
                                             :started-at-ms (System/currentTimeMillis)
                                             :outcome :succeeded
                                             :result result})))]
-    (it "retains read lines as highlighted code without patch anchors or escaped newlines"
+    (it "retains a read's line range without sending the file contents"
         (let [result (terminal :cat "40:abc│ (def value 1)\n41:000│ ")
               presentation (:presentation result)]
 
           (expect (= "Read" (get presentation "headline")))
           (expect (= "src/example.clj · lines 40–41" (get presentation "summary")))
-          (expect (= [{"type" "code" "language" "clojure" "text" "40 │ (def value 1)\n41 │ "}]
-                     (get presentation "content")))))
+          (expect (empty? (get presentation "content")))
+          (expect (not (contains? result :result-summary)))
+          (expect (not (string/includes? (pr-str result) "def value")))))
     (it "renders documentation and structured tool output instead of invocation parameters"
         (expect (= "markdown"
                    (get-in (terminal :doc "# Guide\n\n**Read this**")

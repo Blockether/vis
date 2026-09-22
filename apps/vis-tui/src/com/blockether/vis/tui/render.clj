@@ -5805,6 +5805,31 @@
 
                   {:text (str kept file-name) :dir kept :name file-name}))))
 
+(defn- activity-caption-path-cells
+  "Keep a read's line annotation outside its file target, even when the caption is clipped."
+  [operation target caption ^long max-w]
+  (let [path
+        (if (= "cat" operation) (str target) caption)
+
+        note
+        (if (str/starts-with? caption path) (subs caption (count path)) "")
+
+        name-width
+        (p/display-width (last (str/split path #"/")))
+
+        path-room
+        (max (min max-w name-width) (- max-w (p/display-width note)))
+
+        shown
+        (:text (activity-path-cells path path-room))
+
+        path-width
+        (p/display-width shown)]
+
+    {:text (str shown (ellipsize-cols note (max 0 (- max-w path-width))))
+     :path path
+     :path-width path-width}))
+
 (defn- activity-diff-mark
   "THE KIND IS THE SIGN. The engine strips `+`/`-` from a diff line's text and keeps
    the classification, so the marker column is the renderer's to draw — once."
@@ -6508,36 +6533,31 @@
                                                        mark
                                                        (when openable? (if open? " ▾" " ▸"))
 
-                                                       subject
-                                                       (when-let [text (or caption object)]
-                                                         (if (and (not (:markdown? summary-entry))
-                                                                  (#{"cat" "patch"}
-                                                                   (:operation row)))
-                                                           (:text
-                                                             (activity-path-cells
-                                                               text
-                                                               (max 1
-                                                                    (- (long width)
-                                                                       (p/display-width
-                                                                         (str (activity-lead col)
-                                                                              lead-word
-                                                                              (if caption " · " " ")
-                                                                              delta
-                                                                              suffix
-                                                                              mark))
-                                                                       2))))
-                                                           text))
-
-                                                       path-subject
-                                                       ;; A cat/patch head NAMES the file it worked
-                                                       ;; on, so the span that spells it opens that
-                                                       ;; file — the same press the app gives its
-                                                       ;; caption.
-                                                       (when (and subject
+                                                       path-cells
+                                                       (when (and (or caption object)
                                                                   (not (:markdown? summary-entry))
                                                                   (#{"cat" "patch"}
                                                                    (:operation row)))
-                                                         (str (or caption object)))
+                                                         (activity-caption-path-cells
+                                                           (:operation row)
+                                                           (:summary row)
+                                                           (str (or caption object))
+                                                           (max 1
+                                                                (- (long width)
+                                                                   (p/display-width
+                                                                     (str (activity-lead col)
+                                                                          lead-word
+                                                                          (if caption " · " " ")
+                                                                          delta
+                                                                          suffix
+                                                                          mark))
+                                                                   2))))
+
+                                                       subject
+                                                       (or (:text path-cells) caption object)
+
+                                                       path-subject
+                                                       (:path path-cells)
 
                                                        path-col
                                                        (if path-subject
@@ -6549,9 +6569,7 @@
                                                          0)
 
                                                        path-width
-                                                       (if path-subject
-                                                         (p/display-width (str subject))
-                                                         0)
+                                                       (or (:path-width path-cells) 0)
 
                                                        prefix
                                                        ;; The mark that opens a row belongs to the

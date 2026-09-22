@@ -31,7 +31,7 @@ it('accepts opaque read target identities and rejects malformed ones', () => {
   }
 });
 
-it('merges distinct ranges of one file into one disclosure without changing invocation counts', () => {
+it('merges ranges into one summary without a disclosure or changing invocation counts', () => {
   const activity = reads();
   openReads(activity);
   expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent(
@@ -39,20 +39,29 @@ it('merges distinct ranges of one file into one disclosure without changing invo
   );
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   const row = document.querySelector('[data-activity-row="0:read-1"]')!;
-  const toggle = within(row as HTMLElement).getByRole('button');
-  expect(toggle).toHaveTextContent('PLAN.md · lines 583–584, 615–616');
-  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(row).toHaveTextContent('PLAN.md · lines 583–584, 615–616');
+  expect(within(row as HTMLElement).queryByRole('button')).toBeNull();
   expect(within(row as HTMLElement).getByLabelText('Duration 3ms')).toBeVisible();
-  fireEvent.click(toggle);
-  const content = row.querySelector('[data-activity-content]')!;
-  expect(content.textContent).toContain('583 │ Verify the affected tests.');
-  expect(content.textContent).toContain('616 │ Review the final diff.');
-  expect(content.children).toHaveLength(2);
+  expect(row.querySelector('[data-activity-content]')).toBeNull();
   expect(activity).toEqual(readFixture);
 });
 
-it('keeps an open read mounted when another range arrives', () => {
+it('updates the summary-only row when another range arrives', () => {
   const activity = reads();
+  const view = openReads({ ...activity, rows: activity.rows.slice(0, 1) });
+  view.rerender(<ActivityPanel activity={activity} />);
+  fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
+  const row = document.querySelector('[data-activity-row]')!;
+  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+  expect(row).toHaveTextContent('PLAN.md · lines 583–584, 615–616');
+  expect(row.querySelector('[data-activity-content]')).toBeNull();
+});
+
+it('keeps explicitly opened content mounted when another range arrives', () => {
+  const activity = reads();
+  activity.rows.forEach((row, index) => {
+    row.presentation!.content = [{ type: 'code', text: `Snapshot ${index + 1}` }];
+  });
   const view = openReads({ ...activity, rows: activity.rows.slice(0, 1) });
   const row = document.querySelector('[data-activity-row]')!;
   fireEvent.click(within(row as HTMLElement).getByRole('button'));
@@ -62,9 +71,7 @@ it('keeps an open read mounted when another range arrives', () => {
   expect(row.isConnected).toBe(true);
   expect(content.isConnected).toBe(true);
   expect(firstCode.isConnected).toBe(true);
-  expect(within(row as HTMLElement).getByRole('button', { expanded: true })).toBeVisible();
-  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
-  expect(content.textContent).toContain('616 │ Review the final diff.');
+  expect(content).toHaveTextContent('Snapshot 2');
 });
 
 it.each([
@@ -105,8 +112,11 @@ it.each([
   }
 });
 
-it('retains overlapping snapshots, empty results and truncation without inventing durations', () => {
+it('preserves explicit content and truncation without inventing durations', () => {
   const activity = reads();
+  activity.rows[0].presentation!.content = [
+    { type: 'code', text: '583 │ Verify the affected tests.' },
+  ];
   activity.rows[1].presentation!.summary = activity.rows[0].presentation!.summary;
   activity.rows[1].presentation!.content = [
     { type: 'code', text: '583 │ Updated plan text.' },
@@ -124,19 +134,19 @@ it('retains overlapping snapshots, empty results and truncation without inventin
   expect(row.textContent).not.toContain('Details truncated');
 });
 
-it('keeps empty reads and captions without line ranges in the merged disclosure', () => {
+it('keeps empty reads and captions without line ranges summary-only', () => {
   const activity = reads();
   activity.rows.forEach((row) => {
+    row.summary = '~/vis/empty.txt';
     row.presentation!.summary = '~/vis/empty.txt';
-    row.presentation!.content = [{ type: 'code', text: '' }];
+    row.presentation!.content = [];
   });
   openReads(activity);
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   const row = document.querySelector('[data-activity-row]')!;
-  const toggle = within(row as HTMLElement).getByRole('button');
-  expect(toggle).toHaveTextContent('~/vis/empty.txt');
-  fireEvent.click(toggle);
-  expect(row.querySelector('[data-activity-content]')!.children).toHaveLength(2);
+  expect(row).toHaveTextContent('~/vis/empty.txt');
+  expect(within(row as HTMLElement).queryByRole('button')).toBeNull();
+  expect(row.querySelector('[data-activity-content]')).toBeNull();
 });
 
 it('copies the original reads rather than the merged display', async () => {
@@ -150,4 +160,5 @@ it('copies the original reads rather than the merged display', async () => {
   expect(copied).toContain('~/vis/PLAN.md · lines 583–584');
   expect(copied).toContain('~/vis/PLAN.md · lines 615–616');
   expect(copied).not.toContain('a'.repeat(64));
+  expect(copied).not.toContain('Verify the affected tests.');
 });

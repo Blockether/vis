@@ -65,6 +65,57 @@ function paths(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('[data-path]')];
 }
 
+it.each([
+  [TARGET, ' · lines 12–13'],
+  [TARGET, ' · lines 12–13, 18–20'],
+  [TARGET, ''],
+  ['~/vis/notes · lines 12–13', ''],
+  ['~/vis/notes · lines 12–13', ' · lines 18–20'],
+])(
+  'opens the read target %s without its annotation %s',
+  (target, note) => {
+    const openPath = vi.fn();
+    const activity = projection();
+    activity.rows = [
+      {
+        ...patchRow(),
+        operation: 'cat',
+        presenter: 'generic',
+        signal: 'observation',
+        summary: target,
+        resources: [],
+        evidence: [],
+        presentation: { headline: 'Read', summary: target + note, content: [] },
+      },
+    ];
+    render(
+      <OpenPathContext.Provider value={openPath}>
+        <ActivityPanel activity={activity} />
+      </OpenPathContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const group = screen.queryByRole('button', { name: /Read ×/ });
+    if (group) fireEvent.click(group);
+    const path = paths()[0];
+    expect(path).toHaveAttribute('data-path', target);
+    expect(path).toHaveAttribute('aria-label', `Open ${target}`);
+    expect(path).toHaveAttribute('title', target);
+    expect(path).toHaveTextContent(target);
+    if (note) {
+      const annotation = screen.getByText(note.trim());
+      expect(annotation).toBeVisible();
+      expect(annotation.closest('[data-path]')).toBeNull();
+      fireEvent.click(annotation);
+      expect(openPath).not.toHaveBeenCalled();
+    }
+    fireEvent.click(path);
+    fireEvent.keyDown(path, { key: 'Enter' });
+    fireEvent.keyDown(path, { key: ' ' });
+    expect(openPath.mock.calls).toEqual([[target], [target], [target]]);
+    expect(document.querySelector('[data-activity-content]')).toBeNull();
+  },
+);
+
 it('opens the file a path names, on the machine that ran the step', () => {
   const openPath = vi.fn();
   openPanel(openPath);
