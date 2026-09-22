@@ -40,6 +40,33 @@
                      (expect (= 200000 (:input-limit model)))
                      (expect (= 128000 (:output-limit model)))))))
 
+(defdescribe copilot-astra-catalog-test
+             (it "uses Astra's catalog input/output budgets and metered pricing through pinned Svar"
+                 ;; Regression: the old overlay hid catalog limits behind a 272K input cap
+                 ;; and free pricing, and advertised an unsupported ultra effort.
+                 (let [provider
+                       (@#'sut/provider-entry)
+
+                       router
+                       (svar/make-router [(assoc (:provider/preset provider)
+                                            :id (:provider/id provider)
+                                            :api-key "test"
+                                            :models [{:name "gpt-6-astra"}])])
+
+                       model
+                       (-> router
+                           :providers
+                           first
+                           :models
+                           first)]
+
+                   (expect (= 922000 (:context model) (:input-limit model)))
+                   (expect (= 128000 (:output-limit model)))
+                   (expect (= [{:type "effort" :values ["low" "medium" "high" "xhigh" "max"]}]
+                              (:reasoning-options model)))
+                   (expect (= {:input 10.0 :output 50.0 :cached-input 1.0}
+                              (select-keys (:pricing model) [:input :output :cached-input]))))))
+
 (defdescribe
   provider-registration-test
   (it "registers ONE GitHub Copilot provider, not one per seat tier"
