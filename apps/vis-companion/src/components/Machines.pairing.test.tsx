@@ -121,4 +121,24 @@ describe('pairing after a scan says what it is doing', () => {
     });
     expect(screen.getByRole('status').textContent).toMatch(/Stopped/);
   });
+
+  // Reported from the pairing panel (paraphrased: pad the table of addresses so it
+  // stands under the word `Pairing`): the rows sat on the card's own edge while the
+  // title over them started past the spinner, so the report read as a heading with a
+  // list sliding out from under it. The inset IS that title's step: the header's
+  // `px-3`, the 1rem mark the spinner stands in, and the `gap-2` between them.
+  it('stands every address under the title, not under the spinner', async () => {
+    await pair();
+    await tick(50);
+    const panel = screen.getByRole('status');
+    const header = panel.querySelector('header');
+    expect(header).toHaveClass('gap-2', 'px-3');
+    expect(header?.firstElementChild).toHaveClass('w-4');
+    const rows = panel.querySelectorAll('li');
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row).toHaveClass('pl-9', 'pr-3');
+      expect(row).not.toHaveClass('px-3');
+    }
+  });
 });

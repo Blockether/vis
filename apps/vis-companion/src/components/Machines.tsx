@@ -948,6 +948,15 @@ function candidateView(probe: CandidateProbe): { note: string; textClass: string
 }
 
 /**
+ * THE MARK COLUMN of the pairing report, and the inset every address hangs on: the
+ * header's own `px-3`, this 1rem mark and the `gap-2` beside it — `pl-9`. The rows
+ * stood on the card's own edge instead, a step to the left of the title over them,
+ * so one machine's report read as a heading with a list sliding out from under it.
+ */
+const PROBE_MARK = 'flex w-4 shrink-0 justify-center';
+const PROBE_ROW = 'pl-9 pr-3';
+
+/**
  * WHAT IS HAPPENING WHILE A MACHINE IS BEING PAIRED — reported as it happens.
  *
  * This is the panel the report exists for: the scanner narrates every wait it
@@ -981,7 +990,9 @@ function PairingProgress({
       aria-live="polite"
     >
       <header className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-        <Spinner tone="accent" />
+        <span className={PROBE_MARK}>
+          <Spinner tone="accent" />
+        </span>
         <span className="min-w-0 flex-1">
           <Text variant="label" className="block truncate">
             Pairing with {run.label}
@@ -999,7 +1010,7 @@ function PairingProgress({
         {run.candidates.map((probe) => {
           const view = candidateView(probe);
           return (
-            <li key={probe.url} className="flex items-baseline gap-2 px-3 py-2">
+            <li key={probe.url} className={`flex items-baseline gap-2 py-2 ${PROBE_ROW}`}>
               <Text variant="meta" className="shrink-0">
                 {REACH_LABEL[reachOf(probe.url)]}
               </Text>
