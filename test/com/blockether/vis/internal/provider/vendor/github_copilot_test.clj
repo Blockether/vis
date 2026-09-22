@@ -67,6 +67,46 @@
                    (expect (= {:input 10.0 :output 50.0 :cached-input 1.0}
                               (select-keys (:pricing model) [:input :output :cached-input]))))))
 
+(defdescribe copilot-sol-luna-catalog-test
+             (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
+                 (let [provider
+                       (@#'sut/provider-entry)
+
+                       defaults
+                       (get-in provider [:provider/preset :default-models])
+
+                       router
+                       (svar/make-router [(assoc (:provider/preset provider)
+                                            :id (:provider/id provider)
+                                            :api-key "test"
+                                            :models [{:name "gpt-6-sol"} {:name "gpt-6-luna"}])])]
+
+                   (doseq [model (:models (first (:providers router)))]
+                     (expect (some #{(:name model)} defaults))
+                     (expect (= 922000 (:context model) (:input-limit model)))
+                     (expect (= 128000 (:output-limit model)))
+                     (expect (= :openai-compatible-responses (:api-style model)))
+                     (expect (= :openai-effort (:reasoning-style model)))
+                     (expect (= [{:type "effort"
+                                  :values ["none" "low" "medium" "high" "xhigh" "max"]}]
+                                (:reasoning-options model)))
+                     (expect (= #{:chat :vision} (:capabilities model)))
+                     (expect (= (if (= "gpt-6-sol" (:name model))
+                                  {:input 2.0 :cached-input 0.2 :output 10.0}
+                                  {:input 0.1 :cached-input 0.01 :output 0.5})
+                                (select-keys (:pricing model) [:input :cached-input :output])))))))
+
+(defdescribe copilot-gpt6-policy-test
+             (it "requests Copilot policy access for Sol and Luna"
+                 (let [requested (atom #{})]
+                   (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
+                                                                  (swap! requested conj model)
+                                                                  true)}
+                     (fn []
+                       (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
+                       (expect (contains? @requested "gpt-6-sol"))
+                       (expect (contains? @requested "gpt-6-luna")))))))
+
 (defdescribe
   provider-registration-test
   (it "registers ONE GitHub Copilot provider, not one per seat tier"
@@ -97,8 +137,8 @@
                    (get-in copilot [:provider/preset :base-url])))
         (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
         ;; The curated defaults intentionally contain only the current cacheable fleets.
-        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra" "gpt-5.6-luna"
-                     "gpt-5.6-sol" "gpt-5.6-terra"}
+        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra" "gpt-6-sol"
+                     "gpt-6-luna" "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
         (expect (ifn? (:provider/status-fn copilot)))

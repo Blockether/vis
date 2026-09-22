@@ -3,6 +3,7 @@
             [charred.api :as json]
             [clojure.string]
             [com.blockether.vis.internal.util]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
             [com.blockether.vis.internal.config.core :as config]
@@ -260,6 +261,8 @@
                      ;; svar-catalog models ride as bare strings.
                      (expect (= "gpt-6-astra" (config/model-name (first defaults))))
                      (expect (string? (get by-name "gpt-6-astra")))
+                     (expect (contains? by-name "gpt-6-sol"))
+                     (expect (contains? by-name "gpt-6-luna"))
                      (expect (contains? by-name "gpt-5.6-luna"))
                      (expect (contains? by-name "gpt-5.6-sol"))
                      ;; gpt-5.6-terra rides as a bare name; svar's catalog
@@ -268,6 +271,34 @@
                      (expect (contains? by-name "gpt-5.6-terra"))
                      ;; and rides BARE (no inline :context map) — svar's catalog supplies its window.
                      (expect (string? (get by-name "gpt-5.6-terra")))))))
+
+(defdescribe codex-sol-luna-catalog-test
+             (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
+                 (let [provider
+                       (do (codex/register!) (vis/provider-by-id :openai-codex))
+
+                       defaults
+                       (get-in provider [:provider/preset :default-models])
+
+                       router
+                       (svar/make-router [(assoc (:provider/preset provider)
+                                            :id (:provider/id provider)
+                                            :api-key "test"
+                                            :models [{:name "gpt-6-sol"} {:name "gpt-6-luna"}])])]
+
+                   (doseq [model (:models (first (:providers router)))]
+                     (expect (some #{(:name model)} defaults))
+                     (expect (= 272000 (:context model) (:input-limit model)))
+                     (expect (= 128000 (:output-limit model)))
+                     (expect (= :openai-compatible-responses (:api-style model)))
+                     (expect (= :openai-effort (:reasoning-style model)))
+                     (expect (= [{:type "effort" :values ["low" "medium" "high" "xhigh" "max"]}]
+                                (:reasoning-options model)))
+                     (expect (= #{:chat :vision} (:capabilities model)))
+                     (expect (= (if (= "gpt-6-sol" (:name model))
+                                  {:input 2.0 :cached-input 0.2 :output 10.0}
+                                  {:input 0.1 :cached-input 0.01 :output 0.5})
+                                (select-keys (:pricing model) [:input :cached-input :output])))))))
 
 (defdescribe default-model-context-declaration-test
              (it "an inline-map default-model survives default-model-configs with :context"
