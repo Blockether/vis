@@ -4152,7 +4152,7 @@
                                                        {}))]
 
       (expect (= 1 (count (re-seq #"WHAT HAPPENED" text))))
-      (expect (= 1 (count (re-seq #"NEXT STEP" text))))
+      (expect (= 1 (count (re-seq #"NEXT\s+STEP" text))))
       (expect (not (str/includes? text "Wrapper: Stream semantic timeout")))
       (expect (str/includes? text "Stream went quiet — Vis timed out")))))
 
@@ -5287,6 +5287,7 @@
               (mapv (fn [l]
                       (-> l
                           (str/replace p/INLINE_ITALIC_ON "")
+                          (str/replace #"[\uE000-\uF8FF]" "")
                           (str/replace p/INLINE_ITALIC_OFF "")))
                     body)]
 
@@ -5297,10 +5298,17 @@
           (expect (every? (fn [l]
                             (str/includes? l p/INLINE_ITALIC_ON))
                           body))
-          ;; ... and a line the wrapper broke is stretched flush, not ragged.
-          (expect (some (fn [l]
-                          (str/includes? l "  "))
-                        (butlast plain)))
+          ;; Global paragraph breaks may leave a short line when stretching would
+          ;; make every gap wider. Near-full rows still follow the shared comfort cap.
+          (expect (every? (fn [line]
+                            (let [slack
+                                  (- 40 (p/display-width line))
+
+                                  gaps
+                                  (dec (count (str/split (subs line 2) #"\s+")))]
+
+                              (and (not (neg? slack)) (or (zero? slack) (>= slack gaps)))))
+                          (butlast plain)))
           ;; The bare words - no quotes, no stretch - are what a click copies.
           (expect (= "transcription support for voice attachments and a bit more speech here\n"
                      (:text (:meta (last (@#'render/paste-disclosure-entries

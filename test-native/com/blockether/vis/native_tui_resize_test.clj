@@ -24,8 +24,13 @@
                                        ^bytes (img/encode image :png))}))
         [["first" 1358 1030 "red"] ["second" 702 648 "blue"]]))
 
+(def ^:private native-prose
+  (str "A quiet paragraph can become much more comfortable when its lines share "
+       "a reasonably even rhythm of spaces instead of alternating between very tight "
+       "and very loose arrangements."))
+
 (defn- start-gateway-stub!
-  [& [slow-model? requests clipboard? images]]
+  [& [slow-model? requests clipboard? images prose?]]
   (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
     (.createContext
       server
@@ -70,16 +75,18 @@
                                         "content" []}
                                        {"turn_id" "native-highlighting"
                                         "status" "completed"
-                                        "request" (if clipboard?
-                                                    "Copy: Zażółć gęślą jaźń 中文 😀"
-                                                    "Show Python syntax.")
+                                        "request" (cond clipboard? "Copy: Zażółć gęślą jaźń 中文 😀"
+                                                        prose? "Show beautiful prose."
+                                                        :else "Show Python syntax.")
                                         "content"
                                         [{"id" "code"
                                           "type" "prose"
                                           "markdown"
-                                          (str "```python\n"
-                                               "vis_identifier_marker = \"vis_string_marker\"\n"
-                                               "```")}]})]}
+                                          (if prose?
+                                            native-prose
+                                            (str "```python\n"
+                                                 "vis_identifier_marker = \"vis_string_marker\"\n"
+                                                 "```"))}]})]}
 
                            {})
                     data (.getBytes ^String (json/write-json-str body) "UTF-8")]
@@ -110,7 +117,8 @@
             (start-gateway-stub! (some? model-key)
                                  requests
                                  clipboard?
-                                 (when (= "images" mode) (image-attachments)))]
+                                 (when (= "images" mode) (image-attachments))
+                                 (= "prose" mode))]
 
         (try
           (let [process (.start
@@ -130,6 +138,8 @@
                                  output
                                  (cond (= "theme" mode) "native theme restored after restart"
                                        (= "images" mode) "native Kitty image scrolling verified"
+                                       (= "prose" mode)
+                                       "native Justice prose reflow and copy verified"
                                        clipboard? "native clipboard verified"
                                        model-key "input responsive during slow model HTTP"
                                        :else "resized to 100x35"))
@@ -151,6 +161,11 @@
              ;; Regression: Lanterna silently discarded native WINCH handler registration.
              (it "resizes and repaints persisted Python in the native terminal"
                  (check-native-tui! nil)))
+
+(defdescribe native-tui-prose-test
+             (it
+               "reflows Justice paragraphs and copies original words after native viewport resizes"
+               (check-native-tui! "prose")))
 
 (defdescribe
   native-tui-model-shortcuts-test

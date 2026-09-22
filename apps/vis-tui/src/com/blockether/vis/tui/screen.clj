@@ -1779,8 +1779,8 @@
 
    For trace bubbles, expand disclosure blocks for clipboard export so a copied
    bubble does not paste `N chars hidden` placeholders back into the prompt.
-   Plain answer/user bubbles keep the projected text fallback used for live
-   streaming, where the raw message can still be a placeholder."
+   Plain answer/user bubbles retain the projection's source text: visual wrapping
+   and justification must not enter the clipboard, including during streaming."
   [message bubble-w settings {:keys [session-id detail-expansions]}]
   (if (and (= :assistant (:role message)) (:traces message))
     (let [opts {:session-id session-id
@@ -1797,7 +1797,7 @@
                                                       (:confidence message)
                                                       (= :cancelled (:status message))
                                                       opts)))
-    (or (:text message) "")))
+    (or (:copy-source-text message) (:text message) "")))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.

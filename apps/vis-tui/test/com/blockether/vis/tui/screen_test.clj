@@ -3964,3 +3964,27 @@ therapy line 2"
                  (finally (swap! db assoc :shutdown? true)
                           (.interrupt thread)
                           (.join thread 3000)))))))))
+
+(defdescribe
+  justified-prose-copy-test
+  (it "copies source prose rather than visual line breaks and widened gaps"
+      ;; The native PTY regression exposed layout-only spaces leaking into OSC 52.
+      (let [source (str
+                     "A quiet paragraph can become much more comfortable when its lines share "
+                     "a reasonably even rhythm of spaces instead of alternating between very tight "
+                     "and very loose arrangements.")]
+        (doseq [role [:assistant :user]
+                width [24 60 100]]
+
+          (let [message {:id "prose" :role role :text source}
+                projected (virtual/project-message message width {})
+                layout {:visible [{:idx 0 :top 0 :height 16 :projected projected}]}
+                regions (bubble-copy-regions layout
+                                             [(assoc message :text "stale placeholder")]
+                                             0
+                                             30
+                                             (+ width (long render/MESSAGE_SIDE_PAD))
+                                             {}
+                                             {})]
+
+            (expect (= source (force (:text (first regions))))))))))

@@ -20,7 +20,9 @@ from pathlib import Path
 def check_resize(binary, home, gateway, mode=None):
     """Exercise production rendering and input on a controlling terminal."""
     model_key = mode if mode in ("c", "m") else None
-    clipboard_mode = mode if mode in ("osc52", "clip.exe") else None
+    clipboard_mode = (
+        "osc52" if mode == "prose" else mode if mode in ("osc52", "clip.exe") else None
+    )
     theme_mode = mode in ("theme", "theme-restart")
     config_file = Path(home) / ".vis/tui/config.json"
     clipboard_file = Path(home) / "clipboard.bin"
@@ -194,6 +196,55 @@ def check_resize(binary, home, gateway, mode=None):
     try:
         await_bottom(20)
         print("initial 80x24 painted", flush=True)
+        if mode == "prose":
+            original = (
+                "A quiet paragraph can become much more comfortable when its lines share "
+                "a reasonably even rhythm of spaces instead of alternating between very tight "
+                "and very loose arrangements."
+            )
+            layouts = []
+            for rows, cols in [(24, 80), (45, 32), (35, 68), (35, 100)]:
+                if layouts:
+                    output = b""
+                    fcntl.ioctl(
+                        master,
+                        termios.TIOCSWINSZ,
+                        struct.pack("HHHH", rows, cols, 0, 0),
+                    )
+                    await_bottom(8)
+                await_bottom(8, text=b"arrangements.")
+                screen = screen_lines()
+                first_row = next(
+                    row
+                    for row, line in screen.items()
+                    if re.search(r"A +quiet +paragraph", line)
+                )
+                last_row = next(
+                    row for row, line in screen.items() if "arrangements." in line
+                )
+                lines = [
+                    re.sub(r"^[^A-Za-z]*|[^A-Za-z.]*$", "", screen[row])
+                    for row in range(first_row, last_row + 1)
+                ]
+                assert " ".join(" ".join(lines).split()) == original, screen
+                assert all(len(line) <= cols - 2 for line in lines), lines
+                assert not any("   " in line for line in lines), lines
+                assert "  " not in lines[-1], lines
+                layouts.append(lines)
+            assert len(layouts[1]) > len(layouts[-1]), layouts
+            assert any("  " in line for lines in layouts for line in lines[:-1]), (
+                layouts
+            )
+            # Copy uses the source paragraph, never the added layout spacing.
+            line = screen[first_row]
+            col = line.index("A") + 1
+            output = b""
+            os.write(
+                master, f"\x1b[<0;{col};{first_row}M\x1b[<0;{col};{first_row}m".encode()
+            )
+            await_bottom(8, copied=original)
+            print("native Justice prose reflow and copy verified", flush=True)
+            return
         if mode == "images":
             # #257: inspect the actual native Kitty stream across both image boxes.
             await_bottom(1, idle=True)
@@ -386,5 +437,8 @@ if __name__ == "__main__":
                 )
         except Exception:
             for log in (Path(home) / ".vis/logs").glob("*.log"):
-                print(log.read_text()[-4000:], file=sys.stderr)
+                content = log.read_text()
+                for line in content.splitlines()[-3:]:
+                    print(line[:2000], file=sys.stderr)
+                print(content[-4000:], file=sys.stderr)
             raise

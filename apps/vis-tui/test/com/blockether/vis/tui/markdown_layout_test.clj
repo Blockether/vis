@@ -737,7 +737,7 @@
             46
 
             ragged
-            (plain-lines (layout/ast->entries ir w {:mode :channel}))
+            (plain-lines (layout/ast->entries ir w {:mode :channel :justify? false}))
 
             flush-both
             (plain-lines (layout/ast->entries ir w {:mode :channel :justify? true}))]
@@ -796,3 +796,130 @@
                  ;; The bar still paints as ONE solid block: only interior gaps survive.
                  (let [lines (layout/ast->lines [:ast [:quote [:p "only"]]] 40)]
                    (expect (= ["│ only"] (texts lines))))))
+
+(def ^:private justice-prose
+  (str "A quiet paragraph can become much more comfortable when its lines share "
+       "a reasonably even rhythm of spaces instead of alternating between very tight "
+       "and very loose arrangements."))
+
+(defdescribe
+  paragraph-optimizer-test
+  (it "chooses Justice's paragraph-wide cell breaks rather than greedy ones"
+      (expect (= ["A quiet paragraph" "can become much more" "comfortable when its"
+                  "lines share a reasonably" "even rhythm of spaces" "instead of alternating"
+                  "between very tight and" "very loose arrangements."]
+                 (texts (layout/ast->lines [:ast [:p justice-prose]] 24)))))
+  (it "does not turn a style boundary into a word boundary"
+      (expect (= ["one" "abcdef" "end"]
+                 (texts (layout/ast->lines [:ast [:p "one " [:strong "abc"] "def end"]] 7)))))
+  (it "keeps inline code literal when surrounding prose is justified"
+      (let [runs
+            [{:text "Use " :style #{}} {:text "foo bar" :style #{:code}}
+             {:text " with other words" :style #{}}]
+
+            result
+            (layout/justify-line-runs runs 30)]
+
+        (expect (= "foo bar" (:text (second result))))))
+  (it "uses restrained justification for ordinary TUI prose by default"
+      (let [lines (plain-lines (layout/ast->entries [:ast [:p justice-prose]] 60 {:mode :channel}))]
+        (expect (= 60 (p/display-width (first lines))))
+        (expect (str/starts-with? (first lines) "A  quiet"))
+        (expect (not (str/includes? (last lines) "  "))))))
+
+(defdescribe
+  paragraph-optimizer-boundaries-test
+  (it
+    "preserves Unicode graphemes and source text through narrow and wide resizes"
+    (let
+      [source
+       "Zażółć gęślą jaźń élan 👩‍💻 can become more comfortable when its lines share an even rhythm"]
+      (doseq [width (range 18 81)]
+        (let [lines (texts (layout/ast->lines [:ast [:p source]] width))]
+          (expect (= source (str/join " " lines)))
+          (expect (every? #(<= (p/display-width %) width) lines))))))
+  (it "keeps hard breaks and paragraph endings ragged while retaining empty break rows"
+      (let [ast
+            [:ast [:p "alpha beta" [:br] [:br] "one two"]]
+
+            lines
+            (layout/ast->lines ast 12)]
+
+        (expect (= ["alpha beta" "" "one two"] (texts lines)))
+        (expect (not-any? :wrap? lines))
+        (expect (= ["alpha beta" "" "one two"]
+                   (plain-lines (layout/ast->entries ast 12 {:mode :channel}))))))
+  (it "maps a styled word and its link to the optimized physical row"
+      (let [ast
+            [:ast [:p "one " [:a {:href "https://example.com"} [:strong "abc"] "def"] " end"]]
+
+            lines
+            (layout/ast->lines ast 7)
+
+            entries
+            (layout/ast->entries ast 7 {:mode :channel})
+
+            runs
+            (:runs (second lines))]
+
+        (expect (= ["one" "abcdef" "end"] (texts lines)))
+        (expect (= ["abc" "def"] (mapv :text runs)))
+        (expect (contains? (:style (first runs)) :bold))
+        (expect (every? #(= "https://example.com" (:href %)) runs))
+        (expect (= [{:col 0 :width 6 :url "https://example.com"}]
+                   (get-in entries [1 :meta :links])))))
+  (it "leaves literal inline-code spacing and hyphens intact across wraps"
+      (let [lines
+            (layout/ast->lines [:ast [:p "Use " [:c "foo bar-baz"] " with other words now"]] 14)
+
+            code-runs
+            (filter #(contains? (:style %) :code) (mapcat :runs lines))]
+
+        (expect (= ["foo bar-baz"] (mapv :text code-runs)))
+        (expect (every? #(<= (p/display-width %) 14) (texts lines)))))
+  (it "optimizes list and quote prose inside their fixed structural prefixes"
+      (doseq [[ast prefix] [[[:ast [:ul [:li justice-prose]]] "- "]
+                            [[:ast [:quote [:p justice-prose]]] "│ "]]]
+        (let [lines (texts (layout/ast->lines ast 26))]
+          (expect (= (str prefix "A quiet paragraph") (first lines)))
+          (expect (every? #(<= (p/display-width %) 26) lines))))
+      (let [lines (plain-lines
+                    (layout/ast->entries [:ast [:quote [:p justice-prose]]] 62 {:mode :channel}))]
+        (expect (str/starts-with? (first lines) "│ A  quiet"))
+        (expect (= 62 (p/display-width (first lines))))))
+  (it "uses different first and continuation widths without stretching the prefix"
+      (let [prefix
+            {:initial [{:text "-> " :style #{:marker}}] :cont [{:text " " :style #{}}]}
+
+            lines
+            (#'layout/prose-wrap-runs [{:text justice-prose :style #{}}] 25 prefix)]
+
+        (expect (str/starts-with? (first (texts lines)) "-> "))
+        (expect (every? #(str/starts-with? % " ") (rest (texts lines))))
+        (expect (every? #(<= (p/display-width %) 25) (texts lines)))))
+  (it "does not justify headings and allows explicit ragged-right prose"
+      (doseq [ast [[:ast [:h {:level 3} justice-prose]] [:ast [:table [:tr [:td justice-prose]]]]]]
+        (expect (= (layout/ast->entries ast 40 {:justify? false})
+                   (layout/ast->entries ast 40 {:justify? true}))))
+      (let [lines (plain-lines (layout/ast->entries [:ast [:p justice-prose]]
+                                                    60
+                                                    {:mode :channel :justify? false}))]
+        (expect (str/starts-with? (first lines) "A quiet"))
+        (expect (< (p/display-width (first lines)) 60))))
+  (it "falls back unchanged for unsupported scripts, literal spacing and oversized paragraphs"
+      (doseq [source ["  keep this indent" "keep  these spaces" "keep\tthis tab"
+                      "中文文字 日本語 हिन्दी ไทย" "مرحبا بالعالم" (str/join " " (repeat 401 "word"))
+                      (apply str (repeat 17000 "a"))]]
+        (let [runs [{:text source :style #{}}]]
+          (expect (= (#'layout/wrap-runs runs 24 []) (#'layout/prose-wrap-runs runs 24 []))))))
+  (it "reuses measured paragraphs and bounds the cache during streaming"
+      (let [prepare
+            #'layout/prepared-prose
+
+            ^java.util.Map cache
+            @#'layout/prepared-prose-cache]
+
+        (expect (identical? (prepare justice-prose) (prepare justice-prose)))
+        (doseq [i (range 100)]
+          (prepare (str "streamed paragraph " i)))
+        (locking cache (expect (<= (.size cache) 64))))))

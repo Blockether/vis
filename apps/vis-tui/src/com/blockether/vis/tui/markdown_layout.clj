@@ -36,7 +36,9 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.mermaid :as mermaid]
             [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.presentation :as ir]))
+            [com.blockether.vis.tui.presentation :as ir])
+  (:import [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
+            ParagraphLayout$Options]))
 
 ;; Helpers
 
@@ -206,6 +208,12 @@
                                          :href href
                                          :node node}))))))))))
 
+(defn- wrap-prefixes
+  [prefix-runs]
+  (cond (map? prefix-runs) {:initial (vec (:initial prefix-runs)) :cont (vec (:cont prefix-runs))}
+        (sequential? prefix-runs) {:initial (vec prefix-runs) :cont (vec prefix-runs)}
+        :else {:initial [] :cont []}))
+
 (defn- wrap-runs
   "Greedy word-wrap. Returns a vector of lines; each line is `{:runs [...]}`.
    Drops leading whitespace on continuation lines. `:break?` atoms force
@@ -221,10 +229,7 @@
         (vec (mapcat atomize-run runs))
 
         {init-runs :initial cont-runs :cont}
-        (cond (map? prefix-runs) {:initial (vec (:initial prefix-runs))
-                                  :cont (vec (:cont prefix-runs))}
-              (sequential? prefix-runs) {:initial (vec prefix-runs) :cont (vec prefix-runs)}
-              :else {:initial [] :cont []})
+        (wrap-prefixes prefix-runs)
 
         cont-w
         (long (reduce + 0 (map run-width cont-runs)))
@@ -295,6 +300,123 @@
     (when (> (line-width {:runs @line}) (long @prefix-w)) (vswap! out conj {:runs @line}))
     @out))
 
+(defonce ^:private ^java.util.LinkedHashMap prepared-prose-cache
+  (java.util.LinkedHashMap. 64 (float 0.75) true))
+
+(defn- prepared-prose
+  "Cache bounded, immutable cell measurements across viewport widths, never styled runs."
+  ^ParagraphLayout$Prepared [^String text]
+  (locking prepared-prose-cache
+    (or (.get prepared-prose-cache text)
+        (let [prepared (ParagraphLayout/prepare text)]
+          (.put prepared-prose-cache text prepared)
+          (when (> (.size prepared-prose-cache) 64)
+            (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache)))))
+          prepared))))
+
+(def ^:private terminal-prose-options (ParagraphLayout$Options/terminal))
+
+(defn- source-run-ranges
+  [runs]
+  (second (reduce (fn [[offset ranges] run]
+                    (let [end (+ (long offset) (count (:text run)))]
+                      [end (conj ranges {:start offset :end end :run run})]))
+                  [0 []]
+                  runs)))
+
+(defn- slice-source-runs
+  "Copy an optimized UTF-16 source range without losing styles, links or node identity."
+  [ranges ^long start ^long end]
+  (into []
+        (keep (fn [{run-start :start run-end :end :keys [run]}]
+                (let [a
+                      (max start (long run-start))
+
+                      b
+                      (min end (long run-end))]
+
+                  (when (< a b)
+                    (assoc run
+                      :text (subs (:text run) (- a (long run-start)) (- b (long run-start))))))))
+        ranges))
+
+(defn- prose-segment-lines
+  [runs width initial cont]
+  (let [text
+        (apply str
+          (map (fn [{:keys [text style]}]
+                 ;; These one-cell, one-code-unit masks keep literal code
+                 ;; indivisible. Output is sliced from the ORIGINAL runs.
+                 (if (contains? style :code)
+                   (str/replace text #"[ -]" {" " "\u00a0" "-" "‑"})
+                   text))
+               runs))
+
+        initial-width
+        (- width (reduce + 0 (map run-width initial)))
+
+        cont-width
+        (- width (reduce + 0 (map run-width cont)))
+
+        optimized
+        (when (and (pos? initial-width)
+                   (pos? cont-width)
+                   (not (str/blank? text))
+                   (ParagraphLayout/isTerminalProse text)
+                   ;; Layout must not normalize indentation or literal spacing.
+                   (not (re-find #"^ | $|  |[\t\r\n\f]" text)))
+          (let [prepared
+                (prepared-prose text)
+
+                widths
+                (double-array
+                  (if (= initial-width cont-width) [initial-width] [initial-width cont-width]))
+
+                layout
+                (ParagraphLayout/solve ^ParagraphLayout$Prepared prepared
+                                       ^doubles widths
+                                       ^ParagraphLayout$Options terminal-prose-options)
+
+                ranges
+                (source-run-ranges runs)]
+
+            (when (every? (fn [^ParagraphLayout$Line line]
+                            (<= (.natural line) (.width line)))
+                          (.lines layout))
+              (mapv (fn [i ^ParagraphLayout$Line line]
+                      (cond-> {:runs (into (if (zero? i) initial cont)
+                                           (slice-source-runs ranges
+                                                              (.sourceStart line)
+                                                              (.sourceEnd line)))}
+                        (not (.last line))
+                        (assoc :wrap? true)))
+                    (range)
+                    (.lines layout)))))]
+
+    (or (seq optimized) (wrap-runs runs width {:initial initial :cont cont}))))
+
+(defn- prose-wrap-runs
+  "Optimize a paragraph globally in terminal cells; hard breaks stay ragged-right.
+   Unsupported scripts, literal spacing and oversized input keep the safe greedy path."
+  [runs width prefix-runs]
+  (let [{:keys [initial cont]}
+        (wrap-prefixes prefix-runs)
+
+        segments
+        (reduce (fn [out run]
+                  (if (:break? run) (conj out []) (update out (dec (count out)) conj run)))
+                [[]]
+                runs)]
+
+    (into []
+          (mapcat (fn [i segment]
+                    (let [prefix (if (zero? i) initial cont)]
+                      (if (seq segment)
+                        (prose-segment-lines segment (max 1 (long width)) prefix cont)
+                        (when (< i (dec (count segments))) [{:runs prefix}]))))
+                  (range)
+                  segments))))
+
 (defn- trim-trailing-ws
   [line]
   (update line
@@ -347,7 +469,7 @@
                (seq style-prefix)
                (mapv (fn [r]
                        (if (:break? r) r (update r :style (fnil into #{}) style-prefix)))))]
-    (wrap-runs runs width prefix-runs)))
+    ((if (contains? style-prefix :heading) wrap-runs prose-wrap-runs) runs width prefix-runs)))
 
 (def ^:private wrap-friendly-code-langs
   "Code-block `:lang` values whose body is plain prose / structured
@@ -376,9 +498,9 @@
    so color a producer already wrote survives the fold."
   [^String content ^long budget]
   (let [key [content budget]]
-    (or (.get folded-code-cache key)
+    (or (.get ^java.util.Map folded-code-cache key)
         (let [lines (compute-folded-code-lines content budget)]
-          (.put folded-code-cache key lines)
+          (.put ^java.util.Map folded-code-cache key lines)
           lines))))
 
 (def ^:private ^java.util.Map mermaid-cache
@@ -703,7 +825,7 @@
                                     {:initial [indent-run] :cont [indent-run]})
 
                                   ls
-                                  (wrap-runs inline-runs width prefix)]
+                                  (prose-wrap-runs inline-runs width prefix)]
 
                               (if first? ls (concat [{:runs []}] ls)))
                             ;; nested block: recurse and indent each line
@@ -1762,7 +1884,9 @@
   [runs ^long width]
   (let [prefix-n
         (count (take-while (fn [r]
-                             (or (contains? (:style r) :marker) (str/blank? (str (:text r)))))
+                             (or (contains? (:style r) :marker)
+                                 (contains? (:style r) :quote)
+                                 (str/blank? (str (:text r)))))
                            runs))
 
         content
@@ -1784,7 +1908,10 @@
         (- width prefix-w (long (reduce + 0 (map run-width content))))
 
         stretched
-        (when (and (pos? (count gaps)) (pos? slack) (< slack (count gaps)))
+        (when (and (not-any? #(and (contains? (:style %) :code) (re-find #"\s" (:text %))) content)
+                   (pos? (count gaps))
+                   (pos? slack)
+                   (< slack (count gaps)))
           (p/justify-line text (- width prefix-w)))
 
         widened
@@ -1853,11 +1980,9 @@
      `:channel`  — in-place channel/tool IR; plain paragraphs use no
                    background marker, structural rows keep explicit styling
 
-   `:justify?` full-justifies the prose: every line the wrapper broke on
-   overflow (`:wrap?`) is stretched flush to both margins, while paragraph- and
-   block-terminal lines stay ragged-right (stretching a four-word last line is
-   the mega-hole bug) and code lines are never touched — their columns ARE the
-   content.
+   `:justify?` defaults to true: near-full soft-wrapped prose lines gain restrained
+   inter-word spacing. Set false to keep them ragged-right. Paragraph endings,
+   explicit breaks, headings, tables and literal code are never stretched.
 
    `:code-spacing? false` suppresses generated code margins and padding for
    content inside an existing band. Literal blank source lines are preserved.
@@ -1875,14 +2000,14 @@
          (if tail-n (ast->lines-tail ir width (long tail-n) opts) (ast->lines ir width opts))
 
          justify?
-         (boolean (:justify? opts))
+         (not (false? (:justify? opts)))
 
          ms
          (marker-set-for (:mode opts))]
 
      (mapv (fn [{:keys [runs block-tag block-level meta wrap?]}]
              (let [runs
-                   (if (and justify? wrap? (not= block-tag :code))
+                   (if (and justify? wrap? (contains? #{:p :ul :ol :quote} block-tag))
                      (justify-line-runs runs (long width))
                      runs)
 

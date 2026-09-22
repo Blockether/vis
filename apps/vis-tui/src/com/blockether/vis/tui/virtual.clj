@@ -761,7 +761,9 @@
   ([message ^long bubble-w settings
     {:keys [session-id detail-expansions window-start window-num window-total-h]}]
    (let [message
-         (assoc message :session-id session-id)
+         (assoc message
+           :session-id session-id
+           :copy-source-text (:text message))
 
          trace
          (message-trace message)
