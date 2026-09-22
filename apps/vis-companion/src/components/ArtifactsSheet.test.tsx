@@ -1,33 +1,11 @@
 // @vitest-environment jsdom
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { ArtifactsChip, ArtifactsSheet, previewBlocks, previewLines } from './ArtifactsSheet';
-import { CopyChip } from './ui';
+import { ArtifactsSheet, previewBlocks, previewLines } from './ArtifactsSheet';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionArtifact } from '../lib/artifacts';
 import { dismissTopLayer } from '../lib/edge-back';
-
-/** The BOX the OTHER chip in the session header wears, read from the component that
- *  owns it. The session id is a `CopyChip` on the band's density (so is every `Copy` in
- *  the transcript, at its own), and it is the surviving half of the pair the deleted
- *  Share button belonged to — so "the same box as the chip beside it" is checked
- *  against THAT control and not against a number typed into this file. */
-const sessionIdChipBox = () => {
-  const chip = renderToStaticMarkup(
-    <CopyChip value="s1" label="Copy session id" density="compact">
-      s1
-    </CopyChip>,
-  );
-  return buttonClasses(chip)
-    .filter((one) => /^(mouse:)?h-\d+$/.test(one))
-    .sort();
-};
-
-/** Every class on a rendering's first <button>. */
-const buttonClasses = (html: string) =>
-  (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ');
 
 /** The classes of the button whose tag carries `mark` — attribute order is React's. */
 const classesOf = (html: string, mark: string) => {
@@ -158,64 +136,8 @@ const text = (html: string) =>
     .replace(/&lt;/g, '<')
     .replace(/&amp;/g, '&');
 
-describe('the artifacts chip', () => {
-  it('costs a session that produced nothing exactly nothing', () => {
-    expect(renderToStaticMarkup(<ArtifactsChip count={0} open={false} onToggle={() => {}} />)).toBe(
-      '',
-    );
-  });
-
-  it('says what it owns and whether that surface is open', () => {
-    const html = renderToStaticMarkup(
-      <ArtifactsChip count={12} open={false} onToggle={() => {}} />,
-    );
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('aria-controls="artifacts-surface"');
-    expect(html).toContain('aria-label="12 artifacts produced by the model"');
-    // The word does not fit a phone header, so the pixels carry a clip and `12`.
-    expect(text(html)).toContain('12');
-  });
-
-  it.each([false, true])('keeps the artifact icon unframed when open=%s', (open) => {
-    const html = renderToStaticMarkup(<ArtifactsChip count={3} open={open} onToggle={() => {}} />);
-    expect(buttonClasses(html)).toContain('border-0');
-    expect(buttonClasses(html)).not.toContain('border-accent');
-    expect(buttonClasses(html)).not.toContain('focus-visible:ring-2');
-  });
-
-  // Regression: the chip stood 44px, then 32px, tall beside a 24px session id, so the
-  // header read as one big button with some text next to it. Both wear the band's own
-  // rhythm now — and they are still measured against each other, never against a number.
-  it('is exactly the chip the session id beside it is', () => {
-    const html = renderToStaticMarkup(<ArtifactsChip count={3} open onToggle={() => {}} />);
-    expect(sessionIdChipBox()).toEqual(['h-8', 'mouse:h-7']);
-    for (const box of sessionIdChipBox()) {
-      expect(buttonClasses(html)).toContain(box);
-    }
-    // A 32px face on touch, 28px under a pointer, and Apple's 44px target arriving as
-    // invisible slop — never as a taller painted box to fall back out of.
-    for (const slop of ['after:absolute', 'after:-top-1.5', 'after:-bottom-1.5']) {
-      expect(buttonClasses(html)).toContain(slop);
-    }
-    expect(buttonClasses(html).join(' ')).not.toMatch(/min-h-|sm:h-/);
-    expect(html).toContain('aria-expanded="true"');
-  });
-
-  // Regression: the attachment mark was `▣`, a geometric box that stood for
-  // "some object" and read as a smudge at chip size.
-  it('wears a paperclip drawn like every other icon in the app', () => {
-    const html = renderToStaticMarkup(<ArtifactsChip count={3} open onToggle={() => {}} />);
-    expect(html).not.toContain('▣');
-    // The app's one icon grammar: the 24-unit grid, `currentColor`, and the
-    // library's own stroke of 2, which is the stem of the type beside it.
-    expect(html).toContain('viewBox="0 0 24 24"');
-    expect(html).toContain('stroke="currentColor"');
-    expect(html).toContain('stroke-width="2"');
-  });
-});
-
 describe('the artifacts sheet', () => {
-  it('is the region the chip claims to control, over the transcript', () => {
+  it('is the region the header menu opens, over the transcript', () => {
     const html = sheet([picture, document, recorded]);
     expect(html).toContain('id="artifacts-surface"');
     expect(html).toContain('role="region"');

@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
 import type { Element, Root, Text } from 'hast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -14,7 +22,14 @@ import {
   SectionHeader,
 } from './SessionNavigator';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
-import { ArchiveIcon, FolderPlusIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
+import {
+  ArchiveIcon,
+  FolderPlusIcon,
+  PencilIcon,
+  ProjectsIcon,
+  StarIcon,
+  TrashIcon,
+} from './icons';
 import { GatewayClient, GatewayError, type SessionMatch } from '../lib/gateway';
 import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
@@ -31,6 +46,7 @@ import {
   timeLabel,
 } from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
+import { useSessionLift } from '../lib/session-drag';
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -86,6 +102,12 @@ export type SessionRowCommands = {
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
+  /**
+   * Take the session straight out of its group, with nothing to choose. OPTIONAL, and
+   * offered INSTEAD of `moveToGroup`: the only group its project has is the one it is
+   * already in, so there is nowhere left to move it.
+   */
+  ungroup?: (session: Session, conn: GatewayConn) => void;
 };
 
 /** One stable contract shared by every feature that renders session rows. */
@@ -108,6 +130,14 @@ export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> 
  * `data-row-surface` names it as the row's pressable half, so `SwipeActions` paints
  * the press across the whole row — chevron and menu cell included — instead of
  * stopping at this button's edge.
+ *
+ * The press is the row's own state, marked with `data-pressed` on pointer down and
+ * cleared on release, rather than the browser's `:active`: every cell of the row is
+ * painted from it, and a test can hold one press open and read what each cell wears.
+ *
+ * The paper arrives and leaves at once, with no transition on it. The row's other
+ * cells take it instantly, so a button that eased its own background over 150ms was
+ * still lit after they had let go, and the light appeared to wipe across the row.
  */
 function SessionRowSurface({
   isEditing,
@@ -125,6 +155,20 @@ function SessionRowSurface({
 }) {
   const layout =
     'flex min-h-12 min-w-0 flex-1 items-center py-1.5 pl-4 pr-2 text-left mouse:min-h-8 mouse:py-1';
+  const [isPressed, setIsPressed] = useState(false);
+  useEffect(() => {
+    if (!isPressed) return;
+    // A drag swallows the pointer, so `dragend` is the release that arrives instead.
+    const release = () => setIsPressed(false);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    window.addEventListener('dragend', release);
+    return () => {
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      window.removeEventListener('dragend', release);
+    };
+  }, [isPressed]);
   if (isEditing) {
     return (
       <div className={layout} data-session-id={sessionId}>
@@ -136,14 +180,60 @@ function SessionRowSurface({
     <button
       type="button"
       aria-current={isCurrent ? 'page' : undefined}
-      className={`${layout} transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none`}
+      className={`${layout} data-pressed:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none`}
       data-session-id={sessionId}
       data-row-surface=""
+      data-pressed={isPressed ? '' : undefined}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        setIsPressed(true);
+      }}
       onClick={onOpen}
     >
       {children}
     </button>
   );
+}
+
+/**
+ * THE PICTURE A DRAG CARRIES. Left alone the browser paints one, and WebKit - the engine
+ * behind the desktop window - paints it from the LAYER the row stands in rather than from
+ * the row, so picking up one session put a ghost of every row below it under the cursor.
+ * (Reported with a screenshot of the desktop window: one row taken, a column following
+ * it.) A picture the row hands over is the picture the browser uses, so the row hands it
+ * an opaque copy of ITSELF: one card, the row's own size, held where the pointer took it.
+ */
+function carryOneRow(row: HTMLElement, event: DragEvent<HTMLElement>): void {
+  // Older web views - and the suite's own carriers - have no picture to set.
+  if (typeof event.dataTransfer.setDragImage !== 'function') return;
+  const box = row.getBoundingClientRect();
+  const picture = row.cloneNode(true) as HTMLElement;
+  // The copy is a picture, not a row: nothing looking for this session may find it twice.
+  picture.removeAttribute('data-session-row');
+  picture.querySelectorAll('[data-session-id]').forEach((mark) => {
+    mark.removeAttribute('data-session-id');
+  });
+  picture.setAttribute('aria-hidden', 'true');
+  // Paper of its own, because a see-through card shows the very rows it is carried over,
+  // and its EDGE is drawn inside the box (a border would push the row's own content in and
+  // clip it). It stands exactly ON the row it copies, and a positioned element is a paint
+  // layer of its own: what the engine photographs is this card, not the list it was cut
+  // from. `@container` is what makes the copy read as the row it came from: this row
+  // answers its width to the LIST it stands in, and out here the list is gone, so without
+  // a container of its own the copy loses the second line and its group rail stops short
+  // of the card's own end (reported from the desktop app).
+  picture.className = `${picture.className} @container pointer-events-none overflow-hidden bg-panel ring-1 ring-edge ring-inset`;
+  picture.style.position = 'fixed';
+  picture.style.top = `${box.top}px`;
+  picture.style.left = `${box.left}px`;
+  picture.style.width = `${box.width}px`;
+  picture.style.height = `${box.height}px`;
+  picture.style.zIndex = '9999';
+  document.body.append(picture);
+  event.dataTransfer.setDragImage(picture, event.clientX - box.left, event.clientY - box.top);
+  // The picture is taken as this event returns, so the copy retires before the next frame
+  // is painted and no reader ever sees two rows standing in one place.
+  window.setTimeout(() => picture.remove(), 0);
 }
 
 export const SessionRow = memo(function SessionRow({
@@ -325,6 +415,29 @@ export const SessionRow = memo(function SessionRow({
         },
       ]
     : [];
+  // THE ROW'S FILING VERB, and there is at most one of it. A project with somewhere else
+  // to put this session opens its sheet under the strip; when the only group it has is
+  // the one this row is already under, there is nothing to ask and the verb takes it out.
+  const filing: SwipeAction[] = commands.ungroup
+    ? [
+        {
+          key: 'group',
+          label: 'Ungroup',
+          icon: <ProjectsIcon className="size-4" />,
+          onSelect: () => commands.ungroup?.(session, conn),
+        },
+      ]
+    : commands.moveToGroup
+      ? [
+          {
+            key: 'group',
+            label: 'Move to...',
+            name: 'Move',
+            icon: <FolderPlusIcon className="size-4" />,
+            onSelect: (anchor: HTMLElement) => commands.moveToGroup?.(session, conn, anchor),
+          },
+        ]
+      : [];
   // WHAT THIS ROW STANDS, measured as the question is asked. The two answers carry
   // a 48px floor of their own, and this row is TALLER than that floor whenever its
   // metadata stacks under the title — 52px on a phone — so the list lost those
@@ -338,6 +451,10 @@ export const SessionRow = memo(function SessionRow({
     commands.requestDelete(session, conn);
   }, [commands, session, conn]);
 
+  // A phone raises no drag events either, so a finger that RESTS on the row picks it
+  // up instead (`lib/session-drag`); the row stays behind, dimmed, while it is out.
+  const isCarried = useSessionLift(session.id, rowRef, Boolean(isDraggable));
+
   return (
     <div
       ref={rowRef}
@@ -348,10 +465,11 @@ export const SessionRow = memo(function SessionRow({
           ? (event) => {
               event.dataTransfer.setData('text/plain', session.id);
               event.dataTransfer.effectAllowed = 'move';
+              if (rowRef.current) carryOneRow(rowRef.current, event);
             }
           : undefined
       }
-      className={`${isOpen ? 'bg-standing' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
+      className={`${isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
@@ -386,18 +504,7 @@ export const SessionRow = memo(function SessionRow({
                     icon: <PencilIcon className="size-4" />,
                     onSelect: beginRename,
                   },
-                  ...(commands.moveToGroup
-                    ? [
-                        {
-                          key: 'group',
-                          label: 'Move to...',
-                          name: 'Move',
-                          icon: <FolderPlusIcon className="size-4" />,
-                          onSelect: (anchor: HTMLElement) =>
-                            commands.moveToGroup?.(session, conn, anchor),
-                        },
-                      ]
-                    : []),
+                  ...filing,
                   ...archiving,
                   {
                     key: 'delete',

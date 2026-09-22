@@ -114,7 +114,9 @@ describe('project removal is available only from project management', () => {
     expect(within(header).queryByRole('button', { name: 'Actions for project' })).toBeNull();
     expect(within(header).queryByRole('group', { name: 'project actions' })).toBeNull();
     expect(header.querySelector('[data-swipe-track]')).toBeNull();
-    expect(within(header).getByRole('button', { name: /^New session/ })).toBeEnabled();
+    // The create verb stands on the set it creates in, and falls back to this band only
+    // when the project paints no set — an empty project, or one folded shut.
+    expect(within(project).getByRole('button', { name: /^New session/ })).toBeEnabled();
     if (count > 0) {
       fireEvent.click(within(header).getByRole('button', { name: 'Collapse project' }));
       expect(within(project).queryByText('First')).toBeNull();

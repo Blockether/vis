@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
-import type { Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, BandWindow, Session, SessionGroup } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -20,6 +20,62 @@ const WALLET_GROUP: SessionGroup = {
   position: 0,
   session_count: 2,
 };
+
+/** The steps over a project's wall of bands move this many at a time (`GROUPS_PAGE`). */
+const GROUPS_PAGE = 10;
+/** The window the project stands on when it opens: the first page of the wall. */
+const BANDS: BandWindow = { limit: GROUPS_PAGE, offset: 0 };
+
+/**
+ * What `GET /v1/session-groups` answers: ONE PAGE of the wall, and the WHOLE wall's own
+ * tallies beside it — how many bands the project has, and how many sessions are filed
+ * across all of them.
+ */
+function wall(groups: SessionGroup[], total = groups.length, offset = 0) {
+  return {
+    project_id: STORY_NEWER_PROJECT.projectId,
+    groups,
+    total,
+    session_total: groups.reduce((sum, group) => sum + group.session_count, 0),
+    limit: GROUPS_PAGE,
+    offset,
+    has_more: offset + groups.length < total,
+  };
+}
+
+/** A wall deeper than one page of it: 24 bands, and no session filed under any of them. */
+const WIDE_WALL: SessionGroup[] = Array.from({ length: 24 }, (_, index) => ({
+  ...WALLET_GROUP,
+  id: `group-${String(index).padStart(2, '0')}`,
+  name: `Band ${String(index).padStart(2, '0')}`,
+  position: index,
+  session_count: 0,
+}));
+
+/**
+ * A machine holding that wall, cut to whatever window a read asks for, over rows that name
+ * none of its bands: the WALL is the list these tests page.
+ */
+function shelves() {
+  const loose = {
+    rows: STORY_NEWER_PROJECT.rows,
+    total: STORY_NEWER_PROJECT.rows.length,
+    awaiting: [],
+    grouped: [],
+    nextCursor: '',
+  };
+  return machine({
+    heldProjectPage: () => loose,
+    listProjectPage: vi.fn(async () => loose),
+    listSessionGroups: vi.fn(
+      async (_root: string, _signal?: AbortSignal, _view?: ArchiveView, bands?: BandWindow) => {
+        const offset = bands?.offset ?? 0;
+        const limit = bands?.limit ?? WIDE_WALL.length;
+        return wall(WIDE_WALL.slice(offset, offset + limit), WIDE_WALL.length, offset);
+      },
+    ),
+  });
+}
 
 /** Two of this project's sessions are filed under one group; the rest are not. */
 const ROWS: Session[] = STORY_NEWER_PROJECT.rows.map((row, index) =>
@@ -38,10 +94,7 @@ function machine(overrides: Machine = {}) {
     heldProjectPage: () => page,
     listProjectPage: vi.fn(async () => page),
     isSessionDeleted: () => false,
-    listSessionGroups: vi.fn(async () => ({
-      project_id: STORY_NEWER_PROJECT.projectId,
-      groups: [WALLET_GROUP],
-    })),
+    listSessionGroups: vi.fn(async () => wall([WALLET_GROUP])),
     createSessionGroup: vi.fn(async (_root: string, name: string) => ({
       ...WALLET_GROUP,
       id: 'group-new',
@@ -130,6 +183,12 @@ async function band(name: string): Promise<HTMLElement> {
 
 const sheet = (label: string) => screen.getByRole('dialog', { name: label });
 
+/** One row's action drawer, where its verbs stand: the wrapper a reader drags. */
+function strip(scope: HTMLElement, sid: string): HTMLElement {
+  const slab = scope.querySelector(`[data-session-id="${sid}"]`) as HTMLElement;
+  return slab.closest('[draggable="true"]') as HTMLElement;
+}
+
 describe('ProjectGroup groups', () => {
   // A fold is REMEMBERED (`lib/project-fold`), so one test's shut band must not
   // arrive shut in the next one.
@@ -179,10 +238,7 @@ describe('ProjectGroup groups', () => {
       machine({
         heldProjectPage: () => page,
         listProjectPage: vi.fn(async () => page),
-        listSessionGroups: vi.fn(async () => ({
-          project_id: STORY_NEWER_PROJECT.projectId,
-          groups: [recoloured],
-        })),
+        listSessionGroups: vi.fn(async () => wall([recoloured])),
       }),
     );
     const wallet = await band('Wallet work');
@@ -349,15 +405,83 @@ describe('ProjectGroup groups', () => {
     ]);
   });
 
-  it('ends the project header with its menu, the plus one slot inside', async () => {
+  // Reported once the pages moved onto the sets (paraphrased: the plus belongs on the
+  // session, not on the project): what this create makes is a LOOSE session, so the band
+  // above both sets keeps its menu alone while a set is on screen to carry the verb.
+  it('ends the project header with its menu alone', async () => {
     mount();
     const cluster = (await screen.findByRole('button', { name: `Groups in ${ROOT}` }))
       .parentElement as HTMLElement;
 
     expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
-      'New session on tower',
       `Groups in ${ROOT}`,
     ]);
+  });
+
+  it('stands the project plus on the session set it creates in', async () => {
+    const start = vi.fn(async () => {});
+    const { user } = mount(machine(), { state: null, start });
+    const header = (await screen.findByRole('button', { name: `Groups in ${ROOT}` })).closest(
+      'header',
+    ) as HTMLElement;
+    const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
+
+    expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
+    await user.click(within(sessions).getByRole('button', { name: 'New session on tower' }));
+
+    // Loose, like the set it stands on: no band takes it in.
+    expect(start).toHaveBeenCalledWith(conn, ROOT);
+  });
+
+  // Regression, user report (paraphrased: the marks down the right edge of the list do
+  // not line up, fix it): the trailing rail is ONE column on every kind of row. A header
+  // keeps its plus and its menu in one cluster; a row keeps its disclosure in the same
+  // cluster and its menu in the cell just outside — so all of them wear the rail's box,
+  // and the step between two slots is the inset that ends the rail.
+  it('stands every trailing mark in one column, header, band and row alike', async () => {
+    mount();
+    const wallet = await band('Wallet work');
+    const row = strip(document.body, LOOSE.id);
+    const disclosure = within(row).getByRole('button', { name: /^Show details for / });
+    const rowMenu = within(row).getByRole('button', { name: /^Actions for / });
+    const marks = [
+      screen.getByRole('button', { name: 'New session on tower' }),
+      screen.getByRole('button', { name: `Groups in ${ROOT}` }),
+      within(wallet).getByRole('button', { name: 'New session in Wallet work' }),
+      within(wallet).getByRole('button', { name: 'Actions for Wallet work' }),
+      disclosure,
+      rowMenu,
+    ];
+    for (const mark of marks) {
+      expect(mark).toHaveClass('size-8', 'mouse:size-7');
+      expect(mark).not.toHaveClass('mouse:size-6');
+    }
+    // Every cell that ends the rail ends it at the same inset, and a cluster holding two
+    // marks steps between them by that same number.
+    for (const mark of marks) expect(mark.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
+    for (const cluster of [marks[1].parentElement, marks[3].parentElement, disclosure.parentElement])
+      expect(cluster).toHaveClass('gap-2', 'mouse:gap-2.5');
+  });
+
+  // Regression, user report (paraphrased: the project's own count should not be bold and
+  // should be smaller): a header's total is a caption in the voice its bands count in, not
+  // a second heading standing under the project's name.
+  it('prints the project total in the quiet voice a band counts in', async () => {
+    mount();
+    const header = (await screen.findByRole('button', { name: `Groups in ${ROOT}` })).closest(
+      'header',
+    ) as HTMLElement;
+    const total = within(header).getByText(`${ROWS.length} sessions`);
+    expect(total).not.toHaveClass('font-bold');
+    const caption = total.closest(`[title="${ROOT}"]`) as HTMLElement;
+    expect(caption).toHaveClass('mouse:text-chip');
+    expect(caption).not.toHaveClass('mouse:text-meta');
+    // A band still counts in its own label's weight: the tally takes the line it stands on.
+    const wallet = await band('Wallet work');
+    expect(within(wallet).getByText('2 sessions').parentElement).toHaveClass(
+      'text-chip',
+      'font-bold',
+    );
   });
 
   it('folds one group without folding the project', async () => {
@@ -515,6 +639,43 @@ describe('ProjectGroup groups', () => {
     );
   });
 
+  // ONE GROUP, AND THIS ROW IS FILED UNDER IT: `Move to...` opened a sheet whose only
+  // choice was the band the row already sits in. Reported from the app with a screenshot
+  // of the row's menu — the strip now names the one filing left and runs it in that press.
+  it("names the row's verb Ungroup when its group is the project's only one", async () => {
+    const { client, user } = mount();
+    const wallet = await band('Wallet work');
+    const filed = ROWS[0];
+    const row = strip(wallet, filed.id);
+    expect(within(row).queryByText('Move to...')).toBeNull();
+    await user.click(within(row).getByText('Ungroup'));
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(filed.id, null));
+    // Nothing to choose means nothing to ask: no sheet opens over the list.
+    expect(screen.queryByRole('dialog', { name: `Groups in ${ROOT}` })).toBeNull();
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${filed.id}"]`)).toHaveLength(0),
+    );
+  });
+
+  // A SECOND GROUP IS SOMEWHERE ELSE TO PUT IT, so the sheet's question is a real one.
+  it('keeps Move to... on a filed row while another group could take it', async () => {
+    const { user } = mount(
+      machine({
+        listSessionGroups: vi.fn(async () =>
+          wall([
+            WALLET_GROUP,
+            { ...WALLET_GROUP, id: 'group-notes', name: 'Notes', session_count: 0 },
+          ]),
+        ),
+      }),
+    );
+    const wallet = await band('Wallet work');
+    const row = strip(wallet, ROWS[0].id);
+    expect(within(row).queryByText('Ungroup')).toBeNull();
+    await user.click(within(row).getByText('Move to...'));
+    expect(within(sheet(`Groups in ${ROOT}`)).getByText('Notes')).toBeInTheDocument();
+  });
+
   it('files a session dropped onto a group band', async () => {
     const { client } = mount();
     const wallet = await band('Wallet work');
@@ -527,5 +688,105 @@ describe('ProjectGroup groups', () => {
     await waitFor(() =>
       expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
     );
+  });
+
+  // THE OTHER HALF OF THE DRAG. A band only ever files INTO itself, so a filed row had
+  // nowhere to be dropped and could only leave its group through a menu.
+  it('takes a session out of its group when it is dropped on the ungrouped set', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
+    const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
+    fireEvent.dragOver(sessions, { dataTransfer });
+    expect(within(sessions).getByText('Drop to ungroup')).toBeInTheDocument();
+    fireEvent.drop(sessions, { dataTransfer });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[0].id, null));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${ROWS[0].id}"]`)).toHaveLength(0),
+    );
+    expect(screen.getByText('Sessions').parentElement).not.toHaveTextContent('Drop to ungroup');
+  });
+
+  // A row that is in no group is already where this drop would put it.
+  it('leaves an ungrouped session alone when it is dropped on the ungrouped set', async () => {
+    const { client } = mount();
+    await band('Wallet work');
+    const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
+    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    fireEvent.drop(sessions, { dataTransfer });
+    expect(client.assignSessionGroup).not.toHaveBeenCalled();
+  });
+
+  // THE WALL OF BANDS IS A LIST OF ITS OWN. A reader can keep making groups, so the wall is
+  // paged the way the sessions under it are — and the steps stand on the `Groups` header,
+  // over the set they move.
+  it('pages the wall of bands from the header over it', async () => {
+    mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
+
+    const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    // THE WALL IS WHAT IS COUNTED, not the ten bands of it on screen.
+    expect(within(groups).getByText('24 groups')).toBeInTheDocument();
+    const steps = within(groups).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
+    });
+    expect(within(steps).getByText('Page 1 of 3')).toBeInTheDocument();
+    // One page of sessions is one page: that set has nothing to step through.
+    const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
+    expect(within(sessions).queryByRole('navigation')).toBeNull();
+  });
+
+  // ONE WINDOW, BOTH READS. The rows are asked for with the window that cut the bands, so
+  // the sessions under this page of shelves are the ones the gateway files there.
+  it('asks both reads for the page of bands the reader stepped to', async () => {
+    const client = shelves();
+    const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
+    const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.any(AbortSignal),
+      'exclude',
+      BANDS,
+    );
+
+    await user.click(within(groups).getByRole('button', { name: 'Next page' }));
+
+    await screen.findByText('Band 10');
+    expect(screen.queryByText('Band 00')).toBeNull();
+    const turned = { limit: GROUPS_PAGE, offset: GROUPS_PAGE };
+    expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.any(AbortSignal),
+      'exclude',
+      turned,
+    );
+    expect(client.listProjectPage).toHaveBeenLastCalledWith(
+      ROOT,
+      10,
+      '',
+      expect.any(Map),
+      expect.any(AbortSignal),
+      true,
+      'exclude',
+      turned,
+    );
+  });
+
+  // Reported over the project header while the pager stood on its trailing edge: a paged
+  // project put its plus and its menu in the middle of the band while an unpaged one kept
+  // them flush right. The steps stand over the SET they move now, and the band is one shape.
+  it('stands the session steps on the Sessions header, not on the project band', async () => {
+    const deep = { rows: ROWS, total: 24, awaiting: [], grouped: [], nextCursor: '' };
+    mount(machine({ heldProjectPage: () => deep, listProjectPage: vi.fn(async () => deep) }));
+
+    const sessions = (await screen.findByText('Sessions')).parentElement as HTMLElement;
+    const steps = within(sessions).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} sessions`,
+    });
+    expect(within(steps).getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(steps.nextElementSibling).toBe(
+      within(sessions).getByRole('button', { name: 'New session on tower' }),
+    );
+    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
+    expect(within(header).queryByRole('navigation')).toBeNull();
   });
 });

@@ -107,13 +107,13 @@ describe('ProjectCrumb', () => {
 });
 
 // Regression: the project plus used accent ink instead of the standard icon color,
-// and the word "New session" repeated once per project header.
+// and the word "New session" repeated once per project on screen.
 describe('NewSessionButton', () => {
   it('is a PLUS at rest, named for the machine it starts on', () => {
     render(<NewSessionButton machine="tower" onPress={() => {}} />);
 
     const button = screen.getByRole('button', { name: 'New session on tower' });
-    // Icon-only: no visible word repeats across the project headers.
+    // Icon-only: no visible word repeats down the list.
     expect(button).toHaveTextContent('');
     expect(button).toHaveAttribute('title', 'New session on tower');
   });
@@ -260,12 +260,23 @@ describe('MachineGap', () => {
 });
 
 // A band says its own words in ONE voice: a set's name and what it counts stand at the
-// same step, so `GROUPS 2 groups` reads as one strip of type (reported from a
-// screenshot of the group bands — the counts stood a step above their own labels).
+// same step and in the same weight, joined by a dot, so `GROUPS · 2 groups` reads as one strip
+// (reported from a screenshot of the group bands — the counts stood a step above their own
+// labels). The count wears no face of its own, so this is where a band hands it one.
 describe('HeaderMeta', () => {
-  it('stands at the step of the word over the set', () => {
+  it('stands at the step and the weight of the word over the set', () => {
     const { container } = render(<HeaderMeta>2 groups</HeaderMeta>);
-    expect(container.firstElementChild).toHaveClass('font-mono', 'text-chip');
+    expect(container.firstElementChild).toHaveClass('font-mono', 'text-chip', 'font-bold');
+  });
+
+  // Regression, user report (a screenshot of the list, paraphrased: the bands ran their label
+  // and their count together while the project header above them joined its own two runs with
+  // a dot). A band's voice ANSWERS the word over the set, so it opens with that same joint.
+  it('opens with the dot that joins the count to the word over the set', () => {
+    const { container } = render(<HeaderMeta>2 groups</HeaderMeta>);
+    const dot = container.firstElementChild?.firstElementChild;
+    expect(dot).toHaveTextContent('·');
+    expect(dot).toHaveAttribute('aria-hidden');
   });
 });
 
@@ -282,21 +293,18 @@ describe('HeaderTally', () => {
     expect(container).toHaveTextContent('1 project');
   });
 
-  // Reported from a screenshot of the group bands (paraphrased: the counts should be
-  // set in the same font as GROUPS and SESSIONS): `2 groups` beside `GROUPS` read as a
-  // different typeface. The count wears the label's small caps and NO step of its own —
-  // a band hands it the label's through `HeaderMeta`, while a project header keeps its
-  // caption line, where an arrival has to stay on the total's baseline.
-  it('is set in the small caps the word over the set is set in', () => {
+  // Reported from the group bands (paraphrased: a band should read `GROUPS  2 Groups`, and
+  // each group `N Sessions`): the count was shouting its label back at it. The label names
+  // the set in small caps; the count is a phrase about that set, so it is set in title case.
+  // It wears NO step and NO weight of its own — a band hands it both through `HeaderMeta`,
+  // while a project header hands it a caption line where nothing is bold.
+  it('answers the label in title case instead of shouting it back', () => {
     const { container } = render(<HeaderTally count={10} unit="session" />);
-    expect(container.firstElementChild).toHaveClass(
-      'font-mono',
-      'font-bold',
-      'tracking-[0.08em]',
-      'uppercase',
-    );
-    for (const step of ['text-chip', 'text-meta', 'text-ui']) {
-      expect(container.firstElementChild).not.toHaveClass(step);
+    const tally = container.firstElementChild;
+    expect(tally).toHaveClass('font-mono', 'tracking-[0.08em]', 'capitalize');
+    expect(tally).not.toHaveClass('uppercase');
+    for (const face of ['text-chip', 'text-meta', 'text-ui', 'font-bold']) {
+      expect(tally).not.toHaveClass(face);
     }
   });
 });

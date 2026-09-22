@@ -1011,7 +1011,7 @@ export const ProjectPages: Story = {
   },
 };
 
-/** Collapsed projects retain their counter without offering navigation or editing. */
+/** A set that cannot move keeps its counter, and offers neither steps nor editing. */
 export const ProjectPagesDisabled: Story = {
   render: () => (
     <Sheet>

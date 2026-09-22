@@ -3484,7 +3484,64 @@
       (let [got (grouped-fleet-window {})]
         (expect (= ["loose1" "filed1" "loose2" "filed2"] (mapv #(get % "id") (:sessions got))))
         (expect (empty? (:grouped got)))
-        (expect (= 4 (:total got))))))
+        (expect (= 4 (:total got)))))
+  ;; A wall of groups would be a wall of shelves on the first paint, so a client
+  ;; paging its bands names the page it is painting and the shelves follow it.
+  (it "paints only the shelves the band window names"
+      (let [got (grouped-fleet-window {:limit 1 :grouped "aside" :group-ids ["g2"]})]
+        (expect (= ["filed2"] (mapv #(get % "id") (:grouped got))))
+        ;; The loose window never moves when the bands turn.
+        (expect (= ["loose1"] (mapv #(get % "id") (:sessions got))))
+        (expect (= 2 (:total got)))))
+  (it "answers no shelf at all for a band window that names none"
+      (let [got (grouped-fleet-window {:limit 1 :grouped "aside" :group-ids []})]
+        (expect (= [] (mapv #(get % "id") (:grouped got))))
+        ;; A filed session is out of the page whether or not its band is on screen.
+        (expect (= ["loose1"] (mapv #(get % "id") (:sessions got))))
+        (expect (= 2 (:total got))))))
+
+;; The bands of one project are a WALL a human keeps growing, so the list a client
+;; paints them from is a window with a total of its own - what its pager prints.
+(defn- paged-band-wall
+  "`list-session-groups-page` over a project holding four bands in manual order."
+  [opts]
+  (with-redefs-fn {#'lp/session-groups (fn [_pid _opts]
+                                         [{:id "g1" :name "One" :position 0 :session-count 2}
+                                          {:id "g2" :name "Two" :position 1 :session-count 3}
+                                          {:id "g3" :name "Three" :position 2 :session-count 5}
+                                          {:id "g4" :name "Four" :position 3 :session-count 7}])}
+    (fn []
+      (state/list-session-groups-page "p1" opts))))
+
+(defdescribe gateway-pages-the-wall-of-bands-test
+             (it "cuts one page out of the wall and counts the whole of it"
+                 (let [got (paged-band-wall {:limit 2 :offset 2})]
+                   (expect (= ["Three" "Four"] (mapv #(get % "name") (:groups got))))
+                   (expect (= 4 (:total got)))
+                   (expect (= 2 (:limit got)))
+                   (expect (= 2 (:offset got)))
+                   (expect (not (:has-more got)))))
+             ;; A count over a wall is a count OF THE WALL: the sum follows the whole
+             ;; list, so a reader walking the bands does not watch it change.
+             (it "counts the sessions filed across every band, not this page's"
+                 (let [got (paged-band-wall {:limit 2 :offset 2})]
+                   (expect (= 17 (:session-total got)))
+                   (expect (= 17 (:session-total (paged-band-wall {}))))))
+             (it "tells a pager there is another page of bands to turn to"
+                 (let [got (paged-band-wall {:limit 2})]
+                   (expect (= ["One" "Two"] (mapv #(get % "name") (:groups got))))
+                   (expect (= 0 (:offset got)))
+                   (expect (:has-more got))))
+             (it "answers the whole wall when no window is asked for"
+                 (let [got (paged-band-wall {})]
+                   (expect (= 4 (count (:groups got))))
+                   (expect (nil? (:limit got)))
+                   (expect (not (:has-more got)))))
+             (it "runs off the end of the wall without an exception"
+                 (let [got (paged-band-wall {:limit 2 :offset 9})]
+                   (expect (= [] (:groups got)))
+                   (expect (= 4 (:total got)))
+                   (expect (not (:has-more got))))))
 
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty

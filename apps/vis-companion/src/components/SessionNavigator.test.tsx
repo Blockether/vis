@@ -224,12 +224,11 @@ describe('project pages', () => {
   // Reported over the project header, once the pager took that edge (paraphrased: a plus
   // standing on the left is unacceptable, the three dots belong on the right): a paged
   // project stood its own controls in the middle of the band while an unpaged one kept
-  // them flush right. The controls hold the edge; the pager stands just inside them.
-  it('gives a header’s own controls the trailing edge, the pager just inside', () => {
+  // them flush right. The controls hold the edge in ONE shape now, and the page steps
+  // stand over the set they move (`SetHeader` in `SessionProjectGroups`) instead.
+  it('gives a header’s own controls the trailing edge', () => {
     render(
-      <SectionHeader
-        navigation={<Pager page={2} pageCount={9} label="vis sessions" onPage={vi.fn()} />}
-      >
+      <SectionHeader>
         <span>vis</span>
         <HeaderActions align="center">
           <button type="button">New session on tower</button>
@@ -239,14 +238,12 @@ describe('project pages', () => {
     const actions = screen.getByRole('button', { name: 'New session on tower' })
       .parentElement as HTMLElement;
     const header = actions.parentElement as HTMLElement;
-    const pages = screen.getByRole('navigation').parentElement as HTMLElement;
 
     expect(header.tagName).toBe('HEADER');
     // The band's rule reaches the cluster through its LAST child, so the cluster is it.
     expect(header.lastElementChild).toBe(actions);
-    expect(header.className).toContain('[&>:last-child]:col-start-3');
-    expect(pages.className).toContain('col-start-2');
-    // The page steps keep the inset that spaces them from the controls beside them.
-    expect(pages.className).toContain('pr-2');
+    // One shape for every section: the band never becomes a grid to make room for pages.
+    expect(header.className).toContain('sticky top-0 flex');
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 });

@@ -28,18 +28,20 @@ export const Connected: Story = {
     // Regression: the transcript border must align with the 52px machine strip.
     const canvas = within(canvasElement);
     const header = canvas.getByRole('banner');
-    const actions = [
-      canvas.getByRole('button', { name: 'Copy session id' }),
-      canvas.getByRole('button', { name: '4 artifacts produced by the model' }),
-    ];
+    const actions = canvas.getByRole('button', { name: 'Session actions, 4 artifacts' });
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    for (const action of actions) {
-      await expect(action.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
-    }
-    const [copy, artifacts] = actions.map((action) => action.getBoundingClientRect());
-    await expect(copy.top).toBe(artifacts.top);
-    await expect(artifacts.left - copy.right).toBeGreaterThanOrEqual(8);
+    await expect(actions.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
     await expect(header.getBoundingClientRect().height).toBe(53);
+
+    // The trailing rail carries ONE control, and everything the band used to spell
+    // out stands one press behind it.
+    await userEvent.click(actions);
+    const page = within(document.body);
+    await expect(page.getByRole('dialog', { name: 'Session actions' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open artifacts (4)' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Copy session id/ })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    await expect(page.queryByRole('dialog', { name: 'Session actions' })).toBeNull();
   },
 };
 

@@ -88,7 +88,10 @@ describe('gateway-backed project pages', () => {
     }
   });
 
-  it('keeps the current page visible and inactive while the project is folded', async () => {
+  // A FOLDED PROJECT PAINTS NO LIST, so it offers no way to page one: the steps stand over
+  // the set they move (`SetHeader`) and leave the screen with it. The PLACE is kept — the
+  // project reopens on the page the reader left, and folding asks the gateway for nothing.
+  it('takes the pager away with the set it moves, and reopens on the same page', async () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     try {
@@ -97,32 +100,21 @@ describe('gateway-backed project pages', () => {
       fireEvent.click(view.getByLabelText('Next page'));
       await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
       await settle();
-      const pager = view.getByRole('navigation', { name: 'Pages of alpha sessions' });
-      const current = view.getByRole('textbox', { name: 'Current page' });
-      const previous = view.getByRole('button', { name: 'Previous page' });
-      const next = view.getByRole('button', { name: 'Next page' });
       const reads = pageReads(view).length;
 
       fireEvent.click(view.getByLabelText('Collapse alpha'));
-      expect(view.getByRole('navigation', { name: 'Pages of alpha sessions' })).toBe(pager);
-      expect(pager).toBeVisible();
-      expect(pager).toHaveAttribute('aria-disabled', 'true');
-      expect(current).toHaveValue('2');
-      for (const control of [previous, current, next]) expect(control).toBeDisabled();
-      fireEvent.click(previous);
-      fireEvent.click(next);
-      current.focus();
-      expect(current).not.toHaveFocus();
+      expect(view.queryByRole('navigation', { name: 'Pages of alpha sessions' })).toBeNull();
+      expect(view.queryByRole('textbox', { name: 'Current page' })).toBeNull();
       await settle();
       expect(shown(view)).toHaveLength(0);
       expect(pageReads(view)).toHaveLength(reads);
-      expect(current).toHaveValue('2');
 
       fireEvent.click(view.getByLabelText('Expand alpha'));
       await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
-      expect(view.getByRole('navigation', { name: 'Pages of alpha sessions' })).toBe(pager);
-      for (const control of [previous, current, next]) expect(control).toBeEnabled();
-      fireEvent.click(next);
+      const current = view.getByRole('textbox', { name: 'Current page' });
+      expect(current).toHaveValue('2');
+      expect(current).toBeEnabled();
+      fireEvent.click(view.getByRole('button', { name: 'Next page' }));
       await waitFor(() => expect(current).toHaveValue('3'));
     } finally {
       view.unmount();
@@ -130,7 +122,7 @@ describe('gateway-backed project pages', () => {
     }
   });
 
-  it('shows an inactive pager for a project restored in its folded state', async () => {
+  it('shows no pager for a project restored in its folded state', async () => {
     window.innerHeight = 844;
     const first = renderSessionsScreen({ machines: [{ sessions: rows }] });
     let conns;
@@ -144,11 +136,9 @@ describe('gateway-backed project pages', () => {
     }
     const again = renderSessionsScreen({ machines: [{ sessions: rows }], at: conns });
     try {
-      const pager = await again.findByRole('navigation', { name: 'Pages of alpha sessions' });
-      expect(pager).toBeVisible();
-      expect(pager).toHaveAttribute('aria-disabled', 'true');
-      expect(again.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
-      expect(again.getByRole('textbox', { name: 'Current page' })).toBeDisabled();
+      await again.findByLabelText('Expand alpha');
+      expect(again.queryByRole('navigation', { name: 'Pages of alpha sessions' })).toBeNull();
+      expect(again.queryByRole('textbox', { name: 'Current page' })).toBeNull();
       expect(shown(again)).toHaveLength(0);
       expect(pageReads(again)).toHaveLength(0);
     } finally {
@@ -171,8 +161,11 @@ describe('gateway-backed project pages', () => {
       const first = pageReads(view);
       expect(first).toHaveLength(3);
       // The shelves ride along with the window: a project's filed sessions are answered
-      // complete beside it, so a group is never cut by the pager (BLO-167).
-      expect(first[0]).toBe('/v1/sessions?root=/Users/dev/alpha&limit=15&grouped=aside');
+      // complete beside it, so a group is never cut by the pager (BLO-167). The band window
+      // rides with it too — these rows are the ones filed under the page of bands on screen.
+      expect(first[0]).toBe(
+        '/v1/sessions?root=/Users/dev/alpha&limit=15&grouped=aside&group_limit=10&group_offset=0',
+      );
       expect(first.slice(1).every((read) => read.includes('&after='))).toBe(true);
       expect(first.every((read) => read.includes('limit=15'))).toBe(true);
       expect(shown(view)[0]).toBe('alpha 00');

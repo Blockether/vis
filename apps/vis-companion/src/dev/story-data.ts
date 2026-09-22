@@ -2160,6 +2160,18 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
   };
   const projectAt = (root: string | null | undefined) =>
     projects.find((project) => project.root === root) ?? projects[0];
+  /** The bands a view can see, in the order the wall paints them. */
+  const wallOf = (root: string | null | undefined, url: URL) => {
+    const view = url.searchParams.get('archived') ?? 'exclude';
+    return bandsOf(projectAt(root)).filter(
+      (band) => view === 'include' || (view === 'only') === (band.archived_at != null),
+    );
+  };
+  /** THE PAGE OF THE WALL a reader is standing on: no limit at all is the whole wall. */
+  const bandWindow = <Band,>(wall: Band[], limit: number | null, offset: string | null) => {
+    const from = Math.max(0, Number(offset ?? 0));
+    return limit == null ? wall.slice(from) : wall.slice(from, from + limit);
+  };
   const sent = (init?: RequestInit) =>
     JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>;
   const answer = (body: unknown) =>
@@ -2181,7 +2193,23 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       // beside it, the way `state/list-sessions-page` does: a group is a shelf a reader
       // reads complete, never the slice of it that fell on the page they are standing on.
       const aside = url.searchParams.get('grouped') === 'aside';
-      const shelved = aside ? found.filter((row) => bandOf(row) !== null) : [];
+      // THE WALL IS PAGED TOO, so `group_limit`/`group_offset` name the bands the reader is
+      // standing on and only the sessions filed under THOSE come back beside the window —
+      // the way `:group-ids` cuts `state/list-sessions-page`.
+      const asked = url.searchParams.get('group_limit');
+      const painted =
+        aside && asked != null
+          ? new Set(
+              bandWindow(
+                wallOf(root, url),
+                Math.max(0, Number(asked)),
+                url.searchParams.get('group_offset'),
+              ).map((band) => band.id),
+            )
+          : null;
+      const shelved = aside
+        ? found.filter((row) => bandOf(row) !== null && (!painted || painted.has(bandOf(row)!)))
+        : [];
       const listed = aside ? found.filter((row) => bandOf(row) === null) : found;
       const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
       const after = url.searchParams.get('after');
@@ -2201,20 +2229,34 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     if (url.pathname === '/v1/session-groups') {
       const project = projectAt(url.searchParams.get('root'));
       if ((init?.method ?? 'GET') === 'GET') {
-        const view = url.searchParams.get('archived') ?? 'exclude';
         const keeps = archiveView(url);
-        const bands = bandsOf(project)
-          .filter((band) => view === 'include' || (view === 'only') === (band.archived_at != null))
+        const wall = wallOf(url.searchParams.get('root'), url).map((band) => ({
           // A BAND COUNTS WHAT THE VIEW ASKING FOR IT CAN SEE. A session archived inside a
           // group that is still live is not on the live list, so the band over it does not
           // stand there counting a row nothing under it paints.
-          .map((band) => ({
-            ...band,
-            session_count: (project?.rows ?? []).filter(
-              (row) => !gone.has(row.id) && bandOf(row) === band.id && keeps(row),
-            ).length,
-          }));
-        return answer({ project_id: project?.projectId ?? null, groups: bands });
+          ...band,
+          session_count: (project?.rows ?? []).filter(
+            (row) => !gone.has(row.id) && bandOf(row) === band.id && keeps(row),
+          ).length,
+        }));
+        const limit = url.searchParams.get('limit');
+        const window = bandWindow(
+          wall,
+          limit == null ? null : Math.max(0, Number(limit)),
+          url.searchParams.get('offset'),
+        );
+        const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
+        return answer({
+          project_id: project?.projectId ?? null,
+          groups: window,
+          total: wall.length,
+          // COUNTED OVER THE WHOLE WALL, never the page of it: an archive tally says how much
+          // a project has filed away however few bands the reader is standing on.
+          session_total: wall.reduce((sum, band) => sum + band.session_count, 0),
+          limit: limit == null ? null : Math.max(0, Number(limit)),
+          offset,
+          has_more: limit != null && offset + window.length < wall.length,
+        });
       }
       const body = sent(init);
       const owner = projectAt(typeof body.root === 'string' ? body.root : null);

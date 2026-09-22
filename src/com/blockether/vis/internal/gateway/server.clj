@@ -2338,6 +2338,12 @@
    A group is a shelf the client paints whole, so paging it was hiding rows the
    human had just filed.
 
+   `group_limit`/`group_offset` name the PAGE OF BANDS a client is painting — the
+   same window `/v1/session-groups` cuts — and the shelves under `grouped` follow
+   it. A project with a wall of groups is then a bounded first paint, and the two
+   reads agree by construction instead of by timing. Without them every filed
+   session comes back, as before.
+
    `group_id` cuts the same list to ONE group's sessions: with `archived=only` it
    answers the rows a human archived INSIDE a group that is still active, which is
    what a group's own reveal asks for.
@@ -2407,6 +2413,15 @@
                 str
                 not-empty)
 
+        ;; The page of BANDS the client is painting. The shelves `aside` answers
+        ;; follow this window, so a wall of groups is not a wall of shelves on
+        ;; the first paint.
+        group-limit
+        (query-long request "group_limit")
+
+        group-offset
+        (query-long request "group_offset")
+
         ;; A read that named neither a window nor a cut asked for every session in the
         ;; store. The head window is what it gets, and `next_cursor` carries anyone who
         ;; wants the rest.
@@ -2438,7 +2453,24 @@
 
     (if refusal
       refusal
-      (let [page
+      (let [;; The bands that window names, resolved ONCE: the shelves beside the
+            ;; window are cut to exactly the groups the client is painting. Only a
+            ;; read that asked for a band window pays for this.
+            group-ids
+            (when (and (= "aside" grouped) (some? group-limit))
+              (let [pid (or (some-> project-id
+                                    parse-uuid)
+                            (some-> (when (seq root) (state/get-project-by-root "local" root))
+                                    (get "id")
+                                    parse-uuid))]
+                (when pid
+                  (mapv #(get % "id")
+                        (:groups (state/list-session-groups-page pid
+                                                                 {:archived archived
+                                                                  :limit group-limit
+                                                                  :offset group-offset}))))))
+
+            page
             (state/list-sessions-page :all
                                       {:limit window-limit
                                        :after after
@@ -2446,6 +2478,7 @@
                                        :project-id project-id
                                        :id-prefix id-prefix
                                        :group-id group-id
+                                       :group-ids group-ids
                                        :ids ids
                                        :dirty dirty
                                        :grouped grouped
@@ -3084,6 +3117,7 @@
 
 (defn- list-session-groups-handler
   "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…&archived=exclude|include|only]
+                         [&limit=<n>&offset=<n>]
    — the groups inside ONE project, in the order the human put them in.
 
    `root` is accepted because a client can group its list by WORKSPACE ROOT
@@ -3092,7 +3126,14 @@
 
    An archived group leaves this list the way an archived session leaves the
    session list, and `archived=only` is the reveal that asks for the archive
-   alone."
+   alone.
+
+   `limit`/`offset` cut ONE page out of a wall of bands a human can keep growing,
+   and `total`/`has_more` are what a pager over them prints, with `session_total`
+   counting the sessions filed across the WHOLE wall. Their order is the human's own
+   `position`, which no turn moves, so an offset names the same page
+   tomorrow. Without `limit` the answer is every band, unchanged — what the TUI
+   reads."
   [request]
   (let [asked
         (not-empty (get-in request [:query-params "project"]))
@@ -3106,6 +3147,14 @@
         archived
         (query-archived request)
 
+        ;; ONE page of bands: a client painting a wall of groups asks for its
+        ;; window here instead of receiving the wall and cutting it on the device.
+        limit
+        (query-long request "limit")
+
+        offset
+        (query-long request "offset")
+
         pid
         (or (some-> asked
                     parse-uuid)
@@ -3116,9 +3165,23 @@
     (cond (= :invalid archived) (archived-400)
           (and (nil? asked) (nil? root))
           (error-response 400 :invalid-request "project or root is required")
-          (nil? pid) (json-response {:project_id nil :groups []})
-          :else (json-response {:project_id (str pid)
-                                :groups (state/list-session-groups pid {:archived archived})}))))
+          (nil? pid) (json-response {:project_id nil
+                                     :groups []
+                                     :total 0
+                                     :session_total 0
+                                     :limit limit
+                                     :offset (max 0 (long (or offset 0)))
+                                     :has-more false})
+          :else (let [page (state/list-session-groups-page
+                             pid
+                             {:archived archived :limit limit :offset offset})]
+                  (json-response {:project_id (str pid)
+                                  :groups (:groups page)
+                                  :total (:total page)
+                                  :session_total (:session-total page)
+                                  :limit (:limit page)
+                                  :offset (:offset page)
+                                  :has-more (:has-more page)})))))
 
 (defn- create-session-group-handler
   "POST /v1/session-groups {name, color?, position?, project_id?|root?, owner_id?}

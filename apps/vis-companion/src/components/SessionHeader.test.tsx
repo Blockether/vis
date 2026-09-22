@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
@@ -35,12 +35,19 @@ describe('SessionHeader', () => {
 
     expect(screen.getByRole('heading', { name: model.title })).toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy session id' })).toHaveTextContent('123e4567');
+    // The band keeps the sentence; the id and the artifacts stand behind one kebab, whose
+    // own name still carries the count the artifacts chip used to paint out loud.
+    expect(screen.queryByRole('button', { name: /^Copy session id/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions, 3 artifacts' }));
+
+    expect(screen.getByRole('dialog', { name: 'Session actions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Copy session id/ })).toHaveTextContent('123e4567');
+    fireEvent.click(screen.getByRole('button', { name: 'Open artifacts (3)' }));
+    expect(toggleArtifacts).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog', { name: 'Session actions' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to sessions' }));
-    fireEvent.click(screen.getByRole('button', { name: '3 artifacts produced by the model' }));
     expect(back).toHaveBeenCalledOnce();
-    expect(toggleArtifacts).toHaveBeenCalledOnce();
   });
 
   it('renders the reconnecting state and omits an empty artifact door', () => {
@@ -56,7 +63,68 @@ describe('SessionHeader', () => {
     );
 
     expect(screen.getByText('Reconnecting')).toBeInTheDocument();
-    expect(screen.queryByText(/artifacts produced/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    expect(screen.queryByRole('button', { name: /artifacts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Copy session id/ })).toBeInTheDocument();
+  });
+
+  // Regression, user report (paraphrased): the trailing mark's dots ran across instead
+  // of down, and behind it the artifacts sat over a captioned id chip. Both verbs are
+  // rows now — a mark, then what pressing it does — stacked one under the other.
+  it('hangs both session verbs as marked rows and copies without closing the menu', async () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => void written.push(text) },
+    });
+    render(
+      <SessionHeader
+        model={{ ...model, artifacts: { count: 3, isOpen: true } }}
+        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Session actions/ }));
+
+    const rows = within(screen.getByRole('dialog', { name: 'Session actions' })).getAllByRole(
+      'button',
+    );
+    expect(rows).toHaveLength(2);
+    // An open surface names the verb that closes it, and every row LEADS with its mark.
+    expect(rows[0]).toHaveTextContent('Hide artifacts (3)');
+    expect(rows[1]).toHaveTextContent('Copy session id');
+    expect(rows.map((row) => Boolean(row.firstElementChild?.querySelector('svg')))).toEqual([
+      true,
+      true,
+    ]);
+
+    fireEvent.click(rows[1]);
+    await waitFor(() =>
+      expect(written).toEqual(['vis_session_id#123e4567-e89b-12d3-a456-426614174000']),
+    );
+    // The clipboard answers nothing on its own, so the row keeps the panel standing and
+    // says so itself.
+    expect(screen.getByRole('dialog', { name: 'Session actions' })).toBeInTheDocument();
+    await waitFor(() => expect(rows[1]).toHaveTextContent('copied'));
+  });
+
+  // The screen under this header reads Escape as "cancel the running turn", so an open
+  // menu has to spend that key itself.
+  it('closes its menu on Escape without spending the key on the screen below', () => {
+    const below = vi.fn();
+    window.addEventListener('keydown', below);
+    try {
+      render(
+        <SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: /^Session actions/ }));
+      expect(screen.getByRole('dialog', { name: 'Session actions' })).toBeInTheDocument();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(screen.queryByRole('dialog', { name: 'Session actions' })).not.toBeInTheDocument();
+      expect(below).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', below);
+    }
   });
   it('shows only explicitly supplied goals and opens the full objective', () => {
     const { rerender } = render(

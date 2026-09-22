@@ -244,9 +244,10 @@ describe('the icon set', () => {
     expect(renderToStaticMarkup(<ChevronIcon back />)).toContain('[&amp;&gt;path]:rotate-180');
   });
 
-  // Regression, reported as "the three dots that open the settings run left to right":
-  // the kebab a menu hangs off has to stack DOWN the edge it sits on, on a project row
-  // as on a session row (BLO-167).
+  // Regression, reported first as the settings dots running left to right and then for
+  // the session header's own mark, asked to turn the other way: the kebab a menu hangs
+  // off stacks DOWN the edge it sits on — on a project row, a session row and a title
+  // band alike (BLO-167).
   it('stacks the menu kebab down the row instead of across it', () => {
     const dots = [...renderToStaticMarkup(<DotsIcon />).matchAll(/<circle[^>]*>/g)].map(
       ([tag]) => ({

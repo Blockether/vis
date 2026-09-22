@@ -5806,8 +5806,15 @@
    stands beside it. A group is a shelf, not a page: a client paints the whole
    shelf however deep in the fleet its rows sit, and `total`, `:next-cursor` and
    `:has-more` then describe the LOOSE sessions alone - which is what the pager
-   printed under the groups is counting. Without the option nothing moves and
+   over the sessions set is counting. Without the option nothing moves and
    `:grouped` is empty.
+
+   `:group-ids` narrows those shelves to the bands a client is PAINTING - one page
+   of groups (`list-session-groups-page`), never a whole wall of them. An empty
+   collection answers no shelf at all; `nil` - no band window asked for - answers
+   every filed session, as before. The loose window never moves with it: a filed
+   session is out of the page whether or not its band is on screen, so turning the
+   bands never reshuffles the sessions beside them.
 
    Every row carries `is_unread`/`unread_answers` for the asking `:reader`
    (`default-reader-id` when a caller names none). The gateway owns NEW the way it
@@ -5857,7 +5864,8 @@
    affordable."
   ([opts] (list-sessions-page :all opts))
   ([channel
-    {:keys [limit after root project-id group-id id-prefix ids dirty grouped reader archived]}]
+    {:keys [limit after root project-id group-id group-ids id-prefix ids dirty grouped reader
+            archived]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -5932,11 +5940,21 @@
             (some-> grouped
                     name))
 
+         ;; The page of BANDS the client is painting, when it pages the groups:
+         ;; the shelves beside its window follow the same page, so one read
+         ;; answers exactly the shelves on screen. `nil` is every band.
+         shown-groups
+         (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
+
          ;; Filed rows leave the WINDOW, not the listing: `awaiting` below still
          ;; sees them through `ranked`, and the cut, the total and the cursor are
-         ;; computed over what is left loose.
+         ;; computed over what is left loose - whether or not the band holding a
+         ;; row is on the page of bands.
          filed
-         (if aside-groups? (filterv :group-id ranked) [])
+         (cond->> (if aside-groups? (filterv :group-id ranked) [])
+           (some? shown-groups)
+           (filterv (fn [row]
+                      (contains? shown-groups (str (:group-id row))))))
 
          pageable
          (if aside-groups? (filterv (complement :group-id) ranked) ranked)
@@ -6311,6 +6329,45 @@
    `:include` or `:only`, what a reveal asks for)."
   ([pid] (list-session-groups pid {}))
   ([pid opts] (mapv session-group-wire (lp/session-groups pid opts))))
+
+(defn list-session-groups-page
+  "One WINDOW of a project's groups, with the facts a pager prints:
+   `{:groups … :total … :session-total … :limit … :offset … :has-more …}`.
+
+   A band's place is the human's own `position`, which no turn moves, so a page of
+   bands is an OFFSET and not a cursor: page 7 holds the same bands however long
+   the app sat idle, and a pager can jump straight to it. `nil` limit means \"the
+   rest\", so a caller that names no window still reads the whole wall.
+
+   `:total` counts the BANDS and `:session-total` the sessions filed across ALL of
+   them — both over the whole wall rather than this page, because a client prints
+   those numbers over a wall it is WALKING and they must not move while it does.
+
+   `opts`: `:archived` (the one archive vocabulary, see `list-session-groups`),
+   `:limit` and `:offset`."
+  ([pid] (list-session-groups-page pid {}))
+  ([pid {:keys [limit offset] :as opts}]
+   (let [all
+         (list-session-groups pid (dissoc opts :limit :offset))
+
+         start
+         (max 0 (long (or offset 0)))
+
+         windowed
+         (cond->> (into [] (drop start) all)
+           (some? limit)
+           (into [] (take (max 0 (long limit)))))
+
+         filed
+         (transduce (map #(long (or (get % "session_count") 0))) + 0 all)]
+
+     {:groups windowed
+      :total (count all)
+      :session-total filed
+      :limit (some-> limit
+                     long)
+      :offset start
+      :has-more (< (+ start (count windowed)) (count all))})))
 
 (defn get-session-group [gid] (session-group-wire (lp/get-session-group gid)))
 

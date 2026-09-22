@@ -3,16 +3,16 @@
  *
  * A session's most valuable product is scattered down the transcript in whatever
  * tool call happened to make it, so "show me that chart again" is a scroll hunt
- * through forty turns. The header's right slot answers that instead: one chip
- * that COUNTS what this session produced, and one surface that opens each one in
- * the viewer that can already zoom it, draw on it and attach the drawing to the
- * next message.
+ * through forty turns. The session header's `⋯` answers that instead: one row that
+ * COUNTS what this session produced, and one surface that opens each one in the
+ * viewer that can already zoom it, draw on it and attach the drawing to the next
+ * message.
  *
  * Three rules the design has to keep, and each is falsifiable on screen:
  *
- *   * A session that produced NOTHING pays nothing. `ArtifactsChip` renders
- *     `null` at zero — no dead control, no gallery that opens onto "No artifacts
- *     yet".
+ *   * A session that produced NOTHING pays nothing. The header's menu offers the
+ *     Artifacts row only once there is one — no dead control, no gallery that opens
+ *     onto "No artifacts yet".
  *   * A photo grid is not the only shape. Documents and recorded files have no
  *     picture and do not pretend to: a doc wears a page with its kind, and a file
  *     wears its extension. Every tile opens because every original can now leave
@@ -52,7 +52,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { MediaRecording, RecordingPlayer } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
-import { AlertIcon, ClipIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
+import { AlertIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
 import { BandButton, Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
@@ -1048,55 +1048,6 @@ function ArtifactVersions({
         ))}
       </ul>
     </DetailOverlay>
-  );
-}
-
-/**
- * THE REPURPOSED HEADER SLOT. It counts, so it says something true about THIS
- * session, and with nothing produced it renders nothing at all.
- *
- * On a phone the strip is too narrow for the word, so the visible chip is a
- * paperclip and a count — which is why the WORD lives in `aria-label`/`title`
- * instead of only in the pixels, and `aria-expanded` says whether the surface it
- * owns is open.
- *
- * ITS BOX IS THE BAND'S, and so is the session id's beside it: a 32px face on touch,
- * 24px under a pointer, and the 44px target as invisible slop. The two are measured
- * against EACH OTHER — a chip that disagreed with its neighbour is what made this
- * header read as one big button with some text next to it — and against the `⋯` on
- * every other band in the app, which is `Button density="compact"`.
- */
-export function ArtifactsChip({
-  count,
-  open,
-  controls = 'artifacts-surface',
-  onToggle,
-}: {
-  count: number;
-  open: boolean;
-  controls?: string;
-  onToggle: () => void;
-}) {
-  if (!count) return null;
-  // Opening changes the ink and underlines the label, never frames the paperclip.
-  const tone = open ? 'text-accent-ink underline underline-offset-4' : 'text-white';
-  const label = `${count} artifacts produced by the model`;
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={open}
-      aria-controls={controls}
-      aria-label={label}
-      title={label}
-      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 mouse:hover:text-accent-ink after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${tone}`}
-    >
-      <ClipIcon className="size-3" />
-      <span aria-hidden="true" className="hidden sm:inline">
-        Artifacts
-      </span>
-      <span aria-hidden="true">{count}</span>
-    </button>
   );
 }
 

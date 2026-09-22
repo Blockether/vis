@@ -752,10 +752,37 @@ export interface SessionGroup {
   archived_at?: number | null;
 }
 
-/** `GET /v1/session-groups?root=` — one project's groups, in that manual order. */
+/**
+ * A WINDOW over a project's WALL OF BANDS: `limit` groups starting at `offset`.
+ *
+ * A project's groups are a list of their own, and a human can keep making more, so a
+ * reader pages them the way it pages anything else. A session read carrying the same
+ * window is answered with the rows filed under the bands that window paints, and no
+ * others.
+ */
+export interface BandWindow {
+  limit: number;
+  offset: number;
+}
+
+/**
+ * `GET /v1/session-groups?root=[&limit=&offset=]` — one page of a project's groups, in
+ * that manual order.
+ *
+ * `total` counts the whole wall and `has_more` says whether a band stands past this
+ * page, which is what a pager over them prints. `session_total` counts the sessions
+ * filed across the WHOLE wall, not the part of it this page paints.
+ *
+ * A read that asks for no window is answered with every band and a null `limit`.
+ */
 export interface SessionGroupPage {
   project_id: string | null;
   groups: SessionGroup[];
+  total: number;
+  session_total: number;
+  limit: number | null;
+  offset: number;
+  has_more: boolean;
 }
 
 /**

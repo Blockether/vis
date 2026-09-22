@@ -3516,7 +3516,11 @@
         (java.util.UUID/randomUUID)
 
         group
-        {"id" (str gid) "project_id" (str pid) "name" "Release apps" "color" "amber"}
+        {"id" (str gid)
+         "project_id" (str pid)
+         "name" "Release apps"
+         "color" "amber"
+         "session_count" 3}
 
         json-body
         (fn [m]
@@ -3599,6 +3603,30 @@
             (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"}})))]
               (is (= (str pid) (get body "project_id")))
               (is (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))))
+          ;; A human keeps adding bands, so this list is a WINDOW with a total of its
+          ;; own - what a pager over the groups prints.
+          (testing "a limit cuts one page of bands and still counts the whole wall"
+            (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"
+                                                                            "limit" "1"}})))]
+              (is (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))
+              (is (= 1 (get body "total")))
+              ;; The page cut the bands; the count of what is FILED still follows the
+              ;; whole wall, so a header over it does not move as the reader walks.
+              (is (= 3 (get body "session_total")))
+              (is (= 0 (get body "offset")))
+              (is (false? (get body "has_more")))))
+          (testing "an offset past the wall is an empty page, never the whole wall again"
+            (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"
+                                                                            "limit" "1"
+                                                                            "offset" "1"}})))]
+              (is (= [] (get body "groups")))
+              (is (= 1 (get body "total")))
+              (is (= 1 (get body "offset")))))
+          (testing "a read that names no window still answers every band - what the TUI asks for"
+            (let [body (wire/parse-json (:body (list-groups {:query-params {"root" "/repo"}})))]
+              (is (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))
+              (is (nil? (get body "limit")))
+              (is (= 1 (get body "total")))))
           ;; A group is put away like a session: this list answers the ACTIVE shelves
           ;; unless the reader names another view, and a reveal asks for the archive alone.
           (testing "the archive view a reader names is the view the store is asked for"
@@ -4063,6 +4091,7 @@
                    :project-id nil
                    :id-prefix nil
                    :group-id nil
+                   :group-ids nil
                    :ids #{}
                    :dirty #{}
                    :grouped nil
@@ -4092,7 +4121,15 @@
 ;; could only paint the group bands of the page it was holding, so a session filed deeper
 ;; in the fleet looked like it was in no group at all (BLO-167).
 (deftest sessions-window-keeps-group-shelves-aside
-  (let [seen (atom nil)]
+  (let [seen
+        (atom nil)
+
+        asked
+        (atom nil)
+
+        pid
+        (java.util.UUID/randomUUID)]
+
     (with-redefs [state/list-sessions-page (fn [channel opts]
                                              (reset! seen [channel opts])
                                              {:sessions [{"id" "loose"}]
@@ -4112,7 +4149,30 @@
         (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
                                              {:query-params {"limit" "20"}})))]
           (is (nil? (:grouped (second @seen))))
-          (is (nil? (get body "grouped"))))))))
+          (is (nil? (get body "grouped")))))
+      ;; A project with a wall of bands would paint every shelf on the first read, so
+      ;; a client names the PAGE of bands it is painting and the shelves beside its
+      ;; window follow it.
+      (testing "a band window reaches the store as the groups whose shelves are painted"
+        (with-redefs [state/get-project-by-root (fn [_owner root]
+                                                  (when (= "/repo" root) {"id" (str pid)}))
+                      state/list-session-groups-page (fn [project opts]
+                                                       (reset! asked [project opts])
+                                                       {:groups [{"id" "g3"} {"id" "g4"}]
+                                                        :total 9
+                                                        :limit (:limit opts)
+                                                        :offset (:offset opts)
+                                                        :has-more true})]
+
+          ((rv 'list-sessions-handler)
+            {:query-params
+             {"limit" "20" "grouped" "aside" "root" "/repo" "group_limit" "2" "group_offset" "4"}})
+          (is (= [pid {:archived :exclude :limit 2 :offset 4}] @asked))
+          (is (= ["g3" "g4"] (:group-ids (second @seen))))))
+      (testing "and a read that names no band window still gets every shelf"
+        ((rv 'list-sessions-handler)
+          {:query-params {"limit" "20" "grouped" "aside" "root" "/repo"}})
+        (is (nil? (:group-ids (second @seen))))))))
 
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
 ;; list too"): the channel downloaded every session to answer two narrow questions - one

@@ -6,12 +6,15 @@ import userEvent from '@testing-library/user-event';
 import type { SessionRowCommands } from '../../components/SessionList';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import type { GatewayClient } from '../../lib/gateway';
-import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
 const ROOT = STORY_NEWER_PROJECT.root;
 const MENU = `Groups in ${ROOT}`;
+
+/** The project reads the wall of bands a page at a time, standing on its first page. */
+const BANDS: BandWindow = { limit: 10, offset: 0 };
 
 /** Still active, and it holds one active session and one a reader archived inside it. */
 const WALLET: SessionGroup = {
@@ -100,11 +103,26 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
       ) => (view === 'only' ? archive : ACTIVE_PAGE),
     ),
     isSessionDeleted: () => false,
+    // THE WALL ANSWERS FOR ITSELF: one page of bands carries the whole wall's own tally, and
+    // that is what the reveal counts beside the rows it painted.
     listSessionGroups: vi.fn(
-      async (_root: string, _signal?: AbortSignal, view: ArchiveView = 'exclude') => ({
-        project_id: STORY_NEWER_PROJECT.projectId,
-        groups: view === 'only' ? archivedBands : [WALLET],
-      }),
+      async (
+        _root: string,
+        _signal?: AbortSignal,
+        view: ArchiveView = 'exclude',
+        _bands?: BandWindow,
+      ) => {
+        const groups = view === 'only' ? archivedBands : [WALLET];
+        return {
+          project_id: STORY_NEWER_PROJECT.projectId,
+          groups,
+          total: groups.length,
+          session_total: groups.reduce((sum, group) => sum + group.session_count, 0),
+          limit: BANDS.limit,
+          offset: BANDS.offset,
+          has_more: false,
+        };
+      },
     ),
     assignSessionGroup: vi.fn(async () => ACTIVE),
   };
@@ -206,11 +224,13 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       true,
       'only',
+      BANDS,
     );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
       expect.any(AbortSignal),
       'only',
+      BANDS,
     );
   });
 
@@ -287,6 +307,7 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       true,
       'only',
+      BANDS,
     );
   });
 

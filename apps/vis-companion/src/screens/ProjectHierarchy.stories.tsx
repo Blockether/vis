@@ -57,8 +57,9 @@ export const GroupedSessions: Story = {
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
 
-    // Regression: repeated project pluses and row controls must stay unframed.
-    const create = within(header).getByRole('button', { name: /^New session/ });
+    // Regression: repeated project pluses and row controls must stay unframed. The project's
+    // own plus stands on the set it creates in, under the band, so it is found in the group.
+    const create = within(group).getByRole('button', { name: /^New session on / });
     const face = style(create);
     // Regression: the plus must use the header's neutral ink, not the theme's accent.
     await expect(face.color).toBe(style(title).color);
@@ -76,13 +77,22 @@ export const GroupedSessions: Story = {
     );
     await expect(Number(style(title).fontWeight)).toBeGreaterThanOrEqual(700);
     const rows = header.nextElementSibling!;
-    await expect(rows.children.length).toBeGreaterThan(1);
-    await expect(style(rows.children[1]).borderTopColor).not.toBe(style(header).borderTopColor);
-    await expect(style(rows.children[1]).borderTopWidth).toBe(style(header).borderTopWidth);
-    // The gray band closes once, even while open; the first row adds no second rule.
+    // THE SET CARRIES THE LINE between the band and its page: the word is ruled on both
+    // edges, the first session under it adds none, and an internal row wears the row's own
+    // hairline instead of the band's.
+    const set = within(rows as HTMLElement).getByText('Sessions').parentElement!;
+    await expect(set.parentElement!.querySelectorAll('[data-session-id]').length).toBeGreaterThan(
+      1,
+    );
+    await expect(style(set).borderTopWidth).toBe('1px');
+    const firstRow = set.nextElementSibling!;
+    const internalRow = firstRow.nextElementSibling!;
+    await expect(style(internalRow).borderTopColor).not.toBe(style(header).borderTopColor);
+    await expect(style(internalRow).borderTopWidth).toBe(style(header).borderTopWidth);
+    // The gray band closes once, even while open.
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
-    await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
+    await expect(style(firstRow).borderTopWidth).toBe('0px');
     const nextGroup = group.nextElementSibling!;
     await expect(parseFloat(style(nextGroup).paddingTop)).toBeGreaterThan(0);
 

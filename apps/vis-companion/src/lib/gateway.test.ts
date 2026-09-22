@@ -325,6 +325,50 @@ describe('GatewayClient project-page snapshots', () => {
     expect(cold.heldProjectPage(root, 15, '', new Map(), 'only')).toBeNull();
   });
 
+  // THE BAND WINDOW IS PART OF THE QUESTION. A project's rows are answered for the page of
+  // GROUPS the reader is standing on, so a page held for another page of bands is not an
+  // answer to this one.
+  it('carries the band window on the read, and holds each window apart', async () => {
+    const fetches = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ sessions, total: 1 }), { headers: { ETag: '"head"' } }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    const pins = new Map();
+    const first = await client.listProjectPage(root, 15, '', pins, undefined, true, 'exclude', {
+      limit: 10,
+      offset: 0,
+    });
+    const second = await client.listProjectPage(root, 15, '', pins, undefined, true, 'exclude', {
+      limit: 10,
+      offset: 10,
+    });
+    expect(String(fetches.mock.calls[0][0])).toContain('&group_limit=10&group_offset=0');
+    expect(String(fetches.mock.calls[1][0])).toContain('&group_limit=10&group_offset=10');
+
+    // Each window keeps its own answer in the reader's own store.
+    expect(client.heldProjectPage(root, 15, '', pins, 'exclude', { limit: 10, offset: 0 })).toBe(
+      first,
+    );
+    expect(client.heldProjectPage(root, 15, '', pins, 'exclude', { limit: 10, offset: 10 })).toBe(
+      second,
+    );
+    // A read that asked for no window asked a different question, and this device holds no
+    // answer to that one.
+    expect(client.heldProjectPage(root, 15, '', pins)).toBeNull();
+
+    // The wall itself is asked for one page at a time, in the same window.
+    await client.listSessionGroups(root, undefined, 'exclude', { limit: 10, offset: 20 });
+    const wall = String(fetches.mock.calls[2][0]);
+    expect(wall).toContain('/v1/session-groups?');
+    expect(wall).toContain('limit=10');
+    expect(wall).toContain('offset=20');
+  });
+
   it('never reuses a project validator for a different draft overlay', async () => {
     const fetches = vi.fn().mockImplementation(() =>
       Promise.resolve(

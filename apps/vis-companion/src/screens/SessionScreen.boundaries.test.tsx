@@ -90,7 +90,7 @@ describe('session feature boundaries', () => {
       ['local session header', /<header className=/],
       ['local session id chip', /function CopyableId\(/],
       ['loose header back control', /<BackButton label="Back to sessions"/],
-      ['loose artifacts control', /<ArtifactsChip/],
+      ['loose header overflow control', /<DotsIcon/],
     ]
       .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
       .map(([name]) => name);

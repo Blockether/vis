@@ -82,44 +82,42 @@ export const Fleet: Story = {
     const folderBox = projects.getBoundingClientRect();
     const machinesBox = machines.getBoundingClientRect();
     await expect(folderBox.y + folderBox.height / 2).toBe(machinesBox.y + machinesBox.height / 2);
-    // Action counts must not move the permanent + / disclosure off the shared edge.
+    // Action counts must not move the permanent controls off the shared edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
-    const create = within(project as HTMLElement).getByRole('button', {
-      name: /^New session/,
-    });
     // Compact paging stays beside the project identity and creation action on every device.
-    const pager = page.getByRole('navigation', {
+    let pager = page.getByRole('navigation', {
       name: 'Pages of uberworkspace sessions',
     });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
     // The project band stays uniform across its disclosure, paging and creation control.
     const header = fold.closest('header')!;
-    // Paging stands in the band beside the heading rather than inside the heading element.
+    const menu = within(header).getByRole('button', { name: /^Groups in / });
+    // The band carries the boundary; the steps that move the list stand under it, on the
+    // set's own header.
     const band = header.parentElement!;
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
-    const pageField = within(pager).getByRole('textbox', { name: 'Current page' });
-    const pageControls = [...within(pager).getAllByRole('button'), pageField];
-    const pagerWidth = pager.getBoundingClientRect().width;
-    const pageValue = (pageField as HTMLInputElement).value;
+    const pageValue = (
+      within(pager).getByRole('textbox', { name: 'Current page' }) as HTMLInputElement
+    ).value;
     await userEvent.click(fold);
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
-    await expect(within(band).getByRole('navigation')).toBe(pager);
-    await expect(pager).toBeVisible();
-    await expect(pager).toHaveAttribute('aria-disabled', 'true');
-    await expect(pager.getBoundingClientRect().width).toBe(pagerWidth);
-    await expect(pageField).toHaveValue(pageValue);
-    for (const control of pageControls) await expect(control).toBeDisabled();
-    await expect(win.getComputedStyle(pageField).color).toBe(
-      win.getComputedStyle(pageControls[0]).color,
-    );
+    // THE STEPS LEAVE WITH THE SET THEY MOVE: a folded project paints no list, so it offers
+    // no way to page one. The band keeps its own shape and its own controls.
+    await expect(within(band).queryByRole('navigation')).toBeNull();
     await userEvent.click(fold);
+    pager = await page.findByRole('navigation', { name: 'Pages of uberworkspace sessions' });
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
-    await expect(within(band).getByRole('navigation')).toBe(pager);
     await expect(pager).not.toHaveAttribute('aria-disabled');
+    const pageField = within(pager).getByRole('textbox', { name: 'Current page' });
+    // The PLACE is kept: the project comes back standing on the page the reader left it on.
+    await expect(pageField).toHaveValue(pageValue);
     await expect(pageField).toBeEnabled();
     await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeEnabled();
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
+    // The plus stands on the set it creates in, not on the band, so it is found in the
+    // project — and only after the fold above, which unmounts it with the list it grows.
+    const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
     if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await userEvent.hover(fold);
       const band = win.getComputedStyle(header).backgroundColor;
@@ -136,7 +134,10 @@ export const Fleet: Story = {
     await expect(
       project.querySelectorAll('nav[aria-label="Pages of uberworkspace sessions"]'),
     ).toHaveLength(1);
-    await expect(centerY(fold)).toBe(centerY(create));
+    // THE BAND KEEPS ITS OWN PAIR on one line — the fold and the menu — and the plus stands
+    // on the line of the set it creates in, beside that set's steps.
+    await expect(centerY(fold)).toBe(centerY(menu));
+    await expect(centerY(create)).toBe(centerY(pager));
     const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     const qualifier = header.querySelector('[title]')!;
@@ -147,17 +148,11 @@ export const Fleet: Story = {
       projectName.getBoundingClientRect().left,
     );
     await expect(projectName.scrollWidth).toBe(projectName.clientWidth);
-    if (
-      qualifier.getBoundingClientRect().left < pager.getBoundingClientRect().right &&
-      qualifier.getBoundingClientRect().right > pager.getBoundingClientRect().left
-    ) {
-      // Narrow bands reserve the second line for counts instead of clipping them at the pager.
-      await expect(qualifier.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-        pager.getBoundingClientRect().bottom,
-      );
-    } else {
-      await expect(centerY(pager)).toBe(centerY(create));
-    }
+    // THE BAND KEEPS ONE SHAPE: the steps stand under it, over the set they move, so the
+    // caption never has to give way to them.
+    await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      header.getBoundingClientRect().bottom,
+    );
     const previous = within(pager).getByRole('button', { name: 'Previous page' });
     const next = within(pager).getByRole('button', { name: 'Next page' });
     expect(within(pager).getAllByRole('button')).toHaveLength(2);
@@ -168,16 +163,14 @@ export const Fleet: Story = {
     await expect(current).toHaveValue('1');
     for (const control of [previous, next]) {
       await expect(centerY(control)).toBe(centerY(pager));
-      // Under a pointer the steps take the band's 24px step: they are navigation
-      // beside the project's facts, not the row's own mark, so they read as chrome
-      // while staying centred on the same line as `+`. Touch shares the mark's face.
+      // Under a pointer the steps take the band's 24px step: they are navigation beside the
+      // set's own count, not a row's own mark. Touch shares the rail's reach.
       await expect(control.getBoundingClientRect().height).toBe(
         pointer ? 24 : create.getBoundingClientRect().height,
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
-    const menu = within(header).getByRole('button', { name: /^Groups in / });
-    const targets = [fold, previous, pageTarget, next, create, menu].map((control) => {
+    const reachOf = (control: Element) => {
       const box = control.getBoundingClientRect();
       const reach = win.getComputedStyle(control, '::after');
       const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
@@ -190,32 +183,34 @@ export const Fleet: Story = {
         width: box.width - left - right,
         height: box.height - top - bottom,
       };
-    });
-    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the page
-    // steps between them and the band's own menu take the 24px step. Touch reaches 44px
-    // for all six.
+    };
+    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the band's menu
+    // and the set's page steps take the 24px step. Touch reaches 44px for all six.
     const railFace = pointer ? 28 : 44;
     const bandStep = pointer ? 24 : 44;
-    const minimums = [railFace, bandStep, bandStep, bandStep, railFace, bandStep];
-    targets.forEach((target, index) => {
-      expect(target.width).toBeGreaterThanOrEqual(minimums[index]);
-      expect(target.height).toBeGreaterThanOrEqual(minimums[index]);
+    const bandRow = [fold, menu].map(reachOf);
+    const stepRow = [previous, pageTarget, next, create].map(reachOf);
+    [fold, create, menu, previous, pageTarget, next].map(reachOf).forEach((target, index) => {
+      const minimum = index < 2 ? railFace : bandStep;
+      expect(target.width).toBeGreaterThanOrEqual(minimum);
+      expect(target.height).toBeGreaterThanOrEqual(minimum);
     });
-    // Paging stands above the disclosure that reaches under it, so neighbouring targets
-    // may meet: what matters is their order and that each still takes its own press.
-    // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
-    // the three dots belong on the right): the band's own controls hold its trailing
-    // edge, the page steps stand inside them, and the menu is the last of all.
-    for (let index = 1; index < targets.length; index += 1) {
-      expect(targets[index].left).toBeGreaterThan(targets[index - 1].left);
+    // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable, the
+    // three dots belong on the right): the band's own controls hold its trailing edge and the
+    // menu is the last of them. The page steps read left to right on the set's own line.
+    for (const row of [bandRow, stepRow]) {
+      for (let index = 1; index < row.length; index += 1) {
+        expect(row[index].left).toBeGreaterThan(row[index - 1].left);
+      }
     }
-    for (const control of [fold, previous, pageTarget, next, create, menu]) {
+    for (const control of [fold, create, menu, previous, pageTarget, next]) {
       const box = control.getBoundingClientRect();
       expect(
         control.contains(doc.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)),
       ).toBe(true);
     }
-    expect(targets[5].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
+    expect(bandRow[1].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
+    expect(stepRow[3].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
     const firstPageRows = [...project.querySelectorAll('[data-session-id]')].map((row) =>
@@ -255,8 +250,10 @@ export const Fleet: Story = {
       ),
     ).toEqual(firstPageRows);
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      // Transparent controls expose the same project band on touch.
-      const band = create.closest('header');
+      // Transparent controls expose the surface they stand on: nothing between the plus and
+      // the project's own band paints over it. The plus now stands on the session set, so
+      // the walk ends at the project instead of the band it used to sit in.
+      const band = project;
       for (
         let element: HTMLElement | null = create;
         element && element !== band;
@@ -276,14 +273,11 @@ export const Fleet: Story = {
       'button',
       { name: /^Actions for/ },
     );
-    // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
-    // the three dots belong on the right): the band's menu ends where the row's own menu
-    // ends, the `+` and the row's disclosure stand one slot inside them, and the page
-    // steps stand inside the `+`.
+    // The project and row menus keep the same trailing edge. The Sessions plus now
+    // ends its own strip at that edge, after the pager rather than before it.
     await expect(menu.getBoundingClientRect().right).toBe(rowMenu.getBoundingClientRect().right);
-    await expect(before[0].right).toBeLessThanOrEqual(menu.getBoundingClientRect().left);
+    await expect(before[0].right).toBe(menu.getBoundingClientRect().right);
     await expect(before[1].right).toBeLessThanOrEqual(rowMenu.getBoundingClientRect().left);
-    await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(before[0].left);
 
     for (const control of [disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;

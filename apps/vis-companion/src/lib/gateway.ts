@@ -26,6 +26,7 @@ import type {
   ArchiveView,
   AuthFlow,
   AuthVerdict,
+  BandWindow,
   ModelPref,
   QueuedAttachment,
   QueuedTurn,
@@ -737,6 +738,10 @@ export interface ProjectPage {
    * from the current page instead showed a filed session as ungrouped until the
    * reader happened to page down to it, and `total`/`nextCursor` above therefore
    * count the LOOSE sessions only.
+   *
+   * A read that carries a BAND WINDOW is answered with the rows of the bands that
+   * window paints and no others: a shelf off the page is nobody's to render
+   * (`listProjectPage`).
    */
   grouped: Session[];
 }
@@ -3233,6 +3238,11 @@ export class GatewayClient {
    * `archived` is the VIEW this read asks for: a reveal reads `'only'`, which is another
    * list — its own pages, its own validators, and never the head this device keeps of the
    * project's active first page.
+   *
+   * `bands` is the window over the project's GROUPS this read paints, the same one
+   * `listSessionGroups` cut: `grouped` then holds those bands' rows alone. It belongs to
+   * the question a window answered, so a page held for another page of bands is not an
+   * answer to this one.
    */
   async listProjectPage(
     root: string,
@@ -3242,14 +3252,15 @@ export class GatewayClient {
     signal?: AbortSignal,
     persistHead = false,
     archived: ArchiveView = 'exclude',
+    bands?: BandWindow,
   ): Promise<ProjectPage> {
     // The overlay rides down here too: a session holding words typed on THIS device
     // is in this device's list and in nobody else's, so a page cut without it is a
     // page short (see `dirtySessionIds`).
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(',');
-    const key = this.projectWindowKey(root, limit, after, archived);
-    const pin = this.heldProjectWindow(root, limit, after, pins, archived);
+    const key = this.projectWindowKey(root, limit, after, archived, bands);
+    const pin = this.heldProjectWindow(root, limit, after, pins, archived, bands);
     const res = await this.requestFull<{
       sessions?: Session[];
       awaiting?: Session[];
@@ -3262,7 +3273,7 @@ export class GatewayClient {
         after ? `&after=${encodeURIComponent(after)}` : ''
       }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}${
         archived === 'exclude' ? '' : `&archived=${archived}`
-      }&grouped=aside`,
+      }&grouped=aside${bands ? `&group_limit=${bands.limit}&group_offset=${bands.offset}` : ''}`,
       undefined,
       signal,
       pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
@@ -3312,8 +3323,9 @@ export class GatewayClient {
     after: string,
     pins: ProjectWindows,
     archived: ArchiveView = 'exclude',
+    bands?: BandWindow,
   ): ProjectPage | null {
-    const held = this.heldProjectWindow(root, limit, after, pins, archived)?.page;
+    const held = this.heldProjectWindow(root, limit, after, pins, archived, bands)?.page;
     return held ? this.withoutDeletedProjectSessions(held) : null;
   }
 
@@ -3323,8 +3335,9 @@ export class GatewayClient {
     after: string,
     pins: ProjectWindows,
     archived: ArchiveView = 'exclude',
+    bands?: BandWindow,
   ): { etag: string; page: ProjectPage } | null {
-    const key = this.projectWindowKey(root, limit, after, archived);
+    const key = this.projectWindowKey(root, limit, after, archived, bands);
     const pin = pins.get(key);
     if (pin) return pin;
     if (after) return null;
@@ -3356,6 +3369,7 @@ export class GatewayClient {
     limit: number,
     after: string,
     archived: ArchiveView,
+    bands?: BandWindow,
   ): string {
     return [
       this.base,
@@ -3363,6 +3377,7 @@ export class GatewayClient {
       String(limit),
       after,
       archived,
+      bands ? `${bands.limit}:${bands.offset}` : '',
       dirtySessionIds(this.base).join(','),
     ].join('\u0000');
   }
@@ -3669,14 +3684,22 @@ export class GatewayClient {
    *
    * `archived` picks the view: a project's reveal reads `'only'` and gets the bands the
    * human put away, each still counting the sessions filed under it.
+   *
+   * `bands` cuts ONE page out of that wall, and the answer then carries `total` and
+   * `has_more` for the pager over them. Without it the answer is every band.
    */
   listSessionGroups(
     root: string,
     signal?: AbortSignal,
     archived: ArchiveView = 'exclude',
+    bands?: BandWindow,
   ): Promise<SessionGroupPage> {
     const query = new URLSearchParams({ root });
     if (archived !== 'exclude') query.set('archived', archived);
+    if (bands) {
+      query.set('limit', String(bands.limit));
+      query.set('offset', String(bands.offset));
+    }
     return this.request('GET', `/v1/session-groups?${query.toString()}`, undefined, signal);
   }
 

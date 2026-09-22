@@ -13,13 +13,17 @@ import type { PullPoint } from './pull-to-search';
 
 export type TouchPhase = 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel';
 
-/** Dispatch one touch event on `element` with `fingers` down. */
-export function fireTouch(element: Element, type: TouchPhase, fingers: PullPoint[]): void {
+/**
+ * Dispatch one touch event on `element` with `fingers` down. Answers the event, so a
+ * test can also ask what the gesture under it was allowed to do.
+ */
+export function fireTouch(element: Element, type: TouchPhase, fingers: PullPoint[]): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   const touches = fingers.map((finger) => ({ clientX: finger.x, clientY: finger.y }));
   Object.defineProperty(event, 'touches', { value: touches });
   Object.defineProperty(event, 'changedTouches', { value: touches });
   element.dispatchEvent(event);
+  return event;
 }
 
 /**

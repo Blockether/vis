@@ -34,7 +34,8 @@ describe('the composer under an open artifacts sheet', () => {
     expect(composer).toBeVisible();
     expect(composer).not.toHaveClass('hidden');
 
-    await user.click(await screen.findByRole('button', { name: /artifact/i }));
+    await user.click(await screen.findByRole('button', { name: /^Session actions/ }));
+    await user.click(screen.getByRole('button', { name: 'Open artifacts (1)' }));
     expect(composer).toHaveClass('hidden');
 
     await user.click(screen.getByRole('button', { name: /close/i }));
@@ -79,7 +80,8 @@ describe('the composer under an open artifacts sheet', () => {
     });
     expect(voiceMic).toBeInTheDocument();
 
-    await user.click(await screen.findByRole('button', { name: /artifact/i }));
+    await user.click(await screen.findByRole('button', { name: /^Session actions/ }));
+    await user.click(screen.getByRole('button', { name: 'Open artifacts (1)' }));
     const surface = screen.getByRole('region', {
       name: 'Artifacts produced by the model',
     });
@@ -96,7 +98,7 @@ describe('the composer under an open artifacts sheet', () => {
 // A session id leaves this screen to be pasted somewhere that knows nothing
 // about it, so the chip copies the MARKED form — a bare UUID could be any id at
 // all, while `vis_session_id#<uuid>` says which kind of thing it names.
-describe('the session id chip', () => {
+describe('the session id behind the header menu', () => {
   it('puts the marked id on the clipboard, not the bare uuid', async () => {
     const written: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
@@ -107,7 +109,8 @@ describe('the session id chip', () => {
       session: sessionFixture({ id: '123e4567-e89b-12d3-a456-426614174000' }),
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy session id' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Session actions/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Copy session id/ }));
 
     await waitFor(() =>
       expect(written).toEqual(['vis_session_id#123e4567-e89b-12d3-a456-426614174000']),

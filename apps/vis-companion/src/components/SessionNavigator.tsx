@@ -71,8 +71,19 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 /** Shared trailing controls keep their full hit targets, with roughly 16px to the icon. */
 // Account for the icon's inset within its 32px touch / 28px mouse target rather
 // than adding a second full gutter outside the button.
-const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-2 mouse:pr-2.5';
-const CENTERED_TRAIL = 'flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:pr-2.5';
+//
+// THE STEP BETWEEN TWO SLOTS IS THE INSET THAT ENDS THE RAIL. A header keeps both of its
+// marks in this one cluster, so the gap is what separates them; a row keeps its disclosure
+// here and hands its `⋯` to the cell just outside, so this cluster's own right padding is
+// what separates THOSE two. The two numbers have to be one number, or a header's plus
+// stands a couple of pixels off the disclosure of every row beneath it.
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-2 mouse:gap-2.5 mouse:pr-2.5';
+/**
+ * The same rail, centred through a header's band instead of stretched down a row: a
+ * header's own trailing cluster, and the inset every mark down that column shares.
+ */
+export const HEADER_TRAIL =
+  'flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:gap-2.5 mouse:pr-2.5';
 
 /** Machine and project headers align their identity and disclosure marks. */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
@@ -85,35 +96,21 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
  * Every session is in a project, so the list has ONE kind of section.
  *
- * A SECTION'S OWN CONTROLS OWN ITS TRAILING EDGE. Reported over the project header:
- * with the pager on that edge, a paged project stood its plus and its menu in the
- * middle of the band while an unpaged one kept them flush right, so the same two
- * buttons sat at two distances from the same screen edge. The controls take the edge
- * in every header now and the pager the cell just inside them, which leaves the row
- * menu last on every band, paged or not.
+ * A SECTION'S OWN CONTROLS OWN ITS TRAILING EDGE, AND A PAGER IS NOT ONE OF THEM.
+ * Reported over the project header while the pager stood on that edge: a paged project
+ * put its plus and its menu in the middle of the band while an unpaged one kept them
+ * flush right, so the same two buttons sat at two distances from the same screen edge.
+ * The steps stand over the SET they move instead — the bands over a project's groups,
+ * the page over its sessions (`SetHeader`) — which leaves this band one shape, and the
+ * row menu last on it, paged or not.
  */
-export function SectionHeader({
-  children,
-  navigation,
-}: {
-  children: ReactNode;
-  navigation?: ReactNode;
-}) {
-  const header = (
+export function SectionHeader({ children }: { children: ReactNode }) {
+  return (
     <header
-      className={`${HEADER_BAND} ${navigation ? 'col-span-full col-start-1 row-start-1 grid grid-cols-subgrid [&>:last-child]:col-start-3' : 'sticky top-0 flex'} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} sticky top-0 flex [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
-  );
-  if (!navigation) return header;
-  return (
-    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto]">
-      {header}
-      <div className="z-20 col-start-2 row-start-1 flex items-center justify-end pr-2 mouse:pr-2.5 @md:pl-4">
-        {navigation}
-      </div>
-    </div>
   );
 }
 
@@ -342,8 +339,11 @@ export function ProjectCrumb({
         {name}
       </span>
       {qualifier && (
+        // ONE LEVEL UP, THE SAME QUIET VOICE: under a pointer this caption stands at the
+        // step a group band counts in, so a project's own total reads as a caption under
+        // its name (reported from the sessions list: it was bold and a step too large).
         <span
-          className="pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-meta"
+          className="pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-chip"
           title={qualifierTitle}
         >
           {qualifier}
@@ -354,12 +354,14 @@ export function ProjectCrumb({
 }
 
 /**
- * Compact project navigation in every layout: previous, current / total, next.
+ * Compact navigation over ONE set — a project's sessions, or its wall of bands:
+ * previous, current / total, next.
  * Edit the current number to jump; Enter or blur commits, Escape restores it.
  * Under a pointer the whole cluster steps onto the band's 24px rhythm and its
  * metadata type, so it reads as header chrome; touch keeps its 44px targets.
  * The counter reserves its final width and centers its ink so neither arrow moves.
- * Disabled navigation keeps its place while its project is collapsed.
+ * Disabled navigation keeps its place and its width, so a set that cannot move right
+ * now does not move its steps.
  */
 export function Pager({
   page,
@@ -481,7 +483,7 @@ export function HeaderActions({
   children: ReactNode;
   align?: 'center' | 'stretch';
 }) {
-  return <span className={align === 'center' ? CENTERED_TRAIL : LIST_TRAIL}>{children}</span>;
+  return <span className={align === 'center' ? HEADER_TRAIL : LIST_TRAIL}>{children}</span>;
 }
 
 /**
@@ -516,26 +518,39 @@ export const RowDisclosure = forwardRef<
 });
 
 /**
- * A BAND'S QUIET VOICE: what a set inside a project counts, standing at the STEP of
- * the word over it (`SetHeader`'s label), so the strip is one line of type rather than
- * a label with a bigger note beside it. A project header is not this voice — its
- * caption stands on `ProjectCrumb`'s own qualifier line and keeps that step.
+ * A BAND'S QUIET VOICE: what a set inside a project counts, standing at the STEP and the
+ * WEIGHT of the word over it (`SetHeader`'s label), so the strip is one line of type rather
+ * than a label with a bigger note beside it. `HeaderTally` wears no step and no weight of
+ * its own, so a band's count takes both from here. A project header is not this voice — its
+ * caption stands on `ProjectCrumb`'s own qualifier line, where nothing is set bold.
+ *
+ * IT OPENS WITH THE DOT THAT JOINS THE COUNT TO ITS LABEL, the same joint a project header
+ * already sets between its total and the states beside it. Reported from a screenshot of the
+ * list: that header read `1679 Sessions · 1 live` while the bands under it ran `GROUPS 2
+ * Groups` together, so the count stood as a second label instead of answering the first.
  */
 export function HeaderMeta({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 font-mono text-chip text-dialog-hint">{children}</span>
+    <span className="flex items-center gap-2 font-mono text-chip font-bold text-dialog-hint">
+      {/* Hidden from a reader who HEARS the line: the dot is punctuation between two runs of
+          text, and "Groups dot 2 groups" is not what the eye is being told. */}
+      <span aria-hidden>·</span>
+      {children}
+    </span>
   );
 }
 
 /**
- * A header's own count, in the SAME SMALL CAPS as the word standing over the set it
- * counts (`SetHeader`'s label) — a band reads as one strip of type, not as a heading
- * with a note beside it in another voice.
+ * A header's own count, standing beside the word over the set it counts (`SetHeader`'s
+ * label) — `GROUPS · 2 Groups`. THE LABEL SHOUTS AND THE COUNT ANSWERS: the label names the
+ * set and is set in small caps, while the count is a phrase about that set, so it is set in
+ * title case and reads as words rather than as a second label beside the first.
  *
- * IT CARRIES NO STEP OF ITS OWN. Inside a band it stands at `HeaderMeta`'s, which is
- * the label's; in a project header it stands on the caption line it shares with the
- * states and an arrival, and a count a step down from those leaves the arrival off
- * their baseline.
+ * IT CARRIES NEITHER STEP NOR WEIGHT OF ITS OWN: the line it stands on gives both. Inside
+ * a band that line is `HeaderMeta`, which is the label's — small caps set bold. In a project
+ * header it is `ProjectCrumb`'s caption, shared with the states and an arrival, where
+ * nothing is bold and the whole line steps down to the band's own size under a pointer; the
+ * arrival steps with it, because it has to stay on the total's baseline.
  *
  * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
  * rows says nothing about what was counted, and the phone is exactly where the
@@ -556,9 +571,7 @@ export function HeaderTally({
 }) {
   const noun = count === 1 ? unit : `${unit}s`;
   return (
-    <span
-      className={`whitespace-nowrap font-mono font-bold tracking-[0.08em] uppercase ${className}`}
-    >
+    <span className={`whitespace-nowrap font-mono tracking-[0.08em] capitalize ${className}`}>
       {count} {noun}
     </span>
   );
@@ -740,16 +753,19 @@ export function MachineTab({
  * Repeated project actions use neutral ink without a border or a circular fill.
  * The compact 32px layout box keeps a 44px touch target through `IconButton`.
  * `where` stays in the tooltip and `machine` in the accessible name, unless the
- * button belongs to a `group`: a band's plus is named for the band it starts in,
- * so the project's own plus above it stays a different control. Creation
- * replaces the plus with a spinner without changing the header's width.
+ * button belongs to a `group`: a band's plus is named for the band it starts in, so the
+ * plus on the loose set's own header stays a different control. Creation replaces the
+ * plus with a spinner without changing the header's width.
+ *
+ * It shares the list's trailing rail: before the menu on a group's band, or at the
+ * right edge of the Sessions strip after its page controls. The layout box stays the
+ * same in both places.
  */
 export function NewSessionButton({
   machine,
   where,
   group,
   disabled,
-  density = 'compact',
   isBusy = false,
   onPress,
 }: {
@@ -758,8 +774,6 @@ export function NewSessionButton({
   /** The session group this plus starts INSIDE, when it stands on a group's band. */
   group?: string;
   disabled?: boolean;
-  /** `band` takes a group band's tighter pointer step; the default suits a header. */
-  density?: 'compact' | 'band';
   isBusy?: boolean;
   onPress: (anchor: HTMLElement) => void;
 }) {
@@ -771,7 +785,6 @@ export function NewSessionButton({
       : label;
   return (
     <IconButton
-      density={density}
       disabled={disabled || isBusy}
       aria-busy={isBusy || undefined}
       aria-live="polite"

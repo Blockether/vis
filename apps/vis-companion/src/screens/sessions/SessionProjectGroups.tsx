@@ -1,6 +1,16 @@
 /** One project's band, its session rows, and how that project is paged. */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
 
 import {
   SessionRow,
@@ -9,6 +19,7 @@ import {
   type SessionRowDeletion,
 } from '../../components/SessionList';
 import {
+  HEADER_TRAIL,
   HeaderActions,
   HeaderMeta,
   HeaderTally,
@@ -65,6 +76,7 @@ import {
   readProjectFold,
   writeProjectFold,
 } from '../../lib/project-fold';
+import { useSessionDropTarget } from '../../lib/session-drag';
 import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
@@ -159,20 +171,105 @@ function NameForm({
 }
 
 /**
+ * A PLACE THAT TAKES A DRAGGED ROW. It lights while the pointer is over it, so the
+ * reader sees where the session lands before letting go. A group's band files the row
+ * it takes; the set of ungrouped sessions takes one back OUT of the group it is in.
+ */
+function useSessionDrop(onDropSession?: (sid: string) => void) {
+  const [isOver, setIsOver] = useState(false);
+  // A finger raises no drag events at all, so the touch carry (`lib/session-drag`)
+  // reports the same hover and hands over the same session id: one place, and either
+  // hand files a row into it.
+  const carried = useSessionDropTarget(onDropSession);
+  return {
+    isOver: (isOver || carried.isOver) && Boolean(onDropSession),
+    dropProps: {
+      ...carried.targetProps,
+      onDragOver: (event: DragEvent<HTMLElement>) => {
+        if (!onDropSession) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setIsOver(true);
+      },
+      onDragLeave: () => setIsOver(false),
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        if (!onDropSession) return;
+        event.preventDefault();
+        setIsOver(false);
+        const sid = event.dataTransfer.getData('text/plain');
+        if (sid) onDropSession(sid);
+      },
+    },
+  };
+}
+
+/**
  * The name of ONE SET inside a project: the groups a reader filed, and the sessions
  * that are in none of them. A filed session stands under its band and NOWHERE else, so
  * without these two words the shelves and the page under them read as a single list
  * that happens to wear a coloured stripe on some of its rows.
  */
-function SetHeader({ label, count, unit }: { label: string; count: number; unit: string }) {
+function SetHeader({
+  label,
+  count,
+  unit,
+  navigation,
+  action,
+  onDropSession,
+}: {
+  label: string;
+  /**
+   * How many rows are in THIS set. Left out where that is the number the band above just
+   * printed: a project with no group has one set, and saying its total twice, a hairline
+   * apart, is the second count a whole row of the list was once deleted for.
+   */
+  count?: number;
+  unit: string;
+  /**
+   * THIS SET'S OWN STEPS, on the trailing edge of its band. The bands and the loose
+   * sessions under them are two lists cut apart, so each set carries the pager that
+   * moves it: one pair of arrows in the project header above them moved whichever of
+   * the two the reader was not looking at.
+   */
+  navigation?: ReactNode;
+  /**
+   * THIS SET'S OWN VERB, at the end of the same rail: the plus that starts a session in
+   * it. A create whose session lands in the loose list stood on the project band above
+   * both sets, where it read as the project's plus rather than as the one control that
+   * grows the page under this word.
+   */
+  action?: ReactNode;
+  /**
+   * Called with the session a reader DROPPED on this header. A band only ever files
+   * INTO itself, so the ungrouped set is the one place a drag can put a filed row to
+   * take it back out. Absent: the header takes no drops.
+   */
+  onDropSession?: (sid: string) => void;
+}) {
+  const { isOver, dropProps } = useSessionDrop(onDropSession);
   return (
-    <div className="flex items-center gap-2 border-y border-edge py-1 pr-2 pl-4">
+    <div
+      className={`flex min-h-14 items-center gap-2 border-y border-edge py-1 pl-4 mouse:min-h-10 ${isOver ? 'bg-white/10' : ''}`}
+      {...dropProps}
+    >
       <span className="font-mono text-chip font-bold tracking-[0.08em] text-dialog-hint uppercase">
         {label}
       </span>
-      <HeaderMeta>
-        <HeaderTally count={count} unit={unit} />
-      </HeaderMeta>
+      {/* The verb of THIS drop, said while the row hovers: a lit bar alone reads as
+          "file it here", and what actually happens is the session leaving its group. */}
+      {isOver && <span className="font-mono text-chip text-white">Drop to ungroup</span>}
+      {count !== undefined && (
+        <HeaderMeta>
+          <HeaderTally count={count} unit={unit} />
+        </HeaderMeta>
+      )}
+      {/* Keep the create action at the right edge, after this set's page controls. */}
+      {(action || navigation) && (
+        <span className={`ml-auto ${HEADER_TRAIL}`}>
+          {navigation}
+          {action}
+        </span>
+      )}
     </div>
   );
 }
@@ -180,9 +277,11 @@ function SetHeader({ label, count, unit }: { label: string; count: number; unit:
 /**
  * One group's own band, inside its project's list.
  *
- * A level quieter than the project header above it, and deliberately so: the project
- * owns the boundary rule, the counts and the pager (a group is not paged — it is a
- * place inside the page), while a group owns its name, its colour and its own fold.
+ * A level quieter than the project header above it, and deliberately so: the project owns
+ * the boundary rule, while a group owns its name, its colour, its own fold and the count
+ * of what is filed under it. A band is never paged from the INSIDE — it is a shelf a
+ * reader reads whole — but the WALL of bands is paged, and those steps stand on the
+ * `Groups` header over them.
  */
 function GroupBand({
   name,
@@ -214,24 +313,11 @@ function GroupBand({
 }) {
   // A ROW DRAGGED ONTO THE BAND IS FILED INTO IT, and the band lights while the pointer
   // is over it: the reader sees WHERE the session lands before letting go.
-  const [isOver, setIsOver] = useState(false);
+  const { isOver, dropProps } = useSessionDrop(onDropSession);
   return (
     <div
       className={`flex items-stretch border-t border-edge ${isOver ? 'bg-white/10' : ''}`}
-      onDragOver={(event) => {
-        if (!onDropSession) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        setIsOver(true);
-      }}
-      onDragLeave={() => setIsOver(false)}
-      onDrop={(event) => {
-        if (!onDropSession) return;
-        event.preventDefault();
-        setIsOver(false);
-        const sid = event.dataTransfer.getData('text/plain');
-        if (sid) onDropSession(sid);
-      }}
+      {...dropProps}
     >
       {/* The band and its rows share one coloured edge, so a group reads as a place
           rather than as a caption. That rail is the ONLY place this colour is painted
@@ -257,7 +343,6 @@ function GroupBand({
           <NewSessionButton
             machine={machine}
             group={name}
-            density="band"
             isBusy={isCreating}
             onPress={() => onNewSession()}
           />
@@ -265,7 +350,6 @@ function GroupBand({
         <IconButton
           label={`Actions for ${name}`}
           variant="quiet"
-          density="band"
           aria-haspopup="dialog"
           onClick={(event) => onActions(event.currentTarget)}
         >
@@ -325,6 +409,15 @@ const NO_ROWS: Session[] = [];
 /** Two project pages are read ahead after the visible page answers. */
 const PAGES_AHEAD = 2;
 
+/**
+ * How many of a project's GROUPS stand on one page of them.
+ *
+ * A band is not a row: it carries its own name, its count and the shelf of sessions
+ * under it, so ten of them is already a screen. This step is therefore the wall's own,
+ * not the one the screen measured for rows (`useSessionsPerPage`).
+ */
+const GROUPS_PAGE = 10;
+
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 export const ProjectGroup = memo(function ProjectGroup({
@@ -377,7 +470,24 @@ export const ProjectGroup = memo(function ProjectGroup({
   // page one through the clamp below.
   const [first, setFirst] = useState(0);
   const page = Math.floor(first / pageSize) + 1;
-  const goToPage = (next: number) => setFirst((next - 1) * pageSize);
+  // THE WALL OF BANDS IS PAGED TOO, and by a NUMBER rather than a cursor: the human's own
+  // `position` orders the groups and no turn moves one, so the third page of them names
+  // the same shelves tomorrow (`state/list-session-groups-page`).
+  const [groupPage, setGroupPage] = useState(1);
+  // THE WALL'S OWN TALLIES, as the gateway counted them: how many bands this project
+  // holds, and how many sessions are filed across ALL of them. Both count the wall and
+  // not the page of it on screen, so the steps over the bands and the counts beside them
+  // do not move while the reader walks it.
+  const [groupTotal, setGroupTotal] = useState(0);
+  const [groupSessionTotal, setGroupSessionTotal] = useState(0);
+  // ONE WINDOW OVER THE WALL, ASKED FOR BY BOTH READS. The bands on this page and the
+  // sessions filed under them are two halves of one answer, so the session read carries
+  // the same window: `grouped` then holds those bands' rows and nothing from a shelf that
+  // is off the page (`listProjectPage`).
+  const bandWindow = useMemo(
+    () => ({ limit: GROUPS_PAGE, offset: (groupPage - 1) * GROUPS_PAGE }),
+    [groupPage],
+  );
   // The page that index FALLS IN, from its first row: the reader keeps a ROW, and
   // the page is the grid that row lands on at the step the screen now holds.
   const start = (page - 1) * pageSize;
@@ -443,11 +553,13 @@ export const ProjectGroup = memo(function ProjectGroup({
     setIsRevealed(on);
     // THE OTHER LIST'S PLACE IS NOT THIS ONE'S. A cursor names a row of the view it was
     // learned in, and the page on the glass belongs to that view too, so the archive
-    // opens at its own top instead of under the page the reader was holding.
+    // opens at its own top — its first page of bands and its first page of rows — rather
+    // than under the page the reader was holding.
     cursors.current = new Map([[0, '']]);
     asked.current = '';
     setPaged(null);
     setFirst(0);
+    setGroupPage(1);
     fold(true);
   };
   // A project with no sessions has nothing to reveal. It still names the destination
@@ -502,10 +614,12 @@ export const ProjectGroup = memo(function ProjectGroup({
     // A page this group already HOLDS paints in the frame of the tap that asked for
     // it. Only when the question changed: a poll that moved the list under an unchanged
     // page must not repaint it from a validator that is about to be revalidated anyway.
-    const question = `${limit}\u0000${after}`;
+    // The window over the BANDS is part of that question: the shelves are the other half
+    // of this answer, so turning their page repaints from the page held for it.
+    const question = `${limit}\u0000${after}\u0000${bandWindow.offset}`;
     if (question !== asked.current) {
       asked.current = question;
-      const held = api.heldProjectPage(root, limit, after, pins.current, archived);
+      const held = api.heldProjectPage(root, limit, after, pins.current, archived, bandWindow);
       if (held)
         setPaged({
           start,
@@ -525,6 +639,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           control.signal,
           start === 0,
           archived,
+          bandWindow,
         );
         if (!live) return;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
@@ -549,6 +664,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             control.signal,
             false,
             archived,
+            bandWindow,
           );
           if (!live) return;
           if (next.rows.length === 0) break;
@@ -565,7 +681,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, start, pageSize, isVisible, isShowing, searching, archived, list, getClient]);
+  }, [conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow, list, getClient]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
   // answer is on this device, and then what is on screen is the honest count.
@@ -574,6 +690,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   const shownPage = searching
     ? Math.min(page, pageCount)
     : Math.min(paged ? Math.floor(paged.start / pageSize) + 1 : 1, pageCount);
+  // The bands are paged out of the wall's own total, the same way: the steps over them
+  // print how many pages of GROUPS this project has, not how many are on screen.
+  const groupPageCount = Math.max(1, Math.ceil(Math.max(groupTotal, 1) / GROUPS_PAGE));
+  const shownGroupPage = Math.min(groupPage, groupPageCount);
   // A PAGE ARRIVES OVER THE ONE BEFORE IT, NEVER OVER A HOLE. The read a step takes
   // lands a beat after the tap, and a group that painted nothing meanwhile lost its
   // rows, its height AND the pager the thumb had just pressed — the reflow this seam
@@ -647,11 +767,13 @@ export const ProjectGroup = memo(function ProjectGroup({
       .filter(paints);
     return parked.length === 0 ? held : [...parked, ...held];
   }, [searching, painting, local, refiled, paints, epoch, admitted, paged, getClient, conn, list]);
-  // THE GROUPS ARE NOT PAGED. The gateway answers a project's FILED sessions complete
-  // and beside the window (`?grouped=aside`), because a group is a shelf a reader reads
-  // whole: bands cut from the current page printed a name with `none on this page`
-  // under it while its sessions sat four pages down, and a session filed from the
-  // sheet left the very band that had just taken it.
+  // A BAND IS NEVER CUT BY THE SESSION PAGE. The gateway answers the FILED sessions of
+  // the bands on this page complete and beside the window (`?grouped=aside`), because a
+  // group is a shelf a reader reads whole: bands cut from the current page printed a name
+  // with `none on this page` under it while its sessions sat four pages down, and a
+  // session filed from the sheet left the very band that had just taken it. What IS paged
+  // is the wall of bands itself, and a shelf off that page is not painted here at all
+  // (`&group_limit=`).
   const shelved = useMemo(() => {
     const api = getClient(conn);
     // A query is answered over the whole project already; its hits are the list.
@@ -670,6 +792,11 @@ export const ProjectGroup = memo(function ProjectGroup({
     // asked for.
     if (page > pageCount) setFirst(0);
   }, [page, pageCount]);
+  useEffect(() => {
+    // The wall shrank under its own steps (a band deleted, a band put away): the same
+    // rule as the page above, on the other list.
+    if (groupPage > groupPageCount) setGroupPage(1);
+  }, [groupPage, groupPageCount]);
   // A star PINS its row to the top of the project, and the top of the project is
   // PAGE ONE — so a row starred from any other page LEFT the page under the thumb
   // that starred it. Nothing was broken about the mark: the row carrying it was two
@@ -747,8 +874,16 @@ export const ProjectGroup = memo(function ProjectGroup({
     let live = true;
     void (async () => {
       try {
-        const answer = await getClient(conn).listSessionGroups(root, control.signal, archived);
-        if (live) setGroups(answer?.groups ?? []);
+        const answer = await getClient(conn).listSessionGroups(
+          root,
+          control.signal,
+          archived,
+          bandWindow,
+        );
+        if (!live) return;
+        setGroups(answer?.groups ?? []);
+        setGroupTotal(answer?.total ?? 0);
+        setGroupSessionTotal(answer?.session_total ?? 0);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
         // else in this band depends on them, and an unreachable machine is said once,
@@ -759,7 +894,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, archived, getClient, groupsRead]);
+  }, [conn, root, isVisible, archived, bandWindow, getClient, groupsRead]);
   // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
   // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
   // which keeps the project's own order. It is the shape the TUI's navigator paints
@@ -811,9 +946,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     return [...known, ...unread];
   }, [groups, filed, isRevealing]);
   // WHAT THE ARCHIVE HOLDS IS COUNTED WHERE IT STANDS: the loose rows the reveal's read
-  // answered with, plus what each revealed band says it holds. The project's own tally
+  // answered with, plus what every archived band says it holds — the WALL's own sum, so
+  // turning the page of bands does not move the number over them. The project's own tally
   // counts the list the reader is not looking at while the archive is open.
-  const archiveCount = total + bands.reduce((sum, band) => sum + band.count, 0);
+  const archiveCount = total + groupSessionTotal;
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
   // over it read the SAME group, so a recolour lands on both in the same paint.
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
@@ -881,12 +1017,16 @@ export const ProjectGroup = memo(function ProjectGroup({
       setIsBusy(false);
     }
   };
-  // FILING A SESSION IS THE GATEWAY'S ANSWER, held here until the list catches up.
-  const fileSession = (session: Session, gid: string | null, back: MenuStep | 'close') =>
-    void attempt(async () => {
+  // FILING A SESSION IS THE GATEWAY'S ANSWER, held here until the list catches up. The
+  // call stands apart from the sheet that usually runs it, so a row's own verb can file
+  // with no menu open and the list still holds what the machine answered.
+  const assignGroup = useCallback(
+    async (session: Session, gid: string | null) => {
       const moved = await getClient(conn).assignSessionGroup(session.id, gid);
       setRefiled((held) => new Map(held).set(moved.id, moved));
-    }, back);
+    },
+    [conn, getClient],
+  );
   // PUTTING A ROW AWAY RIDES THE SAME BRIDGE FILING DOES: the screen's verb answers with the
   // row the gateway stamped, and it is held here until the list's window catches up, so the
   // band it left stops painting it without waiting for a poll.
@@ -899,6 +1039,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       return moved;
     };
   }, [rowActions.commands.archive]);
+  const fileSession = (session: Session, gid: string | null, back: MenuStep | 'close') =>
+    void attempt(() => assignGroup(session, gid), back);
   // One session's row, wherever it stands: inside a group's band, or under the
   // project itself with everything nobody filed.
   // A ROW DROPPED ON A BAND RUNS THE SAME FILING VERB the sheet's `Move to...` does.
@@ -917,8 +1059,30 @@ export const ProjectGroup = memo(function ProjectGroup({
     }),
     [archiveSession, openMenu, rowActions.commands],
   );
+  // THE ONLY GROUP THIS PROJECT HAS IS THE ONE THE ROW IS ALREADY UNDER, so the sheet
+  // would offer that band and nothing else. The strip carries the one filing that is
+  // left instead, and runs it in the press that was made. A machine that refuses leaves
+  // the row where it stands, exactly as a refused drop onto a band does.
+  const ungroupSession = useCallback(
+    (session: Session) =>
+      void (async () => {
+        try {
+          await assignGroup(session, null);
+          setGroupsRead((read) => read + 1);
+        } catch {
+          // No sheet is open to carry a note, and the row staying put is the answer.
+        }
+      })(),
+    [assignGroup],
+  );
+  const soleGroupCommands = useMemo<SessionRowCommands>(
+    () => ({ ...rowActions.commands, archive: archiveSession, ungroup: ungroupSession }),
+    [archiveSession, rowActions.commands, ungroupSession],
+  );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;
+    // Nowhere to move it: this project has ONE group and the row is filed under it.
+    const soleGroup = bands.length === 1 && bands[0].id === session.group_id;
     const deletion: SessionRowDeletion = pending
       ? {
           isBusy: rowActions.deletion.isBusy,
@@ -938,7 +1102,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         conn={conn}
         match={matches?.get(session.id) ?? null}
         needle={needle}
-        commands={rowCommands}
+        commands={soleGroup ? soleGroupCommands : rowCommands}
         deletion={deletion}
         isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
         isDraggable
@@ -946,16 +1110,52 @@ export const ProjectGroup = memo(function ProjectGroup({
     );
   };
 
+  const sessionSetRef = useRef<HTMLDivElement>(null);
+  const pageLayout = `${pageSize}\u0000${archived}\u0000${needle}`;
+  const [pageFootprint, setPageFootprint] = useState<{ layout: string; height: number } | null>(
+    null,
+  );
+  const goToPage = (next: number) => {
+    // A shorter page must not shrink the scroller and push the reader back into Groups.
+    // Reserve this set's outgoing height, not the groups above it. A different page size,
+    // search or archive view starts with its own natural height.
+    const set = sessionSetRef.current;
+    if (set) setPageFootprint({ layout: pageLayout, height: set.getBoundingClientRect().height });
+    setFirst((next - 1) * pageSize);
+  };
   const pager =
     pageCount > 1 ? (
       <Pager
         page={shownPage}
         pageCount={pageCount}
-        disabled={!isShowing}
         onPage={goToPage}
         label={`${project} sessions`}
       />
     ) : null;
+
+  // The bands' own steps, over the set they move. A project whose wall fits on one page
+  // shows none of this (`Pager`).
+  const groupPager =
+    groupPageCount > 1 ? (
+      <Pager
+        page={shownGroupPage}
+        pageCount={groupPageCount}
+        onPage={setGroupPage}
+        label={`${project} groups`}
+      />
+    ) : null;
+
+  // THE PROJECT'S OWN PLUS. What it starts is a LOOSE session, so it stands on the header
+  // of the set that session joins — beside that set's pages, one rail with the bands' own
+  // pluses below it, never a second create word over both sets.
+  const createSession = (
+    <NewSessionButton
+      machine={machineLabel(conn)}
+      where={project}
+      isBusy={creating?.at === creationKey(base, root)}
+      onPress={() => void onNewSession(conn, root)}
+    />
+  );
 
   // Use the same open command as a row. The gateway's count covers the whole project,
   // so a run outside the loaded window must remain reachable from a collapsed band.
@@ -1076,7 +1276,10 @@ export const ProjectGroup = memo(function ProjectGroup({
         {hasPending && (
           <>
             <span aria-hidden className="shrink-0 whitespace-pre"> | </span>
+            {/* The arrival takes the caption's step, so the line stays one run of type and
+                its bottom stays on the total's (`AcceptNewerSession` measures it). */}
             <TextButton
+              isCaption
               className="pointer-events-auto relative shrink-0 whitespace-nowrap"
               aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
               onClick={() => {
@@ -1093,12 +1296,12 @@ export const ProjectGroup = memo(function ProjectGroup({
     </span>
   );
 
-  // THE TWO SETS THIS PROJECT PAINTS. A project nobody has filed anything in has one
-  // list and needs no words over it; one with a group names both, so what the bands
-  // hold is visibly not what the page under them holds. A QUERY collapses them into
-  // one answer: every hit is painted in the session set, filed or not, each filed row
-  // still wearing its group's colour (`SessionList`). A group takes a session out of
-  // the list, never out of the search.
+  // THE TWO SETS THIS PROJECT PAINTS. A project nobody has filed anything in has one list,
+  // and the word over it is what carries that list's plus and its pages; one with a group
+  // names both, so what the bands hold is visibly not what the page under them holds. A
+  // QUERY collapses them into one answer: every hit is painted in the session set, filed
+  // or not, each filed row still wearing its group's colour (`SessionList`). A group takes
+  // a session out of the list, never out of the search.
   const hasGroups = bands.length > 0;
   const listed = searching ? painted : filed.loose;
   const listedCount = searching ? listed.length : (paged?.total ?? filed.loose.length);
@@ -1106,6 +1309,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   // answered, and it answered with nothing. A blank band under the header would otherwise
   // be the whole reply to the verb.
   const archiveIsEmpty = isRevealing && paged !== null && painted.length === 0 && !hasGroups;
+  // WHETHER THERE IS A SET ON SCREEN AT ALL. The sets carry this project's plus and its
+  // pages; when none of them is painted, the band above them is the only thing left to
+  // carry the verb.
+  const paintsSets = isShowing && painted.length > 0;
 
   return (
     <>
@@ -1118,7 +1325,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-project-root={root}
         className="[&+&]:pt-2"
       >
-        <SectionHeader navigation={pager}>
+        <SectionHeader>
           <ProjectCrumb
             name={project}
             qualifier={qualifier}
@@ -1134,16 +1341,13 @@ export const ProjectGroup = memo(function ProjectGroup({
             }
           />
           <HeaderActions align="center">
-            <NewSessionButton
-              machine={machineLabel(conn)}
-              where={project}
-              isBusy={creating?.at === creationKey(base, root)}
-              onPress={() => void onNewSession(conn, root)}
-            />
+            {/* THE VERB FALLS BACK TO THE BAND when the project paints no set to hold it:
+                a project folded shut, and a project with nothing in it yet — which is
+                listed FOR this verb and has no fold to open. */}
+            {!paintsSets && createSession}
             <IconButton
               label={`Groups in ${project}`}
               variant="quiet"
-              density="band"
               aria-haspopup="dialog"
               aria-expanded={menu !== null}
               onClick={(event) => openMenu(event.currentTarget, { kind: 'root' })}
@@ -1166,13 +1370,22 @@ export const ProjectGroup = memo(function ProjectGroup({
           </p>
         )}
         {/* Rows own their internal dividers; the wrapper closes the final session. */}
-        {isShowing && painted.length > 0 && (
+        {paintsSets && (
           <div
             ref={rowsRef}
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
             {hasGroups && !searching && (
-              <SetHeader label="Groups" count={bands.length} unit="group" />
+              <SetHeader
+                label="Groups"
+                // THE WALL IS WHAT IS COUNTED, not the page of it under this word: the
+                // steps beside the number are what cut that page. A band this device
+                // learned from a ROW is not in the gateway's count yet, so the larger of
+                // the two numbers is the honest one.
+                count={Math.max(groupTotal, bands.length)}
+                unit="group"
+                navigation={groupPager}
+              />
             )}
             {!searching &&
               bands.map((band) => {
@@ -1198,8 +1411,28 @@ export const ProjectGroup = memo(function ProjectGroup({
                   </div>
                 );
               })}
-            {hasGroups && <SetHeader label="Sessions" count={listedCount} unit="session" />}
-            {listed.map(row)}
+            <div
+              ref={sessionSetRef}
+              style={{
+                minHeight:
+                  pageCount > 1 && pageFootprint?.layout === pageLayout
+                    ? pageFootprint.height
+                    : undefined,
+              }}
+            >
+              {/* A band files into itself; this header takes a session back out. */}
+              <SetHeader
+                label="Sessions"
+                // With groups, count loose sessions; under a query, count its hits.
+                // Otherwise the project header already shows this same total.
+                count={hasGroups || searching ? listedCount : undefined}
+                unit="session"
+                navigation={pager}
+                action={createSession}
+                onDropSession={hasGroups ? (sid) => dropSession(sid, null) : undefined}
+              />
+              {listed.map(row)}
+            </div>
           </div>
         )}
       </section>

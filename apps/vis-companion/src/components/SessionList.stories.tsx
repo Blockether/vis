@@ -55,6 +55,48 @@ export const AwaitingInput: Story = {
   },
 };
 
+/**
+ * A PRESS BELONGS TO THE WHOLE ROW. The paper under the title and the paper under the
+ * trailing controls light together and let go together, at the same instant and with
+ * nothing easing, so a click never reads as half a row nor as a light wiping across
+ * it. The row marks its own press with `data-pressed`, so this can hold one press
+ * open and read the paper each cell wears.
+ */
+export const Pressed: Story = {
+  play: async ({ canvas, canvasElement }) => {
+    const paperUnder = (node: Element | null | undefined) => {
+      for (let el = node; el; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (style.display === 'contents') continue;
+        if (style.backgroundColor !== 'rgba(0, 0, 0, 0)') return style.backgroundColor;
+      }
+      return null;
+    };
+    const surface = canvas.getByText(STORY_SESSION.title).closest('[data-row-surface]');
+    await expect(surface).not.toBeNull();
+    const row = surface!.closest('[data-session-row]') ?? canvasElement;
+    // The drawer's verbs wear their own paper; the chevron and the menu wear the row's.
+    const trailing = [...row.querySelectorAll('button')].filter(
+      (button) => !button.hasAttribute('data-row-surface') && !button.closest('[role="group"]'),
+    );
+    await expect(trailing.length).toBeGreaterThan(0);
+    const lastControl = trailing[trailing.length - 1];
+    const restingSurface = paperUnder(surface);
+    const restingControl = paperUnder(lastControl);
+
+    surface!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+    await waitFor(() => expect(paperUnder(surface)).not.toBe(restingSurface));
+    await expect(paperUnder(lastControl)).toBe(paperUnder(surface));
+    // The row's other cells take the press paper instantly. A surface that eased its
+    // own background stayed lit after they let go, and the press wiped across the row.
+    await expect(getComputedStyle(surface!).transitionProperty).not.toContain('background-color');
+
+    window.dispatchEvent(new PointerEvent('pointerup'));
+    await waitFor(() => expect(paperUnder(surface)).toBe(restingSurface));
+    await expect(paperUnder(lastControl)).toBe(restingControl);
+  },
+};
+
 export const Renaming: Story = {
   play: async ({ canvas, canvasElement }) => {
     const pointer = canvasElement.ownerDocument.defaultView!.matchMedia(

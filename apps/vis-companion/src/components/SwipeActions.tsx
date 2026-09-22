@@ -30,9 +30,13 @@ import { hasHardwarePointer } from '../lib/pointer';
  * row, whose panel is `contents`, and the snap panel carries the touch one — so
  * every cell of the row wears the same paper. A pressable row marks itself with
  * `data-row-surface`; a row with no such control simply never lights up.
+ *
+ * `data-pressed` is what the press itself says: the row marks it on pointer down and
+ * clears it on release, so the paper never waits on `:active` reaching the row and a
+ * test can hold one press open. `:active` stays for the keyboard's own press.
  */
 const ROW_PRESS_PAPER =
-  'has-[[data-row-surface]:active]:bg-hover has-[[data-row-surface]:focus-visible]:bg-hover';
+  'has-[[data-row-surface][data-pressed]]:bg-hover has-[[data-row-surface]:active]:bg-hover has-[[data-row-surface]:focus-visible]:bg-hover';
 
 export interface SwipeAction {
   key: string;

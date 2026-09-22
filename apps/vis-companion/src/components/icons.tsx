@@ -403,12 +403,13 @@ export function AlertIcon({ className }: { className?: string }) {
 }
 
 /**
- * Overflow — "more actions." Three dots stacked VERTICALLY on the optical centre,
- * the kebab every mobile row and header menu is opened with. Horizontal dots read
- * as "typing" or "truncated text" beside a title, which is what a project header
- * and a group band looked like. The `⋯` glyph this replaces is a MATH symbol
- * (U+22EF): it sits on the cap-height line, never the centre, and at small sizes
- * it is a dash.
+ * Overflow — "more actions." Three dots STACKED down the optical centre, the kebab
+ * every mobile row, row-side menu and title band is opened with. Dots laid ACROSS
+ * beside a title read as "typing" or "truncated text", which is what a project header
+ * and a group band looked like (BLO-167), and the session header's own trailing rail
+ * wore that across-laid mark until a reader asked for the dots to turn the other way.
+ * The `⋯` glyph this replaces is a MATH symbol (U+22EF): it sits on the cap-height
+ * line, never the centre, and at small sizes it is a dash.
  */
 export function DotsIcon({ className }: { className?: string }) {
   return <Mark icon={EllipsisVertical} className={className} />;

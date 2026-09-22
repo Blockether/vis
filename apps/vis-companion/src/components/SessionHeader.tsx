@@ -1,10 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { markSessionId } from '../lib/session-id';
-import { ArtifactsChip } from './ArtifactsSheet';
-import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from './ui';
+import { Menu, MenuItem, MENU_WIDTH } from './Menu';
+import { AlertIcon, CheckIcon, ClipIcon, CopyIcon, DotsIcon } from './icons';
+import { BackButton, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
 
 const GOAL_STATUS = Object.fromEntries(
   gatewaySchema.$defs.session_goal.properties.status.oneOf.map(({ const: status, title }) => [
@@ -43,23 +45,12 @@ export type SessionHeaderCommands = Readonly<{
   toggleArtifacts: () => void;
 }>;
 
-function SessionIdChip({ sessionId }: { sessionId: string }) {
-  const short = sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId;
-  return (
-    <CopyChip
-      value={markSessionId(sessionId)}
-      label="Copy session id"
-      title={`Copy session id
-${sessionId}`}
-      density="compact"
-      className="max-w-[9rem]"
-    >
-      {short}
-    </CopyChip>
-  );
-}
-
-/** The session's navigation, identity, connection state, and artifact door. */
+/**
+ * The session's navigation and connection state. What this session IS — its id — and
+ * what it has PRODUCED both stand behind one trailing kebab, so the band itself carries
+ * only the sentence the screen is about. Behind it they are two rows, each a mark and
+ * then a verb, in the same menu every row in the app hangs off the same mark.
+ */
 export function SessionHeader({
   model,
   commands,
@@ -81,6 +72,53 @@ export function SessionHeader({
   // with no list to toggle lets the title claim the edge.
   const isDesk = useDeskRail();
   const [goalDetails, setGoalDetails] = useState(false);
+  /** Where the session's own menu hangs, and `null` while it is closed. */
+  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  // WHAT THE CLIPBOARD ANSWERED, worn by the row that asked it. Copying is silent, so
+  // the row leaves the menu standing and reports in its own badge for a moment; a verb
+  // that closes the panel under the thumb that pressed it reports nothing at all.
+  const [copy, setCopy] = useState<'copied' | 'failed' | null>(null);
+  const copyReset = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copyReset.current), []);
+  const closeMenu = useCallback(() => {
+    window.clearTimeout(copyReset.current);
+    setCopy(null);
+    setMenu(null);
+  }, []);
+  // ESCAPE BELONGS TO THE OPEN MENU. The screen under this header reads Escape as
+  // "cancel the running turn", so the key is caught before it reaches that listener
+  // and spent on the panel the reader can actually see.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      closeMenu();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu, closeMenu]);
+  // ONE DOOR, not a row of chips: the count the artifacts chip used to paint out loud
+  // rides the trigger's own NAME, so a session that produced something still says so
+  // to a reader who never sees the band.
+  const produced = model.artifacts.count;
+  const menuLabel = produced
+    ? `Session actions, ${produced} artifact${produced === 1 ? '' : 's'}`
+    : 'Session actions';
+  // The first block of the id is what a reader recognises a session by, and it rides
+  // the copy row's own line. The clipboard still gets the MARKED form: a bare uuid
+  // pasted into a chat or an issue could be any identifier at all.
+  const shortId = model.sessionId.slice(0, 8);
+  async function copySessionId() {
+    window.clearTimeout(copyReset.current);
+    try {
+      await navigator.clipboard.writeText(markSessionId(model.sessionId));
+      setCopy('copied');
+    } catch {
+      setCopy('failed');
+    }
+    copyReset.current = window.setTimeout(() => setCopy(null), 1_500);
+  }
   const goal = model.goal;
   return (
     /* The notch strip stands above the 52px band via box-content. Edge controls
@@ -123,13 +161,55 @@ export function SessionHeader({
       </div>
       <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
         {team}
-        <SessionIdChip sessionId={model.sessionId} />
-        <ArtifactsChip
-          count={model.artifacts.count}
-          open={model.artifacts.isOpen}
-          onToggle={commands.toggleArtifacts}
-        />
+        <IconButton
+          label={menuLabel}
+          variant="quiet"
+          aria-haspopup="dialog"
+          aria-expanded={menu !== null}
+          onClick={(event) =>
+            setMenu(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))
+          }
+        >
+          <DotsIcon className="size-3.5" />
+        </IconButton>
       </div>
+      {menu && (
+        <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
+          {model.artifacts.count > 0 && (
+            <MenuItem
+              // The row NAMES what pressing it does, and the count rides that name
+              // rather than a badge: "Artifacts" with a bare "3" welded to it is what a
+              // screen reader would have read out as one token.
+              title={`${model.artifacts.isOpen ? 'Hide' : 'Open'} artifacts (${model.artifacts.count})`}
+              icon={<ClipIcon className="size-3.5" />}
+              onSelect={() => {
+                closeMenu();
+                commands.toggleArtifacts();
+              }}
+            />
+          )}
+          {/* THE ID IS A VERB HERE, not a caption with a chip beside it. Every row in
+              this menu is a mark and then the thing pressing it does, one under the
+              other; the id itself rides this row's own line as the fact it copies. */}
+          <MenuItem
+            title="Copy session id"
+            meta={shortId}
+            badge={copy ?? undefined}
+            icon={
+              copy === 'copied' ? (
+                <CheckIcon className="size-3.5 text-ok" />
+              ) : copy === 'failed' ? (
+                <AlertIcon className="size-3.5 text-err-ink" />
+              ) : (
+                <CopyIcon className="size-3.5" />
+              )
+            }
+            onSelect={() => {
+              void copySessionId();
+            }}
+          />
+        </Menu>
+      )}
       {goal && goalDetails && (
         <Modal onDismiss={() => setGoalDetails(false)} size="fit">
           <DialogFrame

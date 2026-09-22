@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import {
   STORY_FLEET_CONNS,
@@ -164,11 +164,19 @@ export const AcceptNewerSession: Story = {
     await expect(style(updates).borderTopWidth).toBe('0px');
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
-    await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
+    // The SETS carry the rule between them: where a project paints one, its header holds the
+    // line and the first session under it adds none; where it paints none, the band's own
+    // line is the only one above the page.
+    const set = within(rows as HTMLElement).queryByText('Sessions')?.parentElement;
+    const firstRow = set ? set.nextElementSibling! : rows.firstElementChild!;
+    if (set) await expect(style(set).borderTopWidth).toBe('1px');
+    await expect(style(firstRow).borderTopWidth).toBe('0px');
     // The final session needs the same thin divider as the internal rows.
     await expect(style(rows).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderBottomStyle).toBe('solid');
-    await expect(style(rows).borderBottomColor).toBe(style(rows.children[1]).borderTopColor);
+    await expect(style(rows).borderBottomColor).toBe(
+      style(firstRow.nextElementSibling!).borderTopColor,
+    );
     await expect(rows.getBoundingClientRect().bottom).toBe(
       rows.lastElementChild!.getBoundingClientRect().bottom + 1,
     );
@@ -184,18 +192,24 @@ export const AcceptNewerSession: Story = {
         matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 48 : 52,
       );
       const pagerBounds = pager.getBoundingClientRect();
-      await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.top);
-      await expect(pagerBounds.bottom).toBeLessThanOrEqual(pendingBounds.bottom);
       const menu = within(header).getByRole('button', { name: /^Groups in / });
-      const create = within(header).getByRole('button', { name: /^New session on / });
       // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
-      // the three dots belong on the right): the header's own controls hold the band's
-      // trailing edge and the page steps stand just inside them.
-      await expect(pagerBounds.right).toBeLessThanOrEqual(create.getBoundingClientRect().left);
-      await expect(create.getBoundingClientRect().right).toBeLessThanOrEqual(
-        menu.getBoundingClientRect().left,
-      );
+      // the three dots belong on the right): the band's own controls hold its trailing edge,
+      // and now that the plus stands on the set it creates in, the menu is the last one left
+      // on the band.
+      await expect(within(header).queryByRole('button', { name: /^New session on / })).toBeNull();
       await expect(menu.getBoundingClientRect().right).toBeLessThanOrEqual(pendingBounds.right);
+      // THE STEPS STAND OVER THE SET THEY MOVE, on the `Sessions` header under the band —
+      // never in it, which is what kept the plus and the menu at two different distances
+      // from the same screen edge depending on whether a project was paged.
+      await expect(within(header).queryByRole('navigation')).toBeNull();
+      await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
+      const set = within(rows as HTMLElement).getByText('Sessions').parentElement!;
+      await expect(set).toContainElement(pager);
+      await expect(pagerBounds.right).toBeLessThanOrEqual(set.getBoundingClientRect().right);
+      // The plus ends this same strip, to the right of the page controls.
+      const create = within(set).getByRole('button', { name: /^New session on / });
+      await expect(create.getBoundingClientRect().left).toBeGreaterThanOrEqual(pagerBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();
         await expect(
@@ -268,7 +282,9 @@ export const DesktopWithPaging: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
-// Regression: scrolling a narrow session pane must not paint rows through its pager.
+// Regression: scrolling a narrow session pane must not paint rows through the band that
+// stays on top of it. The steps ride with the set they move now, so what has to stay opaque
+// is the project header itself.
 export const ScrolledNarrowPane: Story = {
   args: pagedArgs,
   render: (args) => (
@@ -284,24 +300,18 @@ export const ScrolledNarrowPane: Story = {
     const pane = page.getByTestId('scroll-pane');
     const pager = page.getByRole('navigation', { name: 'Pages of /CryptoSafe sessions' });
     const header = pane.querySelector('header')!;
+    await expect(header).not.toContainElement(pager);
     pane.scrollTop = 160;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await expect(pane.scrollTop).toBe(160);
     await expect(header.getBoundingClientRect().top).toBe(pane.getBoundingClientRect().top);
-    await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      header.getBoundingClientRect().top,
-    );
-    await expect(pager.getBoundingClientRect().bottom).toBeLessThanOrEqual(
-      header.getBoundingClientRect().bottom,
-    );
-    await expect(getComputedStyle(header).position).not.toBe('sticky');
-    for (const button of within(pager).getAllByRole('button')) {
-      const bounds = button.getBoundingClientRect();
-      await expect(
-        document
-          .elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-          ?.closest('button'),
-      ).toBe(button);
+    await expect(getComputedStyle(header).position).toBe('sticky');
+    // Nothing that scrolls under the band shows through it: every point across the band
+    // belongs to the band or to one of its own controls.
+    const bounds = header.getBoundingClientRect();
+    for (const x of [bounds.left + 8, bounds.x + bounds.width / 2, bounds.right - 8]) {
+      const hit = document.elementFromPoint(x, bounds.y + bounds.height / 2);
+      await expect(header.contains(hit)).toBe(true);
     }
   },
 };
@@ -358,6 +368,12 @@ export const Groups: Story = {
     const page = within(canvasElement);
     const wallet = await page.findByRole('button', { name: /(Collapse|Expand) Wallet work/ });
     const band = wallet.closest('div')!.parentElement!;
+    // Regression: an unpaged Groups strip must be as tall as Sessions with its plus.
+    const groupsHeader = page.getByText('Groups').parentElement!;
+    const sessionsHeader = page.getByText('Sessions').parentElement!;
+    await expect(groupsHeader.getBoundingClientRect().height).toBe(
+      sessionsHeader.getBoundingClientRect().height,
+    );
     await expect(within(band).getByText('2 sessions')).toBeVisible();
     await expect(band.querySelectorAll('[data-session-id]')).toHaveLength(2);
     await expect(page.getByRole('button', { name: /(Collapse|Expand) Receipts/ })).toBeVisible();
@@ -379,6 +395,96 @@ export const Groups: Story = {
   },
 };
 
+/**
+ * ONE DRAG, done by the BROWSER whenever a browser is running this story: Playwright's
+ * own pointer is the only thing that proves the engine starts a drag on this row at all.
+ * Under Storybook's dev server there is no such pointer, so the events are synthesised
+ * and the story still plays.
+ */
+async function dragOnto(source: HTMLElement, target: HTMLElement) {
+  if ('__vitest_browser_runner__' in globalThis) {
+    const { userEvent: pointer } = await import('vitest/browser');
+    await pointer.dragAndDrop(source, target);
+    return;
+  }
+  const dataTransfer = new DataTransfer();
+  source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
+  target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
+  target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+}
+
+/**
+ * FILING BY HAND, BOTH WAYS. A band takes the row dropped on it, and the `Sessions`
+ * header takes one back out of its group — the half a band cannot offer, since a band
+ * only ever files INTO itself. Reported from the desktop app: dragging a session did
+ * nothing, and there was nowhere to drop one to take it out of a group. The picture the
+ * pointer carries is read here as well: one row, the size of the row that was taken.
+ */
+export const GroupDragAndDrop: Story = {
+  ...Groups,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    await page.findByRole('button', { name: 'Collapse Wallet work' });
+    const wallet = () =>
+      page.getByRole('button', { name: 'Collapse Wallet work' }).closest('div')!.parentElement!;
+    const bandHeader = () =>
+      page.getByRole('button', { name: 'Collapse Wallet work' }).parentElement!;
+    const strip = (sid: string) =>
+      canvasElement
+        .querySelector(`[data-session-id="${sid}"]`)!
+        .closest('[draggable="true"]') as HTMLElement;
+
+    // THE PICTURE THE POINTER CARRIES, caught as the engine starts the drag. It has to be
+    // the row and nothing else: one row big, and laid out the way that row is laid out in
+    // the list. Reported from the desktop app - first as a picture of the whole LIST behind
+    // the row, then, once the row handed over a copy of itself, as a copy that lost the
+    // list's own width and left its group rail short of the card's end.
+    const shape = (root: HTMLElement) => {
+      const outer = root.getBoundingClientRect();
+      const placed = (node: Element | null) => {
+        if (!node) return 'none';
+        const box = node.getBoundingClientRect();
+        return [box.left - outer.left, box.top - outer.top, box.width, box.height]
+          .map(Math.round)
+          .join('/');
+      };
+      return {
+        rows: root.querySelectorAll('[data-row-surface]').length,
+        size: `${Math.round(outer.width)}x${Math.round(outer.height)}`,
+        track: placed(root.querySelector('[data-swipe-track]')),
+        rail: placed(root.querySelector('span[aria-hidden][class*="w-1"]')),
+      };
+    };
+    const carried: { picture: ReturnType<typeof shape>; row: ReturnType<typeof shape> }[] = [];
+    const watchDrag = (event: Event) => {
+      const taken = (event.target as HTMLElement).closest('[draggable="true"]');
+      const card = [...canvasElement.ownerDocument.body.children].find(
+        (node) =>
+          node instanceof HTMLElement &&
+          node.style.position === 'fixed' &&
+          node.getAttribute('aria-hidden') === 'true',
+      ) as HTMLElement | undefined;
+      if (taken && card) carried.push({ picture: shape(card), row: shape(taken as HTMLElement) });
+    };
+    canvasElement.ownerDocument.addEventListener('dragstart', watchDrag);
+
+    await dragOnto(strip(fixture.rows[3].id), bandHeader());
+    await within(wallet()).findByText('3 sessions');
+    await expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(3);
+
+    await dragOnto(strip(GROUPED[0].id), page.getByText('Sessions').parentElement!);
+    await within(wallet()).findByText('2 sessions');
+    await expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(2);
+
+    canvasElement.ownerDocument.removeEventListener('dragstart', watchDrag);
+    // A loose row carries no group rail and the filed one does; either way the picture is
+    // the shape of the row it was taken from, down to where its parts stand inside it.
+    await expect(carried.length).toBeGreaterThanOrEqual(2);
+    await expect(carried.map((seen) => seen.picture)).toEqual(carried.map((seen) => seen.row));
+    await expect(carried.map((seen) => seen.picture.rows)).toEqual(carried.map(() => 1));
+    await expect(carried.at(-1)!.picture.rail).not.toBe('none');
+  },
+};
 // THE BAND'S OWN ⋮ CARRIES THE VERBS — one mark each, and nothing that only repeats the
 // name the reader pressed. The palette waits a step behind a row that names the verb.
 export const GroupVerbs: Story = {
@@ -403,6 +509,94 @@ export const GroupVerbs: Story = {
       'true',
     );
   },
+};
+
+export const GroupsDesktop: Story = {
+  ...Groups,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+const SCROLL_ROWS = [
+  ...GROUPED.slice(0, 3),
+  ...Array.from({ length: 21 }, (_, index) => ({
+    ...fixture.rows[3],
+    id: `paging-scroll-${index}`,
+    title: `Session page row ${index}`,
+  })),
+];
+
+// Regression: paging below the groups must keep the Sessions strip under the eye,
+// including when the next page is shorter than the one it replaces.
+export const PagingBelowGroups: Story = {
+  ...Groups,
+  beforeEach: () => {
+    const previous = globalThis.fetch;
+    const serve = storyFleetFetch([{ ...fixture, rows: SCROLL_ROWS, groups: GROUPED_BANDS }]);
+    globalThis.fetch = async (input, init) => {
+      // Let uncached turns spend time waiting for a reply, just like a remote gateway.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return serve(input, init);
+    };
+    return () => {
+      globalThis.fetch = previous;
+    };
+  },
+  args: {
+    ...Groups.args,
+    group: {
+      ...meta.args.group,
+      tally: { count: SCROLL_ROWS.length, live: 0, awaiting: 0, unread: 0 },
+      sessions: SCROLL_ROWS,
+    },
+    machine: { conn, sessions: SCROLL_ROWS },
+  },
+  render: (args) => (
+    <div
+      className="@container h-80 w-full max-w-[414px] overflow-y-auto bg-page"
+      data-testid="scroll-pane"
+    >
+      <ProjectGroup {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const pane = page.getByTestId('scroll-pane');
+    await page.findByRole('button', { name: 'Collapse Wallet work' });
+    await page.findByText('Session page row 9');
+    const set = page.getByText('Sessions').parentElement!;
+    await expect(page.getByText('Groups').parentElement!.getBoundingClientRect().height).toBe(
+      set.getBoundingClientRect().height,
+    );
+    const pager = within(set).getByRole('navigation');
+    const next = within(pager).getByRole('button', { name: 'Next page' });
+    const previous = within(pager).getByRole('button', { name: 'Previous page' });
+    // Start higher, still reading groups; then repeat with Sessions near the top.
+    for (const offset of [190, 60]) {
+      pane.scrollTop += set.getBoundingClientRect().top - pane.getBoundingClientRect().top - offset;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const top = set.getBoundingClientRect().top;
+      for (const target of [2, 3, 2, 1]) {
+        const current = Number((within(pager).getByRole('textbox') as HTMLInputElement).value);
+        await userEvent.click(target > current ? next : previous);
+        await within(pager).findByText(`Page ${target} of 3`);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        await waitFor(() =>
+          expect(
+            set.getBoundingClientRect().top,
+            `Page ${target}, header offset ${offset}`,
+          ).toBeCloseTo(top, 0),
+        );
+        await expect(
+          pane.querySelector(`[data-session-id="paging-scroll-${(target - 1) * 10}"]`),
+        ).toBeVisible();
+      }
+    }
+  },
+};
+
+export const PagingBelowGroupsDesktop: Story = {
+  ...PagingBelowGroups,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /** Tapping the live count uses the same open action as the session row. */
