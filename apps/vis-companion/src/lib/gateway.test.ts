@@ -288,6 +288,43 @@ describe('GatewayClient project-page snapshots', () => {
     expect(cold.heldProjectPage(root, 20, 'deeper', new Map())).toBeNull();
   });
 
+  it('reads an archive as its own list, and never as the project head', async () => {
+    const fetches = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            String(url).includes('archived=only')
+              ? { sessions: [{ id: 'put-away', title: 'Archived session' }], total: 1 }
+              : { sessions, total: 1 },
+          ),
+          { headers: { ETag: '"head"' } },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const client = new gateway.GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    const pins = new Map();
+    const active = await client.listProjectPage(root, 15, '', pins, undefined, true);
+    const away = await client.listProjectPage(root, 15, '', pins, undefined, true, 'only');
+    expect(String(fetches.mock.calls[0][0])).not.toContain('archived=');
+    expect(String(fetches.mock.calls[1][0])).toContain('archived=only');
+    expect(away).not.toEqual(active);
+
+    // THE HEAD THIS DEVICE HOLDS IS THE ACTIVE LIST. A reveal is read live and kept out of
+    // that snapshot, so the project a cold start opens is still the one with sessions in it
+    // — and a held page is never handed to a view it was not read for.
+    expect(client.heldProjectPage(root, 15, '', new Map(), 'only')).toBeNull();
+    expect(client.heldProjectPage(root, 15, '', new Map())).toEqual(active);
+    gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(cold.heldProjectPage(root, 15, '', new Map())).toEqual(active);
+    expect(cold.heldProjectPage(root, 15, '', new Map(), 'only')).toBeNull();
+  });
+
   it('never reuses a project validator for a different draft overlay', async () => {
     const fetches = vi.fn().mockImplementation(() =>
       Promise.resolve(

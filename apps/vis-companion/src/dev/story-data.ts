@@ -2138,6 +2138,26 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
         ).length,
       }));
   };
+  // AN ARCHIVE IS A VIEW OVER THE SAME ROWS, the way `/v1/sessions?archived=` answers it:
+  // `only` keeps what was put away, `exclude` keeps what was not, and a row filed under an
+  // archived band went away with that band although nothing ever touched the row itself.
+  const awayBands = () =>
+    new Set(
+      projects
+        .flatMap((project) => bandsOf(project))
+        .filter((band) => band.archived_at != null)
+        .map((band) => band.id),
+    );
+  const isAway = (row: Session, bands: Set<string>) => {
+    const id = bandOf(row);
+    return row.archived_at != null || (id !== null && bands.has(id));
+  };
+  const archiveView = (url: URL) => {
+    const view = url.searchParams.get('archived') ?? 'exclude';
+    if (view === 'include') return () => true;
+    const bands = awayBands();
+    return (row: Session) => (view === 'only') === isAway(row, bands);
+  };
   const projectAt = (root: string | null | undefined) =>
     projects.find((project) => project.root === root) ?? projects[0];
   const sent = (init?: RequestInit) =>
@@ -2153,9 +2173,16 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     if (url.pathname === '/v1/projects/overview') return answer(overview);
     if (url.pathname === '/v1/sessions' && (init?.method ?? 'GET') === 'GET') {
       const root = url.searchParams.get('root');
-      const listed = (
+      const keeps = archiveView(url);
+      const found = (
         root ? (projects.find((project) => project.root === root)?.rows ?? []) : all
-      ).filter((row) => !gone.has(row.id));
+      ).filter((row) => !gone.has(row.id) && keeps(row));
+      // `?grouped=aside` CUTS THE FILED SESSIONS OUT OF THE WINDOW and answers them whole
+      // beside it, the way `state/list-sessions-page` does: a group is a shelf a reader
+      // reads complete, never the slice of it that fell on the page they are standing on.
+      const aside = url.searchParams.get('grouped') === 'aside';
+      const shelved = aside ? found.filter((row) => bandOf(row) !== null) : [];
+      const listed = aside ? found.filter((row) => bandOf(row) === null) : found;
       const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
       const after = url.searchParams.get('after');
       const from = after ? listed.findIndex((row) => fleetCursor(row) === after) + 1 : 0;
@@ -2164,6 +2191,7 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       const hasMore = from + window.length < listed.length;
       return answer({
         sessions: window,
+        grouped: shelved,
         total: listed.length,
         has_more: hasMore,
         next_cursor: hasMore && last ? fleetCursor(last) : null,
@@ -2173,7 +2201,20 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     if (url.pathname === '/v1/session-groups') {
       const project = projectAt(url.searchParams.get('root'));
       if ((init?.method ?? 'GET') === 'GET') {
-        return answer({ project_id: project?.projectId ?? null, groups: bandsOf(project) });
+        const view = url.searchParams.get('archived') ?? 'exclude';
+        const keeps = archiveView(url);
+        const bands = bandsOf(project)
+          .filter((band) => view === 'include' || (view === 'only') === (band.archived_at != null))
+          // A BAND COUNTS WHAT THE VIEW ASKING FOR IT CAN SEE. A session archived inside a
+          // group that is still live is not on the live list, so the band over it does not
+          // stand there counting a row nothing under it paints.
+          .map((band) => ({
+            ...band,
+            session_count: (project?.rows ?? []).filter(
+              (row) => !gone.has(row.id) && bandOf(row) === band.id && keeps(row),
+            ).length,
+          }));
+        return answer({ project_id: project?.projectId ?? null, groups: bands });
       }
       const body = sent(init);
       const owner = projectAt(typeof body.root === 'string' ? body.root : null);

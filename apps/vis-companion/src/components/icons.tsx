@@ -6,6 +6,7 @@
  */
 import {
   AlignLeft,
+  Archive,
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
@@ -311,6 +312,14 @@ export function ProjectsIcon({ className }: { className?: string }) {
 /** Make a folder: the project's own mark, taking the add stroke inside it. */
 export function FolderPlusIcon({ className }: { className?: string }) {
   return <Mark icon={FolderPlus} className={className} />;
+}
+
+/**
+ * PUT AWAY: a box with its lid on, because an archived session or group is still kept —
+ * it is out of the lists, not deleted (the bin is `TrashIcon`).
+ */
+export function ArchiveIcon({ className }: { className?: string }) {
+  return <Mark icon={Archive} className={className} />;
 }
 
 /**

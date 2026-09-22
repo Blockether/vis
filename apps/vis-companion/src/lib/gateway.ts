@@ -23,6 +23,7 @@ import {
   hydrateDraftMessages,
 } from './draft-messages';
 import type {
+  ArchiveView,
   AuthFlow,
   AuthVerdict,
   ModelPref,
@@ -3228,6 +3229,10 @@ export class GatewayClient {
    * SAME rows array. Prefetching the pages ahead writes into that store.
    * `persistHead` marks the visible first page, not a wider read for a page jump.
    * That bounded head survives unmount and restart, one snapshot per project.
+   *
+   * `archived` is the VIEW this read asks for: a reveal reads `'only'`, which is another
+   * list — its own pages, its own validators, and never the head this device keeps of the
+   * project's active first page.
    */
   async listProjectPage(
     root: string,
@@ -3236,14 +3241,15 @@ export class GatewayClient {
     pins: ProjectWindows,
     signal?: AbortSignal,
     persistHead = false,
+    archived: ArchiveView = 'exclude',
   ): Promise<ProjectPage> {
     // The overlay rides down here too: a session holding words typed on THIS device
     // is in this device's list and in nobody else's, so a page cut without it is a
     // page short (see `dirtySessionIds`).
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(',');
-    const key = this.projectWindowKey(root, limit, after);
-    const pin = this.heldProjectWindow(root, limit, after, pins);
+    const key = this.projectWindowKey(root, limit, after, archived);
+    const pin = this.heldProjectWindow(root, limit, after, pins, archived);
     const res = await this.requestFull<{
       sessions?: Session[];
       awaiting?: Session[];
@@ -3254,14 +3260,18 @@ export class GatewayClient {
       'GET',
       `/v1/sessions?root=${encodeURIComponent(root)}&limit=${limit}${
         after ? `&after=${encodeURIComponent(after)}` : ''
-      }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}&grouped=aside`,
+      }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}${
+        archived === 'exclude' ? '' : `&archived=${archived}`
+      }&grouped=aside`,
       undefined,
       signal,
       pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
     );
     const remember = (window: { etag: string; page: ProjectPage }): ProjectPage => {
       window = { ...window, page: this.withoutDeletedProjectSessions(window.page) };
-      if (persistHead && !after && limit <= MAX_PROJECT_HEAD_ROWS)
+      // The saved head is the project's ACTIVE first page: a reveal is a look at another
+      // list, and a cold start must not paint the archive in its place.
+      if (persistHead && !after && archived === 'exclude' && limit <= MAX_PROJECT_HEAD_ROWS)
         writeSnapshot(this.snapshotKey('project-head', root), { key, ...window });
       if (window.etag) pins.set(key, window);
       else pins.delete(key);
@@ -3301,8 +3311,9 @@ export class GatewayClient {
     limit: number,
     after: string,
     pins: ProjectWindows,
+    archived: ArchiveView = 'exclude',
   ): ProjectPage | null {
-    const held = this.heldProjectWindow(root, limit, after, pins)?.page;
+    const held = this.heldProjectWindow(root, limit, after, pins, archived)?.page;
     return held ? this.withoutDeletedProjectSessions(held) : null;
   }
 
@@ -3311,8 +3322,9 @@ export class GatewayClient {
     limit: number,
     after: string,
     pins: ProjectWindows,
+    archived: ArchiveView = 'exclude',
   ): { etag: string; page: ProjectPage } | null {
-    const key = this.projectWindowKey(root, limit, after);
+    const key = this.projectWindowKey(root, limit, after, archived);
     const pin = pins.get(key);
     if (pin) return pin;
     if (after) return null;
@@ -3339,10 +3351,20 @@ export class GatewayClient {
   }
 
   /** The question a project window answered, as one string. */
-  private projectWindowKey(root: string, limit: number, after: string): string {
-    return [this.base, root, String(limit), after, dirtySessionIds(this.base).join(',')].join(
-      '\u0000',
-    );
+  private projectWindowKey(
+    root: string,
+    limit: number,
+    after: string,
+    archived: ArchiveView,
+  ): string {
+    return [
+      this.base,
+      root,
+      String(limit),
+      after,
+      archived,
+      dirtySessionIds(this.base).join(','),
+    ].join('\u0000');
   }
   // GET /v1/sessions/actions/search?q= searches the transcript store AND the session
   // titles server-side. Each hit carries the gateway's own `rank` band plus a short
@@ -3628,9 +3650,17 @@ export class GatewayClient {
    * This app groups its list by root and never holds a project id, so the gateway
    * resolves one for it. A root nothing has been filed under yet simply has no
    * groups: a READ never creates a project.
+   *
+   * `archived` picks the view: a project's reveal reads `'only'` and gets the bands the
+   * human put away, each still counting the sessions filed under it.
    */
-  listSessionGroups(root: string, signal?: AbortSignal): Promise<SessionGroupPage> {
+  listSessionGroups(
+    root: string,
+    signal?: AbortSignal,
+    archived: ArchiveView = 'exclude',
+  ): Promise<SessionGroupPage> {
     const query = new URLSearchParams({ root });
+    if (archived !== 'exclude') query.set('archived', archived);
     return this.request('GET', `/v1/session-groups?${query.toString()}`, undefined, signal);
   }
 

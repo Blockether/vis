@@ -744,6 +744,12 @@ export interface SessionGroup {
   position: number;
   session_count: number;
   created_at?: number;
+  /**
+   * When the human PUT THIS GROUP AWAY, stamped by the gateway, or null while it is still
+   * one of the project's bands. An archived group takes its sessions out of sight with it
+   * and stamps none of them (`state/list-sessions-page`).
+   */
+  archived_at?: number | null;
 }
 
 /** `GET /v1/session-groups?root=` — one project's groups, in that manual order. */
@@ -751,6 +757,14 @@ export interface SessionGroupPage {
   project_id: string | null;
   groups: SessionGroup[];
 }
+
+/**
+ * WHICH VIEW of a list a read asks for, in the one vocabulary every list route of the
+ * gateway reads (`server/archived-views`): the active items, both, or the archive alone —
+ * which is what a reveal asks for. Absent is `'exclude'`, so a caller that never heard of
+ * the archive reads the active list.
+ */
+export type ArchiveView = 'exclude' | 'include' | 'only';
 
 /** `GET /v1/projects/overview` — the projects plus the gateway's own totals. */
 export interface GatewayOverview {

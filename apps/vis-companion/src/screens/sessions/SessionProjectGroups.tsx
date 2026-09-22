@@ -21,6 +21,7 @@ import {
 } from '../../components/SessionNavigator';
 import { Menu, MenuBack, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
 import {
+  ArchiveIcon,
   ChevronIcon,
   DotsIcon,
   FolderPlusIcon,
@@ -57,10 +58,11 @@ import { compactProjectPath } from '../../lib/path';
 import {
   groupFoldKey,
   projectFoldKey,
+  projectRevealKey,
   readProjectFold,
   writeProjectFold,
 } from '../../lib/project-fold';
-import type { GatewayConn, Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -385,6 +387,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     awaiting: Session[];
     grouped: Session[];
   } | null>(() => {
+    // A REVEAL OPENS ON ITS OWN READ: what this device holds of a project is its ACTIVE
+    // head, and painting that under a reveal would show the very rows it is not about.
+    if (readProjectFold(projectRevealKey(machineKey(conn), root))) return null;
     const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map());
     return held
       ? {
@@ -406,6 +411,29 @@ export const ProjectGroup = memo(function ProjectGroup({
   const fold = (open: boolean) => {
     writeProjectFold(foldKey, open);
     setIsOpen(open);
+  };
+  // THE ARCHIVE IS A PLACE THE READER GOES TO, not a filter over what is already on
+  // screen: with the reveal on this project paints the groups and the loose sessions it
+  // put away and nothing else, so one list is never two pictures at once. WHICH of the two
+  // a reader is looking at is theirs and this device's, like the fold above it, and it
+  // outlives the screen the same way (`lib/project-fold`).
+  const revealKey = projectRevealKey(machineKey(conn), root);
+  const [isRevealed, setIsRevealed] = useState(() => readProjectFold(revealKey) ?? false);
+  // A QUERY OWNS THE VIEW while it is on. The search is answered over the fleet this
+  // device holds, so a reveal left standing underneath it never cuts those hits.
+  const isRevealing = isRevealed && needle === '';
+  const archived: ArchiveView = isRevealing ? 'only' : 'exclude';
+  const revealArchive = (on: boolean) => {
+    writeProjectFold(revealKey, on);
+    setIsRevealed(on);
+    // THE OTHER LIST'S PLACE IS NOT THIS ONE'S. A cursor names a row of the view it was
+    // learned in, and the page on the glass belongs to that view too, so the archive
+    // opens at its own top instead of under the page the reader was holding.
+    cursors.current = new Map([[0, '']]);
+    asked.current = '';
+    setPaged(null);
+    setFirst(0);
+    fold(true);
   };
   // A project with no sessions has nothing to reveal. It still names the destination
   // of its New-session action, but it is not a fold and must not wear disclosure furniture.
@@ -462,7 +490,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const question = `${limit}\u0000${after}`;
     if (question !== asked.current) {
       asked.current = question;
-      const held = api.heldProjectPage(root, limit, after, pins.current);
+      const held = api.heldProjectPage(root, limit, after, pins.current, archived);
       if (held)
         setPaged({
           start,
@@ -481,6 +509,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           pins.current,
           control.signal,
           start === 0,
+          archived,
         );
         if (!live) return;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
@@ -503,6 +532,8 @@ export const ProjectGroup = memo(function ProjectGroup({
             cursor,
             pins.current,
             control.signal,
+            false,
+            archived,
           );
           if (!live) return;
           if (next.rows.length === 0) break;
@@ -519,7 +550,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, start, pageSize, isVisible, isShowing, searching, list, getClient]);
+  }, [conn, root, start, pageSize, isVisible, isShowing, searching, archived, list, getClient]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
   // answer is on this device, and then what is on screen is the honest count.
@@ -541,10 +572,13 @@ export const ProjectGroup = memo(function ProjectGroup({
   // that would otherwise paint three rows and swap them for twelve waits the one read
   // out instead, which is the reflow this seam exists to end.
   const held = sessions.slice(0, pageSize);
+  // AND THE MACHINE'S HEAD WINDOW IS THE ACTIVE LIST. A reveal has only its own read to
+  // paint from, so it waits that read out rather than opening on the rows it is not about.
+  const headFills =
+    !isRevealing && start === 0 && held.length >= Math.min(pageSize, tally.count);
   const painting = searching
     ? sessions.slice((shownPage - 1) * pageSize, shownPage * pageSize)
-    : (pageRows ??
-      (start === 0 && held.length >= Math.min(pageSize, tally.count) ? held : NO_ROWS));
+    : (pageRows ?? (headFills ? held : NO_ROWS));
   // A ROW THIS DEVICE JUST CHANGED IS THE ROW IT PAINTS. A star or a rename is
   // echoed into the list this screen holds the moment the gateway answers the
   // PATCH; the window carrying it is a read of its own and lands a beat later, so
@@ -688,7 +722,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     let live = true;
     void (async () => {
       try {
-        const answer = await getClient(conn).listSessionGroups(root, control.signal);
+        const answer = await getClient(conn).listSessionGroups(root, control.signal, archived);
         if (live) setGroups(answer?.groups ?? []);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
@@ -700,7 +734,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, getClient, groupsRead]);
+  }, [conn, root, isVisible, archived, getClient, groupsRead]);
   // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
   // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
   // which keeps the project's own order. It is the shape the TUI's navigator paints
@@ -735,6 +769,10 @@ export const ProjectGroup = memo(function ProjectGroup({
       color: group.color,
       count: group.session_count,
     }));
+    // A REVEAL PAINTS THE ARCHIVE'S OWN BANDS AND NOTHING ELSE. A session archived inside
+    // a group that is still active belongs to THAT group's reveal; a band invented here
+    // from the group such a row names would file it under a project that does not have it.
+    if (isRevealing) return known;
     const unread = [...filed.byGroup.entries()]
       .filter(([gid]) => !groups.some((group) => group.id === gid))
       .map(([gid, held]) => ({
@@ -746,7 +784,11 @@ export const ProjectGroup = memo(function ProjectGroup({
         count: held.length,
       }));
     return [...known, ...unread];
-  }, [groups, filed]);
+  }, [groups, filed, isRevealing]);
+  // WHAT THE ARCHIVE HOLDS IS COUNTED WHERE IT STANDS: the loose rows the reveal's read
+  // answered with, plus what each revealed band says it holds. The project's own tally
+  // counts the list the reader is not looking at while the archive is open.
+  const archiveCount = total + bands.reduce((sum, band) => sum + band.count, 0);
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
   // over it read the SAME group, so a recolour lands on both in the same paint.
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
@@ -900,8 +942,26 @@ export const ProjectGroup = memo(function ProjectGroup({
             is what lets the smallest phone shorten `1464 sessions · 2 live` and still
             hold the whole of the arrival the reader has to be able to tap. */}
         <span className="min-w-0 truncate">
-          <HeaderTally count={tally.count} unit="session" />
-          <ProjectStatusCounts live={tally.live} awaiting={tally.awaiting} unread={tally.unread} />
+          {/* A REVEAL CARRIES ITS OWN TALLY, and none of the states beside it: the archive
+              is another list, and a session that was put away is not running. */}
+          <HeaderTally count={isRevealing ? archiveCount : tally.count} unit="session" />
+          {isRevealing ? (
+            <>
+              <span aria-hidden className="mx-2 @max-md:mx-1">
+                ·
+              </span>
+              {/* The band's own ink, like the count it stands beside: muted grey on a
+                  project header measured 4.38:1 against it, under the 4.5:1 a reader with
+                  low vision needs to read an 11px word (`addon-a11y`). */}
+              <span className="whitespace-nowrap font-bold">Archived</span>
+            </>
+          ) : (
+            <ProjectStatusCounts
+              live={tally.live}
+              awaiting={tally.awaiting}
+              unread={tally.unread}
+            />
+          )}
         </span>
         {hasPending && (
           <>
@@ -932,6 +992,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   const hasGroups = bands.length > 0;
   const listed = searching ? painted : filed.loose;
   const listedCount = searching ? listed.length : (paged?.total ?? filed.loose.length);
+  // THE READER ASKED FOR THE ARCHIVE AND THERE IS NOTHING IN IT: the reveal's own read
+  // answered, and it answered with nothing. A blank band under the header would otherwise
+  // be the whole reply to the verb.
+  const archiveIsEmpty = isRevealing && paged !== null && painted.length === 0 && !hasGroups;
 
   return (
     <>
@@ -978,6 +1042,11 @@ export const ProjectGroup = memo(function ProjectGroup({
             </IconButton>
           </HeaderActions>
         </SectionHeader>
+        {isShowing && archiveIsEmpty && (
+          <p className="border-b border-edge px-4 py-3 font-mono text-meta text-dialog-hint">
+            Nothing archived in this project.
+          </p>
+        )}
         {/* Rows own their internal dividers; the wrapper closes the final session. */}
         {isShowing && painted.length > 0 && (
           <div
@@ -1035,6 +1104,17 @@ export const ProjectGroup = memo(function ProjectGroup({
                     onSelect={() => {
                       setTyped('');
                       goTo({ kind: 'new' });
+                    }}
+                  />
+                  {/* THE ARCHIVE IS OPENED WHERE IT WAS FILLED: this project's own verb,
+                      under the header the reader put those sessions away from, and the
+                      sheet closes onto the list it just changed. */}
+                  <MenuItem
+                    title={isRevealed ? 'Hide archived' : 'Show archived'}
+                    icon={<ArchiveIcon className="size-3.5" />}
+                    onSelect={() => {
+                      revealArchive(!isRevealed);
+                      setMenu(null);
                     }}
                   />
                   {failure && <MenuNote>{failure}</MenuNote>}
