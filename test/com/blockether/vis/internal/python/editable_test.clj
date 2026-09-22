@@ -48,7 +48,7 @@
         "assert importlib.util.find_spec('vis_editable_fixture') is None\n"
         "value = await editable_value()\n"
         "assert str(inspect.signature(doctor.help)) == \""
-        (if typed? "(tool: str = Ellipsis) -> 'HelpDocument'" "()")
+        (if typed? "(tool: str = 'doctor') -> 'HelpDocument'" "()")
         "\"\n"
         "assert '"
         description

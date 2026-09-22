@@ -5249,9 +5249,9 @@ vis.register_extension(vis.Extension(
                        "assert str(sig) == "
                        (pr-str
                          (if (zero? iteration)
-                           "(name: str, /, *, loud: bool = Ellipsis, note: str | None = None) -> 'Results'"
-                           (str "(name: str, /, *, loud: bool = Ellipsis, note: str | None = None, "
-                                "repeat: int = Ellipsis) -> 'Results'")))
+                           "(name: str, /, *, loud: bool = False, note: str | None = None) -> 'Results'"
+                           (str "(name: str, /, *, loud: bool = False, note: str | None = None, "
+                                "repeat: int = 1) -> 'Results'")))
                        ", str(sig)\n"
                        "assert sig.parameters['name'].kind is inspect.Parameter.POSITIONAL_ONLY\n"
                        "assert sig.parameters['name'].annotation is str\n"
@@ -5314,6 +5314,87 @@ vis.register_extension(vis.Extension(
                                              "Result((name.upper() if loud else name) * repeat)")))
                 (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
             (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
+  python-literal-defaults-test
+  ;; #281: literals cross the trusted extension boundary without changing dispatch.
+  (it
+    "exposes defaults for functions and methods in both sandboxes across reload"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"literal_defaults.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "class Opaque:\n" "    def __repr__(self):\n"
+           "        raise AssertionError('custom repr ran')\n" "TOKEN = Opaque()\n"
+           "OPTIONS = [1]\n"
+           "def query(dry_run: bool=False, limit: int=200, since: str='1h', services=(), *, token=TOKEN, options=OPTIONS, label='literal =Ellipsis = Ellipsis'):\n"
+           "    \"Query services without changing them.\"\n"
+           "    return {'dry_run': dry_run, 'limit': limit, 'since': since, 'services': services, 'token_default': token is TOKEN, 'options_default': options is OPTIONS, 'options': options}\n"
+           "class Tools:\n" "    @vis.method()\n"
+           "    def value(self, value: int=200):\n" "        \"Read a value.\"\n"
+           "        return value\n"
+           "symbols = [vis.Symbol(query, name='literal_query'), vis.Symbol(Tools(), name='literal_tools')]\n"
+           "catalog = vis.Catalog(symbols)\n"
+           "vis.register_extension(vis.Extension(name='literal-defaults', description='Inspect declared defaults', alias='default_probe', symbols=[*symbols, vis.Symbol(catalog, name='literal_catalog')]))\n")}
+        (fn [result {:keys [ext-dir]}]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}]
+
+            (try
+              (dotimes [iteration 2]
+                (let [ext (registered "literal-defaults")]
+                  (reset! (:extensions env) [ext])
+                  (if worker?
+                    (lp/sync-active-extension-symbols! env [ext])
+                    ;; A local test context has no owning worker; use the registration context.
+                    (lp/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+                  (ep/set-python-binding! ctx 'expected_limit (+ 200 iteration))
+                  (ep/set-python-binding! ctx 'expected_since (if (zero? iteration) "1h" "2h"))
+                  (let
+                    [answer
+                     (ep/run-python-block
+                       ctx
+                       (str
+                         "import inspect, ast\n"
+                         ;; Reload rebinds tools; signature-refresh-test covers retained references.
+                         "kept_query, kept_method = literal_query, literal_tools.value\n"
+                         "parameters = inspect.signature(kept_query).parameters\n"
+                         "expected = {'dry_run': False, 'limit': expected_limit, 'since': expected_since, 'services': (), 'options': [1], 'label': 'literal =Ellipsis = Ellipsis'}\n"
+                         "for name, value in expected.items():\n"
+                         "    assert type(parameters[name].default) is type(value), name\n"
+                         "    assert parameters[name].default == value, name\n"
+                         "    contract = next(p for p in kept_query.contract['parameters'] if p['name'] == name)\n"
+                         "    assert ast.literal_eval(contract['default_source']) == value, contract\n"
+                         "    assert 'default ' + contract['default_source'] in doc('literal_query')\n"
+                         "assert parameters['token'].default is Ellipsis\n"
+                         "assert inspect.signature(kept_method).parameters['value'].default == expected_limit\n"
+                         "spec = await literal_catalog.spec('literal_query')\n"
+                         "assert next(p for p in spec.parameters if p.name == 'limit').default_source == str(expected_limit)\n"
+                         "help_doc = await literal_catalog.help('literal_query')\n"
+                         "assert 'default ' + str(expected_limit) in help_doc.text\n"
+                         "parameters['options'].default.append(999)\n"
+                         "result = await kept_query()\n"
+                         "assert result['dry_run'] is False and result['limit'] == expected_limit\n"
+                         "assert result['since'] == expected_since and result['services'] == []\n"
+                         "assert result['token_default'] and result['options_default'] and result['options'] == [1]\n"
+                         "assert (await kept_query(limit=7, token=None, options=[]))['limit'] == 7\n"
+                         "assert (await kept_query(token=None))['token_default'] is False\n"
+                         "assert await kept_method() == expected_limit\n"
+                         "assert await kept_method(7) == 7\n" "print('defaults verified')\n"))]
+                    (expect (nil? (:error answer))
+                            (str "worker? " worker? " iteration " iteration " " (pr-str answer)))
+                    (expect (= "defaults verified\n" (:stdout answer)))))
+                (when (zero? iteration)
+                  (write-ext! ext-dir
+                              "literal_defaults.py"
+                              (-> (slurp (io/file ext-dir "literal_defaults.py"))
+                                  (str/replace "=200" "=201")
+                                  (str/replace "'1h'" "'2h'")))
+                  (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
+              (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
   bounded-symbol-contract-doc-test
@@ -5532,8 +5613,8 @@ vis.register_extension(vis.Extension(
                    (str
                      "hits = apropos(r'^hello$')\n" "assert len(hits) == 1, repr(hits)\n"
                      "assert 'Preserves capitalization unless uppercase is requested.' in doc(hits[0])\n"
-                     "assert 'hello(name: str, *, uppercase: bool = ...) -> str' in doc(hits[0])\n"
-                     "assert 'uppercase: bool (keyword_only; default omitted)' in doc(hits[0])\n"
+                     "assert 'hello(name: str, *, uppercase: bool = False) -> str' in doc(hits[0])\n"
+                     "assert 'uppercase: bool (keyword_only; default False)' in doc(hits[0])\n"
                      "assert 'Returns: str' in doc(hits[0])\n"
                      "assert hello.contract['parameters'][1]['has_default']\n"
                      "assert await hello('Ada') == 'Hello, Ada!'\n"
@@ -5584,8 +5665,8 @@ vis.register_extension(vis.Extension(
                        "assert 'Unicode code points' in doc(tool_hit)\n"
                        "assert 'uppercase: bool' in doc(tool_hit)\n"
                        "assert 'Preserves capitalization unless uppercase is requested.' in doc(tool_hit)\n"
-                       "assert \"greet.hello(name: str, *, uppercase: bool = ...) -> 'Greeting'\" in doc(tool_hit)\n"
-                       "assert 'uppercase: bool (keyword_only; default omitted)' in doc(tool_hit)\n"
+                       "assert \"greet.hello(name: str, *, uppercase: bool = False) -> 'Greeting'\" in doc(tool_hit)\n"
+                       "assert 'uppercase: bool (keyword_only; default False)' in doc(tool_hit)\n"
                        "assert 'Returns: Greeting' in doc(tool_hit)\n"
                        "assert doc(tool_hit) == doc('greet.hello')\n"
                        "assert all(0 < len(hit.body) <= 100 and '\\n' not in hit.body for hit in hits)\n"

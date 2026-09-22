@@ -113,10 +113,12 @@ the catalog; visibility is not access control. Rebuild the snapshot after declar
 
 `ToolSpec` carries `version`, `name`, `tag`, `description`, `signature`, `parameters`
 and `returns`. Each `ParameterSpec` has `name`, `kind`, `type`, `required`, `has_default`
-and `default_is_none`. `TypeSpec` has `kind`, `name`, `description`, `arguments`, `fields`,
+and `default_is_none`, plus `default_source` (Python source text or `None`).
+`TypeSpec` has `kind`, `name`, `description`, `arguments`, `fields`,
 `values`, `variadic` and `sequence_field`; result fields use `FieldSpec`. These are frozen,
-slotted records; all nested collections produced by the adapter are tuples. No default
-value or callable is retained in public result data. `sequence_field` is `None` unless
+slotted records; all nested collections produced by the adapter are tuples. No host
+default object or callable is retained; literal defaults are copied as source text.
+`sequence_field` is `None` unless
 that record declares [field-backed sequence behavior](#field-backed-sequences). The
 portable `.contract` includes this key only for opted-in records.
 
@@ -373,12 +375,12 @@ tool or its permissions.
 | --- | --- |
 | Callable | `version`, `name`, `tag`, `description`, `signature`, `parameters`, `returns` |
 | Namespace | `version`, `name`, `members` with full public member names |
-| Parameter | Name, parameter kind, `required`, `has_default`, `default_is_none`, and type description |
+| Parameter | Name, parameter kind, `required`, `has_default`, `default_is_none`, `default_source`, and type description |
 
 The registered signature and resolved type metadata are authoritative for invocation
 shape. `doc()` renders that same contract: signature, parameter kinds, required/default
 status, return type and fields, mutation tag, and semantic description. The `signature`
-text is the full Python signature, for example `(name: str, /, *, loud: bool = ...) -> 'Results'`;
+text is the full Python signature, for example `(name: str, /, *, loud: bool = False) -> 'Results'`;
 a method with no arguments has the signature `()`. That does not mean metadata is
 missing. A short semantic docstring is sufficient—do not repeat the signature, defaults
 or full return schema in it.
@@ -416,27 +418,45 @@ not change the contract or the returned values.
 
 ### Defaults and introspection
 
-Non-`None` runtime default values are withheld, and their `repr()` is never called.
-This avoids exposing private host objects or credentials, including values whose
-Python type looks ordinary. Document meaningful omitted-argument behavior, not a
-copied defaults table; see [documenting defaults](extension-design.md#document-default-behavior).
+You can inspect ordinary declared defaults directly: `False`, `200`, `"1h"` and `()`
+appear without an author opt-in. The same values appear in `tool.contract`, `Catalog`,
+generated help, `doc()` and `inspect.signature()`.
 
-| Python declaration | `has_default` | `default_is_none` | Rendered default |
-| --- | --- | --- | --- |
-| Required argument | `False` | `False` | No default |
-| Argument with `= None` | `True` | `True` | `None` |
-| Argument with any other default, including `False` or `30` | `True` | `False` | `...` |
+Vis renders exact built-in literals: `None`, `Ellipsis`, booleans, integers, finite
+floats and complex numbers, strings, bytes, and recursively representable tuples,
+lists, dictionaries and sets. Strings are escaped as Python source, not filtered
+by their contents or parameter names. Declared defaults are public metadata; resolve
+credentials inside the tool rather than putting them in its parameter defaults.
+
+The `default_source` field preserves the literal's Python spelling and type without
+transporting host objects. Its value is source text, not the default itself.
+
+| Python declaration | `has_default` | `default_is_none` | `default_source` | Rendered default |
+| --- | --- | --- | --- | --- |
+| Required argument | `False` | `False` | `None` | No default |
+| Argument with `= None` | `True` | `True` | `"None"` | `None` |
+| Argument with `= False` | `True` | `False` | `"False"` | `False` |
+| Argument with `= "1h"` | `True` | `False` | `"'1h'"` | `'1h'` |
+| Argument with `= ()` | `True` | `False` | `"()"` | `()` |
+| Opaque or unrepresentable default | `True` | `False` | `None` | `...` |
+
+Opaque objects, subclasses, nonfinite numbers and cyclic containers remain `...`.
+Rendering also uses an inspection budget of 4,096 source characters and eight
+container levels; values outside that budget remain `...`. Vis never calls custom
+`repr()` methods or factories to render a default.
 
 `*args` and `**kwargs` are not required even though they have no default.
-The original defaults apply when arguments are omitted. `...` is a display marker,
-not an instruction to pass `Ellipsis`. Dataclass-field defaults and factories are
-also described without exporting values or running factories.
+The original defaults apply when arguments are omitted; inspection never substitutes
+a copied literal or `Ellipsis` in a call. A placeholder `...` means you can omit the
+argument, not that you should pass `Ellipsis`. Dataclass-field defaults and factories
+are still described without exporting values or running factories. Explain contextual
+omission behavior in prose; see [documenting defaults](extension-design.md#document-default-behavior).
 
 | Sandbox inspection | Supported result |
 | --- | --- |
 | `tool.contract` | Portable parameter/result types, fields and documented meaning |
 | `doc("tool")` | Human-readable rendering of that contract |
-| `inspect.signature(tool)` | Names, parameter kinds and annotations; `None` or `Ellipsis` defaults; the return annotation when declared |
+| `inspect.signature(tool)` | Names, parameter kinds and annotations; representable literal defaults or `Ellipsis` placeholders; the return annotation when declared |
 | `tool.__annotations__` | Annotation objects resolved statically from the signature text: builtins, `typing` and `collections.abc` names, unions and subscripts become the real objects; record, opaque and unresolved names stay quoted forward-reference strings such as `'Results'` |
 | `typing.get_type_hints(tool)` | Resolves the same annotations; pass `localns` for forward-reference strings, otherwise it raises `NameError` for them |
 | `tool.__signature__` | Not supplied; `inspect` follows `tool.__wrapped__` |

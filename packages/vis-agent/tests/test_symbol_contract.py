@@ -62,7 +62,7 @@ def test_contract_covers_python_shape_without_executing_defaults_or_tools():
 
 def test_signature_text_is_static_source_with_annotations():
     # #273: the signature reads as `inspect.signature` prints it — parameters,
-    # annotations and return, defaults masked — so a sandbox can stamp it onto
+    # annotations and return, literal defaults — so a sandbox can stamp it onto
     # the bound tool and `inspect`/`typing` there answer the declared types.
     contract = vis.Symbol(measure, name="probe").contract
     assert contract["signature"] == (
@@ -86,7 +86,7 @@ def test_signature_text_is_static_source_with_annotations():
     assert signature == (
         "(flag: Literal['a', 1, True, None], pair: tuple[int, ...],"
         " table: dict[str, list['Reading']], raw: 'Opaque', anything: Any,"
-        " plain, count: int = ...) -> 'Reading' | None"
+        " plain, count: int = 3) -> 'Reading' | None"
     )
     # Only builtins and typing forms appear unquoted: every other name is a
     # forward reference the sandbox never evaluates.
@@ -96,7 +96,7 @@ def test_signature_text_is_static_source_with_annotations():
     assert "Reading" in ast.unparse(tree.body[0].returns)
 
 
-def test_default_values_and_annotation_expressions_are_not_evaluated_or_exported():
+def test_opaque_defaults_and_annotation_expressions_are_not_evaluated():
     class Secret:
         def __repr__(self):
             pytest.fail("default repr ran")
@@ -105,15 +105,200 @@ def test_default_values_and_annotation_expressions_are_not_evaluated_or_exported
         pytest.fail("annotation ran")
 
     def lookup(token=Secret(), *, key="not-for-discovery") -> raise_if_evaluated():
-        """Look up a result using private defaults."""
+        """Look up a result without inspecting opaque defaults."""
         pytest.fail("tool ran")
 
     contract = vis.Symbol(lookup).contract
     encoded = json.dumps(contract)
-    assert "not-for-discovery" not in encoded
+    assert "not-for-discovery" in encoded
     assert contract["returns"]["kind"] == "unresolved"
     assert contract["parameters"][0]["default_is_none"] is False
-    assert contract["signature"] == "(token=..., *, key=...) -> 'raise_if_evaluated()'"
+    assert contract["parameters"][0]["default_source"] is None
+    assert contract["parameters"][1]["default_source"] == "'not-for-discovery'"
+    assert contract["signature"] == (
+        "(token=..., *, key='not-for-discovery') -> 'raise_if_evaluated()'"
+    )
+
+
+def test_literal_defaults_are_exposed_without_opt_in():
+    # #281: signatures, portable metadata and generated help share real defaults.
+    def query(
+        *, dry_run: bool = False, limit: int = 200, since: str = "1h", services=()
+    ):
+        """Query services without changing them."""
+        pytest.fail("tool ran during inspection")
+
+    symbol = vis.Symbol(query)
+    contract = symbol.contract
+    assert contract["signature"] == (
+        "(*, dry_run: bool = False, limit: int = 200, since: str = '1h', services=())"
+    )
+    expected = ["False", "200", "'1h'", "()"]
+    assert [item["default_source"] for item in contract["parameters"]] == expected
+    catalog = vis.Catalog([symbol])
+    assert [
+        item.default_source for item in catalog.spec("query").parameters
+    ] == expected
+    for source in expected:
+        assert f"default {source}" in catalog.help("query").text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        False,
+        True,
+        0,
+        200,
+        -200,
+        2**100,
+        -0.0,
+        1.25,
+        1e300,
+        2 + 3j,
+        -2 - 3j,
+        "1h",
+        "",
+        "token-example",
+        "雪",
+        b"\x00\xff",
+        ...,
+        "quotes: '\"\n\t\\; =Ellipsis; = Ellipsis; ...",
+        "'); __import__('builtins').print('not executable') #",
+        (),
+        (1,),
+        (False, ("1h", None)),
+        [],
+        [1, (2, 3)],
+        {},
+        {"services": ["web", "api"], (1, 2): (False, None)},
+        {1, 2},
+        set(),
+    ],
+)
+def test_default_source_round_trips_as_inert_python(value):
+    # #281: rendering must preserve types and escaping, not replace inside strings.
+    import inspect
+
+    from blockether.vis import _contracts
+
+    def read(argument=value):
+        """Read one value."""
+        return argument
+
+    symbol = vis.Symbol(read)
+    contract = symbol.contract
+    parameter = contract["parameters"][0]
+    source = parameter["default_source"]
+    decoded = ast.literal_eval(source)
+    assert type(decoded) is type(value)
+    assert decoded == value
+    assert _contracts.validate("symbol", "declaration", contract) == contract
+    namespace = {}
+    exec("def read" + contract["signature"] + ": pass", namespace)
+    inspected = inspect.signature(namespace["read"]).parameters["argument"].default
+    assert type(inspected) is type(value)
+    assert inspected == value
+    assert symbol.fn() is value
+    assert symbol.fn("override") == "override"
+
+
+def test_required_none_opaque_and_variadic_defaults_stay_distinct():
+    from blockether.vis import _contracts
+
+    def read(required, optional=None, opaque=object(), *args, **kwargs):
+        """Read a value with optional context."""
+
+    contract = vis.Symbol(read).contract
+    assert [
+        (p["required"], p["has_default"], p["default_is_none"], p["default_source"])
+        for p in contract["parameters"]
+    ] == [
+        (True, False, False, None),
+        (False, True, True, "None"),
+        (False, True, False, None),
+        (False, False, False, None),
+        (False, False, False, None),
+    ]
+    assert _contracts.validate("symbol", "declaration", contract) == contract
+    contract["parameters"][0]["default_source"] = "200"
+    with pytest.raises(ValueError):
+        _contracts.validate("symbol", "declaration", contract)
+
+
+def test_default_rendering_never_calls_custom_repr_or_factories():
+    # #281: exact builtin checks must not invoke subclass or metaclass hooks.
+    class HostileMeta(type):
+        def __eq__(self, other):
+            pytest.fail("metaclass equality ran")
+
+        def __hash__(self):
+            pytest.fail("metaclass hash ran")
+
+    class Hostile(metaclass=HostileMeta):
+        def __repr__(self):
+            pytest.fail("custom repr ran")
+
+    def factory():
+        pytest.fail("default factory ran")
+
+    hostile = Hostile()
+    defaults = [hostile, factory, (hostile,), [hostile], {"value": hostile}]
+    for base in (str, int, float, complex, bytes, tuple, list, dict, set):
+        subclass = type("CustomDefault", (base,), {"__repr__": Hostile.__repr__})
+        defaults.append(subclass())
+    for default in defaults:
+
+        def read(value=default):
+            """Read without running user code during inspection."""
+
+        contract = vis.Symbol(read).contract
+        assert contract["parameters"][0]["default_source"] is None
+        assert contract["signature"] == "(value=...)"
+
+
+def test_default_inspection_budget_and_nonliteral_values_use_placeholders():
+    cyclic = []
+    cyclic.append(cyclic)
+    deep = None
+    for _ in range(9):
+        deep = (deep,)
+    deep_empty = ()
+    for _ in range(8):
+        deep_empty = (deep_empty,)
+    for default in (
+        cyclic,
+        deep,
+        deep_empty,
+        "x" * 4095,
+        ("x" * 2048,) * 2,
+        [0] * 4096,
+        2**20000,
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        complex(1, float("inf")),
+    ):
+
+        def read(value=default):
+            """Read a value with a bounded inspection representation."""
+
+        contract = vis.Symbol(read).contract
+        assert contract["parameters"][0]["default_source"] is None
+        assert contract["signature"] == "(value=...)"
+
+    def read(value="x" * 4094):
+        """Read a value at the inspection budget."""
+
+    assert len(vis.Symbol(read).contract["parameters"][0]["default_source"]) == 4096
+    for default in (deep[0], deep_empty[0]):
+
+        def read(value=default):
+            """Read a value at the nesting budget."""
+
+        source = vis.Symbol(read).contract["parameters"][0]["default_source"]
+        assert ast.literal_eval(source) == default
 
 
 def test_nested_namespace_contract_uses_public_names_and_method_tags():

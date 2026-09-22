@@ -14,6 +14,26 @@
     (is (document/valid? "symbol" {"version" 1 "name" "examples" "members" [callable]}))
     (is (not (document/valid? "symbol" (assoc-in callable ["returns" "kind"] "invented"))))
     (is (not (document/valid? "symbol" {"version" 1 "parameter_kinds" [] "type_kinds" []})))
+    ;; #281: source metadata distinguishes literals, None and opaque defaults.
+    (let [parameter {"name" "limit"
+                     "kind" "keyword_only"
+                     "type" {"kind" "scalar" "name" "int"}
+                     "required" false
+                     "has_default" true
+                     "default_is_none" false
+                     "default_source" "200"}
+          with-parameter #(assoc callable "parameters" [%])]
+
+      (is (document/valid? "symbol" (with-parameter parameter)))
+      (is (document/valid? "symbol" (with-parameter (assoc parameter "default_source" nil))))
+      (is (document/valid? "symbol"
+                           (with-parameter (assoc parameter
+                                             "default_is_none" true
+                                             "default_source" "None"))))
+      (doseq [invalid [(dissoc parameter "default_source") (assoc parameter "default_source" 200)
+                       (assoc parameter "has_default" false)
+                       (assoc parameter "default_is_none" true)]]
+        (is (not (document/valid? "symbol" (with-parameter invalid))))))
     ;; Issue #256: only record contracts may declare a public sequence field.
     (let [record {"kind" "record"
                   "name" "Pages"

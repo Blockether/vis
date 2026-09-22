@@ -952,6 +952,68 @@ def _contract_ast(node, namespace, seen):
     return {"kind": "unresolved", "name": ast.unparse(node)}
 
 
+def _default_source(value):
+    """Render exact builtin literals within an inspection budget, without user code."""
+    remaining, chunks, active = 4096, [], set()
+
+    def emit(text):
+        nonlocal remaining
+        remaining -= len(text)
+        if remaining < 0:
+            raise ValueError("default exceeds the inspection budget")
+        chunks.append(text)
+
+    def render(item, depth):
+        kind = type(item)
+        if item is None or item is Ellipsis or kind is bool:
+            emit("..." if item is Ellipsis else repr(item))
+        elif kind is int:
+            if item.bit_length() > remaining * 4:
+                raise ValueError("integer exceeds the inspection budget")
+            emit(repr(item))
+        elif kind is float or kind is complex:
+            if not math.isfinite(item.real) or not math.isfinite(item.imag):
+                raise ValueError("nonfinite default has no literal representation")
+            emit(repr(item))
+        elif kind is str or kind is bytes:
+            if len(item) > remaining:
+                raise ValueError("string exceeds the inspection budget")
+            emit(repr(item))
+        elif kind is tuple or kind is list or kind is dict or kind is set:
+            if depth >= 8:
+                raise ValueError("default nesting exceeds the inspection budget")
+            if id(item) in active or len(item) > remaining:
+                raise ValueError("cyclic or oversized default")
+            if kind is set and not item:
+                emit("set()")
+                return
+            active.add(id(item))
+            try:
+                emit("(" if kind is tuple else "[" if kind is list else "{")
+                for index, child in enumerate(item.items() if kind is dict else item):
+                    if index:
+                        emit(", ")
+                    if kind is dict:
+                        render(child[0], depth + 1)
+                        emit(": ")
+                        render(child[1], depth + 1)
+                    else:
+                        render(child, depth + 1)
+                if kind is tuple and len(item) == 1:
+                    emit(",")
+                emit(")" if kind is tuple else "]" if kind is list else "}")
+            finally:
+                active.remove(id(item))
+        else:
+            raise ValueError("opaque default")
+
+    try:
+        render(value, 0)
+    except (ValueError, RuntimeError):
+        return None
+    return "".join(chunks)
+
+
 def _callable_contract(fn, name, tag, doc):
     # No evaluation or imports are needed to derive the portable description.
     signature = _inert_signature(fn)
@@ -960,6 +1022,7 @@ def _callable_contract(fn, name, tag, doc):
     parameters, safe = [], []
     for item in signature.parameters.values():
         has_default = item.default is not inspect.Parameter.empty
+        default_source = _default_source(item.default) if has_default else None
         annotated = item.annotation is not inspect.Parameter.empty
         spec = _contract_type(item.annotation, namespace)
         parameters.append(
@@ -970,26 +1033,29 @@ def _callable_contract(fn, name, tag, doc):
                 and item.kind not in (item.VAR_POSITIONAL, item.VAR_KEYWORD),
                 "has_default": has_default,
                 "default_is_none": item.default is None,
+                "default_source": default_source,
                 "type": spec,
             }
         )
         safe.append(
             item.replace(
-                annotation=_AnnotationSource(_contract_type_source(spec))
+                annotation=_SignatureSource(_contract_type_source(spec))
                 if annotated
                 else inspect.Parameter.empty,
-                default=(None if item.default is None else ...)
+                default=_SignatureSource(
+                    default_source if default_source is not None else "..."
+                )
                 if has_default
                 else inspect.Parameter.empty,
             )
         )
     returns = _contract_type(signature.return_annotation, namespace)
     # The signature text reads as `inspect.signature` prints it — parameters,
-    # annotations and return — with defaults masked, so a sandbox can stamp it
+    # annotations and return — with inert literal defaults, so a sandbox can stamp it
     # onto the tool it binds and `inspect`/`typing` there answer the same facts.
     portable = signature.replace(
         parameters=safe,
-        return_annotation=_AnnotationSource(_contract_type_source(returns))
+        return_annotation=_SignatureSource(_contract_type_source(returns))
         if signature.return_annotation is not inspect.Signature.empty
         else inspect.Signature.empty,
     )
@@ -998,16 +1064,14 @@ def _callable_contract(fn, name, tag, doc):
         "name": name,
         "tag": tag,
         "description": doc,
-        "signature": str(portable)
-        .replace("=Ellipsis", "=...")
-        .replace("= Ellipsis", "= ..."),
+        "signature": str(portable),
         "parameters": parameters,
         "returns": returns,
     }
 
 
-class _AnnotationSource(str):
-    """Annotation text that `inspect.Signature` prints as written, not quoted."""
+class _SignatureSource(str):
+    """Inert source that `inspect.Signature` prints as written, not quoted."""
 
     __slots__ = ()
 
@@ -1158,8 +1222,8 @@ def _contract_doc(contract):
             + (
                 "required"
                 if item["required"]
-                else "default None"
-                if item["default_is_none"]
+                else "default " + item["default_source"]
+                if item["default_source"] is not None
                 else "default omitted"
                 if item["has_default"]
                 else "variadic"
@@ -1467,7 +1531,7 @@ class Symbol:
 
     @property
     def contract(self) -> dict[str, Any]:
-        """Fresh portable tool description; no callable, default values or host access.
+        """Fresh portable tool description, including literal defaults but no host access.
 
         Namespace members carry their full public names. Strings in Annotated
         describe meaning; unresolved annotations remain explicit, never evaluated.
@@ -1548,7 +1612,7 @@ class FieldSpec:
 
 @dataclass(frozen=True, slots=True)
 class ParameterSpec(FieldSpec):
-    """A callable parameter, preserving Python binding and safe default metadata."""
+    """A callable parameter; default_source is inert source or None when unavailable."""
 
     kind: Literal[
         "positional_only",
@@ -1557,6 +1621,7 @@ class ParameterSpec(FieldSpec):
         "keyword_only",
         "var_keyword",
     ]
+    default_source: str | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -130,6 +130,10 @@
         "default_is_none": {
           "type": "boolean"
         },
+        "default_source": {
+          "type": ["string", "null"],
+          "description": "Inert Python source for a representable declared default; null for required parameters or defaults that cannot be rendered within the inspection budget. Omission still uses the original callable's default."
+        },
         "kind": {
           "enum": [
             "positional_only",
@@ -146,8 +150,16 @@
         "required",
         "has_default",
         "default_is_none",
+        "default_source",
         "kind"
-      ]
+      ],
+      "allOf": [{
+        "if": {"properties": {"default_source": {"type": "string"}}},
+        "then": {"properties": {"has_default": {"const": true}}}
+      }, {
+        "if": {"properties": {"default_is_none": {"const": true}}},
+        "then": {"properties": {"default_source": {"const": "None"}}}
+      }]
     },
     "callable": {
       "type": "object",

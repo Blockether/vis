@@ -78,7 +78,7 @@ def test_documented_cross_module_wrapper_example(monkeypatch):
     tools = modules["tools"].Tools()
     contract = vis.Symbol(tools, name="tools").contract["members"][0]
     assert _contracts.validate("symbol", "callable", contract) == contract
-    assert contract["signature"] == "(text: str = ...) -> tuple['Result', ...]"
+    assert contract["signature"] == "(text: str = 'ready') -> tuple['Result', ...]"
     result_type = contract["returns"]
     assert result_type["name"] == "tuple"
     assert result_type["variadic"] is True
@@ -150,7 +150,7 @@ def test_quickstart_runs_as_one_project_extension(monkeypatch):
     assert _contracts.validate("symbol", "callable", tool["contract"])
     # #232: prose explains behavior; the generated contract supplies call structure.
     assert "Preserves capitalization unless uppercase is requested." in tool["doc"]
-    assert "uppercase: bool (keyword_only; default omitted)" in tool["doc"]
+    assert "uppercase: bool (keyword_only; default False)" in tool["doc"]
     assert module.hello(" Ada ") == "Hello, Ada!"
     assert module.hello("Ada", uppercase=True) == "HELLO, ADA!"
     with pytest.raises(ValueError, match="blank"):
@@ -173,7 +173,7 @@ def test_greeter_derives_call_shape_with_a_semantic_only_docstring(monkeypatch):
     assert (
         spec.signature
         == contract["signature"]
-        == "(name: str, *, uppercase: bool = ...) -> 'Greeting'"
+        == "(name: str, *, uppercase: bool = False) -> 'Greeting'"
     )
     name, uppercase = spec.parameters
     assert name.required and name.type.name == "str"
@@ -182,9 +182,11 @@ def test_greeter_derives_call_shape_with_a_semantic_only_docstring(monkeypatch):
     assert not uppercase.default_is_none
     assert spec.returns.name == "Greeting"
     assert [field.name for field in spec.returns.fields] == ["text", "characters"]
-    assert "greet.hello(name: str, *, uppercase: bool = ...) -> 'Greeting'" in document
+    assert (
+        "greet.hello(name: str, *, uppercase: bool = False) -> 'Greeting'" in document
+    )
     assert "Effect: observation" in document
-    assert "uppercase: bool (keyword_only; default omitted)" in document
+    assert "uppercase: bool (keyword_only; default False)" in document
     assert "Returns: Greeting" in document
     assert "Unicode code points" in document
     vis.testing.assert_catalog(catalog, names=["greet.hello"])

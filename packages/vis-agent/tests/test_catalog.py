@@ -92,6 +92,9 @@ def test_catalog_preserves_contract_shape_and_nested_public_names(symbol):
     ]
     assert read.parameters[1].type.values == ("short", "full")
     assert read.parameters[1].default_is_none is False
+    assert read.parameters[1].default_source == "'short'"
+    assert note.default_source == "None" and count.default_source is None
+    assert "default 'short'" in catalog.help("store.items.read").text
 
 
 def test_catalog_values_are_deeply_immutable_snapshots(symbol):
@@ -151,7 +154,7 @@ def test_empty_hidden_and_duplicate_declarations(symbol):
             vis.Catalog(invalid)
 
 
-def test_defaults_and_annotations_are_never_evaluated_or_exposed():
+def test_opaque_defaults_and_annotations_are_never_evaluated():
     class Secret:
         def __repr__(self):
             pytest.fail("default repr ran")
@@ -160,12 +163,14 @@ def test_defaults_and_annotations_are_never_evaluated_or_exposed():
         pytest.fail("annotation evaluated")
 
     def read(token=Secret(), *, other="private-default") -> evaluate():
-        """Read without disclosing defaults."""
+        """Read without inspecting opaque defaults."""
         pytest.fail("operation ran")
 
     catalog = vis.Catalog([vis.Symbol(read)])
     assert catalog.spec("read").returns.kind == "unresolved"
-    assert "private-default" not in repr(catalog.spec()) + catalog.help("read").text
+    assert "private-default" in repr(catalog.spec()) + catalog.help("read").text
+    assert catalog.spec("read").parameters[0].default_source is None
+    assert catalog.spec("read").parameters[1].default_source == "'private-default'"
     assert "default omitted" in catalog.help("read").text
     with pytest.raises(AssertionError, match="unresolved"):
         vis.testing.assert_catalog(catalog, names=["read"])

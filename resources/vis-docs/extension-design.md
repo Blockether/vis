@@ -103,11 +103,13 @@ For contextual defaults, name the resolution rule: for example, “Omitting `rep
 uses the current project's repository.” For `None`, say whether it means automatic
 selection, no limit, or absence. Avoid vague phrases such as “uses the default.”
 
-Vis withholds non-`None` default values and never calls their `repr()`: a host default
-can be a credential, client or other private object. `...` means you can omit the
-argument, not that you should pass `Ellipsis`. If a public value is essential to
-safe use, such as a timeout in seconds, document it in prose or `Annotated` metadata;
-never copy a resolved credential or environment value. See the
+Vis exposes ordinary literal defaults in signatures and generated help, so you do
+not need to copy their values into prose. Explain what a timeout controls and its
+units, or what an empty collection means. Opaque objects and defaults outside the
+inspection budget appear as `...`: omit the argument to use the original default,
+not `Ellipsis`. Custom `repr()` methods and factories never run during inspection.
+Declared defaults are public metadata; resolve credentials inside the tool rather
+than putting them in parameter defaults. See the
 [contract reference](extension-api.md#defaults-and-introspection).
 
 ## Keep the entrypoint small

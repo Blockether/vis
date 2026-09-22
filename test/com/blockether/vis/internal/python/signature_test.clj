@@ -81,38 +81,38 @@
 
 (defdescribe
   signature-refresh-test
-  ;; #232 follow-up: cached inspection must follow metadata updates, not just reload.
-  (it
-    "refreshes retained callables while doc and keys restamps preserve the prototype"
-    (doseq [worker? [false true]]
-      (tpc/with-own
-        [ctx
-         {'signature_refresh.probe (fn [& _]
-                                     nil)} nil {:worker? worker?}]
-        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value)")
-        (let [answer (ep/run-python-block ctx
-                                          (str
-                                            "import inspect\n" "kept = signature_refresh.probe\n"
-                                            "original = kept.__wrapped__\n"
-                                            "assert str(inspect.signature(kept)) == '(value)'\n"))]
-          (expect (nil? (:error answer)) (pr-str answer)))
-        (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value, *, repeat=...)")
-        (let [answer (ep/run-python-block
-                       ctx
-                       (str "assert kept is signature_refresh.probe\n"
-                            "assert kept.__wrapped__ is not original\n"
-                            "assert str(inspect.signature(kept)) == '(value, *, repeat=Ellipsis)'\n"
-                            "updated = kept.__wrapped__\n"))]
-          (expect (nil? (:error answer)) (pr-str answer)))
-        (ep/set-python-binding-doc! ctx 'signature_refresh.probe "Inspect a value.")
-        (ep/set-python-binding-keys! ctx 'signature_refresh.probe "repeat (optional)")
-        (let [answer (ep/run-python-block
-                       ctx
-                       (str "assert kept.__wrapped__ is updated\n"
-                            "assert str(inspect.signature(kept)) == '(value, *, repeat=Ellipsis)'\n"
-                            "assert kept.__doc__ == 'Inspect a value.'\n" "print('refreshed')\n"))]
-          (expect (nil? (:error answer)) (pr-str answer))
-          (expect (= "refreshed\n" (:stdout answer))))))))
+  ;; #232 and #281: cached inspection follows metadata updates, including literal defaults.
+  (it "refreshes retained callables while doc and keys restamps preserve the prototype"
+      (doseq [worker? [false true]]
+        (tpc/with-own
+          [ctx
+           {'signature_refresh.probe (fn [& _]
+                                       nil)} nil {:worker? worker?}]
+          (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value)")
+          (let [answer (ep/run-python-block
+                         ctx
+                         (str "import inspect\n" "kept = signature_refresh.probe\n"
+                              "original = kept.__wrapped__\n"
+                              "assert str(inspect.signature(kept)) == '(value)'\n"))]
+            (expect (nil? (:error answer)) (pr-str answer)))
+          (ep/set-python-binding-signature! ctx 'signature_refresh.probe "(value, *, repeat=2)")
+          (let [answer (ep/run-python-block
+                         ctx
+                         (str "assert kept is signature_refresh.probe\n"
+                              "assert kept.__wrapped__ is not original\n"
+                              "assert str(inspect.signature(kept)) == '(value, *, repeat=2)'\n"
+                              "updated = kept.__wrapped__\n"))]
+            (expect (nil? (:error answer)) (pr-str answer)))
+          (ep/set-python-binding-doc! ctx 'signature_refresh.probe "Inspect a value.")
+          (ep/set-python-binding-keys! ctx 'signature_refresh.probe "repeat (optional)")
+          (let [answer (ep/run-python-block
+                         ctx
+                         (str "assert kept.__wrapped__ is updated\n"
+                              "assert str(inspect.signature(kept)) == '(value, *, repeat=2)'\n"
+                              "assert kept.__doc__ == 'Inspect a value.'\n"
+                              "print('refreshed')\n"))]
+            (expect (nil? (:error answer)) (pr-str answer))
+            (expect (= "refreshed\n" (:stdout answer))))))))
 
 (defn- inspect-options
   "Echo a harmless options map through the observed-tool dispatcher."
