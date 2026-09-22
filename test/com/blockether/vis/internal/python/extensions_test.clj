@@ -1027,7 +1027,8 @@ raise RuntimeError(' | '.join(errors))
 
                  (expect (nil? (:error result)))
                  (expect (str/includes? out "BuildStatus job:4:0 safe"))
-                 (expect (str/includes? out "(job, number=None, wait=Ellipsis)"))
+                 ;; #281: sandbox signatures retain literal method defaults.
+                 (expect (str/includes? out "(job, number=None, wait=0)"))
                  (expect (str/includes? out "['deploy_status', 'poll']"))
                  (expect (str/ends-with? (str/trim out) "True"))
                  (lp/sync-active-extension-symbols! env [])
