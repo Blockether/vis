@@ -8,10 +8,12 @@
    prove that the session naming and the deferral survive the crossing."
   (:require [charred.api :as json]
             [clojure.string :as str]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
+  (:import [java.lang Thread$State]))
 
 (defn- reply
   "The reply map for one call to `tool` with `args` in `session`."
@@ -37,6 +39,34 @@
     (some-> (get answer "stdout")
             str
             clojure.string/trim)))
+
+(defn- start-call
+  "Start a driver call and expose its thread so overlap can be measured without sleeps."
+  [f]
+  (let [thread
+        (promise)
+
+        result
+        (future (deliver thread (Thread/currentThread)) (f))]
+
+    {:thread thread :result result}))
+
+(defn- parked?
+  "Wait until a driver is blocked either on the context lock or on a test gate."
+  [call]
+  (when-let [^Thread thread (deref (:thread call) 5000 nil)]
+    (let [deadline (+ (System/nanoTime) 5000000000)]
+      (loop []
+
+        (cond (#{Thread$State/WAITING Thread$State/TIMED_WAITING} (.getState thread)) true
+              (>= (System/nanoTime) deadline) false
+              :else (do (Thread/sleep 1) (recur)))))))
+
+(defn- publish-from-callback
+  "Dispatch without driver bindings, as on an extension worker's host-callback thread."
+  [session headline]
+  (binding [extension/*activity-content-sink* nil]
+    (reply session "publish" [{"headline" headline}])))
 
 (deftest dispatch-envelope-test
   (let [session (block-session! {"echo" (fn [x]
@@ -141,3 +171,215 @@
                (is (true? (python-host/bind!)))
                (is (some? @handed)))))
          (finally (reset! (deref #'python-host/bound) bound)))))
+
+(deftest concurrent-calls-keep-their-activity-sinks-test
+  ;; #283: a second driver replaced the first frame, then either driver removed it.
+  (let [session
+        (block-session! {"publish" extension/publish-activity!})
+
+        events
+        (atom [])
+
+        first-entered
+        (promise)
+
+        first-release
+        (promise)
+
+        second-release
+        (promise)
+
+        second-entered
+        (atom false)
+
+        second-call
+        (atom nil)
+
+        first-call
+        (start-call #(binding [extension/*activity-content-sink*
+                               (fn [p]
+                                 (swap! events conj [:first (get p "headline")]))]
+                       (python-host/conveying session
+                                              (deliver first-entered true)
+                                              @first-release
+                                              (publish-from-callback session "First call"))))]
+
+    (try (is (true? (deref first-entered 5000 nil)))
+         (reset! second-call (start-call #(binding [extension/*activity-content-sink*
+                                                    (fn [p]
+                                                      (swap! events conj
+                                                        [:second (get p "headline")]))]
+                                            (python-host/conveying
+                                              session
+                                              (reset! second-entered true)
+                                              @second-release
+                                              (publish-from-callback session "Second call")))))
+         ;; Both implementations park here: the broken one has entered the body and
+         ;; overwritten the frame; the fixed one is still waiting for the context.
+         (is (parked? @second-call))
+         (let [overlapped?
+               @second-entered
+
+               first-reply
+               (do (deliver first-release true) (deref (:result first-call) 5000 ::timeout))
+
+               second-reply
+               (do (deliver second-release true) (deref (:result @second-call) 5000 ::timeout))]
+
+           (is (= [[:first "First call"] [:second "Second call"]] @events)
+               (str "Activity sink ownership: " (pr-str @events)))
+           (is (false? overlapped?))
+           (is (= {"value" true} first-reply))
+           (is (= {"value" true} second-reply)))
+         (is (not (contains? @@#'python-host/frames session)))
+         (finally (deliver first-release true)
+                  (deliver second-release true)
+                  (doseq [call
+                          [first-call @second-call]
+
+                          :when call]
+
+                    (future-cancel (:result call)))
+                  (python-host/forget-session! session)
+                  (runtime/close-session! session)))))
+
+(deftest nested-calls-restore-the-outer-activity-sink-test
+  ;; #283: a reentrant call must restore, not remove, the outer driver's frame.
+  (let [session
+        (block-session! {"publish" extension/publish-activity!})
+
+        events
+        (atom [])
+
+        failure
+        (ex-info "Inner call failed" {})]
+
+    (try (binding [extension/*activity-content-sink* (fn [p]
+                                                       (swap! events conj
+                                                         [:outer (get p "headline")]))]
+           (python-host/conveying
+             session
+             (is (= {"value" true} (publish-from-callback session "Before inner call")))
+             (binding [extension/*activity-content-sink* (fn [p]
+                                                           (swap! events conj
+                                                             [:inner (get p "headline")]))]
+               (is (identical? failure
+                               (try (python-host/conveying session
+                                                           (publish-from-callback session
+                                                                                  "Inner call")
+                                                           (throw failure))
+                                    (catch Throwable t t)))))
+             (is (= {"value" true} (publish-from-callback session "After inner call")))))
+         (is (= [[:outer "Before inner call"] [:inner "Inner call"] [:outer "After inner call"]]
+                @events))
+         (is (not (contains? @@#'python-host/frames session)))
+         (finally (python-host/forget-session! session) (runtime/close-session! session)))))
+
+(deftest different-contexts-remain-concurrent-test
+  ;; #283: serialize a context, not the entire extension host.
+  (let [one
+        (str "vis-host-concurrent-one-" (System/nanoTime))
+
+        two
+        (str "vis-host-concurrent-two-" (System/nanoTime))
+
+        entered
+        (promise)
+
+        release
+        (promise)
+
+        first-call
+        (start-call #(python-host/conveying one (deliver entered true) @release :first))]
+
+    (try (is (true? (deref entered 5000 nil)))
+         (let [second-call (start-call #(python-host/conveying two :second))]
+           (try (is (= :second (deref (:result second-call) 5000 ::timeout)))
+                (is (not (realized? (:result first-call))))
+                (finally (future-cancel (:result second-call)))))
+         (deliver release true)
+         (is (= :first (deref (:result first-call) 5000 ::timeout)))
+         (doseq [session [one two]]
+           (is (not (contains? @@#'python-host/frames session)))
+           (is (not (contains? @@#'python-host/frame-locks session))))
+         (finally (deliver release true) (future-cancel (:result first-call))))))
+
+(deftest failed-calls-release-the-context-test
+  ;; #283: successful nesting and a failing outer call must both release their leases.
+  (let [session
+        (str "vis-host-failure-" (System/nanoTime))
+
+        failure
+        (ex-info "Driver failed" {})]
+
+    (is (identical? failure
+                    (try (python-host/conveying
+                           session
+                           (is (= :nested (python-host/conveying session :nested)))
+                           (is (contains? @@#'python-host/frames session))
+                           (is (= 1 (get-in @@#'python-host/frame-locks [session :users])))
+                           (throw failure))
+                         (catch Throwable t t))))
+    (is (not (contains? @@#'python-host/frames session)))
+    (is (not (contains? @@#'python-host/frame-locks session)))
+    (is (= :recovered (python-host/conveying session :recovered)))
+    (is (not (contains? @@#'python-host/frame-locks session)))))
+
+(deftest interrupted-waiter-preserves-the-active-context-test
+  ;; #283: cancelling a queued call must not remove the active frame or its lock.
+  (let [session
+        (str "vis-host-interrupted-" (System/nanoTime))
+
+        entered
+        (promise)
+
+        release
+        (promise)
+
+        waiter-entered
+        (atom false)
+
+        waiter
+        (atom nil)
+
+        next-call
+        (atom nil)
+
+        holder
+        (start-call #(python-host/conveying session (deliver entered true) @release :holder))]
+
+    (try (is (true? (deref entered 5000 nil)))
+         (let [frame
+               (get @@#'python-host/frames session)
+
+               lock
+               (get-in @@#'python-host/frame-locks [session :lock])]
+
+           (reset! waiter (start-call #(try (python-host/conveying session
+                                                                   (reset! waiter-entered true)
+                                                                   :unexpected)
+                                            (catch InterruptedException _ :interrupted))))
+           (is (parked? @waiter))
+           (is (= 2 (get-in @@#'python-host/frame-locks [session :users])))
+           (.interrupt ^Thread (deref (:thread @waiter) 5000 nil))
+           (is (= :interrupted (deref (:result @waiter) 5000 ::timeout)))
+           (is (false? @waiter-entered))
+           (is (identical? frame (get @@#'python-host/frames session)))
+           (is (identical? lock (get-in @@#'python-host/frame-locks [session :lock])))
+           (is (= 1 (get-in @@#'python-host/frame-locks [session :users])))
+           (reset! next-call (start-call #(python-host/conveying session :next)))
+           (is (parked? @next-call))
+           (is (not (realized? (:result @next-call))))
+           (is (identical? lock (get-in @@#'python-host/frame-locks [session :lock])))
+           (deliver release true)
+           (is (= :holder (deref (:result holder) 5000 ::timeout)))
+           (is (= :next (deref (:result @next-call) 5000 ::timeout))))
+         (is (not (contains? @@#'python-host/frames session)))
+         (is (not (contains? @@#'python-host/frame-locks session)))
+         (finally (deliver release true)
+                  (doseq [call
+                          [holder @waiter @next-call]
+
+                          :when call]
+
+                    (future-cancel (:result call)))))))

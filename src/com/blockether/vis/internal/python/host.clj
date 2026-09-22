@@ -22,7 +22,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis-python-runtime :as runtime]
-            [taoensso.telemere :as tel]))
+            [taoensso.telemere :as tel])
+  (:import [java.util.concurrent.locks ReentrantLock]))
 
 (defonce
   ^:private
@@ -120,11 +121,46 @@
   frames
   (atom {}))
 
+(defonce ^:private
+         ^{:doc
+           "Context locks retained by active drivers and waiters, removed after the last release."}
+         frame-locks
+  (atom {}))
+
+(defn- retain-frame-lock!
+  ^ReentrantLock [session]
+  (get-in (swap! frame-locks update
+            session
+            (fn [entry]
+              (if entry (update entry :users inc) {:lock (ReentrantLock. true) :users 1})))
+          [session :lock]))
+
+(defn- release-frame-lock!
+  [session]
+  (swap! frame-locks (fn [locks]
+                       (if (= 1 (get-in locks [session :users]))
+                         (dissoc locks session)
+                         (update-in locks [session :users] dec)))))
+
 (defn conveying*
-  "Call `f`, conveying THIS thread's dynamic bindings to `session`'s host calls."
+  "Call `f`, conveying THIS thread's dynamic bindings to `session`'s host calls.
+
+   A context has no invocation identity on its host callbacks, so its complete
+   driver calls must run one at a time. Waiting is interruptible; other contexts
+   remain independent. Reentrant calls restore the outer driver's frame."
   [session f]
-  (swap! frames assoc session (clojure.lang.Var/getThreadBindingFrame))
-  (try (f) (finally (swap! frames dissoc session))))
+  (let [lock (retain-frame-lock! session)]
+    (try (.lockInterruptibly lock)
+         (try (let [previous (get @frames session)]
+                (swap! frames assoc session (clojure.lang.Var/getThreadBindingFrame))
+                (try (f)
+                     (finally (if previous
+                                (swap! frames assoc session previous)
+                                (swap! frames dissoc session)))))
+              (finally (.unlock lock)))
+         ;; Include queued callers in the count: interruption must not replace the
+         ;; lock or frame that another driver still owns.
+         (finally (release-frame-lock! session)))))
 
 (defmacro conveying
   "Evaluate `body`, conveying the current dynamic bindings to `session`'s host calls."

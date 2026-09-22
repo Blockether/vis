@@ -589,6 +589,89 @@ vis.register_extension(vis.Extension(
                        (expect (= ["succeeded" "failed"]
                                   (mapv :state (:rows (activity/presentation @state)))))))))))
 
+(defdescribe
+  sdk-concurrent-activity-ownership-test
+  ;; #283: real worker callbacks must publish into their own invocation's Activity.
+  (it
+    "keeps concurrent publications and validation failures on their originating rows"
+    (with-loaded
+      {"activity_isolation.py"
+       "import blockether.vis.extension as vis
+
+def check_activity(label: str, fail: bool) -> str:
+    \"Publish this invocation's content and optionally fail validation.\"
+    vis.publish_activity(vis.ActivityPresentation(
+        \"Invocation \" + label, \"Check \" + label,
+        (vis.ActivityMarkdown(\"Content \" + label),)))
+    if fail:
+        raise ValueError(\"Rejected \" + label)
+    return label
+
+vis.register_extension(vis.Extension(
+    name=\"activity-isolation\", alias=\"activity_isolation\",
+    description=\"Concurrent Activity ownership fixture\",
+    symbols=[vis.Symbol(check_activity, tag=\"observation\",
+                        activity=vis.Activity(label=\"Check invocation\", show_start=False))]))
+"}
+      (fn [_ _]
+        (expect (= [] (pyx/load-failures)))
+        (let [ext
+              (registered "activity-isolation")
+
+              entry
+              (first (get-in ext [:ext/engine :ext.engine/symbols]))
+
+              events
+              (atom {})
+
+              start
+              (promise)
+
+              calls
+              (mapv (fn [i]
+                      (let [label
+                            (format "call-%02d" i)
+
+                            fail?
+                            (odd? i)]
+
+                        {:label label
+                         :fail? fail?
+                         :result
+                         (future @start
+                                 (binding [extension/*tool-event-sink*
+                                           #(swap! events update label (fnil conj []) %)]
+                                   (try
+                                     {:value
+                                      (extension/invoke-symbol-wrapper ext entry [label fail?] {})}
+                                     (catch Exception e {:error (ex-message e)}))))}))
+                    (range 12))]
+
+          (try (expect (false? (get-in entry [:ext.symbol/activity :show-start])))
+               (deliver start true)
+               (let [outcomes (mapv #(deref (:result %) 10000 ::timeout) calls)]
+                 (doseq [[{:keys [label fail?]} outcome] (map vector calls outcomes)]
+                   (if fail?
+                     (expect (str/includes? (str (:error outcome)) (str "Rejected " label)))
+                     (expect (= {:value label} outcome)))
+                   (let [observed (get @events label)
+                         publications (filter #(and (= :content (:phase %))
+                                                    (str/starts-with?
+                                                      (get-in % [:presentation "headline"] "")
+                                                      "Invocation "))
+                                              observed)
+                         projection (-> observed
+                                        activity/replay
+                                        activity/presentation)]
+
+                     (expect (= [(str "Content " label)]
+                                (mapv #(get-in % [:presentation "content" 0 "text"]) publications)))
+                     (expect (= [(if fail? "failed" "succeeded")] (mapv :state (:rows projection))))
+                     (expect (activity-contract/valid-projection? projection)))))
+               (finally (deliver start true)
+                        (doseq [call calls]
+                          (future-cancel (:result call))))))))))
+
 ;; Loading + registry
 
 (defdescribe load-and-register-test
