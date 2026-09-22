@@ -454,6 +454,84 @@
     (is (= ["line 1" "line 2" "line 3" "line 4"] (mapv :text (filterv #(= :log (:kind %)) rows))))
     (is (not-any? #(str/includes? (str (:text %)) "earlier lines") rows))))
 
+(deftest log-reads-the-record-back-instead-of-counting-earlier-lines-test
+  ;; Attaching mid-run is what the "earlier lines" note used to paper over: the pane
+  ;; asks the record for the lines it was never sent, page by page to the first one,
+  ;; and paints them in front of the window instead of counting them.
+  (let [view
+        (hi/live-view<-wire {"id" "late"
+                             "kind" "live"
+                             "version" 1
+                             "seq" 0
+                             "title" "Build output"
+                             "nodes" [{"id" "log"
+                                       "type" "log"
+                                       "lines" ["line 4499" "line 4500" "line 4501"]
+                                       "line_tones" ["warn" "warn" "warn"]
+                                       "window_lines" 100
+                                       "total_lines" 4501
+                                       "default_expanded" true}]})
+
+        page
+        (fn [from limit]
+          {"lines" (mapv #(str "line " (+ (long from) (long %) 1)) (range limit))
+           "line_tones" (vec (repeat limit "error"))})
+
+        read-back
+        (fn [pane]
+          (loop [pane
+                 pane
+
+                 reads
+                 []]
+
+            (if-let [{:keys [node-id from limit]} (lv/log-fill-request pane)]
+              (let [request-id (random-uuid)]
+                (recur (lv/log-filled (lv/log-fill-requested pane node-id request-id)
+                                      request-id
+                                      {:page (page from limit)})
+                       (conj reads [from limit])))
+              {:pane pane :reads reads})))
+
+        {:keys [pane reads]}
+        (read-back (lv/opened view))
+
+        lines
+        #(filterv (fn [row]
+                    (= :log (:kind row)))
+           (entries %))]
+
+    (is (= [[2498 2000] [498 2000] [0 498]] reads)
+        "the newest missing page first, walking back to the first line")
+    (is (= 4501 (count (lines pane))))
+    (is (= ["line 1" "line 2"] (mapv :text (take 2 (lines pane)))))
+    (is (= ["line 4500" "line 4501"] (mapv :text (take-last 2 (lines pane)))))
+    (is (= [:error :error] (mapv :tone (take 2 (lines pane))))
+        "a page read back keeps the tones it was written with")
+    (is (= [:warn :warn] (mapv :tone (take-last 2 (lines pane)))))
+    (is (not-any? #(str/includes? (str (:text %)) "earlier lines") (entries pane)))
+    (is (nil? (lv/log-fill-request pane)) "nothing left to read")
+    ;; A page that arrives twice cannot duplicate the head.
+    (is (= 4501
+           (count (lines (lv/log-filled (lv/log-fill-requested pane "log" :again)
+                                        :again
+                                        {:page (page 0 498)})))))
+    ;; While the walk is still running, the pane says what it is doing…
+    (is (some #(str/includes? (str (:text %)) "reading 4498 earlier lines")
+              (entries (lv/opened view))))
+    ;; …and a refused read says THAT instead of promising lines nothing is fetching.
+    (let [refused
+          (lv/log-filled (lv/log-fill-requested (lv/opened view) "log" :read) :read {:error true})]
+      (is (some #(str/includes? (str (:text %)) "reading them failed") (entries refused)))
+      (is (nil? (lv/log-fill-request refused)) "a failed read waits for the next line of output")
+      (is (some? (lv/log-fill-request
+                   (lv/patched refused
+                               (hi/live-patch<-wire
+                                 {"view_id" "late"
+                                  "seq" 1
+                                  "ops" [{"op" "append" "node_id" "log" "lines" ["line 4502"]}]}))))
+          "and new output retries it"))))
+
 (deftest styled-log-narrow-terminal-test
   (doseq [cols [24 40 80]]
     (let [view {:id "styled"

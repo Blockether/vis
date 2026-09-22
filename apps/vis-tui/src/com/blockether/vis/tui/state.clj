@@ -3354,6 +3354,18 @@
                       (:live-viewer-search workspace)
                       (update :live-viewer-search lv/log-search-loaded request-id result))))))
 
+(reg-event-db :live-view-log-fill
+              ;; One read of the record, in flight. Its id fences out a page that lands
+              ;; after a newer read, a clear or a tab switch.
+              (fn [db [_ view-id node-id request-id]]
+                (update-live-pane db view-id #(lv/log-fill-requested % node-id request-id))))
+
+(reg-event-db :live-view-log-filled
+              ;; Earlier output, read back and painted IN FRONT of the window the
+              ;; producer holds hot. Nobody asked for it: a log is read, not counted.
+              (fn [db [_ view-id request-id result]]
+                (update-live-pane db view-id #(lv/log-filled % request-id result))))
+
 (reg-event-db :live-record-open
               (fn [db [_ session-id pane]]
                 (let [target (session-target-tab db session-id)]

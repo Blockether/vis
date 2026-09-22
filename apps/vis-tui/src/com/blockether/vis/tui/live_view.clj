@@ -28,10 +28,12 @@
    A viewport parked at the end FOLLOWS new rows; scrolling up releases the
    follow and landing back on the last row re-arms it.
 
-   EVERY NODE PAINTS A WINDOW, never its record — [[node-window]] item rows and
-   one line saying how many more, which a click expands. The record is what the
-   sink keeps and what the model reads; a pane that painted five thousand rows
-   would bury the four nodes under it.
+   A KEYED NODE PAINTS A WINDOW — [[node-window]] item rows and one line saying
+   how many more, which a click expands: a pane that painted five thousand table
+   rows would bury the four nodes under it. A LOG NEVER DOES. Output is what the
+   human came to read, so an open log paints every line it holds, and
+   [[log-fill-request]] reads the record back to its first line for whatever this
+   terminal attached too late to be sent.
 
    SEVERAL VIEWS AT ONCE: the newest paints in full and every older one keeps ONE
    collapsed line above it. A band shares its rows with the transcript and the
@@ -301,13 +303,83 @@
    A patch that does not ADVANCE the view is dropped rather than refused. A view
    opened in THIS process reaches the tab on two routes — the in-process channel
    bus and the session event the gateway journals — and the journalled frame
-   coalesces ops the bus already applied one at a time."
+   coalesces ops the bus already applied one at a time.
+
+   New output also clears a FAILED record read, so the next line that lands
+   retries the earlier ones this pane has not seen."
   [pane patch]
   (if (<= (long (or (:seq patch) 0)) (long (or (get-in pane [:view :seq]) 0)))
     pane
     (-> pane
         (update :view live/apply-patch patch)
+        (dissoc :log-fill-error)
         (assoc :fresh (touched patch)))))
+
+(def log-fill-page-size
+  "Record lines ONE unasked read takes. The gateway serves at most the default log
+   window in a page (`gateway.view/live-log-page`), so this is the largest read
+   that comes back whole."
+  2000)
+
+(defn log-fill-request
+  "The record page an open log is still MISSING — `{:node-id … :from … :limit …}`
+   for `client/live-view-log` — or nil when this pane holds every line the record
+   has.
+
+   A terminal that attached mid-run was handed the producer's window and nothing
+   before it. That is a hole in what a human is reading, so the pane READS IT BACK
+   instead of printing a note about it: the newest missing page first, walking to
+   line 0. One read is in flight at a time, and a read that FAILED waits for the
+   next line of output rather than hammering the gateway."
+  [pane]
+  (when-not (:log-fill pane)
+    (let [unread
+          (or (:log-fill-error pane) #{})
+
+          missing
+          (fn [node]
+            (max 0 (- (long (or (:total-lines node) 0)) (count (:lines node)))))
+
+          node
+          (first (filter #(and (= :log (:type %))
+                               (not (contains? unread (:id %)))
+                               (pos? (long (missing %))))
+                         (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))]
+
+      (when node
+        (let [behind
+              (long (missing node))
+
+              from
+              (max 0 (- behind (long log-fill-page-size)))]
+
+          {:node-id (:id node) :from from :limit (- behind from)})))))
+
+(defn log-fill-requested
+  "The pane with one record read in flight. Its identity is what makes a page that
+   comes back after a newer read, a `clear` or a tab switch harmless."
+  [pane node-id request-id]
+  (assoc pane :log-fill {:node-id node-id :request-id request-id}))
+
+(defn log-filled
+  "The pane one answered read leaves behind: the page's lines standing in front of
+   the log they belong to. A refusal — or a page the record could not serve —
+   remembers the node as unread, which is what the pane SAYS instead of promising
+   lines nothing is fetching. Only the current read is accepted."
+  [pane request-id {:keys [page error]}]
+  (if (not= request-id (:request-id (:log-fill pane)))
+    pane
+    (let [node-id
+          (:node-id (:log-fill pane))
+
+          {:keys [lines line-tones]}
+          (when-not error (view-model/live-log-page<-wire page))]
+
+      (if (seq lines)
+        (-> (dissoc pane :log-fill)
+            (update :view live/log-head-filled node-id (vec lines) (vec line-tones)))
+        (-> (dissoc pane :log-fill)
+            (update :log-fill-error (fnil conj #{}) node-id))))))
 
 (defn settled
   "The pane a close leaves behind — the run's FINAL picture and the verdict that
@@ -842,7 +914,7 @@
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
 
 (defmethod node-rows :log
-  [{:keys [id lines line-tones total-lines]} {:keys [is-expanded]}]
+  [{:keys [id lines line-tones total-lines]} {:keys [is-expanded is-record-unread]}]
   (if (seq lines)
     (let [{:keys [shown]}
           (windowed lines is-expanded true)
@@ -853,7 +925,9 @@
       (into (if (pos? behind)
               [{:kind :note
                 :node-id id
-                :text (str "… " behind " earlier lines — the view's record keeps them all")}]
+                :text (if is-record-unread
+                        (str "… " behind " earlier lines are in the record — reading them failed")
+                        (str "… reading " behind " earlier lines from the record"))}]
               [])
             (map-indexed (fn [index line]
                            {:kind :log
@@ -1273,7 +1347,8 @@
            :is-open (get (:disclosures pane)
                          (:id node)
                          (and (not (settled? pane)) (true? (:default-expanded node))))
-           :is-interactive (not (settled? pane))})
+           :is-interactive (not (settled? pane))
+           :is-record-unread (contains? (:log-fill-error pane) (:id node))})
 
         head
         (mapv (fn [runs]

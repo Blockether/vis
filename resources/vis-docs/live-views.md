@@ -320,12 +320,12 @@ Expanding one never opens another; patches preserve the reader's choice.
 receipts start collapsed again, and their retained output remains available when
 expanded.
 
-A live view shows the whole log. Companion reads the record back to its first
-line when you expand one, and the TUI paints every line it was handed.
-`window_lines` only sizes the tail the model reads and the tail a client is
-handed when it attaches; it never hides output from you. If a surface attached
-after a log had already started, a note says how many earlier lines the record
-holds, and search reaches them.
+A live view shows the whole log. Companion and the TUI both read the record back
+to its first line when you open one, so output that arrived before your surface
+attached is painted rather than counted. `window_lines` only sizes the tail the
+model reads and the tail a client is handed when it attaches; it never hides
+output from you. While those earlier lines are still being read, one line says
+so, and it says so as well when a read fails. Search reaches the record either way.
 
 Expanded logs offer **Search** in Companion and **Search log** through the TUI's
 F3 controls or pointer. Search is a literal substring, case-insensitive, across
@@ -382,7 +382,7 @@ Decode and assemble partial lines in your adapter before redacting and appending
 them. Successive batches keep their own tones, even when updates are coalesced.
 Append incremental output rather than clearing and replacing snapshots. Styling
 does not change `window_lines`, retention or search pagination; the earlier pages
-Companion reads back keep the tones they were written with. Use `vis.code(..., language=...)` for a separate,
+a surface reads back keep the tones they were written with. Use `vis.code(..., language=...)` for a separate,
 known-language snippet, not to reinterpret the mixed log.
 
 For raw wire clients, an `append` operation may carry `tone` only for a log node.

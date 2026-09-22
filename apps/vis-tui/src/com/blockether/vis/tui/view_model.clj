@@ -56,3 +56,9 @@
   (some-> value
           wire/->engine
           restore-values))
+
+(defn live-log-page<-wire
+  [value]
+  (some-> value
+          wire/->engine
+          restore-values))

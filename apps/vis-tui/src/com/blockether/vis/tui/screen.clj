@@ -844,6 +844,28 @@
     (when-let [from (lv/log-search-page-from search direction)]
       (read-live-log! db from))))
 
+(defn- fill-live-log!
+  "Ask the record for the page the painted log is still MISSING, off the render
+   thread. Each page that lands repaints and asks for the next one, so a log this
+   terminal attached to late walks back to its first line without anybody pressing
+   anything. A view with no gateway session cannot be read back at all, and the
+   pane says that rather than promising lines nothing is fetching."
+  []
+  (let [db @state/app-db]
+    (when-let [pane (first (viewer-panes db))]
+      (when-let [{:keys [node-id from limit]} (lv/log-fill-request pane)]
+        (let [request-id (random-uuid)
+              session-id (not-empty (str (get-in pane [:view :session-id])))
+              view-id (lv/view-id pane)]
+
+          (state/dispatch [:live-view-log-fill view-id node-id request-id])
+          (if session-id
+            (future (let [result (try {:page
+                                       (vis/live-view-log session-id view-id node-id from limit "")}
+                                      (catch Throwable _ {:error true}))]
+                      (state/dispatch [:live-view-log-filled view-id request-id result])))
+            (state/dispatch [:live-view-log-filled view-id request-id {:error true}])))))))
+
 (defn- live-log-search-key!
   "The query owns typing; Escape returns to the view without interrupting the run."
   [db ^KeyStroke key]
@@ -3492,6 +3514,9 @@
                                    composer-h
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])
+          ;; The frame that painted the log asks for the record page it is still
+          ;; missing; the page that lands repaints and asks for the next one.
+          (fill-live-log!)
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
       (let [rail-cursor (binding [frame/*column-offset* 0]
                           (projects/paint! (frame/surface-graphics screen screen-cols rows)

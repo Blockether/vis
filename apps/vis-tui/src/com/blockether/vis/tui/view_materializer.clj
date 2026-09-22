@@ -426,6 +426,37 @@
                     (str "patch seq " (:seq patch) " does not advance the view's " (:seq view))))
   (assoc (reduce apply-op view (:ops patch)) :seq (:seq patch)))
 
+(defn log-head-filled
+  "`view` with `lines` — and `tones`, one per line — standing IN FRONT of log node
+   `node-id`: the output the record holds from before this surface attached, read
+   back by the surface that joined late.
+
+   `:total-lines` does not move. The record did not grow; the pane caught up with
+   it. Only the lines still MISSING are taken, from the END of the page, so a page
+   that arrives twice — or after a `clear` re-based the node — can neither
+   duplicate the head nor outrun what the pane already holds."
+  [view node-id lines tones]
+  (if-let [path (node-path view node-id)]
+    (let [node (get-in view path)
+          given (vec lines)
+          taken (min (max 0 (- (long (or (:total-lines node) 0)) (count (:lines node))))
+                     (count given))]
+
+      (if (or (not= :log (:type node)) (zero? taken))
+        view
+        (let [head (subvec given (- (count given) taken))
+              head-tones (subvec (into [] (take (count given)) (concat tones (repeat nil)))
+                                 (- (count given) taken))
+              styled? (or (contains? node :line-tones) (some some? head-tones))]
+
+          (assoc-in view
+            path
+            (cond-> (assoc node :lines (into head (:lines node)))
+              styled?
+              (assoc :line-tones
+                (into head-tones (or (:line-tones node) (repeat (count (:lines node)) nil)))))))))
+    view))
+
 ;; The model's surface
 
 (def ^:private model-budget
