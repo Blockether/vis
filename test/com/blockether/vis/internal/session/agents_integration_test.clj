@@ -31,11 +31,12 @@
 
 (defn- router
   []
+  ;; These fixtures exercise checkpoints and iteration budgets, not context overflow.
   (svar/make-router [{:id :fixture
                       :api-key "test"
                       :base-url "http://127.0.0.1:1/v1"
                       :root "small"
-                      :models [{:name "small"} {:name "large"}]}]))
+                      :models [{:name "small" :context 200000} {:name "large" :context 200000}]}]))
 
 (defn- message-text
   [message]

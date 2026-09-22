@@ -23,10 +23,11 @@
           ["reply_to" "thread_id"]]
 
     (let [router
+          ;; Exercise reply enforcement with room for the full system/Council prompt.
           (svar/make-router [{:id :lmstudio
                               :api-key "test"
                               :base-url "http://127.0.0.1:1234/v1"
-                              :models [{:name "model"}]}])
+                              :models [{:name "model" :context 200000}]}])
 
           a
           (lp/create-environment router {:db :memory})
