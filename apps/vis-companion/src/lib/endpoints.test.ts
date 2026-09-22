@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bestAddress, isUpgrade, normalizeGatewayUrl } from './endpoints';
+import { bestAddress, isUpgrade, mergeAddresses, normalizeGatewayUrl } from './endpoints';
 
 describe('normalizeGatewayUrl', () => {
   it('supplies the scheme a human leaves out', () => {
@@ -59,5 +59,22 @@ describe('gateway address preference', () => {
     expect(isUpgrade(tailnet, lan)).toBe(true);
     expect(isUpgrade(domain, loopback)).toBe(false);
     expect(isUpgrade(tailnet, loopback)).toBe(false);
+  });
+
+  // Regression, Blockether/vis#277: the desktop app running on the gateway's own
+  // Mac took that Mac's LAN address — where the firewall refused the native
+  // binary — while 127.0.0.1 answered the whole time.
+  it('puts loopback first for an app on the gateway machine', () => {
+    const here = { sameMachine: true };
+    expect(bestAddress([lan, tailnet, loopback], here)).toBe(loopback);
+    expect(isUpgrade(loopback, lan, here)).toBe(true);
+    expect(isUpgrade(loopback, domain, here)).toBe(true);
+    expect(isUpgrade(lan, loopback, here)).toBe(false);
+  });
+
+  it('leaves loopback last for every other device, and in what is stored', () => {
+    expect(bestAddress([lan, loopback])).toBe(lan);
+    expect(isUpgrade(loopback, lan)).toBe(false);
+    expect(mergeAddresses([loopback, lan])).toEqual([lan, loopback]);
   });
 });

@@ -977,14 +977,42 @@
         (reset! @(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'default-route-cache) nil)
         (with-server-state! {:host "0.0.0.0" :port 7890 :advertise "192.168.0.1"}
                             (fn []
-                              (is (= ["http://192.168.0.1:7890" "http://100.109.18.77:7890"]
+                              (is (= ["http://192.168.0.1:7890" "http://100.109.18.77:7890"
+                                      "http://127.0.0.1:7890"]
                                      ((rv 'reachable-addresses) {:scheme :http})))))
         (with-server-state!
           {:host "0.0.0.0" :port 7890}
           (fn []
-            (is (= ["http://100.109.18.77:7890" "http://192.168.0.1:7890"]
+            (is
+              (= ["http://100.109.18.77:7890" "http://127.0.0.1:7890"]
+                 ((rv 'reachable-addresses) {:scheme :http}))
+              "the router this machine routes through is not an address it answers on (#277)")))))))
+
+(deftest reachable-addresses-end-with-loopback-for-a-client-on-this-machine
+  (testing
+    "a wildcard bind answers on loopback too, so the list ends with it: the
+             desktop app running on this same machine can stay off the host's LAN
+             interface instead of being refused by its firewall (#277)"
+    (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'iface-addresses)
+                     (fn []
+                       ["100.109.18.77" "192.168.0.150"])
+                     (ns-resolve 'com.blockether.vis.internal.gateway.pairing
+                                 'discover-default-route)
+                     (fn []
+                       nil)}
+      (fn []
+        (reset! @(ns-resolve 'com.blockether.vis.internal.gateway.pairing 'default-route-cache) nil)
+        (with-server-state!
+          {:host "0.0.0.0" :port 7890}
+          (fn []
+            (is (= ["http://100.109.18.77:7890" "http://192.168.0.150:7890" "http://127.0.0.1:7890"]
                    ((rv 'reachable-addresses) {:scheme :http}))
-                "without --advertise the scanned interfaces lead and the router follows")))))))
+                "loopback comes last: it is the fallback, not the route to advertise")))
+        (with-server-state!
+          {:host "192.168.0.150" :port 7890}
+          (fn []
+            (is (= ["http://192.168.0.150:7890"] ((rv 'reachable-addresses) {:scheme :http}))
+                "a concrete bind serves that address alone, loopback included")))))))
 
 (deftest capabilities-advertise-gateway-voice-and-attachment-contract
   (testing "a gateway without any voice engine reports it honestly"

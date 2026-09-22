@@ -66,9 +66,9 @@
         (<= 16 (Integer/parseInt b) 31))))
 
 (def ^:private DEFAULT_ROUTE_TTL_MS
-  "How long a discovered router address stays usable. `/v1/capabilities` asks on
-  every request and a laptop changes networks between them, so the answer is
-  cached briefly instead of being rediscovered or frozen for the process."
+  "How long a discovered router address stays usable. Pairing can be printed
+  again after a laptop changes networks, so the answer is cached briefly
+  instead of being rediscovered on every print or frozen for the process."
   30000)
 
 (def ^:private default-route-cache (atom nil))
@@ -121,10 +121,11 @@
 (defn- default-route-host
   "This machine's router, when it is a site-local address - otherwise nil.
 
-  It is the one address worth offering that this machine does NOT hold. With a
-  port forward on the router it is the only way in from outside the LAN, and
-  without one it just fails to answer, so it rides along last and never leads.
-  A public default gateway is dropped: a link carrying a bearer token is a LAN
+  Printed as an operator hint, never offered as a candidate: this machine does
+  not hold that address, nothing verifies anything answers there, and a client
+  that picks it up dials the router instead of Vis (#277). The honest way in
+  from outside the LAN is a port forward plus `--advertise <public host>`. A
+  public default gateway is dropped: a link carrying a bearer token is a LAN
   guess, never an invitation to the ISP's router."
   []
   (let [now
@@ -146,6 +147,13 @@
         (reset! default-route-cache {:at now :host host})
         host))))
 
+(defn wildcard-bind?
+  "True when `host` names every interface instead of one address. Such a
+   listener also answers on loopback, which is how a client on this same
+   machine reaches it without crossing the LAN (#277)."
+  [host]
+  (contains? #{"" "0.0.0.0" "::" "[::]"} (str/trim (str host))))
+
 (defn candidate-hosts
   "Reachable hostnames/IPs worth showing in a pairing QR, in preference order.
 
@@ -157,10 +165,11 @@
 
   A wildcard bind really does serve every interface, so there Tailscale
   addresses come first because they keep working off-LAN, then LAN, then the
-  rest, and last the router this machine routes through. Every candidate is a
-  guess the client resolves by trying them in order, so the router costs one
-  entry and answers the case nothing else can: a port forward, where the phone
-  reaches the gateway only through the router's address."
+  rest. Only addresses this machine actually holds qualify. Every candidate is
+  a guess the client resolves by trying them in order, so an address nothing
+  answers on - the router this machine routes through, say - costs a timeout
+  and can even win the race against a working one (#277). Reaching the gateway
+  from outside the LAN is a port forward plus `--advertise`, not a guess."
   [bind-host]
   (let [host
         (str bind-host)
@@ -173,9 +182,7 @@
       (let [ips (iface-addresses)]
         (->> (concat (filter tailscale-ip? ips)
                      (filter site-local-ip? ips)
-                     (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips)
-                     (when-let [router (default-route-host)]
-                       [router]))
+                     (remove #(or (tailscale-ip? %) (site-local-ip? %)) ips))
              (remove str/blank?)
              distinct
              vec)))))
@@ -359,7 +366,10 @@
           (advertised-url advertise port)
 
           hosts
-          (if (loopback-bind? host) [] (candidate-hosts host))]
+          (if (loopback-bind? host) [] (candidate-hosts host))
+
+          router
+          (when (and port (seq hosts) (not pinned)) (default-route-host))]
 
       (emit "")
       (emit "VIS companion pairing")
@@ -367,6 +377,9 @@
         "in the companion app open Machines → Add a machine, then scan this or paste the link below")
       (when pinned (emit (str "advertising: " pinned)))
       (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
+      (when router
+        (emit (str "from outside this network: forward port " port " on your router (" router ")"))
+        (emit "  then restart with --advertise <public host or domain> so the link points there"))
       (emit payload)
       (emit (terminal-qr payload))
       ;; Callers often park (the gateway daemon) right after this; `*out*` does

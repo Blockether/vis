@@ -4362,7 +4362,13 @@
    house. Advertising the addresses on a live, token-gated endpoint lets an
    already-paired client discover the tailnet address and move itself, with no
    second QR. The port/scheme come from the request when the bind is unknown, so
-   a tunnel sees itself correctly."
+   a tunnel sees itself correctly.
+
+   A wildcard bind also answers on loopback, so `http://127.0.0.1:<port>` is
+   offered LAST: a client on this same machine can take it instead of routing
+   through the host's LAN interface. Other clients must not — there 127.0.0.1
+   means themselves — so the companion switches to it only after the gateway at
+   that URL reports the identity it is already connected to (#277)."
   [request]
   (let [{:keys [host port advertise]}
         @server-state
@@ -4371,12 +4377,16 @@
         (or port (:server-port request) 7890)
 
         scheme
-        (name (or (:scheme request) :http))]
+        (name (or (:scheme request) :http))
 
-    (->> (pairing/candidate-hosts (or host "0.0.0.0"))
-         (remove str/blank?)
-         (map #(str scheme "://" % ":" port))
-         (cons (pairing/advertised-url advertise port))
+        bind
+        (or host "0.0.0.0")]
+
+    (->> (concat [(pairing/advertised-url advertise port)]
+                 (->> (pairing/candidate-hosts bind)
+                      (remove str/blank?)
+                      (map #(str scheme "://" % ":" port)))
+                 (when (pairing/wildcard-bind? bind) [(str scheme "://127.0.0.1:" port)]))
          (remove str/blank?)
          distinct
          vec)))

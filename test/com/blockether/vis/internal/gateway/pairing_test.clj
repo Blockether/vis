@@ -272,43 +272,89 @@
                                             [])]
       (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))))
 
-(deftest default-route-rides-along-as-the-port-forward-guess
+(deftest router-address-is-never-a-dialable-candidate
   (testing
-    "a wildcard bind offers this machine's router last: with a port forward it
-             is the only way in from outside the LAN, and without one the phone
-             just falls through it to the address that answers"
+    "the router is the one address this machine does NOT hold and nothing ever
+             verifies it answers — offered as a candidate it tied with the real
+             LAN address and won, so a client on the same LAN dialed the router
+             instead of Vis (#277)"
     (with-redefs-fn {#'pairing/iface-addresses (fn []
                                                  ["100.109.18.77" "192.168.0.116"])
                      #'pairing/discover-default-route (fn []
                                                         "192.168.0.1")}
       (fn []
-        (is (= ["100.109.18.77" "192.168.0.116" "192.168.0.1"] (pairing/candidate-hosts "0.0.0.0")))
+        (is (= ["100.109.18.77" "192.168.0.116"] (pairing/candidate-hosts "0.0.0.0")))
         (let [url (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})]
           (is (str/includes? url "url=http%3A%2F%2F100.109.18.77%3A7890"))
-          (is (str/includes? url "http%3A%2F%2F192.168.0.1%3A7890")
-              "the router is one more alt= to try, never the leading url="))
+          (is (not (str/includes? url "192.168.0.1%3A7890"))
+              "and it does not ride along as an alt= either"))
         (is (= ["192.168.0.116"] (pairing/candidate-hosts "192.168.0.116"))
             "a concrete bind still answers on that address alone")))))
 
-(deftest default-route-already-on-an-interface-is-offered-once
-  (testing "the router address is deduplicated against the scanned interfaces"
+(deftest port-forward-hint-names-the-router-instead-of-offering-it
+  (testing
+    "the honest way in from outside the LAN is a port forward plus --advertise,
+             so the router shows up as operator guidance and never as a URL the
+             client dials (#277)"
     (with-redefs-fn {#'pairing/iface-addresses (fn []
-                                                 ["192.168.0.1"])
+                                                 ["192.168.0.116"])
                      #'pairing/discover-default-route (fn []
                                                         "192.168.0.1")}
       (fn []
-        (is (= ["192.168.0.1"] (pairing/candidate-hosts "0.0.0.0")))))))
+        (let [lines (atom [])]
+          (pairing/print-pairing! {:host "0.0.0.0"
+                                   :port 7890
+                                   :token "tok"
+                                   :require-token? true
+                                   :emit #(swap! lines conj (str %))})
+          (let [text (str/join "\n" @lines)]
+            (is (str/includes? text "reachable hosts: 192.168.0.116"))
+            (is (str/includes? text "forward port 7890 on your router (192.168.0.1)"))
+            (is (str/includes? text "--advertise"))
+            (is (not (str/includes? text "192.168.0.1%3A7890"))
+                "the pairing link still carries only addresses that answer"))))))
+  (testing "an advertised route is already the way in, so the hint stays quiet"
+    (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                 ["192.168.0.116"])
+                     #'pairing/discover-default-route (fn []
+                                                        "192.168.0.1")}
+      (fn []
+        (let [lines (atom [])]
+          (pairing/print-pairing! {:host "0.0.0.0"
+                                   :port 7890
+                                   :token "tok"
+                                   :require-token? true
+                                   :advertise "https://gateway.example.com"
+                                   :emit #(swap! lines conj (str %))})
+          (is (not (str/includes? (str/join "\n" @lines) "forward port"))))))))
+
+(deftest wildcard-bind-is-the-one-that-also-answers-on-loopback
+  (testing "a same-machine client can use 127.0.0.1 only when every interface is served (#277)"
+    (is (true? (pairing/wildcard-bind? "0.0.0.0")))
+    (is (true? (pairing/wildcard-bind? "::")))
+    (is (true? (pairing/wildcard-bind? "[::]")))
+    (is (true? (pairing/wildcard-bind? nil)) "a blank bind is the wildcard default")
+    (is (false? (pairing/wildcard-bind? "192.168.0.116")))
+    (is (false? (pairing/wildcard-bind? "127.0.0.1"))
+        "a loopback bind answers nowhere else, so nothing else may be offered")))
 
 (deftest public-default-gateway-is-never-offered
   (testing
-    "a link carries the bearer token, so the router guess stays inside the
-             private ranges instead of pointing a phone at the ISP"
+    "a link carries the bearer token, so neither the candidates nor the printed
+             hint leave the private ranges for the ISP's router"
     (with-redefs-fn {#'pairing/iface-addresses (fn []
                                                  ["192.168.0.116"])
                      #'pairing/discover-default-route (fn []
                                                         "203.0.113.1")}
       (fn []
-        (is (= ["192.168.0.116"] (pairing/candidate-hosts "0.0.0.0")))))))
+        (is (= ["192.168.0.116"] (pairing/candidate-hosts "0.0.0.0")))
+        (let [lines (atom [])]
+          (pairing/print-pairing! {:host "0.0.0.0"
+                                   :port 7890
+                                   :token "tok"
+                                   :require-token? true
+                                   :emit #(swap! lines conj (str %))})
+          (is (not (str/includes? (str/join "\n" @lines) "203.0.113.1"))))))))
 
 (deftest default-route-reads-the-platform-routing-table
   (testing "Linux keeps `/proc/net/route` gateways as little-endian hex"
@@ -330,7 +376,7 @@
         "no default route means no candidate")))
 
 (deftest default-route-is-cached-between-calls
-  (testing "`/v1/capabilities` asks on every request, so discovery cannot run per call"
+  (testing "pairing can be printed again on a new network, so discovery cannot run per call"
     (let [calls (atom 0)]
       (with-redefs-fn {#'pairing/discover-default-route (fn []
                                                           (swap! calls inc)

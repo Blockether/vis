@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Prove the STAGED gateway is reachable on BOTH routes a paired client dials:
+# loopback, which a client on this same machine uses, and this machine's LAN
+# address, which a phone and everything that scanned the pairing QR uses.
+#
+# WHY this exists (Vis #277): a macOS release binary can pass every help and
+# boot check and still be invisible on the LAN. The Application Firewall judges
+# the binary's signature and silently blocks incoming connections for one it
+# does not recognize, so `gateway status` keeps saying running while the
+# companion times out on the only address it was ever given.
+#
+# Usage: bin/smoke-gateway-routes [bundle-dir]    # default target/release-bundle
+#
+#   VIS_SMOKE_LAN_HOST   probe this address instead of the discovered one
+#   VIS_SMOKE_TIMEOUT_S  seconds to wait per route (default 60)
+set -euo pipefail
+
+bundle="${1:-target/release-bundle}"
+vis="$bundle/vis-agent"
+tries="${VIS_SMOKE_TIMEOUT_S:-60}"
+
+[ -x "$vis" ] || {
+  echo "smoke-gateway-routes: no staged wrapper at $vis" >&2
+  exit 1
+}
+
+# The gateway under test is this run's own: never the developer's daemon, and
+# never its session database.
+unset VIS_GATEWAY_URL VIS_GATEWAY_TOKEN
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/vis-gateway-routes.XXXXXX")"
+port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+
+# The address this machine answers on for everyone else. The UDP socket only
+# picks the interface of the default route — nothing is ever sent.
+lan="${VIS_SMOKE_LAN_HOST:-$(python3 -c '
+import socket
+
+probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    probe.connect(("10.255.255.255", 1))
+    address = probe.getsockname()[0]
+except OSError:
+    address = ""
+finally:
+    probe.close()
+print("" if address.startswith("127.") else address)
+')}"
+
+# A wildcard bind is what serves both routes at once, and it is what `--pair`
+# and the desktop app expect to find.
+"$vis" gateway start --host 0.0.0.0 --port "$port" --db "$work/gateway.db" \
+  >"$work/gateway.log" 2>&1 &
+gateway_pid=$!
+trap 'kill "$gateway_pid" 2>/dev/null || true; wait "$gateway_pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+# `/healthz` carries no token on any bind, which is why it is the probe both
+# clients already use.
+probe_route() {
+  local host="$1"
+  local label="$2"
+  local left="$tries"
+  while [ "$left" -gt 0 ]; do
+    if curl -fsS --max-time 3 "http://$host:$port/healthz" 2>/dev/null | grep -q '"status"'; then
+      echo "ok: $label reaches http://$host:$port"
+      return 0
+    fi
+    kill -0 "$gateway_pid" 2>/dev/null || break
+    left=$((left - 1))
+    sleep 1
+  done
+  cat "$work/gateway.log" >&2 || true
+  echo "smoke-gateway-routes: $label never answered at http://$host:$port" >&2
+  return 1
+}
+
+probe_route 127.0.0.1 loopback
+
+if [ -n "$lan" ]; then
+  probe_route "$lan" "the LAN address"
+else
+  # A build machine with no network of its own still proves the loopback route.
+  echo "notice: this host holds no LAN address — the LAN route was not tested" >&2
+fi

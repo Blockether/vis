@@ -30,7 +30,15 @@ import {
   removeConnection,
 } from './lib/storage';
 import type { OpenSession } from './lib/storage';
-import { bestAddress, hostOf, isUpgrade, mergeAddresses, normalizeAddress } from './lib/endpoints';
+import {
+  bestAddress,
+  hostOf,
+  isUpgrade,
+  mergeAddresses,
+  normalizeAddress,
+  reachOf,
+} from './lib/endpoints';
+import { desktopInvoke } from './lib/desktop';
 import { machineOutage } from './lib/fleet-outage';
 import { onAway, onWake, onWakeThrottled } from './lib/wake';
 import {
@@ -720,11 +728,13 @@ export function App() {
   //      tailnet address without re-scanning a QR, and
   //   2. moves itself onto a more durable address as soon as that one answers.
   // A hand-picked address is never changed while it works, and loopback is never
-  // left behind — see `lib/endpoints.ts`.
+  // left behind — see `lib/endpoints.ts`. On the gateway's OWN machine the
+  // desktop window moves the other way, ONTO loopback (#277).
   const activeUrl = active?.url ?? '';
   const activeToken = active?.token;
   const activePinned = active?.pinned ?? false;
   const activeLabel = active?.label;
+  const activeId = active?.id;
   const knownAltsKey = (active?.alts ?? []).join(' ');
   useEffect(() => {
     if (!activeUrl) return;
@@ -769,16 +779,33 @@ export function App() {
       // An address that has gone silent is not asked again on every wake: the
       // list holds LAN addresses from other networks and machines that were
       // re-imaged, and each of them costs a probe (`lib/reachability.ts`).
+      // The desktop window runs ON the gateway's machine, so there loopback is
+      // the best address there is: it needs no LAN interface, so no firewall can
+      // refuse it and no Wi-Fi change can take it away. Everywhere else the
+      // durability order stands, where loopback means the device itself.
+      const preference = { sameMachine: Boolean(desktopInvoke()) };
       const candidates = (
-        activeResponded ? known.filter((url) => isUpgrade(url, activeUrl)) : known
+        activeResponded ? known.filter((url) => isUpgrade(url, activeUrl, preference)) : known
       ).filter((url) => isProbeDue(url));
       if (!candidates.length) return;
+      // Loopback proves nothing by answering: on any other device 127.0.0.1 is
+      // THAT device, and `/healthz` needs no token. So it is taken only when the
+      // gateway answering there reports the same instance id as the one this app
+      // is already connected to — identity, not reachability (#277).
+      const wantsLoopback =
+        preference.sameMachine && candidates.some((url) => reachOf(url) === 'loopback');
+      const selfId = wantsLoopback
+        ? (activeId ?? (await new GatewayClient(creds).identify(signal)))
+        : null;
+      if (cancelled) return;
       const reachable = (
         await Promise.all(
           candidates.map(async (url) => {
-            const answered = await new GatewayClient({ ...creds, url })
-              .ping(signal)
-              .catch(() => false);
+            const client = new GatewayClient({ ...creds, url });
+            const answered =
+              reachOf(url) === 'loopback'
+                ? Boolean(selfId) && (await client.identify(signal)) === selfId
+                : await client.ping(signal).catch(() => false);
             // An aborted probe says nothing about the address: this effect
             // re-runs whenever the pairing changes.
             if (signal.aborted) return null;
@@ -788,7 +815,7 @@ export function App() {
           }),
         )
       ).filter((url): url is string => url !== null);
-      const chosen = bestAddress(reachable);
+      const chosen = bestAddress(reachable, preference);
       if (cancelled || !chosen) return;
       // The capabilities request failed but its follow-up ping won: the original
       // address recovered before failover completed, so simply restore the UI.
@@ -831,7 +858,16 @@ export function App() {
       window.removeEventListener('online', onNetworkChange);
       off();
     };
-  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
+  }, [
+    activeUrl,
+    activeToken,
+    activePinned,
+    activeLabel,
+    activeId,
+    knownAltsKey,
+    recoveryNonce,
+    refresh,
+  ]);
 
   // Native push is a PER-GATEWAY choice, so the sweep is per gateway: every
   // paired machine is brought in line with ITS OWN switch (that gateway's

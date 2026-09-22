@@ -3746,3 +3746,108 @@
       ;; exception it also refuses every wheel a user installs.
       (expect (str/includes? entitlements "com.apple.security.cs.disable-library-validation")
               entitlements))))
+
+(defn- gateway-route-stub!
+  "A staged wrapper that only pretends to be the gateway: it records how it was
+   started and, when `serve?`, answers `/healthz` the way a live daemon does. It
+   listens on loopback alone — which address is PROBED is the script's decision,
+   and that is what these tests are about."
+  [^File dir ^File log serve?]
+  (let [health (io/file dir "health.py")]
+    (spit health
+          (str "import http.server, socketserver, sys\n\n"
+               "class Health(http.server.BaseHTTPRequestHandler):\n" "    def do_GET(self):\n"
+               "        body = b'{\"status\": \"ok\", \"id\": \"stub\"}'\n"
+               "        self.send_response(200)\n"
+               "        self.send_header('Content-Length', str(len(body)))\n"
+               "        self.end_headers()\n"
+               "        self.wfile.write(body)\n\n" "    def log_message(self, *args):\n"
+               "        pass\n\n" "socketserver.TCPServer.allow_reuse_address = True\n"
+               "with socketserver.TCPServer(('127.0.0.1', int(sys.argv[1])), Health) as server:\n"
+               "    server.serve_forever()\n"))
+    (write-executable!
+      (io/file dir "vis-agent")
+      (str "#!/usr/bin/env bash\n"
+           "printf '%s\\n' \"$*\" >> " (.getAbsolutePath log)
+           "\n" (if serve?
+                  (str "port=\"\"\n"
+                       "previous=\"\"\n"
+                       "for argument in \"$@\"; do\n"
+                       "  if [ \"$previous\" = \"--port\" ]; then port=\"$argument\"; fi\n"
+                       "  previous=\"$argument\"\n"
+                       "done\n"
+                       "exec python3 "
+                       (.getAbsolutePath health)
+                       " \"$port\"\n")
+                  "echo 'gateway refused to bind' >&2\nexit 1\n")))
+    dir))
+
+(defn- with-gateway-route-bundle
+  "Run `f` with a staged bundle directory holding the stub and its argument log."
+  [serve? f]
+  (let [root
+        (.toFile (Files/createTempDirectory "vis-gateway-routes-test-"
+                                            (make-array FileAttribute 0)))
+
+        log
+        (io/file root "gateway-args.log")
+
+        bundle
+        (doto (io/file root "bundle") .mkdirs)]
+
+    (try (gateway-route-stub! bundle log serve?) (f bundle log) (finally (delete-tree! root)))))
+
+(defdescribe
+  gateway-route-smoke-test
+  ;; Vis #277: Desktop running on the same Mac as the gateway could not reach it
+  ;; over that Mac's LAN address — the Application Firewall blocked the release
+  ;; binary — while loopback answered throughout. Every release check until now
+  ;; watched the daemon boot, which a blocked binary does perfectly well.
+  (it "passes when both routes a client dials answer"
+      (with-gateway-route-bundle
+        true
+        (fn [bundle log]
+          (let [{:keys [exit output]}
+                (run-bash ["bin/smoke-gateway-routes" (.getAbsolutePath ^File bundle)]
+                          {"VIS_SMOKE_LAN_HOST" "127.0.0.1" "VIS_SMOKE_TIMEOUT_S" "15"})]
+            (expect (zero? (long exit)) output)
+            (expect (str/includes? output "ok: loopback") output)
+            (expect (str/includes? output "ok: the LAN address") output)
+            ;; One wildcard bind is what serves a client on this machine and a
+            ;; phone at the same time; a loopback bind would pass the first probe
+            ;; and strand every other client.
+            (expect (str/includes? (slurp log) "--host 0.0.0.0") (slurp log))))))
+  (it "fails when only loopback answers"
+      (with-gateway-route-bundle
+        true
+        (fn [bundle _log]
+          ;; 192.0.2.0/24 (TEST-NET-1) answers nowhere, which is exactly what a
+          ;; firewall-blocked binary looks like from another device.
+          (let [{:keys [exit output]}
+                (run-bash ["bin/smoke-gateway-routes" (.getAbsolutePath ^File bundle)]
+                          {"VIS_SMOKE_LAN_HOST" "192.0.2.1" "VIS_SMOKE_TIMEOUT_S" "2"})]
+            (expect (not= 0 exit) output)
+            (expect (str/includes? output "ok: loopback") output)
+            (expect (str/includes? output "the LAN address never answered") output)))))
+  (it "fails when the gateway never starts"
+      (with-gateway-route-bundle
+        false
+        (fn [bundle _log]
+          (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
+                                                 (.getAbsolutePath ^File bundle)]
+                                                {"VIS_SMOKE_TIMEOUT_S" "2"})]
+            (expect (not= 0 exit) output)
+            (expect (str/includes? output "loopback never answered") output)))))
+  (it "runs in every macOS release path"
+      (let [workflow
+            (slurp ".github/workflows/native-release.yml")
+
+            steps
+            (get-in (yaml/load workflow) ["jobs" "macos" "steps"])]
+
+        (expect (.canExecute (io/file "bin/smoke-gateway-routes")))
+        (expect (some #(str/includes? (str (get % "run")) "bin/smoke-gateway-routes") steps)
+                workflow)
+        ;; A locally built asset is published the same way, so it is checked the
+        ;; same way.
+        (expect (str/includes? (slurp "bin/release-native") "bin/smoke-gateway-routes")))))

@@ -464,6 +464,12 @@ jobs:
           printf '%s\n' "$status"
           echo '::error::job-owned gateway failed its health check'
           exit 1
+      # Vis #277: a binary the Application Firewall blocks still answers on
+      # loopback, so the check above stays green while every paired client
+      # times out. Both routes a client actually dials are tested here.
+      - name: Smoke-test the gateway on loopback and the LAN address
+        shell: bash
+        run: bin/smoke-gateway-routes target/release-bundle
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.2"

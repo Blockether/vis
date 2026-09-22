@@ -25,6 +25,23 @@ const RANK: Record<Reach, number> = {
   loopback: 4,
 };
 
+/**
+ * Where the app is running relative to the gateway. On the SAME machine — the
+ * desktop window on the host running vis — loopback is the BEST address rather
+ * than the worst: it needs no LAN interface, so no firewall can refuse it and
+ * no network change can take it away (#277).
+ */
+export type AddressPreference = { sameMachine?: boolean };
+
+/** Lower is better for an app running on the gateway's own machine. */
+const SAME_MACHINE_RANK: Record<Reach, number> = {
+  loopback: 0,
+  tunnel: 1,
+  tailscale: 2,
+  lan: 3,
+  other: 4,
+};
+
 export const REACH_LABEL: Record<Reach, string> = {
   tailscale: 'Tailscale',
   tunnel: 'Tunnel',
@@ -138,13 +155,14 @@ export function reachOf(url: string): Reach {
   return 'tunnel';
 }
 
-export function addressRank(url: string): number {
-  return RANK[reachOf(url)];
+export function addressRank(url: string, preference?: AddressPreference): number {
+  const reach = reachOf(url);
+  return preference?.sameMachine ? SAME_MACHINE_RANK[reach] : RANK[reach];
 }
 
 /** Most durable first; ties broken alphabetically so ordering is stable. */
-export function compareAddresses(a: string, b: string): number {
-  return addressRank(a) - addressRank(b) || a.localeCompare(b);
+export function compareAddresses(a: string, b: string, preference?: AddressPreference): number {
+  return addressRank(a, preference) - addressRank(b, preference) || a.localeCompare(b);
 }
 
 /**
@@ -165,8 +183,11 @@ export function mergeAddresses(...lists: (readonly string[] | undefined | null)[
 }
 
 /** The most durable address in the list, or undefined when it is empty. */
-export function bestAddress(urls: readonly string[]): string | undefined {
-  return [...urls].sort(compareAddresses)[0];
+export function bestAddress(
+  urls: readonly string[],
+  preference?: AddressPreference,
+): string | undefined {
+  return [...urls].sort((a, b) => compareAddresses(a, b, preference))[0];
 }
 
 /**
@@ -174,10 +195,15 @@ export function bestAddress(urls: readonly string[]): string | undefined {
  *
  * Only ever towards a more durable address, and never away from loopback: a
  * browser open on the gateway's own machine is deliberately on 127.0.0.1 and
- * must not be pushed onto the tailnet behind the user's back.
+ * must not be pushed onto the tailnet behind the user's back. With
+ * `{sameMachine: true}` the move ONTO loopback is the upgrade instead (#277).
  */
-export function isUpgrade(candidate: string, current: string): boolean {
+export function isUpgrade(
+  candidate: string,
+  current: string,
+  preference?: AddressPreference,
+): boolean {
   if (normalizeAddress(candidate) === normalizeAddress(current)) return false;
   if (reachOf(current) === 'loopback') return false;
-  return addressRank(candidate) < addressRank(current);
+  return addressRank(candidate, preference) < addressRank(current, preference);
 }

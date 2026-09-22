@@ -218,10 +218,14 @@ before stopping it; see [Starting the gateway](#starting-the-gateway).
 
 Every pairing link carries more than one address. It leads with the most durable
 one this computer holds — a tailnet address before a LAN address — and lists the
-rest as fallbacks, including the router this computer routes through. The app
-tries them in order and keeps the one that answers, so a phone that cannot reach
-the first address still connects, and a router that forwards the gateway's port
-works without extra setup.
+rest as fallbacks. The app tries them in order and keeps the one that answers, so
+a phone that cannot reach the first address still connects. Only addresses this
+computer actually answers on are offered, so nothing in the link points at a
+device that never replies.
+
+To reach Vis from outside your network, forward the gateway's port on your router
+and start Vis with `--advertise` set to the public host or domain that forward
+leads to. Pairing prints that reminder together with your router's address.
 
 If the address your network needs is none of those — a proxy in front of the
 gateway, a forward on a different port, or a hostname only DNS knows — name it

@@ -135,6 +135,10 @@ build_macos_arm64() {
     die "the gateway daemon failed to boot — not shipping this binary"
   fi
   target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
+  # The two routes a paired client dials, on the signed bytes that ship: a
+  # firewall-blocked binary answers on loopback and nowhere else (Vis #277).
+  say "smoke: gateway answers on loopback and on the LAN address"
+  bin/smoke-gateway-routes target/release-bundle
   # The sidecar is the whole point of this bundle: prove the wrapper finds the
   # staged interpreter beside itself, not a build leftover on this machine.
   say "smoke: CPython stdlib from the staged interpreter"
