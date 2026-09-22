@@ -1044,7 +1044,9 @@ export function BackButton({
  * the ONE way to it. It wears `BackButton`'s own leading column with a panel glyph
  * in it, so it sits at the seam between the list and the pane it toggles and keeps
  * its place whether the list is up or away. In the app bar, beside the mark, it read
- * as a piece of the logo; at the pane's edge it reads as what it is.
+ * as a piece of the logo; at the pane's edge it reads as what it is. The tap
+ * echoes the list's own direction: away leans toward the seam and settles,
+ * back arrives from it.
  */
 export function SidebarToggle({
   isShown,
@@ -1061,7 +1063,11 @@ export function SidebarToggle({
       className={`${bandEdgeClass} ${className}`}
       {...props}
     >
-      <SidebarIcon className="size-4" aria-hidden />
+      <SidebarIcon
+        key={isShown ? 'shown' : 'away'}
+        className={`size-4 ${isShown ? 'animate-sidebar-return' : 'animate-sidebar-away'} motion-reduce:animate-none`}
+        aria-hidden
+      />
     </button>
   );
 }
