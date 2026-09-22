@@ -71,6 +71,25 @@ describe('every dialog header is the one dialog header', () => {
     );
   });
 
+  it('can omit the visible headline while keeping the dialog and heading named', () => {
+    const view = render(
+      <DialogFrame title="app.ts" subtitle="src/app.ts">
+        <p>body</p>
+      </DialogFrame>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'app.ts' })).not.toHaveClass('sr-only');
+    view.rerender(
+      <DialogFrame title="app.ts" subtitle="src/app.ts" isTitleHidden>
+        <p>body</p>
+      </DialogFrame>,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'app.ts' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'app.ts' })).toHaveClass('sr-only');
+    expect(screen.getByText('src/app.ts')).toBeVisible();
+  });
+
   // Regression, user report over the settings dialog on a phone (a screenshot marked on
   // both edges): the ✕ centred its mark in its own 48px cell, so the way out stood inside
   // the rail that every band mark and every row chevron under it ends on.

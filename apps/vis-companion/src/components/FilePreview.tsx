@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
 import type { FileWindow } from '../lib/types';
+import { ArrowOutIcon } from './icons';
 import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
 
 /**
@@ -11,8 +12,8 @@ import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
  * Opening the editor there is the right answer for whoever sits at that machine —
  * and no answer at all for a reader holding a phone, who watches nothing happen.
  * So the press shows the file itself: the gateway reads a bounded window of text
- * and the sheet stands at the line the press named, with the editor one band
- * button away for the machine that actually holds the tree.
+ * and the sheet stands at the line the press named, with an editor icon for the
+ * machine that actually holds the tree.
  *
  * What the gateway refuses — a path outside this session's workspace, a file that
  * is gone, a binary file — is shown in its own words rather than as an empty box.
@@ -74,11 +75,12 @@ export function FilePreview({
       <DialogFrame
         title={name}
         subtitle={path}
+        isTitleHidden
         closeLabel={`Close ${name}`}
         onClose={onClose}
         actions={
-          <BandButton disabled={isOpening} onClick={openThere}>
-            Open in editor
+          <BandButton label="Open in editor" disabled={isOpening} onClick={openThere}>
+            <ArrowOutIcon />
           </BandButton>
         }
       >

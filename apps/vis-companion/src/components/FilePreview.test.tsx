@@ -27,6 +27,28 @@ function show(client: GatewayClient, line?: number) {
   render(<FilePreview client={client} sid="session-1" path={PATH} line={line} onClose={vi.fn()} />);
 }
 
+it('shows only the file path, without the duplicate headline', async () => {
+  show(gateway());
+
+  await waitFor(() => expect(screen.getByText('twelve')).toBeVisible());
+  const dialog = screen.getByRole('dialog', { name: 'app.ts' });
+  const header = dialog.querySelector('header')!;
+  expect(header.querySelector('h2')).toHaveClass('sr-only');
+  expect(screen.getByText(PATH)).toBeVisible();
+  expect(header.querySelectorAll('p')).toHaveLength(1);
+});
+
+it('uses an accessible editor icon without a left divider', async () => {
+  show(gateway());
+
+  await waitFor(() => expect(screen.getByText('twelve')).toBeVisible());
+  const open = screen.getByRole('button', { name: 'Open in editor' });
+  expect(open).toHaveAttribute('title', 'Open in editor');
+  expect(open.textContent).toBe('');
+  expect(open.querySelector('svg')).toBeInTheDocument();
+  expect(open.className).not.toMatch(/\bborder-l(?:\s|$)/);
+});
+
 it('reads the file where the session is being read, standing at the pressed line', async () => {
   const client = gateway();
   show(client, 12);

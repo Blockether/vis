@@ -2340,6 +2340,7 @@ export function DialogHeader({
   title,
   titleId,
   subtitle,
+  isTitleHidden = false,
   actions,
   closeLabel,
   onClose,
@@ -2351,6 +2352,8 @@ export function DialogHeader({
   /** For a surface labelled by `aria-labelledby` rather than `aria-label`. */
   titleId?: string;
   subtitle?: ReactNode;
+  /** Keep the title accessible without a visible headline above the subtitle. */
+  isTitleHidden?: boolean;
   /**
    * What this band OFFERS, standing between the name and the way out: `BandButton`
    * cells, and nothing else. A dialog's own verbs used to be a docked footer under
@@ -2409,7 +2412,11 @@ export function DialogHeader({
             The band's height is a minimum, not a cap. */}
         <h2
           id={titleId}
-          className="line-clamp-3 font-mono text-head font-semibold tracking-normal"
+          className={
+            isTitleHidden
+              ? 'sr-only'
+              : 'line-clamp-3 font-mono text-head font-semibold tracking-normal'
+          }
           title={typeof title === 'string' ? title : undefined}
         >
           {title}
@@ -2433,6 +2440,7 @@ export function DialogHeader({
 export function DialogFrame({
   title,
   subtitle,
+  isTitleHidden = false,
   actions,
   children,
   footer,
@@ -2443,6 +2451,8 @@ export function DialogFrame({
   title: string;
   /** The line under the title — which machine, which model, which paste. */
   subtitle?: ReactNode;
+  /** Keep the title accessible without a visible headline above the subtitle. */
+  isTitleHidden?: boolean;
   /**
    * What this band OFFERS, standing between the name and the way out: `BandButton`
    * cells, and nothing else. A dialog's own verbs used to be a docked footer under
@@ -2479,6 +2489,7 @@ export function DialogFrame({
       <DialogHeader
         title={title}
         subtitle={subtitle}
+        isTitleHidden={isTitleHidden}
         actions={actions}
         {...closeWith(onClose, closeLabel ?? `Close ${title}`)}
       />
