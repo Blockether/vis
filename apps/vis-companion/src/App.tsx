@@ -200,6 +200,29 @@ function prefetchScreens() {
   warm(import('./screens/SettingsScreen'));
 }
 
+/**
+ * THE DESK'S RAIL, UP OR PUT AWAY.
+ *
+ * Putting the list away slides it under the pane that takes its place: the box KEEPS
+ * its width — the rows never rewrap, and the reader's scroll, scope and folds survive
+ * the round trip — and only the margin pulls it off the seam. That margin mirrors
+ * `min-w-80` and `w-[33%]` exactly, so the rail lands flush off the edge and the pane
+ * behind it takes the whole shell. Letting the width go instead sized the rail by its
+ * own rows: an invisible column stayed standing in the row, and the pane beside it was
+ * stretched past the shell's edge (user report: the list goes out wrong and then is
+ * not there at all). `visibility` rides the same transition, so the list leaves the tab
+ * order only once the ride is over, and the seam's rule fades with it — the rule is
+ * carried in BOTH states, because a border that stops existing cannot fade. A
+ * motion-reduce reader gets the instant move instead of the ride.
+ */
+export function sidebarRailClass(isUp: boolean): string {
+  const box =
+    'h-full min-w-80 w-[33%] shrink-0 border-r transition-[margin-left,visibility,border-color] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none';
+  return isUp
+    ? `${box} border-dialog-edge`
+    : `${box} ml-[min(-20rem,-33%)] invisible border-transparent`;
+}
+
 export function App() {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
@@ -1168,18 +1191,6 @@ export function App() {
   const sessionsVisible =
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
-  // Putting the list away slides it under the pane that takes its place: the box's
-  // width stands still, so the rows never rewrap and the reader's scroll, scope and
-  // folds survive the round trip; only the margin pulls it off the seam. `visibility`
-  // rides the same transition, so the list leaves the tab order only once the ride
-  // is over, and the seam's rule fades away with it. The collapse margin mirrors
-  // `min-w-80` and `w-[33%]` exactly, so the box lands flush off the edge. A phone
-  // keeps its plain `hidden` cut, and a motion-reduce reader gets the instant move.
-  const sidebarTravelClass =
-    'transition-[margin-left,visibility,border-color] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none';
-  const sidebarUpClass = `h-full min-w-80 w-[33%] shrink-0 border-r border-dialog-edge ${sidebarTravelClass}`;
-  const sidebarAwayClass = `h-full ml-[min(-20rem,-33%)] invisible border-transparent ${sidebarTravelClass}`;
-
   return (
     <Shell>
       {(isChromeVisible || edgeBack.isSwiping) && (
@@ -1216,10 +1227,10 @@ export function App() {
             className={
               !sessionsVisible
                 ? canSplit
-                  ? sidebarAwayClass
+                  ? sidebarRailClass(false)
                   : 'hidden'
                 : isSplit
-                  ? sidebarUpClass
+                  ? sidebarRailClass(true)
                   : 'h-full'
             }
           >

@@ -110,8 +110,14 @@ describe('a desk keeps the list beside the conversation', () => {
     // With nothing open, putting the list away leaves the empty pane and the
     // bar's explicit way back; it never relabels a list that is still visible.
     const away = main.firstElementChild as HTMLElement;
-    // It slides under the pane instead of vanishing: same width, margin pulled
+    // It slides under the pane instead of vanishing: the SAME box, margin pulled
     // off the seam, the seam's rule faded, out of the tab order once gone.
+    // Regression, user report: a rail that let its width go was sized by its own rows
+    // instead, so an invisible column stayed standing in the row and the pane beside it
+    // was stretched past the shell's edge. `App.split.stories.tsx` measures the boxes.
+    expect(away.className).toContain('w-[33%]');
+    expect(away.className).toContain('min-w-80');
+    expect(away.className).toContain('shrink-0');
     expect(away.className).toContain('ml-[min(-20rem,-33%)]');
     expect(away.className).toContain('invisible');
     expect(away.className).toContain('border-transparent');
@@ -123,6 +129,7 @@ describe('a desk keeps the list beside the conversation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
     expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
     expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
+    expect((main.firstElementChild as HTMLElement).className).not.toContain('invisible');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
 
@@ -134,6 +141,7 @@ describe('a desk keeps the list beside the conversation', () => {
     expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
     expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
     expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
+    expect((main.firstElementChild as HTMLElement).className).not.toContain('invisible');
     expect(screen.getByRole('button', { name: 'Hide the session list' })).toBeVisible();
     view.unmount();
   });
