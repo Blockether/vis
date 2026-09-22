@@ -523,7 +523,12 @@ export function HeaderMeta({ children }: { children: ReactNode }) {
 }
 
 /**
- * A header's own count, in `HeaderMeta`'s voice.
+ * A header's own count, in the SAME SMALL CAPS as the word standing over the set it
+ * counts (`SetHeader`'s label) — a band reads as one strip of type, not as a heading
+ * with a note beside it in another voice. It takes that label's FACE and not its
+ * smaller step: a project header runs the total, the states and an arrival as one
+ * line of text, and a count a step down from them leaves the arrival off their
+ * baseline.
  *
  * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
  * rows says nothing about what was counted, and the phone is exactly where the
@@ -544,7 +549,9 @@ export function HeaderTally({
 }) {
   const noun = count === 1 ? unit : `${unit}s`;
   return (
-    <span className={`whitespace-nowrap ${className}`}>
+    <span
+      className={`whitespace-nowrap font-mono font-bold tracking-[0.08em] uppercase ${className}`}
+    >
       {count} {noun}
     </span>
   );

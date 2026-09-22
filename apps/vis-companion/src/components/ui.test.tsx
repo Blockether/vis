@@ -269,6 +269,22 @@ describe('HeaderTally', () => {
     const { container } = render(<HeaderTally count={1} unit="project" />);
     expect(container).toHaveTextContent('1 project');
   });
+
+  // Reported from a screenshot of the group bands (paraphrased: the counts should be
+  // set in the same font as GROUPS and SESSIONS): `2 groups` beside `GROUPS` read as a
+  // different typeface, so the count wears the set label's own small caps. The STEP
+  // stays the header caption's, which keeps an arrival on the total's baseline
+  // (`SessionProjectGroups` stories measure that line).
+  it('is set in the small caps the word over the set is set in', () => {
+    const { container } = render(<HeaderTally count={10} unit="session" />);
+    expect(container.firstElementChild).toHaveClass(
+      'font-mono',
+      'font-bold',
+      'tracking-[0.08em]',
+      'uppercase',
+    );
+    expect(container.firstElementChild).not.toHaveClass('text-chip');
+  });
 });
 
 describe('HeaderTitle', () => {
