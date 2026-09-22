@@ -13002,7 +13002,8 @@
      :project-name (:project-name session)
      :project-position (:project-position session)
      :group-id (:group-id session)
-     :favorite-rank (:favorite-rank session)}))
+     :favorite-rank (:favorite-rank session)
+     :archived-at (:archived-at session)}))
 
 (defn by-channel
   [channel]
@@ -13018,14 +13019,15 @@
            :project-name (:project-name c)
            :project-position (:project-position c)
            :group-id (:group-id c)
-           :favorite-rank (:favorite-rank c)})
+           :favorite-rank (:favorite-rank c)
+           :archived-at (:archived-at c)})
         (persistance/db-list-sessions (db-info) channel)))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
 (defn projects
   "List projects (cross-channel). `opts`: :owner-id (default \"local\"),
-   :include-archived?. Each carries a live :session-count."
+   :archived (:exclude, :include or :only). Each carries a live :session-count."
   ([] (projects {}))
   ([opts] (persistance/db-list-projects (db-info) opts)))
 
@@ -13082,6 +13084,12 @@
    holds, or nil once it is unstarred."
   [session-id is-favorite]
   (persistance/db-set-session-favorite! (db-info) session-id is-favorite))
+
+(defn set-archived!
+  "Archive (`true`) or unarchive (`false`) the session soul. Returns the stamp it
+   now carries, or nil once it is unarchived."
+  [session-id archived?]
+  (persistance/db-set-session-archived! (db-info) session-id archived?))
 
 (defn reorder-project-sessions!
   "Atomically adopt any loose named session into `project-id`, then persist the

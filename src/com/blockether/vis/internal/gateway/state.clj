@@ -5058,6 +5058,12 @@
                  ;; it - and null when the session is not starred. Always PRESENT, so a
                  ;; client merging this row onto a cached one sees a star taken away.
                  :favorite_rank (:favorite-rank session)
+                 ;; The human's ARCHIVE, owned by this gateway for the same reason
+                 ;; the star above is: null while the session is active, a stamp
+                 ;; once it is out of sight and read-only. Always PRESENT, so a
+                 ;; client merging this row onto a cached one sees an archive taken
+                 ;; away as well as one put on.
+                 :archived_at (:archived-at session)
                  :status (cond current-turn-id "running"
                                (= "suspended" (:status last-turn)) "suspended"
                                :else "idle")
@@ -5644,7 +5650,9 @@
                         ;; :aside`), so which group holds it has to be known before
                         ;; the page is cut, exactly like the project id above.
                         :group-id (some-> (:group-id record)
-                                          str)}))))))
+                                          str)
+                        ;; The ARCHIVE cut lands on the RANKING, like the ids above.
+                        :archived-at (:archived-at record)}))))))
        (sort-by (juxt :band :sort-key :id))
        vec))
 
@@ -5828,6 +5836,13 @@
    picker that holds a WINDOW paints a search hit: the store ranks the query across every
    session, and only the matched rows the window does not already hold cross the wire.
 
+   `:archived` is the ARCHIVE cut, in the one vocabulary every list route of this
+   gateway reads: `:exclude` (the default) leaves archived sessions out of the
+   window, out of `:awaiting` and off the group shelves alike, `:include` answers
+   both and `:only` answers the archive alone - what a reveal asks for. Like the
+   cuts above it lands on the ranking, so `total`, `:next-cursor` and `:has-more`
+   describe the same list the rows came from.
+
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started in one channel
    is visible in the others and vice-versa. Pass a specific channel keyword only when a
    caller genuinely needs a single-channel slice (e.g. resolving a chat by external-id).
@@ -5838,7 +5853,7 @@
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped reader]}]
+  ([channel {:keys [limit after root project-id id-prefix ids dirty grouped reader archived]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -5863,6 +5878,9 @@
          unsent
          (into #{} (comp (map str) (remove str/blank?)) dirty)
 
+         archived-mode
+         (or archived :exclude)
+
          ranked
          (cond->> (session-ranking channel stats live unsent)
            (and db (some? root))
@@ -5880,7 +5898,14 @@
            (seq ids)
            (filterv (let [wanted (into #{} (comp (map str) (remove str/blank?)) ids)]
                       (fn [row]
-                        (contains? wanted (:id row))))))
+                        (contains? wanted (:id row)))))
+
+           ;; The ARCHIVE cut, on the ranking and before everything the answer
+           ;; counts: an archived session is not in this list at all - not in the
+           ;; window, not beside it in `awaiting`, not on a group shelf - unless
+           ;; the caller asked for it by name.
+           (not= :include archived-mode)
+           (filterv (if (= :only archived-mode) :archived-at (complement :archived-at))))
 
          aside-groups?
          (= "aside"
@@ -6181,7 +6206,7 @@
 
 (defn list-projects
   "Wire projects for one owner view (see loop/projects) — projects are
-   cross-channel. `opts` keys: :owner-id, :include-archived?."
+   cross-channel. `opts` keys: :owner-id, :archived (:exclude, :include, :only)."
   ([] (list-projects {}))
   ([opts] (mapv project-wire (lp/projects opts))))
 
@@ -6426,6 +6451,17 @@
    session exists."
   [sid is-favorite]
   (when (lp/by-id sid) (lp/set-favorite! sid is-favorite) (soul sid)))
+
+(defn set-archived!
+  "Archive (`true`) or unarchive (`false`) `sid`. Returns the refreshed soul (its
+   `archived_at` is the stamp the gateway wrote), or nil when no such session
+   exists.
+
+   Archiving takes the session out of every navigator list this gateway answers
+   and makes it read-only; the conversation is kept and resume by id still finds
+   it."
+  [sid archived?]
+  (when (lp/by-id sid) (lp/set-archived! sid archived?) (soul sid)))
 
 (defn- broadcast-title-event!
   "Append a `session.title_updated` event for `sid` (stored, so a cursor

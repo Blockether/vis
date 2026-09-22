@@ -2121,7 +2121,7 @@
 (defn- project-or-exit!
   "Resolve a project by full id or unambiguous prefix, or print why not and exit."
   [input]
-  (let [matches (match-projects (lp/projects {:include-archived? true}) input)]
+  (let [matches (match-projects (lp/projects {:archived :include}) input)]
     (cond (= 1 (count matches)) (first matches)
           (empty? matches) (do (stdout! (str "Project not found: " input))
                                (stdout! "")
@@ -2149,7 +2149,7 @@
 (defn- list-projects!
   "List projects (cross-channel, archived included) with their live session counts."
   []
-  (let [projects (lp/projects {:include-archived? true})]
+  (let [projects (lp/projects {:archived :include})]
     (if (empty? projects)
       (stdout! "No projects found.")
       (do (stdout! "\n  Projects\n")

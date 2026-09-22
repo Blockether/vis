@@ -3661,7 +3661,7 @@
           _
           (expect (= "vis" (:name (persistance/db-get-project s (:id p-tui)))))
 
-          ;; archive hides from the default list, shows with :include-archived?
+          ;; archive hides from the default list; the vocabulary reveals it
           _
           (persistance/db-update-project! s (:id p-tui) {:archived? true})
 
@@ -3669,9 +3669,11 @@
           (expect (not (contains? (set (map :name (persistance/db-list-projects s {}))) "vis")))
 
           _
-          (expect (contains? (set (map :name
-                                       (persistance/db-list-projects s {:include-archived? true})))
+          (expect (contains? (set (map :name (persistance/db-list-projects s {:archived :include})))
                              "vis"))
+
+          _
+          (expect (= ["vis"] (mapv :name (persistance/db-list-projects s {:archived :only}))))
 
           ;; delete SCATTERS members back to project-less - the conversation survives
           _
@@ -4523,6 +4525,42 @@
         ;; The gap unstarring leaves behind costs nothing: ranks are only compared,
         ;; and the next star still lands last.
         (expect (= 3 (persistance/db-set-session-favorite! s (str a) true))))))
+
+;; The archive is the SESSION's own state, not a per-device preference: it lives on the
+;; soul, so every screen agrees a session is put away and the conversation survives it.
+(defdescribe
+  the-archive-is-a-stamp-on-the-session-soul-test
+  "Archiving stamps `session_soul.archived_at` and unarchiving clears it. The stamp is
+   a TIME rather than a flag so a client can say when a session was put away, and
+   `db-list-sessions` carries it so a window cuts the archive without a query per row."
+  (it "stamps on archive, keeps the first stamp, and clears on unarchive"
+      (let [s
+            (h/store)
+
+            a
+            (h/store-session! s {:channel :api :title "first"})
+
+            b
+            (h/store-session! s {:channel :api :title "second"})
+
+            _
+            (expect (nil? (:archived-at (persistance/db-get-session s a))))
+
+            stamp
+            (persistance/db-set-session-archived! s (str a) true)]
+
+        (expect (inst? stamp))
+        (expect (= stamp (:archived-at (persistance/db-get-session s a))))
+        ;; Archiving what is ALREADY archived is not a re-archive: a retried request or
+        ;; a second tap racing the first must not re-date an archive nobody touched.
+        (expect (= stamp (persistance/db-set-session-archived! s (str a) true)))
+        ;; The LIST carries the stamp too, and only for the session that owns one.
+        (expect (= {(str a) stamp (str b) nil}
+                   (into {}
+                         (map (juxt (comp str :id) :archived-at))
+                         (persistance/db-list-sessions s :all))))
+        (expect (nil? (persistance/db-set-session-archived! s (str a) false)))
+        (expect (nil? (:archived-at (persistance/db-get-session s a)))))))
 
 ;; Regression, issue #155: session usage was summed from the rollup a turn writes
 ;; when it ENDS, so a stopped or still-running turn dropped its tokens and its

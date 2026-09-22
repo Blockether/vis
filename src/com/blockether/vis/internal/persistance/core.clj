@@ -479,6 +479,11 @@
 ;; place a star lives, so every client of it reads the same answer.
 (defdelegate db-set-session-favorite! [db-info session-id is-favorite])
 
+;; The human's archive on a session soul. Backend-owned for the same reason the
+;; star is: a session put out of sight is out of sight on every client of this
+;; gateway, not only on the device that archived it.
+(defdelegate db-set-session-archived! [db-info session-id archived?])
+
 (defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
 
 (defdelegate db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])

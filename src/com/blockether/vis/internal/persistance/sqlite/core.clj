@@ -1241,7 +1241,11 @@
                    ;; The human's STAR, off the `:*` soul row already read: every list
                    ;; row carries it without a second query per session (nil =
                    ;; unstarred). Backend-owned, so two clients cannot disagree.
-                   :favorite-rank (:favorite_rank soul)}
+                   :favorite-rank (:favorite_rank soul)
+                   ;; The human's ARCHIVE stamp, off the same `:*` soul row the
+                   ;; star came from: nil means active, a date means the session
+                   ;; is out of sight and read-only until it comes back.
+                   :archived-at (->date (:archived_at soul))}
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 
@@ -1331,11 +1335,13 @@
            ;; stamped here goes stale the moment the group is renamed or recoloured,
            ;; while the rows carrying it sit in a window nobody read again.
            :group-id (->uuid (:group_id row))
-           :favorite-rank (:favorite_rank row)})
+           :favorite-rank (:favorite_rank row)
+           :archived-at (->date (:archived_at row))})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
                           :cs.project_id :cs.project_position :cs.group_id :cs.favorite_rank
-                          :cs.goal [:p.name :project_name] [:s.title :state_title] :s.version
+                          :cs.archived_at :cs.goal [:p.name :project_name] [:s.title :state_title]
+                          :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
@@ -2321,8 +2327,11 @@
   "List `project`s for `owner-id` (default \"local\"), each with a live
    `:session-count`, ordered by (position, created_at). Projects are
    CROSS-CHANNEL by construction — every channel sees the same set.
-   Archived projects are hidden unless `:include-archived?` is truthy."
-  [db-info {:keys [owner-id include-archived?]}]
+
+   `:archived` says which projects answer, in the ONE archive vocabulary
+   sessions and session groups also read: `:exclude` (the default) hides the
+   archived ones, `:include` returns both, `:only` returns the archive alone."
+  [db-info {:keys [owner-id archived]}]
   (when (ds db-info)
     (let [owner (or owner-id "local")]
       (mapv row->project
@@ -2330,7 +2339,14 @@
                     {:select project-select-cols
                      :from [[:project :p]]
                      :where (into [:and [:= :p.owner_id owner]]
-                                  (when-not include-archived? [[:= :p.archived_at nil]]))
+                                  (case (or archived :exclude)
+                                    :include
+                                    nil
+
+                                    :only
+                                    [[:not= :p.archived_at nil]]
+
+                                    [[:= :p.archived_at nil]]))
                      :order-by [[:p.position :asc] [:p.created_at :asc]]})))))
 
 (defn db-get-project-by-root
@@ -3198,6 +3214,37 @@
 
           (execute! tx-info {:update :session_soul :set {:favorite_rank rank} :where [:= :id id]})
           rank)))))
+
+;; The human's archive (session_soul.archived_at)
+
+(defn db-set-session-archived!
+  "Archive (`true`) or unarchive (`false`) the soul behind `session-id`. Returns
+   the stamp the session now carries - a date while archived, nil once it is not.
+
+   The archive is a STATE the human sets, not an event, so archiving an ALREADY
+   archived soul keeps its original stamp: a retried request or a second tap
+   racing the first must not re-date an archive nobody touched. Archiving never
+   touches the session's turns - the conversation is kept, only hidden."
+  [db-info session-id archived?]
+  (when (and (ds db-info) session-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [id
+              (->ref session-id)
+
+              cur
+              (:archived_at (query-one!
+                              tx-info
+                              {:select [:archived_at] :from :session_soul :where [:= :id id]}))
+
+              stamp
+              (cond (not archived?) nil
+                    (some? cur) (long cur)
+                    :else (now-ms))]
+
+          (execute! tx-info {:update :session_soul :set {:archived_at stamp} :where [:= :id id]})
+          (->date stamp))))))
 
 ;; Turn - session_turn_soul + session_turn_state
 

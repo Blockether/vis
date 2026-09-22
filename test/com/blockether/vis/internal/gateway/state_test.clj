@@ -3013,6 +3013,83 @@
         (expect (contains? row "was_interrupted"))
         (expect (false? (get row "was_interrupted"))))))
 
+;; The human's ARCHIVE behaves like the star: the gateway owns it, every client reads the
+;; same stamp, and the row CARRIES the field even when it is empty - a client merging this
+;; row onto a cached one has to see an archive taken away, not merely not-mentioned.
+(defdescribe soul-carries-the-archive-stamp-test
+             (it "says when the session was put away, and stays present while it is not"
+                 (let [row
+                       (fn [session]
+                         (with-redefs-fn {#'lp/by-id (constantly session)
+                                          #'lp/db-info (constantly nil)
+                                          #'persistance/db-session-turn-stats (constantly nil)
+                                          #'bus/live-turn-id (constantly nil)
+                                          #'bus/session-waiting? (constantly false)
+                                          #'smodel/pending-pref (constantly [false nil])}
+                           (fn []
+                             (state/soul (:id session)))))
+
+                       active
+                       (row {:id "s-active" :channel :api :title "t"})
+
+                       filed
+                       (row {:id "s-filed"
+                             :channel :api
+                             :title "t"
+                             :archived-at #inst "2024-05-01T10:00:00.000Z"})]
+
+                   (expect (contains? active "archived_at"))
+                   (expect (nil? (get active "archived_at")))
+                   (expect (some? (get filed "archived_at"))))))
+
+;; The archive is a CUT on the RANKING, so a session put away leaves the window, the
+;; awaiting shelf and the total TOGETHER: a navigator counting rows no page can paint is
+;; the bug the project window already answered for.
+(defdescribe
+  gateway-session-archive-cut-test
+  (it
+    "hides the archive by default and answers it only when the caller names the view"
+    (with-redefs [lp/db-info
+                  (constantly nil)
+
+                  persistance/db-session-turn-stats
+                  (constantly nil)
+
+                  lp/by-channel
+                  (fn [_]
+                    [{:id "active" :title "active" :created-at 3000}
+                     {:id "filed"
+                      :title "filed"
+                      :created-at 2000
+                      :archived-at #inst "2024-05-01T10:00:00.000Z"}])
+
+                  bus/waiting-requests
+                  (constantly {"filed" [{:id "req-1" :since 1}]})
+
+                  bus/session-waiting?
+                  (fn [sid]
+                    (= "filed" (str sid)))
+
+                  state/soul
+                  (fn [sid]
+                    {"id" (str sid) "created_at" 1000 "is_awaiting_input" (= "filed" (str sid))})]
+
+      (let [page (state/list-sessions-page :all {:limit 1})]
+        (expect (= ["active"] (mapv #(get % "id") (:sessions page))))
+        ;; The total counts the list the client can actually walk.
+        (expect (= 1 (:total page)))
+        ;; An archived session parked on a human is not a chore anyone can do from a
+        ;; list that does not show it, so it leaves the awaiting shelf too.
+        (expect (= [] (mapv #(get % "id") (:awaiting page)))))
+      (let [page (state/list-sessions-page :all {:limit 1 :archived :include})]
+        (expect (= ["active"] (mapv #(get % "id") (:sessions page))))
+        (expect (= 2 (:total page)))
+        (expect (= ["filed"] (mapv #(get % "id") (:awaiting page)))))
+      ;; What a REVEAL asks for: the archive alone.
+      (let [page (state/list-sessions-page :all {:limit 1 :archived :only})]
+        (expect (= ["filed"] (mapv #(get % "id") (:sessions page))))
+        (expect (= 1 (:total page)))))))
+
 ;; Regression: SDK reactivation could miss a ping between terminal state and journal cleanup.
 (defdescribe
   council-wake-after-terminal-marker-test

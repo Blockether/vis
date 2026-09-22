@@ -132,7 +132,14 @@ CREATE TABLE session_soul (
   -- boolean — allocated MAX()+1 — so the pinned band has a total order that no
   -- wall-clock tie can break. The numbers are only ever compared, never shown,
   -- so the gaps unstarring leaves behind cost nothing. NULL = unstarred.
-  favorite_rank     INTEGER
+  favorite_rank     INTEGER,
+
+  -- The human's ARCHIVE, owned HERE for the same reason the star above is: a
+  -- session put out of sight keeps its whole conversation and has to be out of
+  -- sight on every device, so ONE column answers the app, the TUI and the SDK.
+  -- Epoch ms of the archiving; NULL = active. An archived session leaves the
+  -- navigator list and turns READ-ONLY, while resume by id still finds it.
+  archived_at       INTEGER
 );
 
 -- Human model picks lock automatic routing until the user clears the preference.

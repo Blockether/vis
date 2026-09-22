@@ -4017,7 +4017,8 @@
                    :id-prefix nil
                    :ids #{}
                    :dirty #{}
-                   :grouped nil}]
+                   :grouped nil
+                   :archived :exclude}]
                  @seen))
           (is (= "2:-3000:b" (get body "next_cursor")))
           (is (true? (get body "has_more")))
@@ -4376,6 +4377,88 @@
       (with-redefs-fn {#'state/set-favorite! (constantly nil)}
         (fn []
           (is (= 404 (:status (patch-session {:is_favorite true})))))))))
+
+;; The archive is set on the GATEWAY for the same reason the star above is: a session put
+;; away on the phone has to be put away in the TUI and in the web list too, and no device
+;; can hold a private copy of that decision.
+(deftest the-archive-is-set-on-the-gateway-never-on-the-device
+  (let [sid
+        (str (random-uuid))
+
+        asked
+        (atom [])
+
+        archive-setter
+        (fn [stamp]
+          (fn [_sid archived?]
+            (swap! asked conj archived?)
+            {"id" sid "archived_at" (when archived? stamp)}))
+
+        patch-session
+        (fn [body]
+          ((rv 'patch-session-handler)
+            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+
+    (testing "archiving answers the soul carrying the stamp the gateway wrote"
+      (with-redefs-fn {#'state/set-archived! (archive-setter 1717)}
+        (fn []
+          (let [response (patch-session {:archived true})]
+            (is (= 200 (:status response)))
+            (is (= 1717 (get (wire/parse-json (:body response)) "archived_at")))
+            (is (= [true] @asked))))))
+    (testing "unarchiving is the same route, and the stamp comes back empty"
+      (reset! asked [])
+      (with-redefs-fn {#'state/set-archived! (archive-setter 1717)}
+        (fn []
+          (let [response (patch-session {:archived false})]
+            (is (= 200 (:status response)))
+            (is (nil? (get (wire/parse-json (:body response)) "archived_at")))
+            (is (= [false] @asked))))))
+    (testing "the archive is read before a title, so a body carrying both never renames"
+      (reset! asked [])
+      (with-redefs-fn {#'state/set-archived! (archive-setter 1717)
+                       #'state/set-title! (fn [& _]
+                                            (throw (ex-info "renamed instead of archived" {})))}
+        (fn []
+          (is (= 200 (:status (patch-session {:archived true :title "new name"}))))
+          (is (= [true] @asked)))))
+    (testing "a session this gateway does not know is a 404, never a silent archive"
+      (with-redefs-fn {#'state/set-archived! (constantly nil)}
+        (fn []
+          (is (= 404 (:status (patch-session {:archived true})))))))))
+
+;; The ONE archive vocabulary every list route of this gateway reads: the view arrives by
+;; NAME, because a boolean could not say whether the reader wants the active rows, both,
+;; or the archive alone - which is what a reveal asks for.
+(deftest sessions-window-reads-the-archive-view-by-name
+  (let [seen
+        (atom nil)
+
+        page
+        (fn [params]
+          (with-redefs [state/list-sessions-page
+                        (fn [channel opts]
+                          (reset! seen [channel opts])
+                          {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
+            ((rv 'list-sessions-handler) {:query-params params})))]
+
+    (testing
+      "no parameter is the ACTIVE list, so a client that never heard of the archive is unchanged"
+      (page {})
+      (is (= :exclude (:archived (second @seen)))))
+    (testing "a caller names the view it wants, in any case, and a blank names nothing"
+      (doseq [[param view]
+              {"exclude" :exclude "include" :include "only" :only "ONLY" :only "" :exclude}]
+        (page {"archived" param})
+        (is (= view (:archived (second @seen))) param)))
+    (testing "a view this gateway does not have is refused before the window costs anything"
+      (with-redefs [state/list-sessions-page (fn [& _]
+                                               (throw (ex-info "windowed an unknown archive view"
+                                                               {})))]
+        (let [response ((rv 'list-sessions-handler) {:query-params {"archived" "yes"}})]
+          (is (= 400 (:status response)))
+          (is (= "invalid-archived"
+                 (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
 ;; Regression: the settings mutation route answered 200 to every value it could
 ;; not store — a JSON `false` was read as "no value given" and ignored, the string

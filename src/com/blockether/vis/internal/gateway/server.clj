@@ -619,6 +619,27 @@
             str/trim
             not-empty)))
 
+(def ^:private archived-views
+  "The ONE archive vocabulary every list route of this gateway reads: `exclude`
+   answers the active items, `include` answers both and `only` answers the
+   archive alone - what a reveal asks for. A boolean could not say which of the
+   three a reader meant, so the parameter names the VIEW instead."
+  {"exclude" :exclude "include" :include "only" :only})
+
+(defn- query-archived
+  "The archive view a request asks for, or `:invalid` when it names one this
+   gateway does not have. Absent or blank is `:exclude`: a caller that never
+   heard of the archive reads the active list."
+  [request]
+  (if-let [v (query-str request "archived")]
+    (get archived-views (str/lower-case v) :invalid)
+    :exclude))
+
+(defn- archived-400
+  "The answer to an `archived` parameter naming a view that does not exist."
+  []
+  (error-response 400 :invalid-archived "archived must be exclude, include or only"))
+
 (defn- upload-limit
   [media-type]
   (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
@@ -2361,13 +2382,26 @@
         window-limit
         (if (or (given? "limit") (some? root) (seq project-id) (seq id-prefix) (seq ids))
           limit
-          default-session-window)]
+          default-session-window)
 
-    (if (or (and (given? "limit") (nil? limit))
-            (and (some? after) (nil? (state/parse-session-cursor after))))
-      (error-response 400
-                      :invalid-window
-                      "limit must be an integer and after must be a <band>:<key>:<id> cursor")
+        ;; WHICH VIEW of the list: the active sessions (the default), the archive
+        ;; alone - what a reveal asks for - or both.
+        archived
+        (query-archived request)
+
+        ;; The two ways this read is refused before it costs anything: an archive
+        ;; view this gateway does not have, and a window nobody can cut.
+        refusal
+        (cond (= :invalid archived) (archived-400)
+              (or (and (given? "limit") (nil? limit))
+                  (and (some? after) (nil? (state/parse-session-cursor after))))
+              (error-response
+                400
+                :invalid-window
+                "limit must be an integer and after must be a <band>:<key>:<id> cursor"))]
+
+    (if refusal
+      refusal
       (let [page
             (state/list-sessions-page :all
                                       {:limit window-limit
@@ -2377,7 +2411,8 @@
                                        :id-prefix id-prefix
                                        :ids ids
                                        :dirty dirty
-                                       :grouped grouped})
+                                       :grouped grouped
+                                       :archived archived})
 
             payload
             (cond-> {:sessions (:sessions page)
@@ -2456,9 +2491,10 @@
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
-  "PATCH /v1/sessions/:sid - star (`{is_favorite}`), rename (`{title}`) OR change
-   project membership (`{project_id}`, null to remove from project). The star is
-   checked first, then membership."
+  "PATCH /v1/sessions/:sid - star (`{is_favorite}`), archive (`{archived}`),
+   rename (`{title}`) OR change project membership (`{project_id}`, null to
+   remove from project). The star is checked first, then the archive, then
+   membership."
   [request]
   (let [sid
         (path-sid request)
@@ -2473,6 +2509,14 @@
           ;; other devices on this gateway see the same star without being told.
           (contains? body "is_favorite")
           (if-let [soul (state/set-favorite! sid (boolean (get body "is_favorite")))]
+            (json-response soul)
+            (session-404 (get-in request [:path-params :sid])))
+          ;; The ARCHIVE is the same kind of state as the star above: the request
+          ;; carries the intent, the soul that comes back carries the stamp this
+          ;; gateway wrote, and every other device sees the session leave the list
+          ;; without being told about this call.
+          (contains? body "archived")
+          (if-let [soul (state/set-archived! sid (boolean (get body "archived")))]
             (json-response soul)
             (session-404 (get-in request [:path-params :sid])))
           (contains? body "project_id") (if-let [soul (state/assign-project!
@@ -2855,18 +2899,20 @@
       (update (json-response payload) :headers merge base))))
 
 (defn- list-projects-handler
-  "GET /v1/projects[?owner=…&archived=true] — the owner's projects (projects
-   are CROSS-CHANNEL), each with a live session_count."
+  "GET /v1/projects[?owner=…&archived=exclude|include|only] — the owner's
+   projects (projects are CROSS-CHANNEL), each with a live session_count."
   [request]
   (let [owner
         (not-empty (get-in request [:query-params "owner"]))
 
-        archived?
-        (= "true" (get-in request [:query-params "archived"]))]
+        archived
+        (query-archived request)]
 
-    (json-response {:projects (state/list-projects (cond-> {:include-archived? archived?}
-                                                     owner
-                                                     (assoc :owner-id owner)))})))
+    (if (= :invalid archived)
+      (archived-400)
+      (json-response {:projects (state/list-projects (cond-> {:archived archived}
+                                                       owner
+                                                       (assoc :owner-id owner)))}))))
 
 (defn- create-project-handler
   "POST /v1/projects {name, color?, owner_id?, root?} — create a (cross-channel) project."

@@ -740,11 +740,13 @@
 
 (defn list-projects
   "GET /v1/projects — projects are CROSS-CHANNEL. `opts`: :owner (string),
-   :archived? (bool). Returns the :projects vector."
+   :archived (`:exclude` (the default), `:include` or `:only` — the gateway's
+   one archive vocabulary). Returns the :projects vector."
   ([] (list-projects nil))
-  ([{:keys [owner archived?]}]
+  ([{:keys [owner archived]}]
    (let [qs
-         (->> [(when owner (str "owner=" (enc owner))) (when archived? "archived=true")]
+         (->> [(when owner (str "owner=" (enc owner)))
+               (when (and archived (not= :exclude archived)) (str "archived=" (name archived)))]
               (remove nil?)
               (str/join "&"))
 
