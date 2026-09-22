@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import { ArtifactsChip, ArtifactsSheet, previewBlocks, previewLines } from './Ar
 import { CopyChip } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionArtifact } from '../lib/artifacts';
+import { dismissTopLayer } from '../lib/edge-back';
 
 /** The BOX the OTHER chip in the session header wears, read from the component that
  *  owns it. The session id is a `CopyChip` on the band's density (so is every `Copy` in
@@ -670,6 +671,37 @@ describe('an opened artifact', () => {
     );
 
     expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeVisible();
+  });
+
+  // Reported with the back stroke, and the sheet has the same shape: Android's back is one
+  // event for the shell, so an opened artifact used to carry the reader out of the session.
+  // Back walks the ladder Escape walks — the opened cut first, then the sheet itself.
+  it("takes down the opened artifact before the sheet, on the phone's back", () => {
+    const onClose = vi.fn();
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[picture]}
+        initialArtifact={picture}
+        onClose={onClose}
+      />,
+    );
+    expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeVisible();
+
+    act(() => {
+      dismissTopLayer();
+    });
+
+    expect(screen.queryByRole('dialog', { name: 'revenue.png' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      dismissTopLayer();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    view.unmount();
   });
   const openNote = async () => {
     const view = render(

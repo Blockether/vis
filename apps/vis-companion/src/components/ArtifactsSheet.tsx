@@ -25,7 +25,7 @@
  * shrinks a hit box, so an iPad keeps 44px targets at desktop width.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ARTIFACT_FILTERS,
@@ -43,6 +43,7 @@ import { useAttachImage } from '../lib/attach-image';
 import { editedFilename } from '../lib/image-file';
 import type { GatewayClient } from '../lib/gateway';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
+import { useBackLayer } from '../lib/edge-back';
 import { DataTable, parseCsv } from './DataTable';
 import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
@@ -1142,25 +1143,31 @@ export function ArtifactsSheet({
     setOpened(initialArtifact);
   }, [initialArtifact]);
 
+  // Innermost surface first: the opened cut, then the version list it was opened
+  // from, then the sheet itself. A keyboard says that with Escape and a phone says it
+  // with its own back button, so both walk the same ladder.
+  const dismiss = useCallback(() => {
+    if (opened) {
+      setOpened(null);
+      return;
+    }
+    if (versionsOf) {
+      setVersionsOf(null);
+      return;
+    }
+    onClose();
+  }, [onClose, opened, versionsOf]);
+  useBackLayer(dismiss);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
-      // Innermost surface first: the opened cut, then the version list it was
-      // opened from, then the sheet itself.
-      if (opened) {
-        setOpened(null);
-        return;
-      }
-      if (versionsOf) {
-        setVersionsOf(null);
-        return;
-      }
-      onClose();
+      dismiss();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, opened, versionsOf]);
+  }, [dismiss]);
 
   const { host, position } = overlayLayer();
   return createPortal(

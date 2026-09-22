@@ -19,6 +19,7 @@ import { readArtifactText, TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
 import { BandButton, DialogHeader, ListRow, overlayLayer } from './ui';
 import { useStickyOverlay } from '../lib/sticky-overlay';
+import { useBackLayer } from '../lib/edge-back';
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -70,6 +71,10 @@ export function OverlayScreen({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // A phone has no Escape, and its back is the same door: while this document is up,
+  // back closes it rather than leaving the session standing underneath.
+  useBackLayer(onClose);
 
   const { position } = overlayLayer();
   return (

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,9 +8,11 @@ import {
   DocOverlay,
   DocPreview,
   DocStack,
+  OverlayScreen,
   docSandbox,
   docStackSummary,
 } from './DocArtifact';
+import { dismissTopLayer } from '../lib/edge-back';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -359,5 +361,30 @@ describe('a revised document', () => {
       />,
     );
     expect(screen.queryByLabelText('Versions of LONE.md')).toBeNull();
+  });
+});
+
+// Reported with the back stroke: Android's back is ONE event for the whole shell, so an
+// opened document used to carry the reader out of the session standing under it. The
+// document is the layer on top, and back is the door Escape is for a keyboard.
+describe('an opened document answering the phone', () => {
+  it('closes itself rather than the session under it', () => {
+    const onClose = vi.fn();
+    const view = render(
+      <OverlayScreen title="q3-report.pdf" onClose={onClose}>
+        <p>the document</p>
+      </OverlayScreen>,
+    );
+
+    let spent = false;
+    act(() => {
+      spent = dismissTopLayer();
+    });
+
+    expect(spent).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    expect(dismissTopLayer()).toBe(false);
   });
 });

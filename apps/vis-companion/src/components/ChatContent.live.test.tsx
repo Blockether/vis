@@ -7,7 +7,7 @@ import { IterationTrace } from './ChatContent';
 import { activityHistoryPage } from '../dev/activity-history';
 import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
-import { EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back';
+import { dismissTopLayer, EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back';
 import { drag } from '../lib/pull-to-search.fixture';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
@@ -135,6 +135,35 @@ it('closes an opened run on a swipe in from its left edge', () => {
     expect(mounted.queryByRole('dialog')).toBeNull();
   } finally {
     vi.useRealTimers();
+    shell.remove();
+    pane.remove();
+  }
+});
+
+// Reported with the stroke: on Android the system back is not a finger this view can read —
+// it is one event for the whole shell. An opened run is still the thing standing on top, so
+// back closes the run and leaves the session it belongs to where it was.
+it('closes an opened run when the phone answers back', () => {
+  const shell = document.createElement('div');
+  shell.setAttribute('data-viewport-shell', '');
+  const pane = document.createElement('div');
+  pane.setAttribute('data-session-surface', '');
+  document.body.append(shell, pane);
+  try {
+    const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
+    const open = `Open run ${STORY_LIVE_VIEW.title}`;
+    fireEvent.click(mounted.getByRole('button', { name: open }));
+    expect(mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title })).toBeVisible();
+
+    let spent = false;
+    act(() => {
+      spent = dismissTopLayer();
+    });
+
+    expect(spent).toBe(true);
+    expect(mounted.queryByRole('dialog')).toBeNull();
+    expect(mounted.getByRole('button', { name: open })).toBeVisible();
+  } finally {
     shell.remove();
     pane.remove();
   }

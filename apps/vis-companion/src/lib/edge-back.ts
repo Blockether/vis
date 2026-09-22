@@ -282,6 +282,51 @@ export interface EdgeBackOptions {
 }
 
 /**
+ * THE OTHER WAY BACK, and the only one that never reaches this file as touches.
+ * Android answers "back" with its own button or its own system gesture, and what
+ * the page is handed is ONE event for the whole shell (`App.tsx`) — so the layer a
+ * finger could have dragged out has to be FOUND rather than touched. Layers stand
+ * here while they are up, in the order they opened, and the shell asks for the top
+ * one before it walks its own history: a reader inside an opened run means to leave
+ * the run, not the session it belongs to.
+ */
+const layers: Array<() => void> = [];
+
+/**
+ * Stand a layer over the application for as long as the caller is mounted, so the
+ * phone's back takes it down first. `null` is a layer that is not up — the same
+ * "nothing to leave" a null door says to `useEdgeBack`.
+ */
+export function useBackLayer(onDismiss: (() => void) | null): void {
+  // Read only when back arrives, so a re-render never re-announces the layer.
+  const latest = useRef(onDismiss);
+  useEffect(() => {
+    latest.current = onDismiss;
+  });
+  const isUp = onDismiss !== null;
+  useEffect(() => {
+    if (!isUp) return;
+    const dismiss = () => latest.current?.();
+    layers.push(dismiss);
+    return () => {
+      const at = layers.lastIndexOf(dismiss);
+      if (at >= 0) layers.splice(at, 1);
+    };
+  }, [isUp]);
+}
+
+/**
+ * Take down the layer standing on top, and say whether there was one. False leaves
+ * back unspent, and the shell underneath is what answers it.
+ */
+export function dismissTopLayer(): boolean {
+  const top = layers.at(-1);
+  if (!top) return false;
+  top();
+  return true;
+}
+
+/**
  * Watch the pane for a swipe in from its leading edge, drag it with the finger,
  * and leave the session when the stroke completes. Answers the refs to PUT ON
  * THOSE PANES.
@@ -329,6 +374,9 @@ export function useEdgeBack(
     under.current = element;
   }, []);
   const [swiping, setSwiping] = useState(false);
+  // The same layer answers the phone's own back button, which arrives as one event
+  // for the shell rather than as a finger on this pane.
+  useBackLayer(isLayer ? onBack : null);
 
   useEffect(() => {
     if (!pane || !hasDoor) return;

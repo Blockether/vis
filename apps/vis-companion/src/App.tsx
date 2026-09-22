@@ -71,7 +71,7 @@ import {
   tabHash,
 } from './lib/router';
 import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
-import { useEdgeBack } from './lib/edge-back';
+import { dismissTopLayer, useEdgeBack } from './lib/edge-back';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -535,6 +535,11 @@ export function App() {
   const backRef = useRef<() => void>(() => {});
   useEffect(() => {
     backRef.current = () => {
+      // WHAT STANDS ON TOP GOES FIRST. An opened run, a document, the artifact sheet,
+      // any dialog — that is the place the reader is IN, so back takes it down rather
+      // than the session underneath it, exactly as a finger drawn in from its left
+      // edge does. A layer says it is up while it is up (`lib/edge-back`).
+      if (dismissTopLayer()) return;
       if (settingsDestination) {
         setSettingsDestination(null);
         return;

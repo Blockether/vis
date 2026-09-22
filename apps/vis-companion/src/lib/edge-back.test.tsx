@@ -12,9 +12,11 @@ import {
   EDGE_SETTLE_MS,
   EDGE_UNDER_DIM,
   EDGE_ZONE_PX,
+  dismissTopLayer,
   edgeIsFree,
   edgeMove,
   edgeStart,
+  useBackLayer,
   useEdgeBack,
   type EdgePhase,
   type EdgePoint,
@@ -404,5 +406,51 @@ describe('a dialog leaving by the same stroke', () => {
     settle();
 
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Something standing over the application: only its being up matters here. */
+function Layer({ onDismiss }: { onDismiss: () => void }) {
+  useBackLayer(onDismiss);
+  return null;
+}
+
+// Reported after the stroke was fixed: on Android the system back never reaches this
+// file as touches — it arrives as ONE event for the shell — so a reader inside an
+// opened run was carried out of the session instead of out of the run.
+describe('the phone answering back while a layer is up', () => {
+  it('takes down the layer on top, then the one that was under it', () => {
+    const sheet = vi.fn();
+    const run = vi.fn();
+    const under = render(<Layer onDismiss={sheet} />);
+    const over = render(<Layer onDismiss={run} />);
+
+    expect(dismissTopLayer()).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(sheet).not.toHaveBeenCalled();
+
+    over.unmount();
+    expect(dismissTopLayer()).toBe(true);
+    expect(sheet).toHaveBeenCalledTimes(1);
+
+    under.unmount();
+    expect(dismissTopLayer()).toBe(false);
+  });
+
+  it('leaves back unspent when nothing stands over the application', () => {
+    expect(dismissTopLayer()).toBe(false);
+  });
+
+  // The dialog that takes the edge stroke is the same layer the button takes down:
+  // one statement, whichever way the phone says "back".
+  it('answers for a dialog that took the stroke', () => {
+    const onBack = vi.fn();
+    const dialog = render(<OpenDialog onBack={onBack} />);
+
+    expect(dismissTopLayer()).toBe(true);
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    dialog.unmount();
+    expect(dismissTopLayer()).toBe(false);
   });
 });
