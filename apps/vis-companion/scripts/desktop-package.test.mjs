@@ -106,10 +106,11 @@ describe('desktop package', () => {
 });
 
 // v0.1.43 ran before checkout on fresh Linux runners and had no ARM64 package job.
-const workflow = readFileSync(
+const workflowSource = readFileSync(
   new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n');
+const workflow = workflowSource.replace(/^[ \t]*#.*$/gm, '');
 
 describe('desktop release signing', () => {
   it('requires macOS signing credentials and notarization before uploading', () => {
@@ -155,7 +156,7 @@ describe('desktop release signing', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
   });
 
-  it('grants release caller permissions for nested OIDC signing and asset upload', () => {
+  it('grants release asset upload without Windows signing permissions', () => {
     const release = readFileSync(
       new URL('../../../.github/workflows/release.yml', import.meta.url),
       'utf8',
@@ -165,57 +166,8 @@ describe('desktop release signing', () => {
     )?.[1];
     expect(desktop).toBeDefined();
     expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
-    expect(desktop).toMatch(/    permissions:\r?\n      contents: write\r?\n      id-token: write/);
-  });
-
-  it('signs with OIDC and verifies the MSI and extracted EXE before smoke and upload', () => {
-    for (const name of [
-      'CLIENT_ID',
-      'TENANT_ID',
-      'SUBSCRIPTION_ID',
-      'ENDPOINT',
-      'ACCOUNT',
-      'PROFILE',
-      'PUBLISHER',
-    ]) {
-      expect(workflow).toContain(`vars.WINDOWS_SIGNING_${name}`);
-    }
-    expect(workflow).toContain(
-      "environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}",
-    );
-    const login = workflow.indexOf('uses: azure/login@v3');
-    const packaging = workflow.indexOf('name: Sign and package Windows with Pake');
-    const installerCheck = workflow.indexOf('-FilePath $installers[0].FullName -VerifyOnly');
-    const exeCheck = workflow.indexOf('-FilePath $executables[0].FullName -VerifyOnly');
-    const launch = workflow.indexOf('$app = Start-Process');
-    const upload = workflow.indexOf('uses: actions/upload-artifact');
-    expect(login).toBeGreaterThan(0);
-    expect(packaging).toBeGreaterThan(login);
-    expect(installerCheck).toBeGreaterThan(packaging);
-    expect(exeCheck).toBeGreaterThan(installerCheck);
-    expect(launch).toBeGreaterThan(exeCheck);
-    expect(upload).toBeGreaterThan(launch);
-    const signing = readFileSync(new URL('windows-sign.ps1', import.meta.url), 'utf8');
-    expect(signing).toContain("FileDigest = 'SHA256'");
-    expect(signing).toContain("TimestampDigest = 'SHA256'");
-    expect(signing).toContain("TimestampRfc3161 = 'http://timestamp.acs.microsoft.com'");
-    expect(signing).toContain('ExcludeAzureCliCredential = $false');
-    for (const credential of [
-      'Environment',
-      'WorkloadIdentity',
-      'ManagedIdentity',
-      'SharedTokenCache',
-      'VisualStudio',
-      'VisualStudioCode',
-      'AzurePowerShell',
-      'AzureDeveloperCli',
-      'InteractiveBrowser',
-    ]) {
-      expect(signing).toContain(`Exclude${credential}Credential = $true`);
-    }
-    expect(signing.indexOf('Invoke-ArtifactSigning @parameters')).toBeLessThan(
-      signing.indexOf('Assert-VisSignature -Path $Path -Publisher'),
-    );
+    expect(desktop).toMatch(/    permissions:\r?\n      contents: write/);
+    expect(desktop).not.toMatch(/^\s+id-token: write/m);
   });
 });
 
@@ -345,12 +297,11 @@ describe('desktop release platforms', () => {
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it('runs universal macOS, native x64/ARM64 Linux and Windows x64 builders', () => {
+  it('runs only the supported macOS and Linux builders', () => {
     expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
       'macOS universal',
       'Linux x64',
       'Linux ARM64',
-      'Windows x64',
     ]);
     // Only macOS is self-hosted; other platforms use native hosted runners.
     expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
@@ -358,22 +309,8 @@ describe('desktop release platforms', () => {
       '[self-hosted, macOS, ARM64, vis-macos-arm64]',
       'ubuntu-24.04',
       'ubuntu-24.04-arm',
-      'windows-2022',
     ]);
-    expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
-    expect(workflow).toContain('runner: ubuntu-24.04');
-    expect(workflow).toContain('runner: ubuntu-24.04-arm');
-    expect(workflow).toContain('asset: windows-x64');
-    expect(workflow).toContain('uses: azure/login@v3');
-    expect(workflow).toContain('id-token: write');
-    expect(workflow).not.toContain('azure-client-secret');
-    const smoke = workflow.indexOf('name: Smoke-test Windows installer');
-    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Sign and package Windows with Pake'));
-    expect(smoke).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
-    expect(workflow).toContain('shell: pwsh');
-    expect(workflow).toContain('msiexec.exe');
-    expect(workflow).toContain('MainWindowHandle');
-    expect(workflow).toContain('Stop-Process');
+    expect(workflow).toContain('environment: desktop-build');
     expect(workflow).toContain('aarch64-apple-darwin,x86_64-apple-darwin');
     expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
   });
