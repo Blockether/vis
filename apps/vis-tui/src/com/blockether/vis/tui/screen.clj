@@ -5810,7 +5810,9 @@
         (with-dialog-lock
           #(dlg/select-dialog!
              screen
-             (if gid (str "Group · " (get group "name")) (str "Project · " (get project "name")))
+             (if gid
+               (str "Group · " (get group "name"))
+               (str "Project · " (projects/project-label project)))
              (if gid
                [{:id :new-session :label "＋ New session here"} {:id :rename :label "Rename group…"}
                 {:id :recolour :label "Change group colour…"} {:id :new :label "＋ New group…"}
@@ -6710,7 +6712,7 @@
                        (let [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
                              items (vec (concat (mapv (fn [pr]
                                                         {:id (get pr "id")
-                                                         :label (str (get pr "name")
+                                                         :label (str (projects/project-label pr)
                                                                      "  ("
                                                                      (get pr "session_count")
                                                                      ")")})

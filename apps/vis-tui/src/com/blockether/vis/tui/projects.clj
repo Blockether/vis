@@ -5,6 +5,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -116,6 +117,15 @@
      :needs-input (max (long waiting) demand)
      :unread (max (long unread) (long (or (get project "unread_count") 0)))}))
 
+(defn project-label
+  "What a project row paints. A project nobody renamed is named by its own root
+   path, so the rail showed `/Users/me/CryptoSyf` where every other path in the
+   TUI reads `~/CryptoSyf`. Home is shortened for DISPLAY only — selection,
+   matching and the gateway keep the stored name — and a name a human typed, or
+   a root outside home, passes through unchanged."
+  [project]
+  (paths/abbreviate-home (get project "name" "Untitled project")))
+
 (defn sidebar-entries
   "Project counters and actionable sessions, in shared paint/keyboard order.
    Waiting tabs are not running. Unread replies persist until their tab is opened."
@@ -146,7 +156,7 @@
              (into
                [{:kind :project-select
                  :project project
-                 :label (get project "name" "Untitled project")
+                 :label (project-label project)
                  :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
                  :running (:running counts)
                  :needs-input (:needs-input counts)

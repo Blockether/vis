@@ -597,6 +597,38 @@
       (is (= fits? (str/includes? row label)))
       (is (= (not fits?) (str/includes? row "…"))))))
 
+(deftest project-name-reads-as-a-home-path-test
+  ;; A project nobody renamed is named by its own ROOT, and the rail painted that
+  ;; absolute path in full while every other path in the TUI reads `~/…`.
+  (let [home
+        (System/getProperty "user.home")
+
+        cols
+        40
+
+        rows
+        18
+
+        db
+        (assoc-in (fixture-db) [:project-sidebar :items 0 "name"] (str home "/CryptoSyf"))
+
+        capture
+        (cap/capture! {:cols cols
+                       :rows rows
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db cols rows))})
+
+        row
+        (nth (str/split-lines (cap/frame-text capture)) 4)]
+
+    (is (= "~/CryptoSyf" (projects/project-label {"name" (str home "/CryptoSyf")})))
+    (is (= "Vis" (projects/project-label project-a)))
+    (is (= "/opt/shared/vis" (projects/project-label {"name" "/opt/shared/vis"})))
+    (is (= "Untitled project" (projects/project-label {})))
+    (is (nil? (:error capture)))
+    (is (str/includes? row "~/CryptoSyf"))
+    (is (not (str/includes? row home)))))
+
 (deftest project-sidebar-overflow-test
   (let [sidebar
         {:items (vec (repeat 50 project-a)) :index 50}
