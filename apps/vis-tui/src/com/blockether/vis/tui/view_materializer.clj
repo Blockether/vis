@@ -24,10 +24,11 @@
    AUTHORED as markdown and a rendered one re-read. What a budget left behind is
    named, never guessed.
 
-   Nothing here evicts the RECORD. Bounds on keyed collections are REFUSALS
-   (`spec/item-bounds`) naming the bound and the node, a log's `:window-lines`
-   is only how much a surface holds hot, and the model's own budget always says
-   how many lines it left behind."
+   Nothing here evicts the RECORD, and nothing here drops a line this surface was
+   handed: a log KEEPS every line it receives, so an expanded log reads WHOLE in the
+   terminal. Bounds on keyed collections are REFUSALS (`spec/item-bounds`) naming the
+   bound and the node, and the model's own budget always says how many lines it left
+   behind."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.view :as spec]))
 
@@ -233,8 +234,9 @@
                       merged)))))
 
 (defn- apply-append
-  "A node with items added. A `log` grows its window and its record; a keyed
-   node upserts by id and is bounded by refusal."
+  "A node with items added. A `log` keeps every line it is handed — the terminal
+   shows the whole record, never a window — and a keyed node upserts by id and is
+   bounded by refusal."
   [node op]
   (let [k
         (get appendable-key (:type node))
@@ -263,19 +265,17 @@
                                (count items)
                                "; split it"))))
       (if (= :log (:type node))
-        (let [window (long (:window-lines node))
-              all (into (:lines node) items)
-              overflow (max 0 (- (count all) window))
+        (let [all (into (:lines node) items)
               styled? (or (contains? node :line-tones) (contains? op :tone))
               tones (when styled?
                       (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
                             (repeat (count items) (:tone op))))]
 
           (cond-> (assoc node
-                    :lines (if (pos? overflow) (subvec all overflow) all)
+                    :lines all
                     :total-lines (+ (long (:total-lines node)) (count items)))
             styled?
-            (assoc :line-tones (if (pos? overflow) (subvec tones overflow) tones))))
+            (assoc :line-tones tones)))
         (update node k #(checked-count! node (upsert % items)))))))
 
 (defn- prune-selected

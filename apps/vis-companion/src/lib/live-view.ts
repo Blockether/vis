@@ -59,7 +59,7 @@ export const LIVE_ORDERS = ['insertion', 'newest-first'] as const;
 /** Which way a `{by: …}` order runs (`live-sort-dirs`). CLOSED. */
 export const LIVE_SORT_DIRS = ['asc', 'desc'] as const;
 
-/** A log holds this many lines in its window; the record keeps them all. */
+/** The window a log declares when the wire leaves it out; a panel keeps every line. */
 export const LIVE_LOG_WINDOW = 2000;
 /** A table holds this many rows. */
 export const LIVE_TABLE_MAX_ROWS = 5000;
@@ -131,7 +131,7 @@ export interface LiveStepsNode extends LiveNodeBase {
   steps: LiveStep[];
 }
 
-/** Output as it arrives. `lines` is a WINDOW onto `total_lines` in the record. */
+/** Output as it arrives. `lines` is what this panel holds of the `total_lines` recorded. */
 export interface LiveLogNode extends LiveNodeBase {
   type: 'log';
   lines: string[];
@@ -302,9 +302,9 @@ export interface LiveView {
 }
 
 /**
- * One page of a log node's RECORD, as `GET …/views/live/:view/log?node=…`
- * answers it. The section shows a WINDOW; this is how the operator walks back
- * past it without the phone ever holding the whole run.
+ * One page of a log node's RECORD, as `GET …/views/live/:view/log?node=…` answers
+ * it. A panel reads the pages that came before the lines it was sent, so what it
+ * shows is the whole log; search answers from the same route.
  */
 export interface LiveLogPage {
   node_id: string;
@@ -753,10 +753,10 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
 }
 
 /**
- * `append` (`live/apply-append`). A log grows its WINDOW and its record: the
- * window slides off the front while `total_lines` keeps counting, which is what
- * lets the section say how much of the story is behind what it shows. Every
- * other node upserts by id.
+ * `append` (`live/apply-append`). A log keeps EVERY line it is handed: a live view
+ * shows the whole log, never a tail of it, and `window_lines` stays what the MODEL
+ * reads of it. `total_lines` still counts the record, so a panel that joined late
+ * knows how much came before the lines it was sent. Every other node upserts by id.
  */
 function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   const key = appendKey(node);
@@ -764,18 +764,16 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
   if (node.type === 'log') {
     const arriving = lines(op.lines);
     if (arriving.length === 0) return node;
-    const all = node.lines.concat(arriving);
-    const overflow = Math.max(0, all.length - node.window_lines);
     return {
       ...node,
-      lines: overflow > 0 ? all.slice(overflow) : all,
+      lines: node.lines.concat(arriving),
       total_lines: node.total_lines + arriving.length,
       ...(node.line_tones || op.tone != null
         ? {
             line_tones: [
               ...(node.line_tones ?? node.lines.map(() => null)),
               ...arriving.map(() => (op.tone == null ? null : tone(op.tone))),
-            ].slice(overflow),
+            ],
           }
         : {}),
     };

@@ -313,12 +313,19 @@ view["state"].set("Complete", detail="")  # Clears the detail.
 ```
 
 Keyed updates insert new ids or update existing ones without changing their
-position. Log lines have no ids and are appended. `window_lines` limits the
-recent lines retained by a client; `.clear()` removes both displayed and
-recorded lines. Every log starts collapsed independently. Expanding one never
-opens another; patches preserve the reader's choice. `default_expanded=True`
-changes only the initial active state. Completed receipts start collapsed again,
-and their retained output remains available when expanded.
+position. Log lines have no ids and are appended. `.clear()` removes both
+displayed and recorded lines. Every log starts collapsed independently.
+Expanding one never opens another; patches preserve the reader's choice.
+`default_expanded=True` changes only the initial active state. Completed
+receipts start collapsed again, and their retained output remains available when
+expanded.
+
+A live view shows the whole log. Companion reads the record back to its first
+line when you expand one, and the TUI paints every line it was handed.
+`window_lines` only sizes the tail the model reads and the tail a client is
+handed when it attaches; it never hides output from you. If a surface attached
+after a log had already started, a note says how many earlier lines the record
+holds, and search reaches them.
 
 Expanded logs offer **Search** in Companion and **Search log** through the TUI's
 F3 controls or pointer. Search is a literal substring, case-insensitive, across
@@ -374,8 +381,8 @@ Each argument to `write` is a complete retained line, not a raw network fragment
 Decode and assemble partial lines in your adapter before redacting and appending
 them. Successive batches keep their own tones, even when updates are coalesced.
 Append incremental output rather than clearing and replacing snapshots. Styling
-does not change `window_lines`, retention or search pagination; Companion keeps
-one earlier page loaded at a time. Use `vis.code(..., language=...)` for a separate,
+does not change `window_lines`, retention or search pagination; the earlier pages
+Companion reads back keep the tones they were written with. Use `vis.code(..., language=...)` for a separate,
 known-language snippet, not to reinterpret the mixed log.
 
 For raw wire clients, an `append` operation may carry `tone` only for a log node.

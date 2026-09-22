@@ -420,9 +420,39 @@
            (entries %))]
 
     (is (= :warn (get-in view [:nodes 0 :line-tones 0])))
-    (is (= ["ERROR compiler" "plain"] (mapv :text (logs pane))))
-    (is (= [:error nil] (mapv :tone (logs pane))))
+    (is (= ["WARN before" "ERROR compiler" "plain"] (mapv :text (logs pane))))
+    (is (= [:warn :error nil] (mapv :tone (logs pane))))
     (is (= (logs pane) (logs (lv/expanded (lv/settled pane {:reason :completed}) "log"))))))
+
+(deftest log-keeps-every-line-past-its-window-test
+  ;; A window is what the producer holds hot, never a cut: the pane paints the whole
+  ;; log it was handed, with no "earlier lines" note standing in for dropped text.
+  (let [view
+        (hi/live-view<-wire {"id" "whole"
+                             "kind" "live"
+                             "version" 1
+                             "seq" 0
+                             "title" "Build output"
+                             "nodes" [{"id" "log"
+                                       "type" "log"
+                                       "lines" ["line 1"]
+                                       "window_lines" 2
+                                       "total_lines" 1
+                                       "default_expanded" true}]})
+
+        pane
+        (lv/patched (lv/opened view)
+                    (hi/live-patch<-wire {"view_id" "whole"
+                                          "seq" 1
+                                          "ops" [{"op" "append"
+                                                  "node_id" "log"
+                                                  "lines" ["line 2" "line 3" "line 4"]}]}))
+
+        rows
+        (entries pane)]
+
+    (is (= ["line 1" "line 2" "line 3" "line 4"] (mapv :text (filterv #(= :log (:kind %)) rows))))
+    (is (not-any? #(str/includes? (str (:text %)) "earlier lines") rows))))
 
 (deftest styled-log-narrow-terminal-test
   (doseq [cols [24 40 80]]

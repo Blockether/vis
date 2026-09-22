@@ -61,7 +61,7 @@ describe('log search', () => {
       .fn()
       .mockResolvedValueOnce(page(['ERROR [disk]'], 0, 201))
       .mockResolvedValueOnce(page(['error last'], 200, 201));
-    render(<LiveViewPanel view={view(['latest'], 500)} load={load} />);
+    render(<LiveViewPanel view={view(['latest'])} load={load} />);
     search('ERROR');
     await waitFor(() => expect(output()).toContain('10: ERROR [disk]'));
     expect(load).toHaveBeenCalledWith('log', 0, 200, 'ERROR');
@@ -114,7 +114,7 @@ describe('log search', () => {
     const rendered = render(<LiveViewPanel view={view()} load={load} />);
     search('error');
     await waitFor(() => expect(output()).toContain('error before'));
-    rendered.rerender(<LiveViewPanel view={view(['error after'], 4)} load={load} />);
+    rendered.rerender(<LiveViewPanel view={view(['error before', 'error after'])} load={load} />);
     expect(screen.getByText('Log changed. Refresh results.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh results' }));
     await waitFor(() => expect(output()).toContain('error after'));
@@ -152,7 +152,9 @@ it('preserves #209 text, styles and line numbers in a closed searchable receipt'
   expect(output()).toBe(log.lines.join('\n'));
 });
 
-it('keeps only one earlier styled page while retaining Stop and independent status', async () => {
+// A live view shows the LOG, not a tail of it: the styled lines before the window
+// arrive on their own, and reading them never disturbs the run's own controls.
+it('paints the earlier styled lines unasked while retaining Stop and independent status', async () => {
   const load = vi.fn().mockImplementation(async (nodeId, from) => ({
     ...page([`WARN page ${from}`], from, 1000, 1000),
     node_id: nodeId,
@@ -166,11 +168,10 @@ it('keeps only one earlier styled page while retaining Stop and independent stat
     tone: 'error',
   });
   render(<LiveViewPanel view={live} load={load} onInterrupt={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
-  await waitFor(() => expect(output()).toContain('WARN page 799'));
-  fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
-  await waitFor(() => expect(output()).toContain('WARN page 599'));
-  expect(output()).not.toContain('WARN page 799');
+  await waitFor(() => expect(output()).toContain('WARN page 0'));
+  expect(load).toHaveBeenCalledWith('log', 0, 999);
+  expect(screen.queryByRole('button', { name: /earlier lines/ })).toBeNull();
+  expect(screen.getByTitle('Severity: warn').textContent).toContain('WARN page 0');
   expect(screen.getByText('Failed promptly')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
   expect(screen.getByRole('textbox', { name: 'Why are you stopping Build?' })).toBeVisible();

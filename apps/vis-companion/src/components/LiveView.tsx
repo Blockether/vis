@@ -16,7 +16,6 @@ import {
   ExecutionAction,
   Input,
   ListRow,
-  LoadMore,
   Modal,
   PROSE,
   Spinner,
@@ -105,8 +104,15 @@ const EMPTY_LINE = {
   link: 'no links',
 } as const;
 
-/** How many earlier lines one press of `Load earlier` reads out of the record. */
+/** How many matching lines one page of search results holds. */
 const LOG_PAGE = 200;
+
+/**
+ * How many earlier lines one read takes out of the record. The gateway caps a page
+ * at the default log window (`gateway.view/live-log-page`), so this is the largest
+ * read that comes back whole.
+ */
+const LOG_READ_PAGE = 2000;
 
 /**
  * The node's name, in the label voice the dialog's fields already use.
@@ -367,13 +373,13 @@ function LogLines({
 }
 
 /**
- * Output as it arrives, and a way BACK past it.
+ * Output as it arrives — ALL of it.
  *
- * The node carries a window; the record behind it can be a hundred thousand
- * lines, which is precisely what a phone must not hold. So the walk back is a
- * page at a time out of the record itself, and when the window has slid on
- * while the operator was reading, the hole between what was fetched and what is
- * live is STATED rather than closed over.
+ * The node carries a WINDOW onto a record that can be a hundred thousand lines, and
+ * a live view shows the LOG, never a tail of it: the pane reads the record back to
+ * its first line on its own, a page at a time, and keeps every line it is sent
+ * afterwards. Nothing here asks the operator to press for output the view already
+ * holds — search is for jumping straight to a match in a long run.
  */
 function LogRows({
   node,
@@ -382,9 +388,15 @@ function LogRows({
   node: LiveLogNode;
   load?: (from: number, limit: number, query?: string) => Promise<LiveLogPage>;
 }) {
-  const [earlier, setEarlier] = useState<LiveLogPage | null>(null);
+  const [head, setHead] = useState<{
+    from: number;
+    lines: string[];
+    tones: (LiveTone | null)[];
+  } | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [readError, setReadError] = useState(false);
+  const [readAttempt, setReadAttempt] = useState(0);
+  const loadRef = useRef(load);
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState<{ query: string; from: number } | null>(null);
   const [result, setResult] = useState<{
@@ -403,8 +415,7 @@ function LogRows({
   );
 
   const windowStart = Math.max(0, node.total_lines - node.lines.length);
-  const knownFrom = earlier ? earlier.from : windowStart;
-  const hole = earlier ? Math.max(0, windowStart - (earlier.from + earlier.lines.length)) : 0;
+  const hasLoad = Boolean(load);
 
   const clearSearch = () => {
     searchRequest.current += 1;
@@ -458,21 +469,56 @@ function LogRows({
     }
   };
 
-  const readEarlier = () => {
-    if (!load || isReading) return;
-    const from = Math.max(0, knownFrom - LOG_PAGE);
-    const limit = knownFrom - from;
-    if (limit <= 0) return;
-    setIsReading(true);
+  // The panel builds its reader inline, so the effect below reads the LATEST one
+  // instead of re-running on an identity that changes with every paint.
+  useEffect(() => {
+    loadRef.current = load;
+  });
+
+  /**
+   * What the pane was never sent, read out of the record and painted as each page
+   * lands. `windowStart` moves only when a fresh snapshot or a `clear` re-bases the
+   * node — exactly when the earlier lines have to be read again.
+   */
+  useEffect(() => {
+    setHead(null);
     setReadError(false);
-    load(from, limit)
-      .then((page) => {
-        // Keep one history page; older output stays in the retained record.
-        setEarlier(page);
-      })
-      .catch(() => setReadError(true))
-      .finally(() => setIsReading(false));
-  };
+    if (!hasLoad || windowStart <= 0) return;
+    let isWanted = true;
+    setIsReading(true);
+    void (async () => {
+      const reader = loadRef.current;
+      if (!reader) {
+        setIsReading(false);
+        return;
+      }
+      let from = windowStart;
+      let earlier: string[] = [];
+      let tones: (LiveTone | null)[] = [];
+      while (isWanted && from > 0) {
+        const start = Math.max(0, from - LOG_READ_PAGE);
+        try {
+          const page = await reader(start, from - start);
+          if (!isWanted) return;
+          earlier = page.lines.concat(earlier);
+          tones = (page.line_tones ?? page.lines.map(() => null)).concat(tones);
+          from = start;
+          setHead({ from, lines: earlier, tones });
+          if (page.lines.length === 0) break;
+        } catch {
+          if (isWanted) {
+            setReadError(true);
+            setIsReading(false);
+          }
+          return;
+        }
+      }
+      if (isWanted) setIsReading(false);
+    })();
+    return () => {
+      isWanted = false;
+    };
+  }, [hasLoad, node.id, windowStart, readAttempt]);
 
   return (
     <div className="min-w-0">
@@ -551,21 +597,22 @@ function LogRows({
           {result && result.page.lines.length === 0 && <Empty>No matching lines.</Empty>}
         </div>
       )}
-      {!search && load && knownFrom > 0 && (
-        <LoadMore
-          label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
-          disabled={isReading}
-          onClick={readEarlier}
-        >
-          {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
-        </LoadMore>
-      )}
-      {!search && readError && (
-        <p role="alert" className="font-mono text-ui text-err">
-          Could not read log. Try again.
+      {!search && isReading && (
+        <p role="status" className="mt-2 font-mono text-ui text-dialog-hint">
+          Reading earlier lines…
         </p>
       )}
-      {!search && node.lines.length === 0 && !earlier && <Empty>{EMPTY_LINE.log}</Empty>}
+      {!search && readError && (
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-5">
+          <p role="alert" className="font-mono text-ui text-err">
+            Could not read the earlier lines.
+          </p>
+          <Button variant="secondary" onClick={() => setReadAttempt((count) => count + 1)}>
+            Try again
+          </Button>
+        </div>
+      )}
+      {!search && node.lines.length === 0 && !head && <Empty>{EMPTY_LINE.log}</Empty>}
       <pre
         role="region"
         tabIndex={0}
@@ -589,9 +636,8 @@ function LogRows({
           )
         ) : (
           <>
-            {earlier && <LogLines lines={earlier.lines} tones={earlier.line_tones} />}
-            {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
-            {earlier && hole === 0 && node.lines.length > 0 && '\n'}
+            {head && <LogLines lines={head.lines} tones={head.tones} />}
+            {head && head.lines.length > 0 && node.lines.length > 0 && '\n'}
             <LogLines lines={node.lines} tones={node.line_tones} />
           </>
         )}

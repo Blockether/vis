@@ -167,12 +167,15 @@ describe('a patch frame', () => {
     ]);
   });
 
-  it('slides the log window and keeps the count the record holds', () => {
+  // A live view shows the whole log: `window_lines` bounds what the MODEL reads of
+  // it, never what a panel keeps of what it was sent.
+  it('keeps every line it is sent and counts the record with it', () => {
+    const before = nodeOfType(opened(), 'tail', 'log');
     const arriving = Array.from({ length: LIVE_LOG_WINDOW }, (_, at) => `line ${at}`);
     const view = patched(opened(), 1, [{ op: 'append', node_id: 'tail', lines: arriving }]);
     const log = nodeOfType(view, 'tail', 'log');
-    expect(log.lines.length).toBe(LIVE_LOG_WINDOW);
-    expect(log.lines[0]).toBe('line 0');
+    expect(log.lines.length).toBe(before.lines.length + LIVE_LOG_WINDOW);
+    expect(log.lines[0]).toBe(before.lines[0]);
     expect(log.lines.at(-1)).toBe(`line ${LIVE_LOG_WINDOW - 1}`);
     expect(log.total_lines).toBe(LIVE_LOG_WINDOW + 2);
   });
@@ -626,8 +629,8 @@ it('keeps #209 log tones aligned through wire parsing, chunk appends and clear',
     { op: 'append', node_id: 'log', lines: ['plain'] },
   ]);
   expect(updated.nodes[0]).toMatchObject({
-    lines: ['ERROR literal <script>', 'plain'],
-    line_tones: ['error', null],
+    lines: ['first', 'ERROR literal <script>', 'plain'],
+    line_tones: ['running', 'error', null],
     total_lines: 3,
   });
   const cleared = patched(updated, 2, [{ op: 'clear', node_id: 'log' }]);

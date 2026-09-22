@@ -465,48 +465,73 @@ describe('selecting a table row', () => {
   });
 });
 
-describe('a log the operator walks back through', () => {
-  const behind = (): LiveView =>
+describe('a log the panel shows whole', () => {
+  const behind = (total = 500): LiveView =>
     withNode(opened(), {
       id: 'tail',
       type: 'log',
       label: 'Output',
       lines: ['db-2 · 1 critical (openssl)'],
       window_lines: 2000,
-      total_lines: 500,
+      total_lines: total,
       default_expanded: true,
     });
 
-  it('offers the earlier lines only when the record still holds some', () => {
-    const html = paint({ view: behind(), load: vi.fn() });
-    // What a screen reader hears is the PROMISE; what the eye reads is how much
-    // of the run is still behind the window.
-    expect(screen.getByRole('button', { name: 'Load 200 earlier lines' })).toBeVisible();
-    expect(html).toContain('499 earlier lines');
-
-    cleanup();
-    paint({ view: opened(), load: vi.fn() });
-    expect(screen.queryByRole('button', { name: /earlier lines/ })).toBeNull();
-  });
-
-  it('reads one page out of the record and keeps it above the window', async () => {
-    const load = vi.fn().mockResolvedValue({
+  const record = (total: number) =>
+    vi.fn(async (_node: string, from: number, limit: number) => ({
       node_id: 'tail',
-      from: 299,
-      lines: ['db-0 · 0 critical'],
-      total: 500,
-    });
+      from,
+      lines: Array.from({ length: limit }, (_, at) => `line ${from + at}`),
+      total,
+      matched: total,
+      line_numbers: Array.from({ length: limit }, (_, at) => from + at + 1),
+    }));
+
+  // A live view shows the LOG, never a tail of it: the panel reads the record back
+  // itself and paints it above the window, instead of asking the operator to press
+  // for output the view already holds.
+  it('reads the record back to its first line on its own', async () => {
+    const load = record(500);
     paint({ view: behind(), load });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
-    await waitFor(() => expect(document.body.innerHTML).toContain('db-0 · 0 critical'));
-    expect(load).toHaveBeenCalledWith('tail', 299, 200);
+    await waitFor(() => expect(document.body.innerHTML).toContain('line 0'));
+    expect(load).toHaveBeenCalledWith('tail', 0, 499);
 
     const html = document.body.innerHTML;
-    expect(html.indexOf('db-0 · 0 critical')).toBeLessThan(html.indexOf('db-2 · 1 critical'));
-    // 299 read, 200 fetched, 499 in the record before the window: the lines
-    // between what was read and what is on screen are NAMED, never skipped over.
-    expect(html).toContain('lines scrolled past while you were reading');
+    expect(html.indexOf('line 0')).toBeLessThan(html.indexOf('db-2 · 1 critical'));
+    expect(screen.queryByRole('button', { name: /earlier lines/ })).toBeNull();
+    expect(html).not.toContain('lines scrolled past while you were reading');
+  });
+
+  it('keeps reading pages until the whole record is on screen', async () => {
+    const load = record(4500);
+    paint({ view: behind(4500), load });
+
+    await waitFor(() => expect(document.body.innerHTML).toContain('line 0'));
+    expect(load.mock.calls).toEqual([
+      ['tail', 2499, 2000],
+      ['tail', 499, 2000],
+      ['tail', 0, 499],
+    ]);
+  });
+
+  it('says a failed read and takes the operator at their word to try again', async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({
+        node_id: 'tail',
+        from: 0,
+        lines: ['line 0'],
+        total: 500,
+        matched: 500,
+        line_numbers: [1],
+      });
+    paint({ view: behind(), load });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeVisible());
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(document.body.innerHTML).toContain('line 0'));
   });
 });
 
@@ -881,7 +906,6 @@ describe('the section is built from the closed vocabulary', () => {
   it('uses shared actions around its feature-only meter and tables', () => {
     expect(liveViewSource).toContain('<Button');
     expect(liveViewSource).toContain('<ProgressMeter');
-    expect(liveViewSource).toContain('<LoadMore');
     expect(liveViewSource).toContain('<Disclosure');
     // Motion is explicit: only a declared spinner uses the shared control.
     expect(liveViewSource).toContain('<Spinner');
