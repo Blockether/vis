@@ -397,6 +397,20 @@
              "print(isinstance(project_root_path, pathlib.Path), str(project_root_path / 'src'))")]
           (expect (nil? (:error result)))
           (expect (= (str "True " directory "/src\n") (:stdout result)))))))
+  (it "answers a ctx field by attribute as well as by key"
+      ;; `session` is read the way a tool result is, so the dot must not be the one
+      ;; spelling that fails; a miss names the keys this map does carry.
+      (tpc/with-own
+        [ctx {}]
+        (ep/bind-ctx! ctx {"turn" 3 "workspace" {"root" "/workspace/first"}})
+        (let [result (ep/run-python-block
+                       ctx
+                       (str "print(session.turn,"
+                            " session.workspace.root == session['workspace']['root'])\n"
+                            "try:\n    session.turnip\nexcept AttributeError as e:\n    print(e)"))]
+          (expect (nil? (:error result)))
+          (expect (str/includes? (:stdout result) "3 True"))
+          (expect (str/includes? (:stdout result) "'turnip' is not a field of this result map")))))
   (it "seeds standalone contexts without a legacy root alias"
       (tpc/with-own
         [ctx {}]

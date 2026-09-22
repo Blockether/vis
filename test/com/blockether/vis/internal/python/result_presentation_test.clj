@@ -58,6 +58,21 @@
                       (io/delete-file file true)))))))
 
 (defdescribe
+  result-field-access-test
+  ;; Session report fd553c3f-a123-4f63-afae-969e07c6f064: `h.transcript` raised
+  ;; AttributeError on a read_session result whose `h['transcript']` answered, so the
+  ;; field was fetched a second time instead of read where it already was.
+  (it "reads a result field by dot as well as by key, at any depth"
+      (let [out (check-result
+                  {"op" "read_session" "session_id" "s-1" "transcript" {"turns" [{"index" 1}]}}
+                  (str "print(r.transcript is r['transcript'], r.transcript.turns[0].index)\n"
+                       "try:\n    r.transcripts\nexcept AttributeError as e:\n    print(e)"))]
+        (expect (str/includes? out "True 1"))
+        (expect (str/includes? out "'transcripts' is not a field of 'read_session' result"))
+        (expect (str/includes? out "Keys: 'op', 'session_id', 'transcript'"))
+        (expect (str/includes? out "Did you mean 'transcript'?")))))
+
+(defdescribe
   compact-shell-result-test
   (it
     "prints the verdict and log without discarding any mapping data"

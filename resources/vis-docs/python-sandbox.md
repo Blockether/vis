@@ -102,6 +102,13 @@ omits text, it names the field or log cursor that holds the rest. `dict(r)` expo
 the full mapping and `json.dumps(r)` serializes every field; both can produce much
 more output than the model needs.
 
+You can read a result map either way: `r["status"]` and `r.status` return the same
+field, and that holds at any depth, so `r["transcript"]["turns"]` is
+`r.transcript.turns`. Dictionary names keep their dictionary meaning, so `r.items` is
+the mapping method and the field of that name stays `r["items"]`. A name that is not
+a field raises `KeyError` or `AttributeError` listing the fields the result does
+carry. `session` reads the same way.
+
 `apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
 shows one compact row per symbol; attributes, indexing and `doc(row)` still work.
 

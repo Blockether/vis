@@ -770,7 +770,9 @@
     for name in old - names:
         g.pop(name, None)
     g.update(paths)
-    g['session'] = data
+    # Typed like a tool result: session['env'] and session.env read the same
+    # field at any depth, and a missing key names the keys this map does carry.
+    g['session'] = __vis_typed_result__(data)
     g['__vis_path_names__'] = sorted(names)
     g['__vis_protected_names__'] = sorted((protected - old) | names)
 ")
