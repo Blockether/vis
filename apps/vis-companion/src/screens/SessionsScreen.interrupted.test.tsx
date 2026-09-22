@@ -35,7 +35,7 @@ describe('a session whose last turn was cut off', () => {
     restore = view.restore;
 
     expect(await screen.findByText('STOPPED')).toBeInTheDocument();
-    expect(screen.queryByText('new')).not.toBeInTheDocument();
+    expect(screen.queryByText('NEW')).not.toBeInTheDocument();
     // One mark per row: a chip beside the title used to repeat the status mark.
     expect(screen.queryByText('stopped')).not.toBeInTheDocument();
 

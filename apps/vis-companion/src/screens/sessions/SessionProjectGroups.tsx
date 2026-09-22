@@ -41,6 +41,7 @@ import {
   machineKey,
   machineLabel,
   sessionMillis,
+  sessionRowKey,
   type FleetMachine,
   type ProjectGroupView,
 } from '../../lib/fleet';
@@ -267,6 +268,12 @@ export type SessionRowsContext = {
   matches: Map<string, SessionMatch> | null;
   needle: string;
   actions: SessionListActions;
+  /**
+   * The session the pane beside this list is showing, as `sessionRowKey` names it —
+   * null while nothing is open. A STRING, never the connection: this context is
+   * memoised, and a fresh object per paint re-renders every row of a long list.
+   */
+  openRow: string | null;
 };
 
 /** The reader agreement shared by every project on one machine. */
@@ -323,7 +330,7 @@ export const ProjectGroup = memo(function ProjectGroup({
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
-  const { getClient, drafts, matches, needle, actions: rowActions } = context;
+  const { getClient, drafts, matches, needle, actions: rowActions, openRow } = context;
   const { pageSize, epoch, admitted, isVisible, pendingByRoot, acceptUpdates } = reading;
   const pendingIds = pendingByRoot.get(root) ?? [];
   const hasPending = pendingIds.length > 0;
@@ -853,6 +860,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         needle={needle}
         commands={rowCommands}
         deletion={deletion}
+        isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
         isDraggable
       />
     );

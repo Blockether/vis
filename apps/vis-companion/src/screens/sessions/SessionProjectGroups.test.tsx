@@ -83,6 +83,7 @@ function mount(
         drafts: {},
         matches: null,
         needle,
+        openRow: null,
         actions: {
           commands: {
             open: vi.fn(),
@@ -309,7 +310,7 @@ describe('ProjectGroup groups', () => {
       hold([LOOSE, { ...shelved, answer_count: 4, is_unread: true, unread_answers: 1 }]);
     });
 
-    expect(await screen.findByText('new')).toBeInTheDocument();
+    expect(await screen.findByText('NEW')).toBeInTheDocument();
   });
 
   // BLO-167: a session started ON a band is minted inside that group, so it opens at

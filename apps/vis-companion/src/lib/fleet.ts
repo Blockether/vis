@@ -54,6 +54,14 @@ export function machineKey(conn: GatewayConn): string {
   return conn.url;
 }
 
+/**
+ * Identity of ONE session across the fleet: the machine it lives on, then its
+ * id. Two machines can hold the same id, so a row is named by both.
+ */
+export function sessionRowKey(conn: GatewayConn, sid: string): string {
+  return `${machineKey(conn)}\u0000${sid}`;
+}
+
 /** What the chip and the machine header say. */
 export function machineLabel(conn: GatewayConn): string {
   return conn.label?.trim() || hostOf(conn.url);

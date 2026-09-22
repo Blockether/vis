@@ -226,11 +226,19 @@ function RowActionMenu({
 export function SwipeActions({
   actions,
   children,
+  isCurrent = false,
   label,
   trailing,
 }: {
   actions: SwipeAction[];
   children: ReactNode;
+  /**
+   * The row is the one standing open elsewhere on the screen, and the list says so
+   * in its paper. The touch panel carries its own opaque slab over the drawer, so
+   * the standing paper has to BE that slab: a colour on the row behind it would be
+   * covered exactly where a finger reads the row.
+   */
+  isCurrent?: boolean;
   label?: string;
   /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
   trailing?: ReactNode;
@@ -369,7 +377,7 @@ export function SwipeActions({
           Desktop ends the row with its menu trigger and stands the permanent controls
           one slot inside it, the two cells every header in the list uses. */}
       <div
-        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents bg-panel ${ROW_PRESS_PAPER}`}
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isCurrent ? 'bg-standing' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

@@ -86,11 +86,14 @@ export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> 
  */
 function SessionRowSurface({
   isEditing,
+  isCurrent,
   sessionId,
   onOpen,
   children,
 }: {
   isEditing: boolean;
+  /** This session is the one standing open in the pane beside the list. */
+  isCurrent: boolean;
   sessionId: string;
   onOpen: () => void;
   children: ReactNode;
@@ -107,6 +110,7 @@ function SessionRowSurface({
   return (
     <button
       type="button"
+      aria-current={isCurrent ? 'page' : undefined}
       className={`${layout} transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none`}
       data-session-id={sessionId}
       data-row-surface=""
@@ -126,6 +130,7 @@ export const SessionRow = memo(function SessionRow({
   needle,
   commands,
   deletion,
+  isOpen = false,
   isDraggable,
 }: {
   session: Session;
@@ -142,6 +147,12 @@ export const SessionRow = memo(function SessionRow({
   needle: string;
   commands: SessionRowCommands;
   deletion: SessionRowDeletion;
+  /**
+   * This session is the one the pane beside the list is showing. The row wears the
+   * standing paper — never a second rail down the leading edge, which belongs to the
+   * group's colour and would read as two marks on one filed row.
+   */
+  isOpen?: boolean;
   /**
    * Let a reader DRAG this row onto something that takes it — a group's band. The row
    * carries its own session id; lists that have nowhere to drop it leave this off.
@@ -166,16 +177,21 @@ export const SessionRow = memo(function SessionRow({
   // timestamp cannot announce. The GATEWAY counts them and says so on the row, so
   // every surface of that machine paints the same badge — and the poll that brings
   // the row back read is what retires it here.
-  const unread = unreadTurnCount(session);
+  //
+  // The session standing open in the pane beside the list is BEING READ: its row
+  // drops NEW the moment it opens. The transcript reports the read mark through its
+  // OWN gateway client, which this list only hears about on its next poll — and
+  // until then the badge sat on the very conversation the reader was looking at.
+  const unread = isOpen ? 0 : unreadTurnCount(session);
   // STOPPED: the newest turn was cut off — the operator cancelled it, or the
   // gateway died mid-answer and swept it on its next start. Gated on the unread
   // mark on purpose, so the flag is BOUNDED: it reports something you have not
   // seen, and opening the session retires it exactly the way it retires "new".
   // Ungated it would sit on the row until that session's next turn, which for an
-  // abandoned session never comes. The row wears it ONCE, in the status mark on the
-  // right; the flags column stays quiet so a cut-off row never carries two STOPPED labels.
+  // abandoned session never comes. STOPPED takes the status mark for itself, ahead
+  // of the NEW that mark would otherwise carry, so a cut-off row never says both.
   const stopped = !live && sessionWasInterrupted(session) && unread > 0;
-  const status = statusLabel(session, stopped, hasUnsent);
+  const status = statusLabel(session, stopped, hasUnsent, unread);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
@@ -278,7 +294,7 @@ export const SessionRow = memo(function SessionRow({
             }
           : undefined
       }
-      className={`[&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
+      className={`${isOpen ? 'bg-standing' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
@@ -294,6 +310,7 @@ export const SessionRow = memo(function SessionRow({
       ) : (
         <SwipeActions
           label={title}
+          isCurrent={isOpen}
           actions={
             renameDraft !== null
               ? []
@@ -360,13 +377,14 @@ export const SessionRow = memo(function SessionRow({
             )}
             <SessionRowSurface
               isEditing={renameDraft !== null}
+              isCurrent={isOpen}
               sessionId={session.id}
               onOpen={() => void commands.open(conn, session.id)}
             >
               {/* Narrow lists stack metadata under the title. The container, not the
                   viewport, selects the full-width table so desktop sidebars stay readable.
                   The favorite shares the status cluster; no leading mark indents the title. */}
-              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.5rem_6rem] @3xl:gap-y-0">
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_7.5rem_6rem] @3xl:gap-y-0">
                 {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -438,14 +456,6 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* The unread flag keeps this aligned column of its own. */}
-                <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip @3xl:col-start-auto @3xl:row-start-auto">
-                  {!stopped && unread > 0 && (
-                    <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
-                      {unread > 1 ? `${unread} new` : 'new'}
-                    </span>
-                  )}
-                </span>
                 {/* `@3xl:contents` lets one DOM order cover three layouts. Under 24rem the
               row shows its title and status mark; from 24rem, including the desktop sidebar,
               the id, turns and time appear as one line of prose under the title. At
@@ -490,12 +500,12 @@ export const SessionRow = memo(function SessionRow({
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
                       status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${statusTone(session, stopped, hasUnsent)}`}
+                    } ${statusTone(session, stopped, hasUnsent, unread)}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
-                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
                     <span className="sr-only @sm:not-sr-only">
                       {renameBusy ? 'Saving' : status}
@@ -844,7 +854,7 @@ export function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
 }
 
-function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean): string {
+function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
   if (sessionNeedsInput(session)) {
@@ -855,6 +865,10 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean): st
   }
   if (sessionIsLive(session)) return 'LIVE';
   if (stopped) return 'STOPPED';
+  // The gateway's own count of answers that landed since this reader last read the
+  // session. It stands where IDLE and DIRTY stand, because it is the same fact about
+  // the row: what this conversation is holding for you.
+  if (unread > 0) return unread > 1 ? `NEW ×${unread}` : 'NEW';
   if (session.status === 'suspended') return 'WAITING';
   // Unsent words outrank IDLE and nothing else. What the session is doing is
   // news about the session; this is news about you, and it waits its turn.
@@ -862,20 +876,22 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean): st
   return 'IDLE';
 }
 
-function statusTone(session: Session, stopped: boolean, hasUnsent: boolean): string {
+function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
   if (sessionNeedsInput(session)) return 'text-warn';
   if (sessionIsLive(session)) return 'text-ok';
   if (stopped) return 'text-err';
+  if (unread > 0) return 'text-accent';
   if (session.status === 'suspended') return 'text-warn';
   if (hasUnsent) return 'text-dirty';
   return 'text-dialog-hint';
 }
 
-function statusDot(session: Session, stopped: boolean, hasUnsent: boolean): string {
+function statusDot(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
   if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   // Solid, never pulsing: an interrupted session is the opposite of live.
   if (stopped) return 'bg-err';
+  if (unread > 0) return 'bg-accent';
   if (session.status === 'suspended') return 'bg-warn-strong';
   // Filled like every mark that means something is waiting. The hollow square
   // is IDLE's alone, because it is the one that means nothing is.

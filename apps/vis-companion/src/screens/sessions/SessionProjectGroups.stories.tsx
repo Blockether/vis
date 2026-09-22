@@ -44,6 +44,7 @@ const meta = {
       drafts: {},
       matches: null,
       needle: '',
+      openRow: null,
       actions: {
         commands: { open: fn(), rename: fn(async () => {}), requestDelete: fn(), toggleStar: fn() },
         deletion: { target: null, isBusy: false, error: null, confirm: fn(), cancel: fn() },

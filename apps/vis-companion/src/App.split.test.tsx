@@ -142,4 +142,108 @@ describe('a desk keeps the list beside the conversation', () => {
     );
     view.unmount();
   });
+
+  // Regression, user report (paraphrased: on a desk nothing in the list changes for the
+  // session that is open): the sidebar stands beside the transcript, so the row that
+  // transcript belongs to wears the standing paper and an accent rail, and the reader
+  // can see which of the rows they are reading.
+  it('marks the row whose session the pane beside the list is showing', async () => {
+    const restoreDensity = onADesk();
+    // The tests above leave a session in the route; this one starts with none open.
+    window.location.hash = '';
+    const view = renderApp({
+      machines: [
+        {
+          label: 'laptop',
+          sessions: [
+            listSession({
+              id: 'one',
+              title: 'Alpha one',
+              workspace: { root: '/Users/dev/alpha' },
+              modified_at: '2024-05-01T11:00:00Z',
+            }),
+            listSession({
+              id: 'two',
+              title: 'Alpha two',
+              workspace: { root: '/Users/dev/alpha' },
+              modified_at: '2024-05-01T10:00:00Z',
+            }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.restore();
+      restoreDensity();
+    };
+    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    const main = view.baseElement.querySelector('main') as HTMLElement;
+    const sidebar = main.firstElementChild as HTMLElement;
+    const row = (sid: string) => sidebar.querySelector(`[data-session-row="${sid}"]`) as HTMLElement;
+    const open = (sid: string) =>
+      fireEvent.click(row(sid).querySelector('[data-row-surface]') as HTMLElement);
+
+    // Nothing is open: no row claims the pane.
+    expect(row('one').className).not.toContain('bg-standing');
+    expect(within(sidebar).queryByRole('button', { current: 'page' })).toBeNull();
+
+    open('one');
+    await screen.findByLabelText('Message Vis');
+    await waitFor(() => expect(row('one').className).toContain('bg-standing'));
+    expect(within(row('one')).getByRole('button', { current: 'page' })).toBeVisible();
+    // ONE mark, and it is the paper: the leading edge stays the group's rail.
+    expect(row('one').className).not.toContain('border-l');
+    expect(row('two').className).not.toContain('bg-standing');
+    expect(within(row('two')).queryByRole('button', { current: 'page' })).toBeNull();
+
+    // The mark FOLLOWS the pane: opening the other session moves it, never doubles it.
+    open('two');
+    await waitFor(() => expect(row('two').className).toContain('bg-standing'));
+    expect(row('one').className).not.toContain('bg-standing');
+    expect(within(sidebar).getAllByRole('button', { current: 'page' })).toHaveLength(1);
+    view.unmount();
+  });
+
+  // Regression, user report (paraphrased: the NEW mark sits on a row whose session is
+  // already open, and only writing or sending something retires it): the transcript
+  // reports the read mark through its OWN gateway client, so the list beside it went on
+  // painting the badge until its next poll answered.
+  it('retires the NEW mark on the row whose session the pane is showing', async () => {
+    const restoreDensity = onADesk();
+    // The tests above leave a session in the route; this one starts with none open.
+    window.location.hash = '';
+    const view = renderApp({
+      machines: [
+        {
+          label: 'laptop',
+          sessions: [
+            listSession({
+              id: 'one',
+              title: 'Alpha one',
+              workspace: { root: '/Users/dev/alpha' },
+              modified_at: '2024-05-01T11:00:00Z',
+              turn_count: 6,
+              answer_count: 3,
+              is_unread: true,
+              unread_answers: 2,
+            }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.restore();
+      restoreDensity();
+    };
+    const mark = await screen.findByText('NEW ×2', {}, { timeout: 5_000 });
+    // In the row's ONE status mark, where the same row otherwise reads IDLE.
+    expect(mark.closest('[data-session-status]')).not.toBeNull();
+
+    fireEvent.click(screen.getByText('Alpha one'));
+    await screen.findByLabelText('Message Vis');
+    // Nothing was written and nothing was sent: the conversation on screen is read.
+    await waitFor(() => expect(screen.queryByText('NEW ×2')).toBeNull());
+    expect(within(screen.getByRole('region', { name: 'Sessions' })).getByText('IDLE')).toBeVisible();
+    view.unmount();
+  });
 });

@@ -239,7 +239,7 @@ export const Stopped: Story = {
   args: { session: STOPPED_SESSION },
   play: async ({ canvas, canvasElement }) => {
     await expect(canvas.getByText('STOPPED')).toBeVisible();
-    await expect(canvas.queryByText('2 new')).not.toBeInTheDocument();
+    await expect(canvas.queryByText('NEW ×2')).not.toBeInTheDocument();
     // One mark, not two: the status mark alone says the turn was cut off.
     await expect(canvas.queryByText('stopped')).not.toBeInTheDocument();
     const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;

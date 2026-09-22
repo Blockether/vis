@@ -76,6 +76,7 @@ import {
   sessionIsLive,
   sessionMillis,
   sessionOrder,
+  sessionRowKey,
   withSearchHits,
   machineProject,
   type FleetMachine,
@@ -289,6 +290,12 @@ interface Props {
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /**
+   * The session standing open in the pane beside this list, so the row it belongs to
+   * can say so. `null` while nothing is open — and on a phone, where the transcript
+   * replaces the list instead of standing next to it.
+   */
+  openSession?: { conn: GatewayConn; sid: string } | null;
+  /**
    * Whether this screen is the one on the glass. It stays MOUNTED behind an open
    * transcript — its rows, scope, scroll position and expanded projects are the
    * reader's own frame — and everything below reads this to keep fleet-wide work
@@ -321,6 +328,7 @@ export function SessionsScreen({
   subscriptions,
   onUnreachable,
   onOpen,
+  openSession = null,
   isVisible,
   onSearch,
   share = null,
@@ -1346,16 +1354,27 @@ export function SessionsScreen({
     [heldRows, sessions],
   );
 
+  // The row the transcript beside this list belongs to, named the way a row names
+  // itself. A STRING in the row context rather than the connection it came from:
+  // that context is memoised, and an object would re-render every row per paint.
+  const openRow = openSession ? sessionRowKey(openSession.conn, openSession.sid) : null;
+  // A session standing OPEN beside the list is BEING READ, so it stops being news
+  // at once: its own row drops NEW, and so does every count painted over it.
+  const isRowUnread = useCallback(
+    (conn: GatewayConn, session: Session) =>
+      unreadTurnCount(session) > 0 && sessionRowKey(conn, session.id) !== openRow,
+    [openRow],
+  );
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
     () =>
       new Map(
         machines.map((machine) => [
           machineKey(machine.conn),
-          machineCounts(machine, sessionIsLive, (session) => unreadTurnCount(session) > 0),
+          machineCounts(machine, sessionIsLive, (session) => isRowUnread(machine.conn, session)),
         ]),
       ),
-    [machines],
+    [machines, isRowUnread],
   );
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
@@ -1542,8 +1561,9 @@ export function SessionsScreen({
       matches,
       needle: searchNeedle,
       actions: rowActions,
+      openRow,
     }),
-    [draftMessages, matches, searchNeedle, rowActions],
+    [draftMessages, matches, searchNeedle, rowActions, openRow],
   );
   const projectCreation = useMemo<ProjectCreation>(
     () => ({ state: creating, start: createSession }),
@@ -1569,14 +1589,14 @@ export function SessionsScreen({
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: searching
-          ? searchGroups(entry.rows, (session) => unreadTurnCount(session) > 0)
+          ? searchGroups(entry.rows, (session) => isRowUnread(entry.machine.conn, session))
           : projectGroups(
               entry.machine.overview,
               entry.rows,
-              (session) => unreadTurnCount(session) > 0,
+              (session) => isRowUnread(entry.machine.conn, session),
             ),
       })),
-    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates],
+    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates, isRowUnread],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.

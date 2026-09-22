@@ -242,6 +242,12 @@
      with nothing to override and no per-theme fork. */
   --color-level-machine: var(--level-machine, color-mix(in oklab, var(--fg) 9%, var(--surface)));
   --color-level-project: var(--level-project, color-mix(in oklab, var(--fg) 4%, var(--surface)));
+  /* THE ROW YOU ARE STANDING IN: the session the pane beside the list is showing.
+     Mixed from the ACCENT rather than the ink, so the row reads as a place you are
+     rather than one more depth step — and so the leading edge stays the GROUP's, which
+     already owns a colour rail there. Opaque, because the touch drawer's own slab has
+     to be able to wear it. */
+  --color-standing: color-mix(in oklab, var(--primary) 14%, var(--surface));
   /* Project headings need a distinct surface, without darkening neutral notices. */
   --color-project-header: color-mix(in oklab, var(--fg) 14%, var(--surface));
   --color-project-live: color-mix(in oklab, var(--ok) 50%, var(--fg));

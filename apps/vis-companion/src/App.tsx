@@ -1182,6 +1182,9 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openSharedTarget}
+              // WHICH ROW THE TRANSCRIPT BELONGS TO. On a desk the list stands beside
+              // the session it opened, so that row wears the open session's mark.
+              openSession={openTarget}
               // A parked share turns this list into the chooser it already is:
               // the row the human taps IS the destination.
               share={pendingShare}
