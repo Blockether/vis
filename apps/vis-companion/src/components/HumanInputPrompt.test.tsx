@@ -58,6 +58,39 @@ function element(html: string, marker: string): string {
 }
 
 describe('human input sheet', () => {
+  // Regression #282: request descriptions are Markdown, not a plain paragraph.
+  it('renders bold labels on three authored lines in a request description', () => {
+    markup('minimal', {
+      request: {
+        ...HUMAN_INPUT_REQUESTS.minimal,
+        description:
+          '**Environment:** DEV01\n**Service:** glms-plcx-svc\n**Command:** :init-batch-report',
+      },
+    });
+    const labels = ['Environment:', 'Service:', 'Command:'].map((label) => screen.getByText(label));
+    const paragraph = labels[0].closest('p')!;
+    expect(labels.every((label) => label.tagName === 'STRONG')).toBe(true);
+    expect(paragraph.querySelectorAll('br')).toHaveLength(2);
+    expect(paragraph.textContent).toBe(
+      'Environment: DEV01\nService: glms-plcx-svc\nCommand: :init-batch-report',
+    );
+    expect(paragraph.textContent).not.toContain('**');
+  });
+
+  it('keeps raw HTML inert and rejects unsafe links in request Markdown', () => {
+    markup('minimal', {
+      request: {
+        ...HUMAN_INPUT_REQUESTS.minimal,
+        description:
+          '**Safe** <img src=x onerror="alert(1)"> <script>alert(1)</script> [unsafe](javascript:alert(1))',
+      },
+    });
+    expect(screen.getByText('Safe').tagName).toBe('STRONG');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelector('img, script, [onerror], a[href^="javascript:"]')).toBeNull();
+    expect(dialog.textContent).toContain('<img src=x onerror="alert(1)">');
+  });
+
   // The question can be longer than the phone. When the whole dialog scrolled,
   // the two buttons that END the pause scrolled away with it and a long form
   // could not be answered at all without scrolling back.

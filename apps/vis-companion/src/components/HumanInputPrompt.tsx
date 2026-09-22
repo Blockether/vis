@@ -10,6 +10,7 @@ import {
   ViewLayout,
   ViewParagraph,
 } from './ui';
+import { Markdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -308,7 +309,11 @@ export function HumanInputSheet({
           {(request.description || request.source) && (
             <div className="space-y-1">
               {request.description && (
-                <p className="font-mono text-meta italic text-dialog-hint">{request.description}</p>
+                <div className="font-mono text-meta italic text-dialog-hint">
+                  <Markdown compact nested hardBreaks>
+                    {request.description}
+                  </Markdown>
+                </div>
               )}
               {/* WHO stopped the run is half the question: an answer means
                   something different to a deploy hook than to a linter. */}

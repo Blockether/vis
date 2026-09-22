@@ -1239,6 +1239,69 @@
   [rows]
   (mapcat #(str/split (str/trim (str (:text %))) #"\s+") rows))
 
+(def ^:private markdown-description
+  "**Environment:** DEV01\n**Service:** glms-plcx-svc\n**Command:** :init-batch-report")
+
+(defdescribe
+  markdown-description-test
+  ;; Regression #282: exercise the wire request through layout and terminal cells.
+  (it "keeps three authored rows and bold runs at every unwrapped width"
+      (let [form (hi/init-form
+                   (hi/request<-wire
+                     {:id "r" :title "Confirm" :description markdown-description :fields []}))]
+        (doseq [width [nil 80]]
+          (let [rows (take-while #(= :description (:kind %)) (hi/form-rows form width))]
+            (expect (= ["Environment: DEV01" "Service: glms-plcx-svc" "Command: :init-batch-report"]
+                       (mapv :text rows)))
+            (expect (= ["Environment:" "Service:" "Command:"]
+                       (mapv #(-> %
+                                  :runs
+                                  first
+                                  :text)
+                             rows)))
+            (expect (every? #(contains? (-> %
+                                            :runs
+                                            first
+                                            :style)
+                                        :bold)
+                            rows))))))
+  (it "paints bold labels without markers or bold leaking into their values"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (try (hi/paint! g
+                        80
+                        30
+                        (hi/init-form
+                          {:id "r" :title "Confirm" :description markdown-description :fields []}))
+             (let [ys (mapv #(screen-row-of screen %) ["Environment:" "Service:" "Command:"])]
+               (expect (every? some? ys))
+               (expect (= [1 1] (mapv - (rest ys) ys))))
+             (doseq [label ["Environment:" "Service:" "Command:"]]
+               (expect (contains? (modifiers-of screen label) SGR/BOLD)))
+             (doseq [value ["DEV01" "glms-plcx-svc" ":init-batch-report"]]
+               (expect (not (contains? (modifiers-of screen value) SGR/BOLD))))
+             (expect (not (str/includes? (screen-text screen) "**")))
+             (finally (.close ^TerminalScreen screen)))))
+  (it "wraps Markdown without dropping characters or styles"
+      (let [rows (take-while #(= :description (:kind %))
+                             (hi/form-rows (hi/init-form {:description "**abcdefghijklmnop**\nlast"
+                                                          :fields []})
+                                           8))]
+        (expect (= "abcdefghijklmnoplast" (apply str (map :text rows))))
+        (expect (= "last" (:text (last rows))))
+        (expect (every? #(<= (count (:text %)) 8) rows))
+        (expect (every? #(contains? (:style %) :bold) (mapcat :runs (butlast rows))))))
+  (it "keeps raw HTML literal rather than treating it as formatting"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (try (hi/paint! g
+                        80
+                        30
+                        (hi/init-form
+                          {:title "Confirm" :fields [] :description "**Safe** <b>literal</b>"}))
+             (expect (contains? (modifiers-of screen "Safe") SGR/BOLD))
+             (expect (some? (screen-row-of screen "<b>literal</b>")))
+             (expect (not (contains? (modifiers-of screen "literal") SGR/BOLD)))
+             (finally (.close ^TerminalScreen screen))))))
+
 (defdescribe
   wrapped-description-test
   "A description is a SENTENCE, not a token. Ellipsizing it into one row throws
@@ -1289,7 +1352,7 @@
                                               :title "Deploy"
                                               :description prose
                                               :fields [{:id "env" :type :plaintext}]}))]
-        (expect (= {:kind :description :text prose} (first rows)))
+        (expect (= {:kind :description :text prose} (select-keys (first rows) [:kind :text])))
         (expect (= :blank (:kind (second rows))))))
   (it "paints the whole description instead of clipping it at the border"
       (let [{:keys [screen g]}

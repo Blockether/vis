@@ -91,6 +91,15 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     cancel_label: 'Not now',
     is_cancellable: true,
   },
+  markdown: {
+    id: 'req-markdown',
+    title: 'Run this command?',
+    description: '**Environment:** DEV01\n**Service:** glms-plcx-svc\n**Command:** :init-batch-report',
+    fields: [field('confirm', 'checkbox', 'Proceed with this command')],
+    submit_label: 'Run',
+    cancel_label: 'Cancel',
+    is_cancellable: true,
+  },
   long: {
     id: 'req-long',
     title: 'Release checklist',

@@ -25,6 +25,40 @@ type Story = StoryObj<typeof meta>;
 
 /** A decision with a reason and two answers. */
 export const Approve: Story = { args: { state: 'approve' } };
+/** Regression #282: authored newlines remain separate rows in the real browser. */
+export const MarkdownDescription: Story = {
+  args: { state: 'markdown' },
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    const dialog = body.getByRole('dialog');
+    const labels = ['Environment:', 'Service:', 'Command:'].map((label) => body.getByText(label));
+    const paragraph = labels[0].closest('p')!;
+    await expect(paragraph.querySelectorAll('br')).toHaveLength(2);
+    await expect(paragraph).not.toHaveTextContent('**');
+    const originalWidth = dialog.style.width;
+    try {
+      for (const width of ['560px', '280px']) {
+        dialog.style.width = width;
+        let previousBottom = 0;
+        for (const label of labels) {
+          await expect(label.tagName).toBe('STRONG');
+          await expect(Number(getComputedStyle(label).fontWeight)).toBeGreaterThanOrEqual(600);
+          const box = label.getBoundingClientRect();
+          await expect(box.top).toBeGreaterThanOrEqual(previousBottom);
+          await expect(box.left).toBe(labels[0].getBoundingClientRect().left);
+          previousBottom = box.bottom;
+        }
+        await expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+      }
+    } finally {
+      dialog.style.width = originalWidth;
+    }
+    const confirm = body.getByRole('button', { name: 'Proceed with this command' });
+    await userEvent.click(confirm);
+    await expect(confirm).toHaveAttribute('aria-pressed', 'true');
+    await expect(body.getByRole('button', { name: 'Run' })).toBeEnabled();
+  },
+};
 /** One question, nothing else on the sheet. */
 export const Minimal: Story = { args: { state: 'minimal' } };
 /** Enough fields to scroll: the answer bar must stay reachable. */

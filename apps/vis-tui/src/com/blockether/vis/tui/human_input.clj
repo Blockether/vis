@@ -20,6 +20,8 @@
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.markdown-layout :as markdown-layout]
+            [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.theme :as t]
@@ -592,12 +594,10 @@
 (defn- description-rows
   "`text` as `:description` rows, WORD-WRAPPED to `text-w` columns.
 
-   Prose is the one thing in this dialog that is a sentence, not a token: the
-   request's own description says what the whole ask is about, and a field's
-   explains that field. Clipping it to a single `…` row loses exactly the part
-   that was worth reading, so it wraps onto as many rows as it needs. `text-w`
-   nil means \"do not wrap\" — the pure plan a caller measures without a
-   terminal.
+   A field's description explains that field. Clipping it to a single `…` row
+   loses exactly the part that was worth reading, so it wraps onto as many rows
+   as it needs. A nil `text-w` leaves the pure plan unwrapped for callers
+   measuring without a terminal.
 
    Whitespace is not prose: a blank description is NO rows, never an empty one,
    so `description: \"   \"` cannot open a hole above the first field."
@@ -614,6 +614,47 @@
       (mapv (fn [line]
               {:kind :description :text line})
             (if (pos? width) (render/wrap-text text width) [text])))))
+
+(defn- description-line-rows
+  "Hard-fold oversized Markdown tokens without dropping their text or inline styles."
+  [{:keys [runs]} width]
+  (let [text
+        (apply str (map :text runs))
+
+        parts
+        (p/fold-cols text width)
+
+        offsets
+        (reductions + 0 (map #(count (:text %)) runs))]
+
+    (mapv (fn [part start]
+            {:kind :description
+             :text part
+             :runs (into []
+                         (keep (fn [[run offset]]
+                                 (let [s
+                                       (:text run)
+
+                                       a
+                                       (max 0 (- start offset))
+
+                                       b
+                                       (min (count s) (- (+ start (count part)) offset))]
+
+                                   (when (< a b) (assoc run :text (subs s a b))))))
+                         (map vector runs offsets))})
+          parts
+          (reductions + 0 (map count parts)))))
+
+(defn- request-description-rows
+  "Request Markdown as styled rows; authored newlines stay hard breaks."
+  [text text-w]
+  (when-not (str/blank? text)
+    (let [width (max 1 (long (or text-w (p/display-width text))))]
+      (into []
+            (mapcat #(description-line-rows % width))
+            (markdown-layout/ast->lines (presentation/markdown->ast text {:soft-break :hard})
+                                        width)))))
 
 (defn- decor-rows
   "Rows for a DECORATION — a heading or a paragraph. Neither holds a value and
@@ -845,7 +886,7 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
    (let [head
-         (when-let [rows (seq (description-rows (:description request) text-w))]
+         (when-let [rows (seq (request-description-rows (:description request) text-w))]
            (conj (vec rows) {:kind :blank}))
 
          ;; ONE context per paint — including the stop index the whole tree shares,
@@ -935,7 +976,7 @@
   (p/put-str! g (+ (long left) 2) row (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 3)))))
 
 (defn- paint-italic!
-  "Prose rows — the request's description and each field's — paint in the same
+  "Plain field descriptions paint in the same
    dim ITALIC voice the rest of the TUI uses for explanatory text, so a
    description can never be mistaken for a label or a value."
   [g left row inner-w fg text]
@@ -947,6 +988,31 @@
                         (+ (long left) 2)
                         row
                         (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 3))))))
+
+(defn- paint-description-runs!
+  "Paint request Markdown over the description's italic base without losing inline styles."
+  [g left row inner-w runs]
+  (p/set-colors! g t/dialog-hint t/dialog-bg)
+  (p/fill-rect! g (inc (long left)) row inner-w 1)
+  (reduce (fn [^long used {:keys [text style]}]
+            (let [shown
+                  (p/ellipsize text (max 0 (- (long inner-w) 3 used)))
+
+                  fg
+                  (if (or (contains? style :code) (contains? style :link))
+                    t/header-active-tab-accent
+                    t/dialog-hint)
+
+                  styles
+                  (cond-> [p/ITALIC]
+                    (contains? style :bold)
+                    (conj p/BOLD))]
+
+              (p/set-colors! g fg t/dialog-bg)
+              (p/styled g styles (p/put-str! g (+ (long left) 2 used) row shown))
+              (+ used (long (p/display-width shown)))))
+          0
+          runs))
 
 (defn- paint-required!
   "Re-ink a row's trailing [[required-marker]] in the error colour, on whatever paper
@@ -1026,12 +1092,14 @@
     ;; The request's own prose has no field to belong to, so it stays dim; a
     ;; field's description brightens with the field, and fades back with it.
     :description
-    (do (paint-italic! g
-                       left
-                       row
-                       inner-w
-                       (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
-                       (:text entry))
+    (do (if-let [runs (:runs entry)]
+          (paint-description-runs! g left row inner-w runs)
+          (paint-italic! g
+                         left
+                         row
+                         inner-w
+                         (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
+                         (:text entry)))
         nil)
 
     :label
