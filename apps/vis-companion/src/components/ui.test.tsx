@@ -42,6 +42,7 @@ import {
   ViewParagraph,
 } from './ui';
 import {
+  HeaderMeta,
   HeaderTally,
   HeaderTitle,
   MachineGap,
@@ -257,6 +258,15 @@ describe('MachineGap', () => {
   });
 });
 
+// A band says its own words in ONE voice: a set's name and what it counts stand at the
+// same step, so `GROUPS 2 groups` reads as one strip of type (reported from a
+// screenshot of the group bands — the counts stood a step above their own labels).
+describe('HeaderMeta', () => {
+  it('stands at the step of the word over the set', () => {
+    const { container } = render(<HeaderMeta>2 groups</HeaderMeta>);
+    expect(container.firstElementChild).toHaveClass('font-mono', 'text-chip');
+  });
+});
 // Regression, user report (the phone header printed "725" over a list): a number
 // with no noun is a different sentence, not a shorter one.
 describe('HeaderTally', () => {
@@ -272,9 +282,9 @@ describe('HeaderTally', () => {
 
   // Reported from a screenshot of the group bands (paraphrased: the counts should be
   // set in the same font as GROUPS and SESSIONS): `2 groups` beside `GROUPS` read as a
-  // different typeface, so the count wears the set label's own small caps. The STEP
-  // stays the header caption's, which keeps an arrival on the total's baseline
-  // (`SessionProjectGroups` stories measure that line).
+  // different typeface. The count wears the label's small caps and NO step of its own —
+  // a band hands it the label's through `HeaderMeta`, while a project header keeps its
+  // caption line, where an arrival has to stay on the total's baseline.
   it('is set in the small caps the word over the set is set in', () => {
     const { container } = render(<HeaderTally count={10} unit="session" />);
     expect(container.firstElementChild).toHaveClass(
@@ -283,7 +293,9 @@ describe('HeaderTally', () => {
       'tracking-[0.08em]',
       'uppercase',
     );
-    expect(container.firstElementChild).not.toHaveClass('text-chip');
+    for (const step of ['text-chip', 'text-meta', 'text-ui']) {
+      expect(container.firstElementChild).not.toHaveClass(step);
+    }
   });
 });
 

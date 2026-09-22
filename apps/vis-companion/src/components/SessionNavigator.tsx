@@ -515,20 +515,27 @@ export const RowDisclosure = forwardRef<
   );
 });
 
-/** A header's smaller quiet voice: what it counts, in the list's monospace hint ink. */
+/**
+ * A BAND'S QUIET VOICE: what a set inside a project counts, standing at the STEP of
+ * the word over it (`SetHeader`'s label), so the strip is one line of type rather than
+ * a label with a bigger note beside it. A project header is not this voice — its
+ * caption stands on `ProjectCrumb`'s own qualifier line and keeps that step.
+ */
 export function HeaderMeta({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 font-mono text-meta text-dialog-hint">{children}</span>
+    <span className="flex items-center gap-2 font-mono text-chip text-dialog-hint">{children}</span>
   );
 }
 
 /**
  * A header's own count, in the SAME SMALL CAPS as the word standing over the set it
  * counts (`SetHeader`'s label) — a band reads as one strip of type, not as a heading
- * with a note beside it in another voice. It takes that label's FACE and not its
- * smaller step: a project header runs the total, the states and an arrival as one
- * line of text, and a count a step down from them leaves the arrival off their
- * baseline.
+ * with a note beside it in another voice.
+ *
+ * IT CARRIES NO STEP OF ITS OWN. Inside a band it stands at `HeaderMeta`'s, which is
+ * the label's; in a project header it stands on the caption line it shares with the
+ * states and an arrival, and a count a step down from those leaves the arrival off
+ * their baseline.
  *
  * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
  * rows says nothing about what was counted, and the phone is exactly where the
