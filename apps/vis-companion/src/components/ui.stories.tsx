@@ -462,9 +462,6 @@ export const Chips: Story = {
       </Group>
       <Group of="Band furniture">
         <BandLabel>Recent</BandLabel>
-        <BandLabel weight="state">
-          LIVE
-        </BandLabel>
         <SectionHeader>Machines</SectionHeader>
       </Group>
     </Sheet>

@@ -1296,8 +1296,9 @@ export function LiveViewPanel({
               </Button>
             ))}
           {/* The band ends INTERRUPT | LIVE: the verb, the rule a terminal prints between two
-              words, and the run's state last. The touch target keeps its 44px reach in an
-              invisible pseudo-element, so the row stays a line of text under the finger too. */}
+              words, and the run's state last. Both words PRESS — LIVE opens the run the row is
+              reporting — and each keeps its 44px reach in an invisible pseudo-element, so the
+              row stays a line of text under the finger too. */}
           {embedded && !isSettled && (
             <>
               {onInterrupt && !isArmed && (
@@ -1308,9 +1309,14 @@ export function LiveViewPanel({
                   |
                 </span>
               )}
-              <BandLabel weight="state" className="shrink-0">
+              <TextButton
+                isBand
+                className="shrink-0"
+                aria-label={`Open the live run ${view.title}`}
+                onClick={() => setOpened(true)}
+              >
                 LIVE
-              </BandLabel>
+              </TextButton>
             </>
           )}
           <ViewState view={view} isSettled={isSettled} />

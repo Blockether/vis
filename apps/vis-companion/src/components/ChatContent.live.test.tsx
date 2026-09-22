@@ -48,9 +48,21 @@ it('ends the live band with a bold INTERRUPT | LIVE and no button face', () => {
   expect(rule).toHaveAttribute('aria-hidden', 'true');
   // A line of text says "target" by underlining what the pointer is on.
   expect(interrupt).toHaveClass('enabled:hover:underline');
-  expect(live).toHaveClass('hover:underline');
+  expect(live).toHaveClass('enabled:hover:underline');
   // Losing the face must not lose the 44px touch reach it used to give.
   expect(interrupt).toHaveClass('after:absolute', 'after:-inset-y-3.5');
+  expect(live).toHaveClass('after:absolute', 'after:-inset-y-3.5');
+});
+
+// Regression, user report (screenshot): LIVE underlined under the pointer but pressing it did
+// nothing — only the run's name opened the view. The word the band ends on opens the run too,
+// so the whole row answers the gesture it advertises.
+it('opens the run from the LIVE word the band ends on', () => {
+  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded onInterrupt={() => {}} />);
+  fireEvent.click(
+    mounted.getByRole('button', { name: `Open the live run ${STORY_LIVE_VIEW.title}` }),
+  );
+  expect(mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title })).toBeVisible();
 });
 
 // THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A run painted in place stood taller

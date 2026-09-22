@@ -876,25 +876,16 @@ export function Disclosure({
 export function BandLabel({
   className = '',
   tone = 'default',
-  weight = 'name',
   children,
 }: {
   className?: string;
   /** Only failure and interruption labels override the primary text color. */
   tone?: 'default' | 'err' | 'hint';
-  /**
-   * `state` is the word a band ENDS on — LIVE, while the run is going — rather than
-   * the name it opens with. It stands in the full weight of the verb beside it and
-   * underlines under the pointer as that verb does, so the end of the row reads as
-   * one line of type instead of a label wedged against a control.
-   */
-  weight?: 'name' | 'state';
   children: ReactNode;
 }) {
   const ink = tone === 'err' ? 'text-err' : tone === 'hint' ? 'text-dialog-hint' : 'text-white';
-  const face = weight === 'state' ? 'font-bold tracking-[0.06em] hover:underline' : BAND_NAME;
   return (
-    <span className={`select-none truncate font-mono text-ui ${face} ${ink} ${className}`}>
+    <span className={`select-none truncate font-mono text-ui ${BAND_NAME} ${ink} ${className}`}>
       {children}
     </span>
   );
