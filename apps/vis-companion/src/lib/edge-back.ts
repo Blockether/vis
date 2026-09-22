@@ -102,10 +102,12 @@ export function edgeMove(gesture: EdgeGesture, touches: number, at: EdgePoint): 
  *    because it drives the picture itself, like the zoomable image viewer.
  *
  * A dialog standing over the session answers for the whole screen while it is
- * up, so the session underneath is not the thing being left.
+ * up, so the session underneath is not the thing being left. The dialog is the
+ * one exception, and it is its own: a stroke dragging the DIALOG is leaving the
+ * dialog, which is what `isLayer` says.
  */
-export function edgeIsFree(from: EventTarget | null, root: Element): boolean {
-  if (root.ownerDocument.querySelector('[aria-modal="true"]')) return false;
+export function edgeIsFree(from: EventTarget | null, root: Element, isLayer = false): boolean {
+  if (!isLayer && root.ownerDocument.querySelector('[aria-modal="true"]')) return false;
   let node = from instanceof Element ? from : null;
   while (node && node !== root) {
     const style = getComputedStyle(node);
@@ -192,8 +194,13 @@ interface EdgeStage {
  * down by the bar's height the moment the shell paints it. Pinned to the shell —
  * which is the element the app's own geometry is kept on — it covers the bar as
  * a page does on iOS, and nothing underneath can shift it.
+ *
+ * A LAYER — a dialog, an opened artifact — is already out of the flow and
+ * already pinned to the host it was portalled into, so it is dragged where it
+ * stands: putting it on the shell as well would move it by the distance between
+ * the two.
  */
-function edgeOpen(pane: HTMLElement, under: HTMLElement | null): EdgeStage {
+function edgeOpen(pane: HTMLElement, under: HTMLElement | null, isLayer: boolean): EdgeStage {
   const view = pane.ownerDocument.defaultView;
   const box = pane.getBoundingClientRect();
   const shell = pane.closest('[data-viewport-shell]');
@@ -208,7 +215,7 @@ function edgeOpen(pane: HTMLElement, under: HTMLElement | null): EdgeStage {
     underStyle: under?.style.cssText ?? '',
   };
 
-  if (frame) {
+  if (frame && !isLayer) {
     pane.style.position = 'absolute';
     pane.style.left = `${box.left - frame.left}px`;
     pane.style.top = `${box.top - frame.top}px`;
@@ -265,6 +272,15 @@ export interface EdgeBackPanes {
   readonly isSwiping: boolean;
 }
 
+export interface EdgeBackOptions {
+  /**
+   * The pane is a layer standing OVER the application — a dialog, an opened
+   * artifact — rather than a page in the flow under it. What such a pane
+   * uncovers is already on screen behind it, so `under` goes unused.
+   */
+  readonly isLayer?: boolean;
+}
+
 /**
  * Watch the pane for a swipe in from its leading edge, drag it with the finger,
  * and leave the session when the stroke completes. Answers the refs to PUT ON
@@ -290,8 +306,15 @@ export interface EdgeBackPanes {
  * WATCHES must never be able to delay the scroll it is watching, captured so a
  * component inside the transcript cannot hide the stroke by stopping it on its
  * way up.
+ *
+ * A DIALOG takes the same stroke with `isLayer`. It stands over the application
+ * rather than in the flow under it, so it is dragged where it is, and its own
+ * being up stops being a reason to refuse: what the stroke leaves is the dialog.
  */
-export function useEdgeBack(onBack: (() => void) | null): EdgeBackPanes {
+export function useEdgeBack(
+  onBack: (() => void) | null,
+  { isLayer = false }: EdgeBackOptions = {},
+): EdgeBackPanes {
   // Read only from an event, so it is kept in a ref instead of resubscribing the
   // listeners every time the shell re-renders.
   const latest = useRef(onBack);
@@ -376,7 +399,7 @@ export function useEdgeBack(onBack: (() => void) | null): EdgeBackPanes {
         : null;
       // The strip is asked about FIRST, so the walk up the tree only happens for
       // the few touches that landed where the gesture could begin at all.
-      gesture = started && edgeIsFree(touchEvent.target, pane) ? started : null;
+      gesture = started && edgeIsFree(touchEvent.target, pane, isLayer) ? started : null;
       velocity = 0;
       lastAt = performance.now();
       lastX = at?.x ?? 0;
@@ -397,7 +420,7 @@ export function useEdgeBack(onBack: (() => void) | null): EdgeBackPanes {
       }
       gesture = next;
       if (!stage && next.across >= EDGE_OPEN_PX && wantsMotion(view)) {
-        stage = edgeOpen(pane, under.current);
+        stage = edgeOpen(pane, under.current, isLayer);
         setSwiping(true);
       }
       if (stage) edgePaint(stage, next.across);
@@ -428,7 +451,7 @@ export function useEdgeBack(onBack: (() => void) | null): EdgeBackPanes {
       if (settling !== null) view?.clearTimeout(settling);
       if (stage) edgeClose(stage);
     };
-  }, [hasDoor, pane]);
+  }, [hasDoor, isLayer, pane]);
 
   return { pane: setPane, under: setUnder, isSwiping: swiping };
 }

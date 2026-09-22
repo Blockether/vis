@@ -112,6 +112,20 @@ describe('what the edge strip is standing on', () => {
     dialog.remove();
     expect(edgeIsFree(line, pane)).toBe(true);
   });
+
+  it('keeps the stroke for the dialog that is dragging ITSELF out', () => {
+    const line = document.createElement('p');
+    const pane = paneWith(line);
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    pane.append(dialog);
+
+    expect(edgeIsFree(line, pane)).toBe(false);
+    expect(edgeIsFree(line, pane, true)).toBe(true);
+
+    dialog.remove();
+  });
 });
 
 function OpenSession({
@@ -337,5 +351,58 @@ describe('the pop the stroke draws', () => {
     } finally {
       window.matchMedia = asked;
     }
+  });
+});
+
+/** A dialog standing over the open session, mounted the way `Modal` mounts one. */
+function OpenDialog({ onBack }: { onBack: () => void }) {
+  const { pane } = useEdgeBack(onBack, { isLayer: true });
+  return (
+    <div data-viewport-shell>
+      <div data-testid="list">sessions</div>
+      <div ref={pane} data-testid="box">
+        <section role="dialog" aria-modal="true" aria-label="Build" data-testid="run">
+          the live view
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// Reported: the stroke that leaves a session did nothing inside an opened live run, where
+// the ✕ was the only way back to the transcript. A dialog is the layer on top, so it takes
+// the stroke itself and leaves ITSELF.
+describe('a dialog leaving by the same stroke', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('drags the layer where it stands and dismisses it on the lift', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenDialog onBack={onBack} />);
+    const box = getByTestId('box');
+    const run = getByTestId('run');
+
+    act(() => {
+      fireTouch(run, 'touchstart', [AT]);
+      fireTouch(run, 'touchmove', [across(60)]);
+    });
+
+    // A layer is in nobody's flow, so it is never put on the shell: it follows the
+    // finger from exactly where it already stands.
+    expect(box.style.position).toBe('');
+    expect(xOf(box)).toBe(60);
+
+    act(() => {
+      fireTouch(run, 'touchmove', [across(EDGE_BACK_PX + 20)]);
+      fireTouch(run, 'touchend', []);
+    });
+    settle();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

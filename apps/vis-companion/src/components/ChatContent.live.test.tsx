@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { LiveViewPanel } from './LiveView';
 import { STORY_LIVE_VIEW } from '../dev/story-data';
@@ -7,6 +7,8 @@ import { IterationTrace } from './ChatContent';
 import { activityHistoryPage } from '../dev/activity-history';
 import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
+import { EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back';
+import { drag } from '../lib/pull-to-search.fixture';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
 // User report (screenshot): the embedded run stood in a box of its own. It is a BAND now, the
@@ -99,6 +101,40 @@ it('mounts the opened run in the session pane rather than over the whole app', (
     expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
     expect(pane.firstElementChild).not.toHaveClass('fixed');
   } finally {
+    shell.remove();
+    pane.remove();
+  }
+});
+
+// Reported: a finger drawn in from the left edge is how the phone says "back", and inside an
+// opened run it said nothing — the ✕ was the only way back to the transcript. The dialog is the
+// layer on top, so the stroke that leaves a session leaves the dialog instead.
+it('closes an opened run on a swipe in from its left edge', () => {
+  const shell = document.createElement('div');
+  shell.setAttribute('data-viewport-shell', '');
+  const pane = document.createElement('div');
+  pane.setAttribute('data-session-surface', '');
+  document.body.append(shell, pane);
+  vi.useFakeTimers();
+  try {
+    const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
+    fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+    const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
+    const at = { x: 6, y: 300 };
+
+    act(() =>
+      drag(dialog, at, [
+        { x: at.x + 40, y: at.y },
+        { x: at.x + EDGE_BACK_PX + 20, y: at.y },
+      ]),
+    );
+    act(() => {
+      vi.advanceTimersByTime(EDGE_SETTLE_MS);
+    });
+
+    expect(mounted.queryByRole('dialog')).toBeNull();
+  } finally {
+    vi.useRealTimers();
     shell.remove();
     pane.remove();
   }

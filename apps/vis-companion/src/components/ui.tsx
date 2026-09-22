@@ -50,6 +50,7 @@ import { createPortal } from 'react-dom';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
+import { useEdgeBack } from '../lib/edge-back';
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 /**
@@ -2220,6 +2221,12 @@ export function Modal({
 }) {
   const { host: portalHost, position } = within === 'session' ? sessionLayer() : overlayLayer();
   const dismissOnClick = useRef(false);
+  // BACK IS A STROKE IN HERE TOO. A dialog that took the glass is a place the reader
+  // arrived at, and a finger drawn in from its left edge is how the phone in their hand
+  // says "back" — so the box rides the finger and the lift dismisses it, exactly as the
+  // same stroke leaves a session. This box IS the layer on top: it drags where it
+  // stands, and what it uncovers is already behind it, so nothing waits under.
+  const { pane: edgeBack } = useEdgeBack(onDismiss, { isLayer: true });
   // ONLY `full` PAPERS THE WHOLE PHONE. Reported over settings on an iPhone: with the
   // application fold closed and three machines listed, two thirds of the glass below the
   // last row was blank panel. A sheet that stops at its content rises from the bottom
@@ -2284,6 +2291,7 @@ export function Modal({
           painting on it, and every box carries its own paper.
           `ui.conventions.test.ts` holds the layer clear. */}
       <div
+        ref={edgeBack}
         className={`flex w-full flex-col ${boxWidth} ${boxHeight}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
