@@ -837,17 +837,28 @@ function ActivityStep({
       )}
     </>
   );
-  // THE CHEVRON STANDS BESIDE THE NAME, the way CODE, RESULT and ACTIVITY wear theirs:
-  // the word that says what opens, then the mark that opens it. What the row reports about
-  // that call — its object, its caption, its counts, how long it took — rides after the
-  // chevron in the disclosure's own tally. Held at the trailing edge instead, past the
-  // duration, the one part of the row that presses sat where nothing else on it begins.
-  const label = (
+  // Successful file reads are identified by the filename, not a repeated "Read" label.
+  // Keep authored labels and non-success states so failures and running work stay clear.
+  const filenameLabel =
+    row.operation === 'cat' &&
+    row.state === 'succeeded' &&
+    lead === 'Read' &&
+    !linkedSummary &&
+    Boolean(caption || object);
+  const label = filenameLabel ? (
+    <span
+      data-activity-summary
+      className="min-w-0 truncate font-normal"
+      title={caption || object}
+    >
+      <ActivityPath {...readPathCaption(caption ? row.summary : object, caption)} />
+    </span>
+  ) : (
     <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
       {lead}
     </span>
   );
-  const detail = (
+  const detail = filenameLabel ? metadata : (
     <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
       {object ? ' ' : null}
       {object && (

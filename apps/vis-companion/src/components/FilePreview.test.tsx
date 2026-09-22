@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
+import readFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-reads.json';
+import { activityProjectionFromWire } from '../lib/activity';
 import type { GatewayClient } from '../lib/gateway';
+import { OpenPathContext } from '../lib/open-path';
+import { ActivityPanel } from './ActivityPanel';
 import { FilePreview } from './FilePreview';
 
 afterEach(cleanup);
@@ -26,6 +31,49 @@ function gateway(overrides: Record<string, unknown> = {}): GatewayClient {
 function show(client: GatewayClient, line?: number) {
   render(<FilePreview client={client} sid="session-1" path={PATH} line={line} onClose={vi.fn()} />);
 }
+
+function ReadActivityPreview({ client }: { client: GatewayClient }) {
+  const [path, setPath] = useState<string | null>(null);
+  return (
+    <OpenPathContext.Provider value={setPath}>
+      <ActivityPanel activity={activityProjectionFromWire(readFixture)!} />
+      {path && (
+        <FilePreview client={client} sid="session-1" path={path} onClose={() => setPath(null)} />
+      )}
+    </OpenPathContext.Provider>
+  );
+}
+
+it('opens the simplified preview from a filename-only read activity', async () => {
+  const client = gateway();
+  render(<ReadActivityPreview client={client} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
+  const row = document.querySelector<HTMLElement>('[data-activity-row]')!;
+  expect(within(row).queryByText('Read')).toBeNull();
+  fireEvent.click(within(row).getByRole('button', { name: 'Open ~/vis/PLAN.md' }));
+
+  const dialog = screen.getByRole('dialog', { name: 'PLAN.md' });
+  await waitFor(() => expect(within(dialog).getByText('twelve')).toBeVisible());
+  expect(client.readPath).toHaveBeenCalledWith(
+    'session-1',
+    '~/vis/PLAN.md',
+    undefined,
+    expect.anything(),
+  );
+  expect(dialog.querySelector('header h2')).toHaveClass('sr-only');
+  expect(within(dialog).getByText('~/vis/PLAN.md')).toBeVisible();
+  const editor = within(dialog).getByRole('button', { name: 'Open in editor' });
+  expect(editor).toHaveAttribute('title', 'Open in editor');
+  expect(editor.textContent).toBe('');
+  expect(editor.querySelector('svg')).toBeInTheDocument();
+  expect(editor.className).not.toMatch(/\bborder-l(?:\s|$)/);
+  fireEvent.click(editor);
+  expect(client.openPath).toHaveBeenCalledWith('session-1', '~/vis/PLAN.md');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close PLAN.md' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(row).toBeVisible();
+});
 
 it('shows only the file path, without the duplicate headline', async () => {
   show(gateway());

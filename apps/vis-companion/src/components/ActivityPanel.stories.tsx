@@ -73,21 +73,24 @@ export const LongLabels: Story = {
       const name = toggle.firstElementChild!;
       const chevron = toggle.querySelector('svg')!;
       const detail = toggle.lastElementChild!;
-      const summary = detail.querySelector<HTMLElement>('.flex-1[title]')!;
+      const filenameLabel = name.hasAttribute('data-activity-summary');
+      const summary = filenameLabel
+        ? name
+        : detail.querySelector<HTMLElement>('.flex-1[title]')!;
       const duration = within(row).getByLabelText(/^Duration /);
       // A row can fit its container while visible text still spills across siblings.
       await expect(getComputedStyle(summary).overflowX).toBe('hidden');
       await expect(getComputedStyle(summary).textOverflow).toBe('ellipsis');
       await expect(getComputedStyle(summary).whiteSpace).toBe('nowrap');
-      // User report: the mark that opens a step hung at the far edge, past its duration.
-      // It stands beside the step's own name, the way CODE, RESULT and ACTIVITY wear it,
-      // and everything the step reports follows it.
+      // The chevron follows the filename for a read, or the operation label for other steps.
       await expect(
         chevron.getBoundingClientRect().left - name.getBoundingClientRect().right,
       ).toBeCloseTo(6, 0);
-      await expect(summary.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-        chevron.getBoundingClientRect().right,
-      );
+      if (!filenameLabel) {
+        await expect(summary.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+          chevron.getBoundingClientRect().right,
+        );
+      }
       await expect(summary.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
         duration.getBoundingClientRect().left + 1,
       );
@@ -765,6 +768,7 @@ export const SameFileReads: Story = {
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
     const row = canvasElement.querySelector<HTMLElement>('[data-activity-row]')!;
     await expect(row.textContent).toContain('PLAN.md · lines 583–584, 615–616');
+    await expect(within(row).queryByText('Read')).not.toBeInTheDocument();
     await expect(within(row).queryByRole('button')).not.toBeInTheDocument();
     await expect(canvas.getByLabelText('Duration 3ms')).toBeVisible();
     await expect(row.querySelector('[data-activity-content]')).toBeNull();

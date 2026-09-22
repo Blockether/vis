@@ -46,6 +46,64 @@ it('merges ranges into one summary without a disclosure or changing invocation c
   expect(activity).toEqual(readFixture);
 });
 
+it.each([1, 2])(
+  'labels %i same-file reads with the filename instead of a Read headline',
+  (count) => {
+    const activity = reads();
+    activity.rows = activity.rows.slice(0, count);
+    openReads(activity);
+    const row = document.querySelector<HTMLElement>('[data-activity-row]')!;
+    const headline = within(row).getByRole('heading', { level: 4 });
+    const ranges = count === 1 ? '583–584' : '583–584, 615–616';
+    const duration = activity.rows.reduce((sum, read) => sum + read.duration_ms!, 0);
+    expect(headline.textContent).toBe(`~/vis/PLAN.md · lines ${ranges}${duration}ms`);
+    expect(within(row).queryByText('Read')).toBeNull();
+    expect(row.querySelector('[data-activity-content]')).toBeNull();
+  },
+);
+
+it('uses the filename as the disclosure label when a read includes an excerpt', () => {
+  const activity = reads();
+  activity.rows = activity.rows.slice(0, 1);
+  activity.rows[0].presentation!.content = [{ type: 'code', text: 'File snapshot' }];
+  openReads(activity);
+  const row = document.querySelector<HTMLElement>('[data-activity-row]')!;
+  const toggle = within(row).getByRole('button');
+  expect(toggle.textContent).toMatch(/^~\/vis\/PLAN\.md · lines 583–584/);
+  expect(within(row).queryByText('Read')).toBeNull();
+  fireEvent.click(toggle);
+  expect(within(row).getByText('File snapshot')).toBeVisible();
+  expect(row.querySelector('[data-activity-content] > div')).not.toHaveClass('border');
+});
+
+it('uses a filename-only label for a read without an authored presentation', () => {
+  const activity = reads();
+  activity.rows = activity.rows.slice(0, 1);
+  delete activity.rows[0].presentation;
+  openReads(activity);
+  const headline = screen.getByRole('heading', { level: 4 });
+  expect(headline.textContent).toBe(`~/vis/PLAN.md${activity.rows[0].duration_ms}ms`);
+});
+
+it.each(['running', 'failed', 'cancelled'] as const)(
+  'keeps the read headline for a %s operation',
+  (state) => {
+    const activity = reads();
+    activity.rows = activity.rows.slice(0, 1);
+    activity.rows[0].state = state;
+    openReads(activity);
+    expect(screen.getByText('Read')).toBeVisible();
+  },
+);
+
+it('keeps a custom read headline', () => {
+  const activity = reads();
+  activity.rows = activity.rows.slice(0, 1);
+  activity.rows[0].presentation!.headline = 'Inspect file';
+  openReads(activity);
+  expect(screen.getByText('Inspect file')).toBeVisible();
+});
+
 it('updates the summary-only row when another range arrives', () => {
   const activity = reads();
   const view = openReads({ ...activity, rows: activity.rows.slice(0, 1) });
