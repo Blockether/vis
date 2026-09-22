@@ -101,4 +101,18 @@ describe('app bar', () => {
     expect(cog).toEqual([]);
     expect(classes(labelledTag(app, 'Search all machines'))).toEqual([]);
   });
+
+  // Reported from the desktop build: the mark, the wordmark and the two marks on the
+  // right did not sit on one line. The mark's BOX was centred all along — the file's
+  // top fifth is rays, hairlines that wash out at this rung, so the eye inside it rode
+  // 2px under the bar's middle and 3px under the caps beside it. The brand corrects the
+  // ink and leaves the box on the row's own centre.
+  it('centres the mark on its ink, not on its canvas', () => {
+    const brand = app.slice(app.indexOf('aria-label="Vis"'));
+    const mark = classes(brand.slice(brand.indexOf('<img')));
+    expect(mark).toContain('h-6');
+    expect(mark).toContain('-translate-y-0.5');
+    // The row itself still takes the bar's height and centres what it holds.
+    expect(app).toContain('<div className="flex h-12 items-center gap-2.5" aria-label="Vis">');
+  });
 });
