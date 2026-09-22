@@ -267,6 +267,7 @@ describe('HeaderMeta', () => {
     expect(container.firstElementChild).toHaveClass('font-mono', 'text-chip');
   });
 });
+
 // Regression, user report (the phone header printed "725" over a list): a number
 // with no noun is a different sentence, not a shorter one.
 describe('HeaderTally', () => {
