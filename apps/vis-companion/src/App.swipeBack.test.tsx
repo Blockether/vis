@@ -102,4 +102,32 @@ describe('swiping in from the edge of a transcript', () => {
     act(() => fireTouch(pane, 'touchcancel', []));
     view.unmount();
   });
+
+  // Regression, user report (paraphrased: swiping back from a session to the list shows a
+  // band offering a pull to search). The band is pinned to the glass and parked one band
+  // height above it — but a `fixed` element inside a transformed ancestor is pinned to THAT
+  // ancestor instead, and the stroke transforms the list's pane, which stood the band back
+  // on the glass under the app bar for as long as the transcript was sliding.
+  it('keeps the list search band off the glass while the transcript slides back', async () => {
+    window.location.hash = '';
+    const view = renderApp({ machines: fleet() });
+    restore = view.restore;
+    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    fireEvent.click(screen.getByText('Alpha one'));
+    await screen.findByLabelText('Message Vis');
+    const main = view.baseElement.querySelector('main') as HTMLElement;
+    const list = main.firstElementChild as HTMLElement;
+    const pane = main.lastElementChild as HTMLElement;
+
+    act(() => {
+      fireTouch(pane, 'touchstart', [{ x: 6, y: 300 }]);
+      fireTouch(pane, 'touchmove', [{ x: 6 + EDGE_BACK_PX, y: 300 }]);
+    });
+
+    expect(list.style.transform).toContain('translate');
+    expect(list.contains(screen.getByText('Pull to search'))).toBe(false);
+
+    act(() => fireTouch(pane, 'touchcancel', []));
+    view.unmount();
+  });
 });

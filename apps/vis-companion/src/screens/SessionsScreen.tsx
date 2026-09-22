@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button } from '../components/ui';
+import { createPortal } from 'react-dom';
+import { Banner, Button, overlayLayer } from '../components/ui';
 import {
   MachineGap,
   MachineMark,
@@ -1870,8 +1871,15 @@ export function SessionsScreen({
           Sharing the first header's pixel avoids a doubled rule or a layout shift. */}
       <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-page before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-20 before:border-t before:border-white sm:max-h-full">
         {/* The pull reports itself where the search door lives: it takes over the app bar
-            until the finger releases, instead of inserting a new band above the list. */}
-        <PullToSearchHint phase={pullPhase} ref={hintRef} />
+            until the finger releases, instead of inserting a new band above the list.
+
+            IT HANGS IN THE APP'S OVERLAY LAYER, NOT IN THIS SCREEN. The band is pinned to
+            the glass, which holds only while nothing above it is transformed — and the back
+            swipe out of a session (`lib/edge-back`) drags this whole pane. A `fixed` element
+            inside a transformed ancestor is pinned to THAT ancestor, so the band's resting
+            place, one band height above the top, landed back on the glass under the app bar
+            for the length of every stroke. */}
+        {createPortal(<PullToSearchHint phase={pullPhase} ref={hintRef} />, overlayLayer().host)}
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (

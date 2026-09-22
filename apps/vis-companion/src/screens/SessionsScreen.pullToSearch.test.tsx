@@ -51,7 +51,7 @@ describe('pulling the sessions list down', () => {
     const view = fleet(() => {});
     try {
       const list = await listOf(view);
-      const hint = () => view.container.querySelector<HTMLElement>('.pointer-events-none')!;
+      const hint = () => view.getByText(/ to search$/);
 
       act(() => {
         fireTouch(list, 'touchstart', [AT]);
@@ -60,6 +60,8 @@ describe('pulling the sessions list down', () => {
       expect(hint().textContent).toBe('Pull to search');
       expect(hint().className).toContain('fixed');
       expect(hint().className).toContain('top-[env(safe-area-inset-top)]');
+      // And it hangs in the app's overlay layer, clear of the pane the list is drawn in.
+      expect(view.container.contains(hint())).toBe(false);
       act(() => fireTouch(list, 'touchmove', [down(PULL_OPEN_PX)]));
       expect(hint().textContent).toBe('Release to search');
       expect(hint().className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
@@ -75,7 +77,7 @@ describe('pulling the sessions list down', () => {
     const view = fleet(() => {});
     try {
       const list = await listOf(view);
-      const hint = () => view.container.querySelector<HTMLElement>('.pointer-events-none')!;
+      const hint = () => view.getByText(/ to search$/);
 
       act(() => {
         fireTouch(list, 'touchstart', [AT]);

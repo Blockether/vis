@@ -16,7 +16,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { IconButton } from './ui';
+import { IconButton, overlayLayer } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -27,15 +27,22 @@ const HEADER_TYPE = 'text-title';
 const HEADER_BAND =
   'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
 
-/** The session list's pull gesture takes over the app bar with the action a release would take. */
+/**
+ * The session list's pull gesture takes over the app bar with the action a release would take.
+ *
+ * A band pinned to the glass stays pinned only while nothing above it is transformed, so it is
+ * one of the app's overlay layers (`overlayLayer`): the screen that owns the gesture hangs it
+ * there rather than inside its own pane.
+ */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
   const isShown = phase !== 'none';
   const isArmed = phase === 'armed';
+  const { position } = overlayLayer();
   return (
     <div
       ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none fixed inset-x-0 top-[env(safe-area-inset-top)] z-40 flex min-h-12 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
+      className={`pointer-events-none ${position} inset-x-0 top-[env(safe-area-inset-top)] z-40 flex min-h-12 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
         isShown ? 'translate-y-0' : '-translate-y-full'
       } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
     >
