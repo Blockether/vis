@@ -2,7 +2,9 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor } from 'storybook/test';
 
 import { LOG_TEXT, NOTE_ANNOTATED, NOTE_MARKDOWN } from '../dev/story-data';
-import { type DocumentChrome, MarkdownAnnotator } from './MarkdownArtifact';
+import { type DocumentChrome, MarkdownAnnotator, MarkdownArtifact } from './MarkdownArtifact';
+import type { GatewayClient } from '../lib/gateway';
+import { quoteOf, renderAnnotated } from '../lib/markdown-annotations';
 
 /**
  * A NOTE, READ AS PROSE AND TALKED BACK TO.
@@ -96,6 +98,127 @@ export const StableHighlight: Story = {
     await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Keep this layout.');
     await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
     check();
+  },
+};
+
+const RICH_PARAGRAPH =
+  'A **formatted paragraph** should use the same optimizer as plain prose. Read *the careful explanation*, follow [the reference](https://example.com), and keep `git  status --short` literal. Repeated words, **words**, and well-**known** choices must be measured in their own styles, without changing what you select or quote.';
+const RICH_TEXT = `# Artifact typography
+
+${RICH_PARAGRAPH}
+
+- A **formatted list item** also balances its lines without losing the meaning or the original source.
+
+> A quotation with *emphasis* follows the same paragraph layout rules.`;
+const RICH_SOURCE = new Blob([RICH_TEXT], { type: 'text/markdown' });
+const readerClient = { base: 'http://127.0.0.1:7777' } as GatewayClient;
+
+function fittedParagraph(prose: HTMLElement) {
+  expect(prose).toHaveAttribute('data-justice');
+  const bounds = prose.getBoundingClientRect();
+  const style = getComputedStyle(prose);
+  const left = bounds.left + parseFloat(style.paddingLeft);
+  const right = bounds.right - parseFloat(style.paddingRight);
+  const lines = [...prose.children];
+  expect(lines.length).toBeGreaterThan(1);
+  for (const [index, line] of lines.entries()) {
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const rect = range.getBoundingClientRect();
+    expect(Math.abs(rect.left - left)).toBeLessThan(1);
+    expect(rect.right).toBeLessThanOrEqual(right + 1);
+    if (index < lines.length - 1) expect(Math.abs(rect.right - right)).toBeLessThan(1);
+  }
+}
+
+/** The actual artifact reader, including rich text, code and responsive composition. */
+export const RichReadOnlyArtifact: Story = {
+  globals: { theme: 'blockether-dark' },
+  render: () => (
+    <div data-artifact-column style={{ width: 600, maxWidth: '100%' }}>
+      <MarkdownArtifact
+        client={readerClient}
+        sid="s1"
+        iterationId="i1"
+        name="typography.md"
+        mediaType="text/markdown"
+        source={RICH_SOURCE}
+        chrome={chrome}
+      />
+    </div>
+  ),
+  play: async ({ canvas, canvasElement }) => {
+    await document.fonts.ready;
+    const column = canvasElement.querySelector<HTMLElement>('[data-artifact-column]')!;
+    await waitFor(() => expect(column.querySelector('p')).toHaveAttribute('data-justice'));
+    const prose = column.querySelector('p')!;
+    const original = prose.textContent;
+    fittedParagraph(prose);
+    const wideLines = prose.children.length;
+    column.style.width = '300px';
+    await waitFor(() => {
+      fittedParagraph(prose);
+      expect(prose.children.length).toBeGreaterThan(wideLines);
+    });
+    const link = canvas.getByRole('link', { name: 'the reference' });
+    expect(link).toHaveAttribute('href', 'https://example.com');
+    expect(prose.querySelectorAll('code')).toHaveLength(1);
+    const code = prose.querySelector('code')!;
+    expect(code.textContent).toBe('git  status --short');
+    expect(getComputedStyle(code).wordSpacing).toBe('0px');
+    expect(parseFloat(getComputedStyle(code).letterSpacing) || 0).toBe(0);
+    const range = document.createRange();
+    range.selectNodeContents(prose);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.toString()).toBe(original);
+    const selectedMarkup = prose.innerHTML;
+    column.style.width = '500px';
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    expect(prose.innerHTML).toBe(selectedMarkup);
+    expect(selection.toString()).toBe(original);
+    selection.removeAllRanges();
+    await waitFor(() => fittedParagraph(prose));
+    expect(prose.textContent).toBe(original);
+    await waitFor(() => fittedParagraph(column.querySelector('li')!));
+    await waitFor(() => fittedParagraph(column.querySelector('blockquote p')!));
+    expect(canvas.queryByRole('button', { name: 'Comment on the whole document' })).toBeNull();
+  },
+};
+
+/** Formatting and optimized line spans remain transparent to artifact comments. */
+export const RichArtifactComments: Story = {
+  globals: { theme: 'blockether-dark' },
+  args: { text: RICH_TEXT, onSave: fn(async () => 2) },
+  render: (args) => (
+    <div style={{ width: 420, maxWidth: '100%' }}>
+      <MarkdownAnnotator {...args} />
+    </div>
+  ),
+  play: async ({ canvas, canvasElement, args }) => {
+    await document.fonts.ready;
+    const prose = canvasElement.querySelector('p')!;
+    await waitFor(() => fittedParagraph(prose));
+    const original = prose.textContent;
+    const markup = prose.innerHTML;
+    await userEvent.click(prose.querySelector('strong')!);
+    expect(prose.innerHTML).toBe(markup);
+    const quote = canvasElement.querySelector('textarea[aria-label="Comment"]')!;
+    expect(quote).toBeVisible();
+    await userEvent.type(
+      canvas.getByRole('textbox', { name: 'Comment' }),
+      'Keep these line breaks.',
+    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
+    expect(prose.innerHTML).toBe(markup);
+    expect(prose.textContent).toBe(original);
+    await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
+    expect(args.onSave).toHaveBeenCalledWith(
+      renderAnnotated(RICH_TEXT, [
+        { quote: quoteOf(original ?? ''), body: 'Keep these line breaks.' },
+      ]),
+    );
   },
 };
 

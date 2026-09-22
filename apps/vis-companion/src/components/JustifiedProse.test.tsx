@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { act, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Markdown } from './ChatContent';
 import { JustifiedProse } from './JustifiedProse';
+import { MarkdownAnnotator } from './MarkdownArtifact';
+import { lineText, prepare, solve } from '@kitlangton/justice';
 
 const paragraph =
   'A paragraph should choose its line breaks together rather than treating every line as an isolated decision. The final line can remain naturally short.';
@@ -122,7 +124,7 @@ describe('Justice prose', () => {
     expect(measure.mock.calls.length).toBe(measurements);
   });
 
-  it('shows the latest streamed text immediately and drops composition for rich markup', async () => {
+  it('shows the latest streamed text immediately and composes updated rich markup', async () => {
     const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
     const prose = view.getByRole('paragraph');
     await composed(prose);
@@ -135,7 +137,7 @@ describe('Justice prose', () => {
         Read <a href="https://example.com">the source</a>.
       </JustifiedProse>,
     );
-    expect(prose).not.toHaveAttribute('data-justice');
+    await composed(prose);
     expect(view.getByRole('link', { name: 'the source' })).toHaveAttribute(
       'href',
       'https://example.com',
@@ -148,6 +150,9 @@ describe('Justice prose', () => {
     'Keep\u00a0these words together.',
     'Directional \u202etext remains native.',
     'word '.repeat(401).trim(),
+    'x'.repeat(16_385),
+    `${'a-'.repeat(17)}z`,
+    Array(129).fill('well-known').join(' '),
     '',
   ])('keeps unsupported text native (case %#)', (text) => {
     const view = render(<JustifiedProse>{text}</JustifiedProse>);
@@ -200,6 +205,136 @@ describe('Justice prose', () => {
     const prose = view.getByRole('paragraph');
     await composed(prose);
     expect(prose.textContent).toBe(text);
+  });
+
+  it('optimizes formatted artifact paragraphs without losing annotations or inline semantics', async () => {
+    const text =
+      'Artifact paragraphs keep **bold words**, *emphasis*, ~~old wording~~, [a link](https://example.com) and `git  status --short` while choosing their line breaks together.';
+    const view = render(
+      <MarkdownAnnotator text={text} onSave={async () => 2} chrome={({ body }) => <>{body}</>} />,
+    );
+    const prose = view.getByRole('paragraph');
+    const original = prose.textContent;
+    await composed(prose);
+    expect(prose.textContent).toBe(original);
+    expect([...prose.querySelectorAll('strong')].map((node) => node.textContent).join(' ')).toBe(
+      'bold words',
+    );
+    expect(prose.querySelector('em')).toHaveTextContent('emphasis');
+    expect([...prose.querySelectorAll('del')].map((node) => node.textContent).join(' ')).toBe(
+      'old wording',
+    );
+    expect(view.getByRole('link', { name: 'a link' })).toHaveAttribute(
+      'href',
+      'https://example.com',
+    );
+    expect(prose.querySelectorAll('code')).toHaveLength(1);
+    expect(prose.querySelector('code')?.textContent).toBe('git  status --short');
+  });
+
+  it('optimizes formatted list items and quotations in artifact Markdown', async () => {
+    const view = render(
+      <Markdown>{`- A **formatted** list item chooses all its line breaks together.
+
+> A quoted paragraph with *emphasis* uses the same paragraph optimizer.`}</Markdown>,
+    );
+    await composed(view.getByRole('listitem'));
+    await composed(view.container.querySelector('blockquote p')!);
+    expect(view.container.querySelector('strong')).toHaveTextContent('formatted');
+    expect(view.container.querySelector('em')).toHaveTextContent('emphasis');
+  });
+
+  it('feeds Justice distinct advances for identical words in different styles', async () => {
+    const measured: { text: string; width: number }[] = [];
+    const advance = (node: Node, bold = false): number => {
+      if (node.nodeType === Node.TEXT_NODE)
+        return (node.textContent?.length ?? 0) * (bold ? 16 : 8);
+      const strong = bold || (node instanceof HTMLElement && node.tagName === 'STRONG');
+      return [...node.childNodes].reduce((sum, child) => sum + advance(child, strong), 0);
+    };
+    measure.mockImplementation(function (this: HTMLElement) {
+      const width = advance(this);
+      measured.push({ text: this.textContent ?? '', width });
+      return { width } as DOMRect;
+    });
+    const text = 'Read echo echo echo carefully and keep each repeated word in its own style.';
+    const view = render(
+      <JustifiedProse>
+        Read echo <strong>echo</strong> echo carefully and keep each repeated word in its own style.
+      </JustifiedProse>,
+    );
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    expect(measured).toContainEqual({ text: 'echo', width: 32 });
+    expect(measured).toContainEqual({ text: 'echo', width: 64 });
+    const expected = prepare(text, (word) => word.length * 8);
+    for (let index = 3; index < expected.widths.length; index++) expected.widths[index] += 32;
+    const layout = solve(expected, width, { hanging: 0, opening: 0 });
+    expect([...prose.children].map((line) => line.textContent)).toEqual(
+      layout.lines.map((line) => lineText(expected, line)),
+    );
+    const count = measured.length;
+    width = 480;
+    resized();
+    await composed(prose);
+    expect(measured).toHaveLength(count);
+    view.rerender(<JustifiedProse>{text}</JustifiedProse>);
+    await composed(prose);
+    expect(prose.querySelector('strong')).toBeNull();
+    expect(measured.length).toBeGreaterThan(count);
+    expect(prose.textContent).toBe(text);
+  });
+
+  it('retains styled partial words, explicit hyphens, graphemes and link actions', async () => {
+    const open = vi.fn();
+    const view = render(
+      <JustifiedProse>
+        A para<strong>graph</strong> keeps well-<em>known</em> words, naïve café é 👩‍💻 👍🏽 and{' '}
+        <button onClick={open}>a note</button> intact while wrapping.
+      </JustifiedProse>,
+    );
+    const prose = view.getByRole('paragraph');
+    const original = prose.textContent;
+    await composed(prose);
+    expect(prose.textContent).toBe(original);
+    expect(prose.querySelector('strong')).toHaveTextContent('graph');
+    expect(prose.querySelector('em')).toHaveTextContent('known');
+    fireEvent.click(view.getByRole('button', { name: 'a note' }));
+    expect(open).toHaveBeenCalledOnce();
+    expect(prose.innerHTML).not.toContain('�');
+  });
+
+  it('keeps oversized inline code native instead of changing its spaces or hyphens', async () => {
+    const code = 'git  status --short-with-a-long-identifier';
+    const view = render(<Markdown>{`Read \`${code}\` without changing the command.`}</Markdown>);
+    const prose = view.getByRole('paragraph');
+    const original = prose.textContent;
+    await waitFor(() => expect(measure).toHaveBeenCalled());
+    expect(prose).not.toHaveAttribute('data-justice');
+    expect(prose.textContent).toBe(original);
+    width = 640;
+    resized();
+    await composed(prose);
+    expect(prose.querySelectorAll('code')).toHaveLength(1);
+    expect(prose.querySelector('code')?.textContent).toBe(code);
+  });
+
+  it('keeps nested block structure and task controls native while optimizing child paragraphs', async () => {
+    const view = render(
+      <Markdown>
+        {
+          '- [ ] **Keep this control**\n\n- A paragraph with **emphasis**.\n\n  Another paragraph in the same item.\n\n  - Nested list'
+        }
+      </Markdown>,
+    );
+    expect(view.getByRole('checkbox')).not.toBeChecked();
+    const outer = view.getAllByRole('listitem').slice(0, 2);
+    for (const item of outer) expect(item).not.toHaveAttribute('data-justice');
+    for (const prose of view
+      .getAllByRole('paragraph')
+      .filter((node) => !node.querySelector('input')))
+      await composed(prose);
+    expect(view.getAllByRole('list')).toHaveLength(2);
   });
 
   it('enhances Markdown paragraphs and list items, but not compact results or rich hard breaks', async () => {
