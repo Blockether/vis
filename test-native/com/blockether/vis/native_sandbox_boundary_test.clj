@@ -33,28 +33,41 @@
            "assert await asyncio.to_thread(probe.echo, value='thread') == 'thread!'\n"
            "print('NATIVE_KEYWORDS_READY')\n"
            ;; #207: execute the owned-process and capture boundary in the image.
-           "child = await shell('sleep 30')\n"
-           "stopped = await child.stop()\n" "assert stopped['status'] == 'stopped', str(stopped)\n"
-           "print('NATIVE_PROCESS_CLEANUP_READY')\n" "from pathlib import Path\n"
-           "assert 'default.clj' in ls(Path('.'), depth=2)\n"
+           "child = await shell('sleep 30')\n" "stopped = await child.stop()\n"
+           "assert stopped['status'] == 'stopped', str(stopped)\n"
+           "print('NATIVE_PROCESS_CLEANUP_READY')\n"
+           "from pathlib import Path\n" "assert 'default.clj' in ls(Path('.'), depth=2)\n"
            "file_hit = grep({'query': ['defn f'], 'paths': [Path('default.clj')], 'context': 1})\n"
            "dir_hit = grep({'query': ['defn.*f'], 'paths': [Path('configured')], 'is_regex': True, 'context': 1})\n"
            "assert 'default.clj' in str(file_hit), str(file_hit)\n"
-           "assert 'example.clj' in str(dir_hit), str(dir_hit)\n" "print('NATIVE_FFF_READY')\n"
+           "assert 'example.clj' in str(dir_hit), str(dir_hit)\n"
+           "print('NATIVE_FFF_READY')\n"
            ;; An anchored write is the editing path the agent depends on most.
            "edit_target = project_root_path / 'edit.txt'\n"
            "edit_target.write_text('alpha\\nbeta\\n')\n"
            "anchor = re.match(r'\\d+:[0-9a-f]{3}', cat(str(edit_target)).splitlines()[1]).group(0)\n"
            "patch(str(edit_target), [{'from': anchor, 'replace': 'gamma'}])\n"
            "assert edit_target.read_text() == 'alpha\\ngamma\\n', edit_target.read_text()\n"
-           "print('NATIVE_PATCH_READY')")
-         tool {:id "sandbox-native"
-               :type "function"
-               :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
+           "print('NATIVE_PATCH_READY')\n"
+           ;; #279: let the refusal escape this tool call; the next model step must
+           ;; still see the same session, rather than an env_context_retired.
+           "scan_kept = 279\nscan_root = project_root_path / 'scan-budget'\n"
+           "scan_root.mkdir()\n(scan_root / 'entry').touch()\n"
+           "for _ in range(10001):\n    list(scan_root.rglob('*.missing'))")
+         tools [{:id "sandbox-native"
+                 :type "function"
+                 :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
+                {:id "sandbox-recovery"
+                 :type "function"
+                 :function {:name "python_execution"
+                            :arguments (json/write-json-str
+                                         {:code (str "assert scan_kept == 279\n"
+                                                     "assert len(list(scan_root.iterdir())) == 1\n"
+                                                     "print('NATIVE_TRAVERSAL_RECOVERED')")})}}]
          whole @#'native/whole-body
          stream @#'native/stream-body
          reply (fn [stream? text]
-                 (if (= 1 (swap! calls inc))
+                 (if-let [tool (get tools (dec (swap! calls inc)))]
                    (if stream?
                      (str "data: "
                           (json/write-json-str {:id "stub"
@@ -152,9 +165,12 @@
                                                       (slurp file))))]
 
                              (expect (= 0 (.exitValue process)) output)
-                             (expect (>= @calls 2) output)
+                             (expect (>= @calls 3) output)
+                             (expect (str/includes? (pr-str tool-results) "10000") output)
+                             (expect (str/includes? (pr-str tool-results) "grep/ls") output)
                              (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PROCESS_CLEANUP_READY"
-                                             "NATIVE_FFF_READY" "NATIVE_PATCH_READY"]]
+                                             "NATIVE_FFF_READY" "NATIVE_PATCH_READY"
+                                             "NATIVE_TRAVERSAL_RECOVERED"]]
                                (expect (str/includes? (pr-str tool-results) marker) output))
                              (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                              (expect (every? #(= model

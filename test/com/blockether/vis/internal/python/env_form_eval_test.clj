@@ -339,3 +339,35 @@
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
         (expect (nil? (:error r))))))
+
+(defdescribe
+  directory-traversal-budget-test
+  ;; #279: a resource refusal is a normal tool failure, not an env_context_retired.
+  (it "keeps the Python session usable after exhausting traversal in local and worker contexts"
+      (doseq [worker? [false true]]
+        (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                             "vis-scan-budget"
+                             (make-array java.nio.file.attribute.FileAttribute 0)))
+              entry (java.io.File. dir "entry")]
+
+          (try
+            (spit entry "")
+            (tpc/with-own
+              [ctx {} nil {:worker? worker?}]
+              (let [failure (ep/run-python-block ctx
+                                                 (str "scan_kept = 279\n"
+                                                      "scan_root = Path("
+                                                      (pr-str (str dir))
+                                                      ")\n"
+                                                      "for _ in range(10001):\n"
+                                                      "    list(scan_root.rglob('*.missing'))"))
+                    message (get-in failure [:error :message])
+                    recovered
+                    (ep/run-python-block ctx "print(scan_kept, len(list(scan_root.iterdir())))")]
+
+                (expect (str/includes? (str message) "10000"))
+                (expect (str/includes? (str message) "grep/ls"))
+                (expect (not (str/includes? (str failure) "env_context_retired")))
+                (expect (nil? (:error recovered)) (pr-str recovered))
+                (expect (= "279 1" (out recovered)))))
+            (finally (.delete entry) (.delete dir)))))))
