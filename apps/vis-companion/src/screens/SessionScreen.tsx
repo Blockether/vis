@@ -238,6 +238,13 @@ const OPENING_RAMP_MAX_MS = 800;
 // lands, and an unreachable gateway shows its error instead of a spinner.
 const LOADING_VEIL_MAX_MS = 12_000;
 
+// How long a following reader is carried across a HANDOVER. The running-turn bubble
+// leaving and its persisted row arriving is ONE transaction spread over frames: the
+// row's own pixels — markdown, highlighted code, images — land after the swap has
+// committed. A transcript still resizing this long afterwards is a stream, not a
+// swap, and the observers own it again.
+const HANDOVER_FOLLOW_MAX_MS = 1_500;
+
 // A transcript row is a PLACEHOLDER while its turn runs. The engine persists it
 // at SUBMIT with `running` (`/transcript` ships the engine row verbatim) and the
 // gateway overlay calls the same state `streaming` (`persisted-status->wire` in
@@ -1365,6 +1372,19 @@ export function SessionScreen({
   // to keep, and measuring it as such is what stopped a streaming session from
   // ever following its own newest turn again. Read by `arrivedAtEnd`.
   const aimedEndRef = useRef(0);
+  // ...and the LOWEST that end passed through since that measurement. Both observers
+  // below run before paint and see ends `handleScroll`'s batched read never does: a
+  // handover drops the bubble and mounts its row in stages, so the transcript DIPS
+  // and grows back between two scroll events while the browser clamps the reader on
+  // the way through. Credited against the end as it stands by then, that clamp read
+  // as a retreat, dropped the follow, and the anchor put the reader back onto the
+  // turn ABOVE the one that had just finished (BLO-170).
+  const lowestEndRef = useRef(-1);
+  const markLowestEnd = useCallback((box: HTMLElement | null) => {
+    if (!box) return;
+    const end = bottomOf(box);
+    if (lowestEndRef.current < 0 || end < lowestEndRef.current) lowestEndRef.current = end;
+  }, []);
 
   const scrollToEnd = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -1377,6 +1397,42 @@ export function SessionScreen({
     },
     [syncJump],
   );
+
+  // A reader who is following when a turn ENDS has to be carried across the whole
+  // handover. The content observer is the only thing that re-pins them, and it stands
+  // down for the reader's gesture grace — so a nudge of the wheel while the bubble is
+  // swapped for its persisted row vetoes exactly the frames that row's pixels land in,
+  // and nothing re-measures once the grace expires. Measured on a long session: the
+  // swap grew the transcript by 388 px, the pin never moved, and the reader was left
+  // looking at the answer of the PREVIOUS turn (BLO-170).
+  // So hold the follow for the length of the swap: re-pin every frame no hand is on
+  // the scroller, keep watching while one is, and stop once the transcript's own
+  // height has held still with no gesture left to wait out.
+  const handoverFollowFrameRef = useRef<number | null>(null);
+  const followThroughHandover = useCallback(() => {
+    if (handoverFollowFrameRef.current !== null || !followingRef.current) return;
+    const settled = heightSettler();
+    const startedAt = Date.now();
+    const step = () => {
+      handoverFollowFrameRef.current = null;
+      const viewport = scrollRef.current;
+      // Only the reader ends this: `handleScroll` clears the follow for a real
+      // retreat, and a follow they never dropped outlives the swap.
+      if (!viewport || !followingRef.current) return;
+      const quiet = settled(viewport.scrollHeight);
+      const readerOwns = readerOwnsScroll();
+      if (!readerOwns && !submitScrollActiveRef.current && !isViewportRotating()) {
+        followEnd(viewport);
+        correctedTopRef.current = viewport.scrollTop;
+        syncJump();
+      }
+      // A height that holds still is settled only once nobody is touching it: the
+      // pixels that landed under a gesture still have to be billed after it.
+      if ((quiet && !readerOwns) || Date.now() - startedAt > HANDOVER_FOLLOW_MAX_MS) return;
+      handoverFollowFrameRef.current = window.requestAnimationFrame(step);
+    };
+    handoverFollowFrameRef.current = window.requestAnimationFrame(step);
+  }, [syncJump]);
 
   // Sending is a transition into the newly authored turn, not a correction. The old
   // eager pin ran before React mounted that turn, did no useful movement, and the
@@ -1498,6 +1554,9 @@ export function SessionScreen({
       if (frame === null) frame = window.requestAnimationFrame(recapture);
     };
     const observer = new ResizeObserver(() => {
+      // Before any early return: a dip this callback sees is a clamp the reader's
+      // next scroll event must not read as a retreat of their own.
+      markLowestEnd(viewport);
       if (busy()) return;
       const readerOwns = readerOwnsScroll();
       // The send transition is already carrying this viewport to the end. Any direct
@@ -1551,7 +1610,7 @@ export function SessionScreen({
       viewport.removeEventListener('scroll', handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [captureScrollAnchor, syncJump]);
+  }, [captureScrollAnchor, markLowestEnd, syncJump]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -1840,6 +1899,9 @@ export function SessionScreen({
         widenWindowForHandover();
         setRunningTurn(null);
         runningTurnRef.current = null;
+        // The row's own pixels land over the frames AFTER this batch; carry a
+        // following reader across them.
+        followThroughHandover();
       }
       // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
       // by a suspended stream would otherwise leave the tray lying until the
@@ -2465,6 +2527,8 @@ export function SessionScreen({
           widenWindowForHandover();
           setRunningTurn(null);
           runningTurnRef.current = null;
+          // ...and the same carry as the stream's own handover above.
+          followThroughHandover();
         }
       }
       if (type === 'turn.failed') {
@@ -2887,8 +2951,14 @@ export function SessionScreen({
     if (!viewport || typeof ResizeObserver === 'undefined') return;
     viewportHeightRef.current = viewport.clientHeight;
     shellHeightRef.current = shellViewportHeight();
+    // Another session's transcript, another end: a dip recorded against the one that
+    // just left must not forgive a clamp in this one.
+    lowestEndRef.current = -1;
 
     const observer = new ResizeObserver(() => {
+      // The keyboard going down GROWS this box and lowers its end under the reader:
+      // the same clamp the content observer records, from the viewport's side.
+      markLowestEnd(viewport);
       // Composer-only height changes consume the scroller bottom and need no correction.
       // Shell/keyboard resizing and rotation retain their separate snapshot handling.
       if (isViewportRotating() || rotationRestorePendingRef.current) {
@@ -2963,8 +3033,12 @@ export function SessionScreen({
         window.cancelAnimationFrame(scrollMetricsFrameRef.current);
         scrollMetricsFrameRef.current = null;
       }
+      if (handoverFollowFrameRef.current !== null) {
+        window.cancelAnimationFrame(handoverFollowFrameRef.current);
+        handoverFollowFrameRef.current = null;
+      }
     };
-  }, [sid]);
+  }, [markLowestEnd, sid]);
 
   // Seed only on a session change. A deferred typing snapshot must never write
   // back over newer native text, marked text or an unreported iOS correction.
@@ -3862,6 +3936,11 @@ export function SessionScreen({
       // newest turn with "↓ Latest" painted over the composer.
       const previousTop = seenTopRef.current;
       const previousBottom = seenBottomRef.current;
+      // ...and the lowest end since, including the dips only the observers caught.
+      // Consumed and re-armed on every measurement, echo or not: the baseline below
+      // moves with it.
+      const lowestEnd = lowestEndRef.current < 0 ? bottomOf(viewport) : lowestEndRef.current;
+      lowestEndRef.current = bottomOf(viewport);
       const settled = isCorrectionEcho(viewport, previousTop);
       seenTopRef.current = viewport.scrollTop;
       seenBottomRef.current = bottomOf(viewport);
@@ -3873,14 +3952,19 @@ export function SessionScreen({
       const readerOwns = readerOwnsScroll();
       // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
       // upward move still proves retreat; the end-aware reading excludes a clamp.
-      const readerRetreated = readerRetreatedFrom(viewport, previousTop, previousBottom);
+      const readerRetreated = readerRetreatedFrom(
+        viewport,
+        previousTop,
+        previousBottom,
+        lowestEnd,
+      );
       // The same clamp read from the other side. Content that LEAVES can only
       // carry the reader TOWARDS the end, and arriving there is something a
       // reader DOES: a position handed to them by a transcript shrinking under
       // their eyes is not an arrival. Counting it as one re-armed the follow on
       // someone reading the middle of the turn that had just finished, and the
       // next catch-up took them to its last line — BLO-170, once per turn.
-      const endCameUp = endCameUpToReader(viewport, previousTop, previousBottom);
+      const endCameUp = endCameUpToReader(viewport, previousTop, previousBottom, lowestEnd);
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this

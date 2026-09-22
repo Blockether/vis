@@ -238,6 +238,25 @@ describe('a clamp is not a retreat', () => {
     expect(endCameUpToReader(box(45_200, TRANSCRIPT, 800), 44_000, 45_200)).toBe(false);
   });
 
+  // BLO-170 again: between two scroll measurements the transcript can dip AND come
+  // back — the running bubble leaves, the persisted row's highlighted code lands a
+  // frame later — and the browser's clamp is all the reader has moved.
+  it('forgives the reader clamped by a dip that grew back', () => {
+    // End 9 140 → 8 800 (bubble gone) → 9 528 (the answer's code block arrived).
+    expect(readerRetreatedFrom(box(8_800, 10_328, 800), 9_140, 9_140, 8_800)).toBe(false);
+    expect(endCameUpToReader(box(8_800, 10_328, 800), 9_140, 9_140, 8_800)).toBe(true);
+  });
+
+  it('still hears a gesture that outruns a dip that grew back', () => {
+    expect(readerRetreatedFrom(box(8_600, 10_328, 800), 9_140, 9_140, 8_800)).toBe(true);
+    expect(endCameUpToReader(box(8_600, 10_328, 800), 9_140, 9_140, 8_800)).toBe(false);
+  });
+
+  it('reads the low-water mark off the box when the caller kept none', () => {
+    // Same frame without the mark: the dip is invisible and reads as a retreat.
+    expect(readerRetreatedFrom(box(8_800, 10_328, 800), 9_140, 9_140)).toBe(true);
+  });
+
   it('reads the end off the box itself', () => {
     expect(bottomOf(box(0, TRANSCRIPT, 526))).toBe(45_474);
     expect(bottomOf(box(0, 600, 800))).toBe(0);

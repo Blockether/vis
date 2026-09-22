@@ -42,14 +42,24 @@ export function bottomOf(box: ScrollBox): number {
  * with it. Measured against the previous top alone, both read as an upward
  * gesture, which is what dropped follow on a tap — and a reader whose follow
  * died that way was offered "↓ Latest" the next time they touched the composer.
+ *
+ * `lowestBottom` is the LOWEST that end passed through SINCE that measurement,
+ * for the clamp the reader never sees land. A transcript can shrink and grow back
+ * between two reads — the running-turn bubble leaves and the persisted row's own
+ * pixels arrive a frame later — and the browser clamps them on the way through.
+ * Credited against the end as it stands by then, the browser's own correction
+ * reads as a retreat, drops the follow and anchors the reader onto the turn above.
+ * It defaults to that end, which is the reading a caller who kept no low-water
+ * mark already had.
  */
 export function readerRetreatedFrom(
   box: ScrollBox,
   previousTop: number,
   previousBottom: number,
+  lowestBottom: number = bottomOf(box),
 ): boolean {
   if (box.scrollTop >= previousTop) return false;
-  const clamp = Math.max(0, previousBottom - bottomOf(box));
+  const clamp = Math.max(0, previousBottom - Math.min(lowestBottom, bottomOf(box)));
   return previousTop - box.scrollTop > clamp;
 }
 
@@ -67,8 +77,12 @@ export function endCameUpToReader(
   box: ScrollBox,
   previousTop: number,
   previousBottom: number,
+  lowestBottom: number = bottomOf(box),
 ): boolean {
-  return box.scrollTop < previousTop && !readerRetreatedFrom(box, previousTop, previousBottom);
+  return (
+    box.scrollTop < previousTop &&
+    !readerRetreatedFrom(box, previousTop, previousBottom, lowestBottom)
+  );
 }
 
 /**
