@@ -982,7 +982,15 @@
 
       (try (is (false? (port-free? "127.0.0.1" port)) "occupied port is not free")
            (finally (.close sock)))
-      (is (true? (port-free? "127.0.0.1" port)) "released port is free"))))
+      ;; macOS can still complete a handshake against a listener closed moments
+      ;; ago, so the port drains asynchronously — exactly why the callers of
+      ;; `port-free?` wait for it instead of reading it once.
+      (is (true? (loop [deadline (+ (System/currentTimeMillis) 5000)]
+                   (or (port-free? "127.0.0.1" port)
+                       (when (< (System/currentTimeMillis) deadline)
+                         (Thread/sleep 25)
+                         (recur deadline)))))
+          "released port is free"))))
 
 (deftest sse-event-action-test
   (testing "own turn terminal returns the event"
