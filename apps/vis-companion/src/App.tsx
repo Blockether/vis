@@ -1474,17 +1474,19 @@ export function Header({
               pupil, a highlight, a smile and seven rays share the box, so barely a
               third of it is ink and it reads smaller than it measures; under 24px a
               1x screen washes the pupil to grey and closes the smile. It takes the
-              scale's own rung, half the bar and twice the wordmark's cap height,
-              never a pixel fitted by hand to the file's proportion. */}
+              scale's own rung, half the bar's height, never a pixel fitted by hand to
+              the file's proportion. */}
           {/* AND ITS CANVAS IS NOT ITS CENTRE. The file's top fifth holds only the
               rays — hairlines that wash out at this rung — so a box centred on the
-              bar leaves the eye itself 2px under the bar's middle and 3px under the
-              wordmark's caps, which is what reads as a crooked brand. The nudge is
-              that offset, a twelfth of the mark's height, and it moves the ink only:
+              bar leaves the eye itself 2px under the bar's middle, so it reads lower
+              than the wordmark. The nudge is that offset, a twelfth of the mark's
+              height, and it moves the ink only:
               the box stays where the row put it. */}
           <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
             <img src="/vis-logo.png" alt="" className="h-6 w-7 -translate-y-0.5 object-contain" />
-            <span className="font-mono text-title font-black tracking-[0.18em] text-white">
+            {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
+                hard offset rather than the dialog's black shadow. */}
+            <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
               VIS
             </span>
           </div>

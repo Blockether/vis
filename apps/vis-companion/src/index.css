@@ -259,9 +259,9 @@
      its own ground puts it one step UNDER the sheet in both directions: #f3ece4
      behind a #faf3eb sheet in light, #14161c behind a #161820 one in dark. */
   --color-page: var(--page, color-mix(in oklab, var(--fg) 3%, var(--bg)));
-  /* The one shadow in the app: a floating layer (menu, popover, sheet, dialog) casts a
-     solid offset in the theme's dialog-shadow ink, the token the TUI paints under its
-     dialogs. One size everywhere; nothing in flow casts one. */
+  /* The one box shadow in the app: a floating layer (menu, popover, sheet, dialog)
+     casts a solid offset in the theme's dialog-shadow ink, the token the TUI paints
+     under its dialogs. One size everywhere; nothing in flow casts a box shadow. */
   --shadow-float: 4px 4px 0 var(--dialog-shadow);
   --font-sans: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
