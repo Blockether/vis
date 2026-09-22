@@ -4540,6 +4540,156 @@
           (is (= (str gid) (:group-id (second @seen))))
           (is (= :only (:archived (second @seen)))))))))
 
+;; READ-ONLY is the other half of the archive: the row leaves the lists AND stops taking
+;; work. The app and the TUI disable their composer, so what reaches these routes is a
+;; stale screen or a caller coming straight through the SDK - and the refusal names the
+;; archive, because unarchiving is the whole fix.
+(deftest an-archived-session-takes-no-new-work
+  (let [sid
+        (str (random-uuid))
+
+        archived?
+        (atom true)
+
+        refuses
+        {#'state/session-archived? (fn [_sid]
+                                     @archived?)
+         #'state/submit-turn! (fn [& _]
+                                (throw (ex-info "submitted a turn into the archive" {})))
+         #'state/set-session-model! (fn [& _]
+                                      (throw (ex-info "pinned a model on the archive" {})))}
+
+        submit
+        (fn []
+          ((rv 'submit-turn-handler)
+            (merge {:request-method :post :path-params {:sid sid}}
+                   (json-body {:request "keep working"}))))
+
+        pin
+        (fn []
+          ((rv 'set-session-model-handler)
+            (merge {:request-method :patch :path-params {:sid sid}}
+                   (json-body {:model "glm-5.2"}))))]
+
+    (testing "a turn aimed at an archived session is refused, and nothing is queued"
+      (with-redefs-fn refuses
+        (fn []
+          (let [response
+                (submit)
+
+                error
+                (get (wire/parse-json (:body response)) "error")]
+
+            (is (= 409 (:status response)))
+            (is (= "session-archived" (get error "type")))
+            (is (= sid (get error "session_id")))
+            ;; A human reads this one: it has to say what to do, not just what failed.
+            (is (re-find #"unarchive" (get error "message")))))))
+    (testing "pinning a model on an archived session is refused the same way"
+      (with-redefs-fn refuses
+        (fn []
+          (let [response (pin)]
+            (is (= 409 (:status response)))
+            (is (= "session-archived"
+                   (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
+    (testing "the SAME calls go through once the archive is lifted"
+      (reset! archived? false)
+      (with-redefs-fn {#'state/session-archived? (fn [_sid]
+                                                   @archived?)
+                       #'state/submit-turn! (fn [_sid _opts]
+                                              {:turn {:turn_id "turn-1"}})
+                       #'state/set-session-model! (fn [& _]
+                                                    nil)
+                       #'state/session-model (fn [_sid]
+                                               {:model "glm-5.2"})}
+        (fn []
+          (is (= 202 (:status (submit))))
+          (is (= 200 (:status (pin)))))))
+    (testing "the conversation is KEPT, so reading an archived session is never refused"
+      (reset! archived? true)
+      (with-redefs-fn (assoc refuses
+                        #'state/transcript-page (fn [_sid _opts]
+                                                  {:turns [] :total 0 :offset 0 :has-more false}))
+        (fn []
+          (is (= 200
+                 (:status ((rv 'transcript-handler)
+                            {:path-params {:sid sid} :query-params {}})))))))))
+
+;; A session still WORKING cannot be put away: the turn would keep running with nothing
+;; in any list naming it, and cancelling it behind a swipe verb would be worse. The group
+;; is a shelf, so ONE working member holds the whole shelf up - and the answer names that
+;; session, because the human has to know where the work is.
+(deftest work-in-flight-refuses-the-archive-and-names-the-session
+  (let [sid
+        (str (random-uuid))
+
+        gid
+        (random-uuid)
+
+        asked
+        (atom [])
+
+        patch-session
+        (fn [body]
+          ((rv 'patch-session-handler)
+            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))
+
+        patch-group
+        (fn [body]
+          ((rv 'patch-session-group-handler)
+            (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
+
+    (testing "a session with work in flight refuses the archive and is never stamped"
+      (with-redefs-fn {#'state/session-working? (constantly true)
+                       #'state/set-archived! (fn [& _]
+                                               (throw (ex-info "archived a working session" {})))}
+        (fn []
+          (let [response
+                (patch-session {:archived true})
+
+                error
+                (get (wire/parse-json (:body response)) "error")]
+
+            (is (= 409 (:status response)))
+            (is (= "session-busy" (get error "type")))
+            (is (= sid (get error "session_id")))))))
+    (testing "UNarchiving is never refused - it only brings the row back into the list"
+      (with-redefs-fn {#'state/session-working? (constantly true)
+                       #'state/set-archived! (fn [_sid archived?]
+                                               (swap! asked conj archived?)
+                                               {"id" sid "archived_at" nil})}
+        (fn []
+          (is (= 200 (:status (patch-session {:archived false}))))
+          (is (= [false] @asked)))))
+    (testing "one working member refuses the whole group, and the answer names it"
+      (with-redefs-fn {#'state/get-session-group (fn [_g]
+                                                   {"id" (str gid) "name" "Release apps"})
+                       #'state/busy-session-in-group (fn [g]
+                                                       (when (= (str gid) (str g)) sid))
+                       #'state/update-session-group! (fn [& _]
+                                                       (throw (ex-info "archived a working group"
+                                                                       {})))}
+        (fn []
+          (let [response
+                (patch-group {:archived true})
+
+                error
+                (get (wire/parse-json (:body response)) "error")]
+
+            (is (= 409 (:status response)))
+            (is (= "session-busy" (get error "type")))
+            (is (= sid (get error "session_id")))))))
+    (testing "unarchiving a group never asks whether a member is still working"
+      (with-redefs-fn {#'state/get-session-group (fn [_g]
+                                                   {"id" (str gid)})
+                       #'state/busy-session-in-group
+                       (fn [& _]
+                         (throw (ex-info "asked about work while unarchiving" {})))
+                       #'state/update-session-group! (fn [_g _opts]
+                                                       {"id" (str gid) "archived_at" nil})}
+        (fn []
+          (is (= 200 (:status (patch-group {:archived false})))))))))
+
 ;; Regression: the settings mutation route answered 200 to every value it could
 ;; not store — a JSON `false` was read as "no value given" and ignored, the string
 ;; "false" was cast by truthiness into ON, an unknown enum choice changed nothing

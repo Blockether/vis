@@ -3197,6 +3197,64 @@
         (expect (= ["loose" "filed"] (mapv #(get % "id") (:sessions page))))
         (expect (= 2 (:total page)))))))
 
+;; The two questions every archive write asks before it changes anything: is this session
+;; already put away - its own stamp, or the shelf holding it - and is somebody still
+;; waiting on work inside it.
+(defdescribe gateway-archive-write-guards-test
+             (it "reads the archive exactly the way the lists do: own stamp OR the group's"
+                 (with-redefs [lp/archived-session-group-ids
+                               (constantly #{"shelf"})
+
+                               lp/by-id
+                               (fn [sid]
+                                 ({"stamped" {:id "stamped"
+                                              :archived-at #inst "2024-05-01T10:00:00.000Z"}
+                                   "filed" {:id "filed" :group-id "shelf"}
+                                   "open" {:id "open" :group-id "active"}}
+                                  (str sid)))]
+
+                   (expect (true? (state/session-archived? "stamped")))
+                   ;; Never stamped itself: the shelf it stands on is what puts it away.
+                   (expect (true? (state/session-archived? "filed")))
+                   (expect (false? (state/session-archived? "open")))
+                   ;; A session this gateway does not know is not archived - its 404 says so.
+                   (expect (nil? (state/session-archived? "nobody")))))
+             (it "counts a running turn, a queued turn and an open prompt as work in flight"
+                 (with-redefs [bus/live-turn-id
+                               (fn [sid]
+                                 (when (= "running" (str sid)) "turn-1"))
+
+                               bus/session-waiting?
+                               (fn [sid]
+                                 (= "asked" (str sid)))
+
+                               state/list-queued-turns
+                               (fn [sid]
+                                 (when (= "queued" (str sid)) [{"turn_id" "turn-2"}]))]
+
+                   (expect (true? (state/session-working? "running")))
+                   (expect (true? (state/session-working? "queued")))
+                   ;; A question nobody answered is work too: archiving would hide the asking.
+                   (expect (true? (state/session-working? "asked")))
+                   (expect (false? (state/session-working? "idle")))))
+             (it "names the member holding a whole shelf up, and nil when the group is idle"
+                 (with-redefs [lp/session-group-session-ids
+                               (fn [gid]
+                                 (when (= "shelf" (str gid)) ["idle-one" "running" "idle-two"]))
+
+                               bus/live-turn-id
+                               (fn [sid]
+                                 (when (= "running" (str sid)) "turn-1"))
+
+                               bus/session-waiting?
+                               (constantly false)
+
+                               state/list-queued-turns
+                               (constantly nil)]
+
+                   (expect (= "running" (state/busy-session-in-group "shelf")))
+                   (expect (nil? (state/busy-session-in-group "empty"))))))
+
 ;; Regression: SDK reactivation could miss a ping between terminal state and journal cleanup.
 (defdescribe
   council-wake-after-terminal-marker-test

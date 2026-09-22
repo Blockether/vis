@@ -6490,6 +6490,41 @@
   [sid archived?]
   (when (lp/by-id sid) (lp/set-archived! sid archived?) (soul sid)))
 
+(defn session-archived?
+  "Whether `sid` is EFFECTIVELY archived: its own stamp is set, or the stamp on the
+   GROUP holding it is - the same rule that hides it from the lists. An archived
+   session is READ-ONLY, and this is where that holds: the app and the TUI disable
+   their controls, but a stale screen or an SDK caller reaches the write routes
+   anyway.
+
+   nil for a session this gateway does not know - the route's own 404 answers that."
+  [sid]
+  (when-let [record (lp/by-id sid)]
+    (boolean (or (:archived-at record)
+                 (contains? (lp/archived-session-group-ids)
+                            (some-> (:group-id record)
+                                    str))))))
+
+(defn session-working?
+  "Whether `sid` is holding work a human is waiting on: a turn RUNNING in any vis
+   process on this machine, a turn QUEUED behind it, or an input prompt parked on the
+   operator. Wider than `session-busy?` above, which reads only the turns this process
+   keeps in its own registry.
+
+   Archiving such a session would hide work that keeps running with nothing in any
+   list naming it, and cancelling the turn behind a swipe would be worse - so the
+   archive is refused while this is true."
+  [sid]
+  (boolean (or (bus/live-turn-id sid) (bus/session-waiting? sid) (seq (list-queued-turns sid)))))
+
+(defn busy-session-in-group
+  "The id (string) of the first member of `gid` that is still working
+   (`session-working?`), or nil when the whole group is idle. Archiving a group archives
+   everything standing on it, so one busy member refuses the whole shelf - and the answer
+   names it."
+  [gid]
+  (first (filter session-working? (lp/session-group-session-ids gid))))
+
 (defn- broadcast-title-event!
   "Append a `session.title_updated` event for `sid` (stored, so a cursor
    replay re-delivers it) and STORE a copy on every OTHER registered

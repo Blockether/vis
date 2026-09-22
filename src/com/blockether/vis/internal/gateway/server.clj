@@ -640,6 +640,26 @@
   []
   (error-response 400 :invalid-archived "archived must be exclude, include or only"))
 
+(defn- session-archived-409
+  "The answer to a WRITE aimed at an archived session. The archive is READ-ONLY and
+   the gateway is where that holds: the app and the TUI disable their controls, so a
+   human never learns it from a refusal, but a stale screen or an SDK caller reaches
+   these routes anyway."
+  [sid]
+  (error-response 409
+                  :session-archived
+                  "this session is archived and read-only - unarchive it to keep working"
+                  :session_id (str sid)))
+
+(defn- session-busy-409
+  "The answer to an archive aimed at work in flight: a running turn, a turn queued
+   behind it, or an input prompt parked on the operator. `sid` names the session that
+   is busy, which for a GROUP is the member holding the whole shelf up."
+  [sid]
+  (error-response 409
+                  :session-busy "this session is still working - archive it once its turn is done"
+                  :session_id (str sid)))
+
 (defn- upload-limit
   [media-type]
   (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
@@ -2532,10 +2552,16 @@
           ;; carries the intent, the soul that comes back carries the stamp this
           ;; gateway wrote, and every other device sees the session leave the list
           ;; without being told about this call.
-          (contains? body "archived")
-          (if-let [soul (state/set-archived! sid (boolean (get body "archived")))]
-            (json-response soul)
-            (session-404 (get-in request [:path-params :sid])))
+          ;;
+          ;; A session still WORKING cannot be put away: the turn would keep running with
+          ;; nothing in any list naming it, and cancelling it behind a swipe verb would be
+          ;; worse. Unarchiving is never refused.
+          (contains? body "archived") (let [archived? (boolean (get body "archived"))]
+                                        (if (and archived? (state/session-working? sid))
+                                          (session-busy-409 sid)
+                                          (if-let [soul (state/set-archived! sid archived?)]
+                                            (json-response soul)
+                                            (session-404 (get-in request [:path-params :sid])))))
           (contains? body "project_id") (if-let [soul (state/assign-project!
                                                         sid
                                                         (some-> (get body "project_id")
@@ -3179,11 +3205,17 @@
                           :invalid-request "color must be one of the closed group palette tokens"
                           :colors gateway-contract/session-group-colors)
           (empty? opts) (error-response 400 :invalid-request "no group fields to update")
-          :else (if-let [group (try (state/update-session-group! gid opts) (catch Exception _ nil))]
-                  (json-response group)
-                  (error-response 409
-                                  :group-exists
-                                  "a group with that name already exists in this project")))))
+          ;; Archiving the shelf archives everything standing on it, so ONE member still
+          ;; working refuses the whole group - and the answer names it. Unarchiving is
+          ;; never refused.
+          :else (if-let [busy (when (:archived? opts) (state/busy-session-in-group gid))]
+                  (session-busy-409 busy)
+                  (if-let [group (try (state/update-session-group! gid opts)
+                                      (catch Exception _ nil))]
+                    (json-response group)
+                    (error-response 409
+                                    :group-exists
+                                    "a group with that name already exists in this project"))))))
 
 (defn- delete-session-group-handler
   "DELETE /v1/session-groups/:gid[?sessions=detach|delete] — drop a group and say
@@ -3286,14 +3318,21 @@
 
     (if (nil? sid)
       (session-404 (get-in request [:path-params :sid]))
-      (let [attachments
-            (resolve-upload-attachments sid (get body "attachments"))
+      (let [;; READ-ONLY: an archived session - its own stamp, or the stamp on the group
+            ;; holding it - takes no new work, and nothing is resolved or queued on its
+            ;; behalf. The app and the TUI disable their composer, so this answers a
+            ;; stale screen or a caller coming straight through the SDK.
+            archived?
+            (state/session-archived? sid)
+
+            attachments
+            (when-not archived? (resolve-upload-attachments sid (get body "attachments")))
 
             missing-upload?
             (some nil? attachments)
 
             result
-            (when-not missing-upload?
+            (when-not (or archived? missing-upload?)
               (state/submit-turn! sid
                                   {:request (get body "request")
                                    :idempotency-key (get body "idempotency_key")
@@ -3309,7 +3348,8 @@
                                    ;; is what made a queued image render as a raw /var/folders path.
                                    :display-request (get body "display_request")}))]
 
-        (cond missing-upload?
+        (cond archived? (session-archived-409 sid)
+              missing-upload?
               (error-response 400 :invalid-upload "attachment upload is missing or expired")
               (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
@@ -3959,12 +3999,15 @@
                       not-empty)
           known (into #{} (map (comp name :id)) (providers/picker-fleet))]
 
-      (if (and pid (not (contains? known pid)))
+      (cond
+        ;; READ-ONLY: pinning a model is a write, and an archived session takes none.
+        (state/session-archived? sid) (session-archived-409 sid)
+        (and pid (not (contains? known pid)))
         (error-response 400
                         :unknown-provider (str "provider " pid " is not configured on this gateway")
                         :provider_id pid)
-        (do (state/set-session-model! sid pid model)
-            (json-response {:model (state/session-model sid)}))))
+        :else (do (state/set-session-model! sid pid model)
+                  (json-response {:model (state/session-model sid)}))))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- usage-handler
