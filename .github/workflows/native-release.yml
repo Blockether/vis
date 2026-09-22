@@ -414,6 +414,19 @@ jobs:
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
           (clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/engine.log"
+      - name: Sign and notarize the macOS runtime
+        env:
+          VIS_MACOS_P12: ${{ secrets.VIS_DESKTOP_P12 }}
+          VIS_MACOS_P12_PASSWORD: ${{ secrets.VIS_DESKTOP_P12_PASSWORD }}
+          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
+          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
+        shell: bash
+        # Ahead of staging, so the smoke tests below, `-M:test-native` and the
+        # published bundle all exercise the same Developer ID signed bytes.
+        run: |
+          bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
+            target/vis target/vis-agent-python
       - name: Stage wrapper bundle
         shell: bash
         run: bin/stage-release-bundle target/vis "$VIS_ASSET"
@@ -456,12 +469,21 @@ jobs:
           version: "0.9.2"
           enable-cache: false
       - name: Build and stage standalone TUI
+        env:
+          VIS_MACOS_P12: ${{ secrets.VIS_DESKTOP_P12 }}
+          VIS_MACOS_P12_PASSWORD: ${{ secrets.VIS_DESKTOP_P12_PASSWORD }}
+          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
+          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
         shell: bash
         run: |
           set -euo pipefail
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
           (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
+          # The terminal client loads no foreign code, so it needs no
+          # entitlements — only the same identity and notary ticket.
+          bin/sign-macos-release apps/vis-tui/target/vis-tui
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null

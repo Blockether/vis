@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+# Sign and notarize ONE macOS release artifact — the single definition of what
+# an Apple-trusted Vis binary is. Used by
+# .github/workflows/native-release.yml AND by bin/release-native, so a CI asset
+# and a locally built asset can never carry a different identity.
+#
+#   bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
+#     target/vis target/vis-agent-python
+#   bin/sign-macos-release apps/vis-tui/target/vis-tui
+#
+# Every Mach-O below the given paths is signed with the hardened runtime and a
+# secure timestamp: the native runtime, the interpreter cdylib, libpython, each
+# stdlib extension module and uv. All of them then travel to Apple's notary
+# service in ONE submission, and the paths named as FILES are assessed the way
+# Gatekeeper assesses them on a user's Mac.
+#
+# Vis #277: an ad-hoc signed runtime has no stable identity, so the macOS
+# Application Firewall resolves `vis-agent-native` to "Block incoming
+# connections" and Vis Desktop cannot reach the gateway over anything but
+# loopback, while a Developer ID signed JVM on the same machine is allowed.
+# Signing runs BEFORE staging, so the smoke-tested, the bundled and the
+# notarized bytes are the same bytes.
+#
+# A `.tar.gz` cannot carry a stapled ticket: `xcrun stapler` writes only into
+# disk images, installer packages and app bundles. For a bare executable
+# Gatekeeper resolves the ticket online by cdhash, which is why the submission
+# has to happen here, at build time, and why `spctl` is checked before
+# publication rather than trusted.
+#
+# Credentials, none of which is ever printed:
+#   VIS_MACOS_SIGNING_IDENTITY  Developer ID Application identity (default below)
+#   VIS_MACOS_P12               base64 PKCS#12 signed into an isolated keychain;
+#   VIS_MACOS_P12_PASSWORD      without it this machine's keychain must already
+#                               hold the identity
+#   VIS_ASC_KEY_ID              App Store Connect API key id, issuer and the
+#   VIS_ASC_ISSUER_ID           private key itself
+#   VIS_ASC_KEY
+set -euo pipefail
+
+die() { printf 'sign-macos-release: %s\n' "$@" >&2; exit 1; }
+say() { printf 'sign-macos-release: %s\n' "$*"; }
+
+identity="${VIS_MACOS_SIGNING_IDENTITY:-Developer ID Application: BLOCKETHER SP. Z O.O. (JSZTFUBUBB)}"
+team="${VIS_MACOS_TEAM_ID:-JSZTFUBUBB}"
+entitlements=""
+targets=()
+
+while (( $# )); do
+  case "$1" in
+    --entitlements) entitlements="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,37p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+    -*) die "unknown option $1" ;;
+    *) targets+=("$1"); shift ;;
+  esac
+done
+
+(( ${#targets[@]} )) || die "usage: sign-macos-release [--entitlements <plist>] <path>..."
+[[ "$(uname -s)" == "Darwin" ]] || die "Apple signing needs a macOS host, not $(uname -s)"
+[[ -z "$entitlements" || -f "$entitlements" ]] || die "no entitlements file at $entitlements"
+
+for target in "${targets[@]}"; do
+  [[ -e "$target" ]] || die "nothing to sign at $target" \
+    "'clojure -T:build native' writes the runtime and stages its interpreter beside it."
+done
+
+for name in VIS_ASC_KEY_ID VIS_ASC_ISSUER_ID VIS_ASC_KEY; do
+  [[ -n "${!name:-}" ]] || die "notarization needs $name" \
+    "A signature alone still leaves Gatekeeper without a ticket (Vis #277)." \
+    "Release builds inherit the repository secrets; a local release needs the" \
+    "App Store Connect key in the environment."
+done
+
+umask 077
+signing_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-macos-signing.XXXXXX")"
+keychain=""
+original_keychains=()
+
+cleanup() {
+  if [[ -n "$keychain" ]]; then
+    if (( ${#original_keychains[@]} )); then
+      security list-keychains -d user -s "${original_keychains[@]}" >/dev/null || true
+    fi
+    security delete-keychain "$keychain" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$signing_dir"
+}
+trap cleanup EXIT
+
+if [[ -n "${VIS_MACOS_P12:-}" ]]; then
+  # Isolate signing from locked or duplicate identities in the login keychain:
+  # the macOS builder is a long-lived machine and its own keychains stay as they
+  # were, whatever this build does.
+  [[ -n "${VIS_MACOS_P12_PASSWORD:-}" ]] || die "VIS_MACOS_P12 needs VIS_MACOS_P12_PASSWORD"
+  keychain="$signing_dir/signing.keychain-db"
+  keychain_password="$(openssl rand -hex 32)"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then printf '::add-mask::%s\n' "$keychain_password"; fi
+  while IFS= read -r line; do
+    line="${line#*\"}"
+    original_keychains+=("${line%\"*}")
+  done < <(security list-keychains -d user)
+  printf '%s' "$VIS_MACOS_P12" | base64 --decode > "$signing_dir/certificate.p12"
+  security create-keychain -p "$keychain_password" "$keychain"
+  security set-keychain-settings -lut 21600 "$keychain"
+  security unlock-keychain -p "$keychain_password" "$keychain"
+  security import "$signing_dir/certificate.p12" -k "$keychain" \
+    -P "$VIS_MACOS_P12_PASSWORD" -T /usr/bin/codesign > /dev/null
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+    -k "$keychain_password" "$keychain" > /dev/null
+  # codesign also needs Apple's intermediate certificates to build its trust chain.
+  for certificate in DeveloperIDCA DeveloperIDG2CA; do
+    curl --fail --silent --show-error --location \
+      "https://www.apple.com/certificateauthority/$certificate.cer" \
+      -o "$signing_dir/$certificate.cer"
+    security import "$signing_dir/$certificate.cer" -k "$keychain" > /dev/null
+  done
+  security list-keychains -d user -s "$keychain" "${original_keychains[@]}" > /dev/null
+fi
+
+# Mach-O by header, never by name: the interpreter tree mixes executables,
+# dylibs, extension modules, scripts, data and symlinks, and `codesign` refuses
+# the whole run over one file it cannot sign. `mach_o_kind` reports what the
+# header says so entitlements land on executables only, where they are honored.
+mach_o_kind=""
+
+is_mach_o() {
+  local header magic filetype
+  mach_o_kind=""
+  header="$(od -An -N16 -tx1 "$1" 2>/dev/null | tr -d ' \n')"
+  [[ ${#header} -eq 32 ]] || return 1
+  magic="${header:0:8}"
+  case "$magic" in
+    # A universal wrapper hides its members' type. Apple ships no universal
+    # object file, but Java class files share this magic, hence the name filter
+    # in `signable_files`.
+    cafebabe|bebafeca) mach_o_kind="executable"; return 0 ;;
+    cffaedfe|cefaedfe) filetype="${header:24:2}" ;;
+    feedfacf|feedface) filetype="${header:30:2}" ;;
+    *) return 1 ;;
+  esac
+  case "$filetype" in
+    # MH_EXECUTE, then MH_DYLIB and MH_BUNDLE. MH_OBJECT (01) and static
+    # archives are not signable, and the vendored CPython ships both.
+    02) mach_o_kind="executable"; return 0 ;;
+    06|08) mach_o_kind="library"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+signable_files() {
+  local target
+  for target in "$@"; do
+    if [[ -d "$target" ]]; then
+      find "$target" -type f ! -name '*.o' ! -name '*.a' ! -name '*.class' -print0
+    else
+      printf '%s\0' "$target"
+    fi
+  done
+}
+
+signed=0
+while IFS= read -r -d '' file; do
+  if is_mach_o "$file"; then
+    args=(--force --timestamp --options runtime --sign "$identity")
+    if [[ -n "$keychain" ]]; then args+=(--keychain "$keychain"); fi
+    if [[ -n "$entitlements" && "$mach_o_kind" == "executable" ]]; then
+      args+=(--entitlements "$entitlements")
+    fi
+    codesign "${args[@]}" "$file"
+    codesign --verify --strict "$file"
+    signed=$(( signed + 1 ))
+  fi
+done < <(signable_files "${targets[@]}")
+
+(( signed > 0 )) || die "no Mach-O file below: ${targets[*]}"
+say "signed $signed Mach-O files as '$identity'"
+
+# What the Application Firewall and Gatekeeper resolve is an Apple-chain
+# Developer ID leaf for our team — the ad-hoc signature of Vis #277 satisfies
+# neither, and a missing timestamp expires the rest.
+requirement="anchor apple generic and certificate leaf[subject.OU] = \"$team\""
+requirement="$requirement and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+entries=()
+for target in "${targets[@]}"; do
+  if [[ -f "$target" ]] && is_mach_o "$target"; then
+    codesign --verify -R="$requirement" "$target"
+    entries+=("$target")
+  fi
+done
+(( ${#entries[@]} )) || die "name the executable that ships, not only its sidecar" \
+  "Gatekeeper is assessed per binary, so at least one path must be a Mach-O file."
+
+key_path="$signing_dir/AuthKey_$VIS_ASC_KEY_ID.p8"
+printf '%s\n' "$VIS_ASC_KEY" > "$key_path"
+submission="$signing_dir/submission"
+mkdir -p "$submission"
+for target in "${targets[@]}"; do
+  cp -R "$target" "$submission/"
+done
+# `ditto` is what the notary service accepts for a plain tree of executables,
+# and it keeps the symlinks and executable bits the interpreter needs.
+archive="$signing_dir/vis-macos-release.zip"
+ditto -c -k --sequesterRsrc --keepParent "$submission" "$archive"
+say "submitting $(du -h "$archive" | cut -f1 | tr -d ' ') to the notary service"
+if ! xcrun notarytool submit "$archive" \
+  --key "$key_path" --key-id "$VIS_ASC_KEY_ID" --issuer "$VIS_ASC_ISSUER_ID" \
+  --wait --timeout "${VIS_NOTARY_TIMEOUT:-45m}" 2>&1 | tee "$signing_dir/notary.log"; then
+  submission_id="$(sed -n 's/^ *id: *\([0-9a-fA-F-]*\).*/\1/p' "$signing_dir/notary.log" | head -1)"
+  die "the notary service refused the submission" \
+    "Read why: xcrun notarytool log ${submission_id:-<id>} --key-id \$VIS_ASC_KEY_ID ..."
+fi
+grep -q 'status: Accepted' "$signing_dir/notary.log" || \
+  die "the notary service did not accept the submission" \
+    "An unaccepted ticket leaves every user on the ad-hoc firewall behavior of Vis #277."
+
+# Nothing is stapled to a bare executable, so assess what a user's Mac assesses:
+# Gatekeeper resolves the fresh ticket over the network, which can trail
+# acceptance by a few seconds.
+for entry in "${entries[@]}"; do
+  attempt=1
+  until spctl --assess --type execute --verbose=2 "$entry"; do
+    if (( attempt >= 5 )); then
+      die "notarized, yet Gatekeeper still refuses $entry"
+    fi
+    attempt=$(( attempt + 1 ))
+    sleep 10
+  done
+done
+say "notarized and accepted by Gatekeeper: ${entries[*]}"

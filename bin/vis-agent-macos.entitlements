@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the notarized macOS engine (bin/sign-macos-release).
+
+  The hardened runtime is what Apple's notary service requires, and it is also
+  what would break a Python host: the engine deliberately runs code it did not
+  build. Each exception below is a capability the runtime actually uses.
+-->
+<plist version="1.0">
+<dict>
+  <!-- The runtime dlopens the embedded CPython cdylib, every wheel a user
+       installs with uv or pip, and the speech libraries sherpa downloads on
+       first use. Library validation accepts only our own team's code and would
+       refuse all of them. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- ctypes and cffi build their callback trampolines in writable executable
+       pages, which the hardened runtime denies by default. Without this a
+       package as ordinary as a C-callback binding aborts on first call. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

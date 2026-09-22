@@ -3510,3 +3510,239 @@
              "        request.assert_not_called()"])]
          {})]
       (expect (zero? exit) output))))
+
+(defn- mach-o!
+  "Write a little-endian 64-bit Mach-O header of `filetype`: 2 executable, 6
+   dylib, 1 one of the object files the vendored interpreter also ships."
+  [^File file filetype]
+  (io/make-parents file)
+  (with-open [out (io/output-stream file)]
+    (.write out
+            ^bytes
+            (byte-array (map unchecked-byte
+                             (concat [0xcf 0xfa 0xed 0xfe 0x0c 0x00 0x00 0x01 0x00 0x00 0x00 0x00
+                                      filetype 0x00 0x00 0x00]
+                                     (repeat 64 0))))))
+  (.setExecutable file true)
+  file)
+
+(defn- apple-tool-stubs!
+  "PATH stubs for the Apple tools that record every invocation in `log`. The
+   signing contract is a release contract, so it has to be exercised on the
+   Linux test runners as well as on the macOS builder."
+  [^File dir ^File log]
+  (let [record (str "printf '%s\\n' \"$(basename \"$0\") $*\" >> " (.getAbsolutePath log) "\n")]
+    (write-executable! (io/file dir "uname")
+                       (str "#!/usr/bin/env bash\n" "case \"${1:-}\" in\n"
+                            "  -s) printf 'Darwin\\n' ;;\n" "  -m) printf 'arm64\\n' ;;\n"
+                            "  *)  printf 'Darwin\\n' ;;\n" "esac\n"))
+    (write-executable! (io/file dir "codesign") (str "#!/usr/bin/env bash\n" record "exit 0\n"))
+    (write-executable! (io/file dir "spctl")
+                       (str "#!/usr/bin/env bash\n" record
+                            "printf 'accepted\\nsource=Notarized Developer ID\\n'\n" "exit 0\n"))
+    ;; The script reports the size of the archive it is about to submit.
+    (write-executable! (io/file dir "ditto")
+                       (str "#!/usr/bin/env bash\n"
+                            record
+                            "archive=\"\"\nfor argument in \"$@\"; do archive=\"$argument\"; done\n"
+                            "printf 'zip' > \"$archive\"\n"
+                            "exit 0\n"))
+    (write-executable! (io/file dir "xcrun")
+                       (str "#!/usr/bin/env bash\n"
+                            record
+                            "printf '  id: 11111111-2222-3333-4444-555555555555\\n"
+                            "  status: Accepted\\n'\n"
+                            "exit 0\n"))
+    dir))
+
+(defdescribe
+  macos-release-signing-test
+  ;; Vis #277: the released runtime was ad-hoc signed, so the macOS Application
+  ;; Firewall resolved `vis-agent-native` to "Block incoming connections" and
+  ;; Desktop could not reach its own gateway over the machine's LAN address,
+  ;; while a Developer ID signed JVM on the same Mac was allowed.
+  (it
+    "signs every Mach-O it ships, notarizes them once and assesses what Gatekeeper assesses"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-macos-signing-test-"
+                                              (make-array FileAttribute 0)))
+
+          stubs
+          (doto (io/file root "stubs") .mkdirs)
+
+          log
+          (io/file root "apple-tools.log")
+
+          payload
+          (doto (io/file root "payload") .mkdirs)
+
+          runtime
+          (mach-o! (io/file payload "vis") 2)
+
+          sidecar
+          (io/file payload "vis-agent-python")
+
+          uv
+          (mach-o! (io/file sidecar "python/bin/uv") 2)
+
+          libpython
+          (mach-o! (io/file sidecar "python/lib/libpython3.13.dylib") 6)
+
+          extension
+          (mach-o! (io/file sidecar "python/lib/python3.13/lib-dynload/_ssl.cpython-313-darwin.so")
+                   6)
+
+          object
+          (mach-o! (io/file sidecar "python/lib/config-3.13-darwin/python.o") 1)
+
+          stray
+          (mach-o! (io/file sidecar "python/lib/stray-object") 1)
+
+          stdlib-data
+          (io/file sidecar "python/lib/stdlib.json")
+
+          notary-key
+          "notary-private-key-material"
+
+          sign!
+          (fn [env-extra]
+            (run-bash ["bash" "bin/sign-macos-release" "--entitlements"
+                       "bin/vis-agent-macos.entitlements" (.getAbsolutePath runtime)
+                       (.getAbsolutePath sidecar)]
+                      (merge {"PATH" (str (.getAbsolutePath stubs) ":" (System/getenv "PATH"))
+                              "VIS_ASC_KEY_ID" "KEYID"
+                              "VIS_ASC_ISSUER_ID" "ISSUER"
+                              "VIS_ASC_KEY" notary-key}
+                             env-extra)))]
+
+      (try (io/make-parents stdlib-data)
+           (spit stdlib-data "{}\n")
+           (apple-tool-stubs! stubs log)
+           ;; A release built without the notary key would hand every user the
+           ;; ad-hoc firewall identity again, so it must not produce an asset.
+           (let [{:keys [exit output]} (sign! {"VIS_ASC_KEY" ""})]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "VIS_ASC_KEY") output)
+             (expect (not (.isFile log)) "credentials are checked before anything is signed"))
+           (let [{:keys [exit output]}
+                 (sign! {})
+
+                 calls
+                 (slurp log)
+
+                 signed
+                 (fn [^File file]
+                   (->> (str/split-lines calls)
+                        (filter #(and (str/includes? % "--force")
+                                      (str/includes? % (.getAbsolutePath file))))
+                        first))]
+
+             (expect (= 0 exit) output)
+             (expect (not (str/includes? output notary-key)) "the notary key is never printed")
+             ;; One identity for the runtime, uv, libpython and every extension
+             ;; module: the sidecar is loaded by the process the firewall judges.
+             (doseq [file [runtime uv libpython extension]]
+               (let [call (signed file)]
+                 (expect (some? call) (str "left unsigned: " file "\n" calls))
+                 (expect (str/includes? call "--options runtime") call)
+                 (expect (str/includes? call "--timestamp") call)
+                 (expect (str/includes?
+                           call
+                           "Developer ID Application: BLOCKETHER SP. Z O.O. (JSZTFUBUBB)")
+                         call)))
+             ;; Entitlements are honored on executables only, and codesign
+             ;; refuses a whole run over one object file or static archive.
+             (expect (str/includes? (signed runtime) "--entitlements") (signed runtime))
+             (expect (not (str/includes? (signed libpython) "--entitlements")) (signed libpython))
+             (doseq [file [object stray stdlib-data]]
+               (expect (nil? (signed file)) (str "signed what codesign cannot sign: " file)))
+             (expect (str/includes? calls "--verify --strict") calls)
+             (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
+             ;; Nothing is stapled to a bare executable: one submission covers
+             ;; every cdhash and Gatekeeper resolves the ticket online.
+             (expect
+               (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
+               calls)
+             (expect (str/includes? calls "--wait") calls)
+             (expect (str/includes? calls
+                                    (str "spctl --assess --type execute --verbose=2 "
+                                         (.getAbsolutePath runtime)))
+                     calls))
+           (finally (delete-tree! root)))))
+  (it "refuses a payload with nothing signable instead of shipping it unsigned"
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-macos-signing-empty-"
+                                                (make-array FileAttribute 0)))
+
+            stubs
+            (doto (io/file root "stubs") .mkdirs)
+
+            sidecar
+            (doto (io/file root "payload/vis-agent-python") .mkdirs)]
+
+        (try (spit (io/file sidecar "stdlib.json") "{}\n")
+             (apple-tool-stubs! stubs (io/file root "apple-tools.log"))
+             (let [{:keys [exit output]}
+                   (run-bash ["bash" "bin/sign-macos-release" (.getAbsolutePath sidecar)]
+                             {"PATH" (str (.getAbsolutePath stubs) ":" (System/getenv "PATH"))
+                              "VIS_ASC_KEY_ID" "KEYID"
+                              "VIS_ASC_ISSUER_ID" "ISSUER"
+                              "VIS_ASC_KEY" "key"})]
+               (expect (not= 0 exit) output)
+               (expect (str/includes? output "no Mach-O") output))
+             (finally (delete-tree! root)))))
+  (it
+    "signs before staging in every release path, on the credentials the desktop DMG already uses"
+    (let [workflow
+          (slurp ".github/workflows/native-release.yml")
+
+          local
+          (slurp "bin/release-native")
+
+          entitlements
+          (slurp "bin/vis-agent-macos.entitlements")
+
+          steps
+          (get-in (yaml/load workflow) ["jobs" "macos" "steps"])
+
+          ;; The Linux job stages the same TUI archive, so ordering is only
+          ;; meaningful inside the macOS job that signs it.
+          macos-script
+          (str/join "\n" (map #(str (get % "run")) steps))
+
+          before?
+          (fn [source signing staging]
+            (let [sign-at
+                  (str/index-of source signing)
+
+                  stage-at
+                  (str/index-of source staging)]
+
+              (and sign-at stage-at (< (long sign-at) (long stage-at)))))]
+
+      (expect (some #(str/includes? (str (get % "run")) "bin/sign-macos-release") steps) workflow)
+      ;; The staged bundle, the smoke tests and the notarized submission have to
+      ;; be the same bytes, so signing runs before staging — never after it.
+      (expect (before? macos-script
+                       "bin/sign-macos-release --entitlements"
+                       "bin/stage-release-bundle target/vis")
+              "the engine bundle must be staged from signed bytes")
+      (expect (before? macos-script
+                       "bin/sign-macos-release apps/vis-tui/target/vis-tui"
+                       "bin/stage-tui-release apps/vis-tui/target/vis-tui")
+              "the terminal client ships the same identity as the engine")
+      (expect (before? local
+                       "bin/sign-macos-release --entitlements"
+                       "bin/stage-release-bundle target/vis")
+              "a locally built asset may not drift from the CI one")
+      (doseq [secret ["secrets.VIS_DESKTOP_P12" "secrets.VIS_DESKTOP_P12_PASSWORD"
+                      "secrets.VIS_ASC_KEY_ID" "secrets.VIS_ASC_ISSUER_ID" "secrets.VIS_ASC_KEY"]]
+        (expect (str/includes? workflow secret) secret))
+      ;; Both publishers call this workflow, and neither reaches the notary
+      ;; service without passing the repository secrets down.
+      (doseq [caller [".github/workflows/beta-native.yml" ".github/workflows/release.yml"]]
+        (expect (str/includes? (slurp caller) "secrets: inherit") caller))
+      ;; The hardened runtime is what notarization requires; without this
+      ;; exception it also refuses every wheel a user installs.
+      (expect (str/includes? entitlements "com.apple.security.cs.disable-library-validation")
+              entitlements))))

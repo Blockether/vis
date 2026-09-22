@@ -41,7 +41,11 @@
 #                  gh workflow run native-release.yml -f tag=vX.Y.Z
 #
 # Assets land in the repo root as vis-agent-<os>-<arch>.tar.gz, exactly
-# like the CI ones — both go through bin/stage-release-bundle.
+# like the CI ones — both go through bin/stage-release-bundle, and the macOS
+# asset goes through bin/sign-macos-release first, so a locally built runtime
+# carries the same Developer ID signature and notary ticket as the released one.
+# That needs the Developer ID identity in this machine's keychain and the App
+# Store Connect key in VIS_ASC_KEY_ID / VIS_ASC_ISSUER_ID / VIS_ASC_KEY.
 set -euo pipefail
 
 repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
@@ -116,6 +120,11 @@ build_macos_arm64() {
   # the pinned GraalVM CE by itself; nothing to tune here.
   clojure -X:deps prep
   clojure -T:build native
+  # Sign and notarize BEFORE staging: the smoke tests below and the published
+  # asset have to be the exact bytes a user's Gatekeeper and Application
+  # Firewall judge (Vis #277).
+  bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
+    target/vis target/vis-agent-python
   bin/stage-release-bundle target/vis "$asset"
   say "smoke: help + gateway boot"
   target/release-bundle/vis-agent help >/dev/null
