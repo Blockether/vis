@@ -55,7 +55,7 @@ function currentViewport(): Viewport {
 
 /**
  * A menu pinned to `anchor`, right-aligned to it, never crowding an edge of the
- * screen — including the BOTTOM one.
+ * screen — including the BOTTOM one, and never carried out past the RIGHT one.
  *
  * The bottom edge is not symmetric with the others. A menu that runs off the left
  * is merely ugly; a menu that runs off the bottom takes its footer with it, and
@@ -78,6 +78,17 @@ function currentViewport(): Viewport {
  * and clamping a squeezed panel to the top margin parked that same menu in the corner
  * of the window, under the app's own header (reported again: still misplaced).
  *
+ * The right edge is the ANCHOR's own edge. Right-aligning to a control that stands
+ * past the side of the screen carries the panel out there with it, and a swipe
+ * drawer's verb is exactly that control: the drawer snaps home in the same tap that
+ * opens the menu, so the cell that was pressed reports a box a couple of hundred
+ * pixels beyond the screen. On a phone the machine's address menu opened almost
+ * entirely off it (reported: the dropdowns in Settings sit wrong on the phone). So a
+ * panel is placed from the width it PAINTS — `min(width, screen − 2 × EDGE_MARGIN)`,
+ * the clamp its own class carries — and its left is held inside both side margins:
+ * right-aligned to its anchor while the anchor is on the screen, and to the screen's
+ * own margin once the anchor is not.
+ *
  * `null` — close the menu — means only ONE thing: there is no anchor to hang from
  * any more. A live anchor always yields a position, including across a resize: a
  * phone fires `resize` for its own reasons (the on-screen keyboard alone fires one
@@ -91,7 +102,11 @@ export function menuPosition(
   panelHeight?: number,
 ): MenuPosition | null {
   if (!anchor) return null;
-  const left = Math.round(Math.max(EDGE_MARGIN, anchor.right - width));
+  // A panel never paints wider than the screen leaves it, so the painted width — not
+  // the caller's number — is what it right-aligns from and what the margins clamp.
+  const painted = viewport.width <= 0 ? width : Math.min(width, viewport.width - 2 * EDGE_MARGIN);
+  const rightmost = viewport.width <= 0 ? Infinity : viewport.width - EDGE_MARGIN - painted;
+  const left = Math.round(Math.max(EDGE_MARGIN, Math.min(anchor.right - painted, rightmost)));
   // A zero-height viewport is a non-browser render (jsdom, SSR): fall back to the
   // plain drop, because clamping against nothing would pin every menu to the top.
   if (viewport.height <= 0) return { top: Math.round(anchor.bottom + ANCHOR_GAP), left };

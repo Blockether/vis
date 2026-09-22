@@ -50,6 +50,48 @@ describe('menuPosition', () => {
     expect(keyboardHidden).toEqual({ top: 138, left: 58 });
   });
 
+  // Regression, user report (paraphrased: the dropdowns in Settings are not positioned
+  // correctly on the phone). A machine row's `Address` verb lives in a swipe drawer,
+  // and the drawer snaps home in the same tap that opens the menu — so the cell that
+  // was pressed hands over a box 216px PAST the right edge of a 393px screen. The
+  // placement right-aligned to it faithfully: a 320px panel at left=289, a quarter of
+  // it on the screen and every address on it off the side.
+  describe('the right edge', () => {
+    /** A phone in portrait, wide enough for the panel's full 320px. */
+    const PHONE = { width: 393, height: 852 };
+    /** The painted width of a menu panel, which is what `w-[min(20rem,…)]` clamps. */
+    const paintedOn = (viewport: { width: number }, width: number) =>
+      Math.min(width, viewport.width - 24);
+
+    it('keeps a panel on the screen when the anchor it came from is not', () => {
+      const snappedHomeCell = { top: 300, bottom: 328, right: 609 };
+      const at = menuPosition(snappedHomeCell, 320, PHONE)!;
+
+      expect(at).toEqual({ top: 334, left: 61, maxHeight: 506 });
+      // Right-aligned to the screen's own margin, because the anchor has none to give.
+      expect(at.left + paintedOn(PHONE, 320)).toBe(PHONE.width - 12);
+    });
+
+    it('places from the width the panel paints, not the width it asked for', () => {
+      // A small phone: the panel paints `100vw - 24px` = 296px, so 296 is what it
+      // right-aligns from. Placing a 320px reserve would hang it 24px off the edge.
+      const small = { width: 320, height: 568 };
+      const at = menuPosition({ top: 100, bottom: 128, right: 312 }, 320, small)!;
+
+      expect(at).toEqual({ top: 134, left: 12 });
+      expect(at.left + paintedOn(small, 320)).toBe(small.width - 12);
+    });
+
+    it('never crosses either side margin, wherever the anchor says it is', () => {
+      for (const right of [-40, 0, 120, 380, 393, 609, 1200])
+        for (const width of [320, 384]) {
+          const at = menuPosition({ top: 300, bottom: 328, right }, width, PHONE)!;
+          expect(at.left).toBeGreaterThanOrEqual(12);
+          expect(at.left + paintedOn(PHONE, width)).toBeLessThanOrEqual(PHONE.width - 12);
+        }
+    });
+  });
+
   // Regression (reported: "the manage projects looks absolutely awful
   // on the desktop"). `Manage projects` opened from a project header at
   // y=300 of a 900px window was placed at top=300 with a 630px (70vh) budget: its
