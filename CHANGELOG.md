@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.23] - 2026-09-22
+
+### Fixed
+- Find out when a newer Vis is already running: after an update that leaves the gateway on a newer
+  release than the client in front of you, the terminal says so once per run, the TUI raises a
+  header notice and `vis-agent gateway status` names both releases. Your session keeps working,
+  because both halves still speak the same protocol; run `vis-agent update` on the side behind.
+- The companion's pull-to-search band stays off the glass while you swipe back out of a session.
+
 ## [v0.2.22] - 2026-09-22
 
 ### Added
