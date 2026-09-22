@@ -196,3 +196,54 @@
       (expect (not (contract/session-group-color? "#ff00ff")))
       (expect (not (contract/session-group-color? "SLATE")))
       (expect (not (contract/session-group-color? nil)))))
+
+;; The order that decides whether a running daemon is stale after `vis-agent update`,
+;; and which half of a compatible pair is merely out of date.
+(defdescribe release-version-ordering-test
+             (it "picks a release up only forward"
+                 (expect (true? (contract/newer-release? "0.1.40" "0.1.39")))
+                 (expect (false? (contract/newer-release? "0.1.39" "0.1.40")))
+                 (expect (false? (contract/newer-release? "0.1.40" "0.1.40"))))
+             (it "compares segments as numbers, not as text"
+                 (expect (true? (contract/newer-release? "0.1.10" "0.1.9")))
+                 (expect (true? (contract/newer-release? "0.2.0" "0.1.99"))))
+             (it "zero-pads a shorter version instead of ranking it by length"
+                 (expect (true? (contract/newer-release? "0.2" "0.1.9")))
+                 (expect (false? (contract/newer-release? "0.1" "0.1.0")))
+                 (expect (false? (contract/newer-release? "0.1.0" "0.1"))))
+             (it "ranks a prerelease with the release it precedes"
+                 (expect (true? (contract/newer-release? "0.1.40-rc1" "0.1.39")))
+                 (expect (false? (contract/newer-release? "0.1.40" "0.1.40-rc1"))))
+             (it "orders nothing a build could not name"
+                 (expect (false? (contract/newer-release? "dev" "0.1.39")))
+                 (expect (false? (contract/newer-release? "0.1.40" "dev")))
+                 (expect (false? (contract/newer-release? "0.1.40" nil)))
+                 (expect (false? (contract/newer-release? nil nil)))))
+
+(defn- release-skew-verdict
+  "A verdict for two halves that speak the SAME protocol and differ only in release."
+  [gateway-version client-version]
+  (contract/verdict {:gateway-protocol contract/protocol-version
+                     :gateway-min-client contract/minimum-client-protocol
+                     :gateway-version gateway-version
+                     :client-protocol contract/protocol-version
+                     :client-min-gateway contract/minimum-gateway-protocol
+                     :client-version client-version
+                     :client-name "vis-tui"}))
+
+;; Regression: two halves on DIFFERENT releases of one protocol were simply "ok" -
+;; `:upgrade` nil and the copy "Versions match" - so no surface could tell a human
+;; that a newer Vis was already installed and running.
+(defdescribe compatible-release-skew-test
+             (it "names the half that is behind without refusing the pair"
+                 (let [v (release-skew-verdict "0.2.22" "0.2.21")]
+                   (expect (true? (:is-compatible v)))
+                   (expect (= "ok" (:reason v)))
+                   (expect (nil? (:upgrade v)))
+                   (expect (= "client" (:behind v)))))
+             (it "names the gateway when this client is the newer half"
+                 (expect (= "gateway" (:behind (release-skew-verdict "0.2.21" "0.2.22")))))
+             (it "claims no order where a release carries none"
+                 (expect (nil? (:behind (release-skew-verdict "0.2.22" "0.2.22"))))
+                 (expect (nil? (:behind (release-skew-verdict "dev" "0.2.22"))))
+                 (expect (nil? (:behind (release-skew-verdict "0.2.22" nil))))))

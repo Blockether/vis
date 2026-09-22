@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.runtime-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -115,28 +116,6 @@
         (is (= expected (protocol/release-version)))))
     (is (zero? @lookups) "version reads after the first one must not probe the classpath")))
 
-;; The order that decides whether a running daemon is stale after `vis-agent update`.
-(deftest release-version-ordering-test
-  (testing "a release is only ever picked up forward"
-    (is (true? (protocol/newer-release? "0.1.40" "0.1.39")))
-    (is (false? (protocol/newer-release? "0.1.39" "0.1.40")))
-    (is (false? (protocol/newer-release? "0.1.40" "0.1.40"))))
-  (testing "segments compare as numbers, not as text"
-    (is (true? (protocol/newer-release? "0.1.10" "0.1.9")))
-    (is (true? (protocol/newer-release? "0.2.0" "0.1.99"))))
-  (testing "a shorter version is zero-padded, never ranked by its length"
-    (is (true? (protocol/newer-release? "0.2" "0.1.9")))
-    (is (false? (protocol/newer-release? "0.1" "0.1.0")))
-    (is (false? (protocol/newer-release? "0.1.0" "0.1"))))
-  (testing "a prerelease ranks with the release it precedes"
-    (is (true? (protocol/newer-release? "0.1.40-rc1" "0.1.39")))
-    (is (false? (protocol/newer-release? "0.1.40" "0.1.40-rc1"))))
-  (testing "a build with no ordered version is neither newer nor older"
-    (is (false? (protocol/newer-release? "dev" "0.1.39")))
-    (is (false? (protocol/newer-release? "0.1.40" "dev")))
-    (is (false? (protocol/newer-release? "0.1.40" nil)))
-    (is (false? (protocol/newer-release? nil nil)))))
-
 ;; A dev build has no release to be ordered by, so its commit is what says whether a
 ;; daemon is running the code in front of you.
 (deftest build-identity-supersedes-an-unorderable-version-test
@@ -191,3 +170,33 @@
       (is (= "bcc0c8208350-dirty" (short-commit "bcc0c8208350bd0e9e6c1a5a6f4d3c2b1a098765-dirty")))
       (is (nil? (short-commit "unknown"))
           "a build that could not read its own commit has no identity to compare"))))
+
+(defn- release-skew-copy
+  "The human copy for two halves that speak the SAME protocol and differ only in
+   release - the pair the verdict calls compatible."
+  [gateway-version client-version]
+  (protocol/explain (contract/verdict {:gateway-protocol contract/protocol-version
+                                       :gateway-min-client contract/minimum-client-protocol
+                                       :gateway-version gateway-version
+                                       :client-protocol contract/protocol-version
+                                       :client-min-gateway contract/minimum-gateway-protocol
+                                       :client-version client-version
+                                       :client-name "vis-tui"})))
+
+;; Regression: a client and a gateway on different releases of one protocol were told
+;; "Versions match", which is how somebody running the older half learned nothing at
+;; all about the newer Vis already serving them.
+(deftest compatible-release-skew-copy-test
+  (testing "a newer gateway is announced to the client that is behind"
+    (let [{:keys [title summary remedy]} (release-skew-copy "0.2.22" "0.2.21")]
+      (is (= "A newer Vis is available" title))
+      (is (str/includes? summary "0.2.22"))
+      (is (str/includes? summary "0.2.21"))
+      (is (str/includes? (str/join " " remedy) "vis-agent update"))))
+  (testing "a newer client is told which half is behind instead"
+    (let [{:keys [title remedy]} (release-skew-copy "0.2.21" "0.2.22")]
+      (is (= "The gateway runs an older Vis" title))
+      (is (str/includes? (str/join " " remedy) "vis-agent gateway stop"))))
+  (testing "one release on both halves still matches"
+    (is (= "Versions match" (:title (release-skew-copy "0.2.22" "0.2.22"))))
+    (is (= "Versions match" (:title (release-skew-copy "dev" "0.2.22"))))))

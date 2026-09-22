@@ -71,6 +71,18 @@ Version pins are not accepted with beta or dev. Native updates acquire the engin
 Python worker and TUI from the same immutable release before replacing installed files.
 A missing native TUI fails rather than starting a JVM client.
 
+### How you learn that a newer version is running
+
+The gateway is a daemon that outlives the command that started it, so it can already
+run a newer Vis than the client in front of you — after an update that an open TUI
+kept alive, or when you point a client at a gateway on another machine.
+
+When the two halves are on different releases, Vis says so instead of staying quiet:
+the terminal client prints one line per run, the TUI raises a header notice, and
+`vis-agent gateway status` names both releases. Nothing is refused, because both
+halves still speak the same wire protocol. Run `vis-agent update` on the machine that
+is behind to close the gap.
+
 ## Switching between versions
 
 `update` follows a track forward. `switch` names the build you want to run, so you can

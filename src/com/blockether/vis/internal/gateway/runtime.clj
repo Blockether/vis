@@ -20,43 +20,10 @@
   "Human release version of this build: the `vis/VERSION` resource written at
    build time from the repo-root VIS_VERSION, verbatim (`0.1.28`), else
    `dev`. Loaded once per process, like the build revision. Ordered ONLY for
-   staleness ([[newer-release?]]) - never for compatibility, which is
+   staleness ([[contract/newer-release?]]) - never for compatibility, which is
    [[contract/protocol-version]]'s job alone."
   []
   @build-version)
-
-(defn- version-parts
-  "Numeric segments of a human release version, or nil when it carries no order at
-   all (`dev`, a git sha, nil). Only the leading dotted digits count and any
-   `-rc1`/`+build` suffix is dropped, so a prerelease ranks with the release it
-   precedes rather than pretending to be a different number."
-  [v]
-  (when-let [head (some-> v
-                          str
-                          str/trim
-                          not-empty
-                          (str/split #"[-+]")
-                          first)]
-    (let [segs (str/split head #"\.")]
-      (when (every? #(re-matches #"\d+" %) segs) (mapv #(Long/parseLong ^String %) segs)))))
-
-(defn newer-release?
-  "True when release `a` is STRICTLY newer than release `b`, compared segment by
-   segment as numbers (`0.1.10` > `0.1.9`) with the shorter one zero-padded, so
-   `0.2` and `0.2.0` are the same release rather than being ranked by length.
-
-   A version without order - `dev`, a checkout, nil, anything [[version-parts]]
-   cannot read - is neither newer nor older. That is deliberate: it makes the
-   comparison one-directional and total, so a source build never decides that a
-   released daemon is stale and two builds can never bounce each other in turn."
-  [a b]
-  (boolean (when-let [x (version-parts a)]
-             (when-let [y (version-parts b)]
-               (let [width (max (count x) (count y))
-                     pad (fn [v]
-                           (into v (repeat (- width (count v)) 0)))]
-
-                 (pos? (compare (pad x) (pad y))))))))
 
 (defn- resource-file
   "The FILE a classpath resource resolves to, or nil when it lives inside a jar or
@@ -188,7 +155,7 @@
    build replaces. The two inputs answer different questions and are consulted in
    that order:
 
-     version  an ORDER ([[newer-release?]]). A strictly newer peer is never
+     version  an ORDER ([[contract/newer-release?]]). A strictly newer peer is never
               replaced, so an old client can never downgrade a fresh daemon.
      build    an IDENTITY, and only where the versions carry no order between them
               (`dev` against `dev`, or the same VIS_VERSION built twice). Different
@@ -200,8 +167,8 @@
    process, which turns the worst case into one restart instead of two builds
    trading a daemon back and forth."
   [{:keys [our-version their-version our-build their-build]}]
-  (cond (newer-release? our-version their-version) true
-        (newer-release? their-version our-version) false
+  (cond (contract/newer-release? our-version their-version) true
+        (contract/newer-release? their-version our-version) false
         :else (boolean (and our-build their-build (not= our-build their-build)))))
 
 (defn handshake
@@ -268,8 +235,8 @@
   "Human copy for a verdict: a title, one plain-language summary, and ORDERED
    remedy steps. One writer for every surface (terminal panel, gateway 426
    body, companion screen) so the wording never drifts between them."
-  [{:keys [reason gateway-protocol gateway-min-client client-protocol client-min-gateway
-           client-name]}]
+  [{:keys [reason behind gateway-protocol gateway-min-client gateway-version client-protocol
+           client-min-gateway client-version client-name]}]
   (case reason
     "client-too-old"
     {:title "Update this client"
@@ -310,13 +277,42 @@
        :remedy ["Update Vis on this device to the version running the gateway."
                 "Reload the app (or restart the TUI) once the update lands."]})
 
-    {:title "Versions match"
-     :summary (str "Gateway and "
-                   (or client-name "client")
-                   " both speak protocol "
-                   (or gateway-protocol client-protocol)
-                   ".")
-     :remedy []}))
+    (case behind
+      "client"
+      {:title "A newer Vis is available"
+       :summary (str "The gateway runs Vis "
+                     (or gateway-version "a newer release")
+                     " and this "
+                     (or client-name "client")
+                     " runs "
+                     (or client-version "an older one")
+                     ". Both speak protocol "
+                     (or gateway-protocol client-protocol)
+                     ", so this session keeps working on the older release.")
+       :remedy ["Install the newer release here: vis-agent update"
+                "Restart the TUI (or reload the app) once the update lands."]}
+
+      "gateway"
+      {:title "The gateway runs an older Vis"
+       :summary (str "This "
+                     (or client-name "client")
+                     " runs Vis "
+                     (or client-version "a newer release")
+                     " and the gateway runs "
+                     (or gateway-version "an older one")
+                     ". Both speak protocol "
+                     (or gateway-protocol client-protocol)
+                     ", so this session keeps working on the older release.")
+       :remedy ["Restart the gateway once nothing is using it:"
+                "vis-agent gateway stop && vis-agent gateway start"]}
+
+      {:title "Versions match"
+       :summary (str "Gateway and "
+                     (or client-name "client")
+                     " both speak protocol "
+                     (or gateway-protocol client-protocol)
+                     ".")
+       :remedy []})))
 
 (def ^:private panel-width 70)
 

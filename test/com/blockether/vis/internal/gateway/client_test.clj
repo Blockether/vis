@@ -1735,3 +1735,33 @@
     (is (= 4 (:clients result)))
     (is (= 0 (:running-turns result)))
     (is (not-any? string? (keys result)) "no wire key survives into the client's answer")))
+
+;; Regression: a daemon on a NEWER release than this build refused nothing, bounced
+;; nothing and said nothing, so an update that was already installed and serving
+;; sessions was invisible to the human running the older half.
+(deftest newer-daemon-is-reported-once-test
+  (let [line
+        (rv 'newer-daemon-line)
+
+        report!
+        (rv 'report-newer-daemon!)
+
+        reported?
+        @(rv 'newer-daemon-reported?)
+
+        ahead
+        {:behind "client" :gateway-version "0.2.22" :client-version "0.2.21"}]
+
+    (testing "the line names both releases and what installs the newer one"
+      (let [text (line ahead)]
+        (is (str/includes? text "0.2.22"))
+        (is (str/includes? text "0.2.21"))
+        (is (str/includes? text "vis-agent update"))))
+    (testing "nothing is said where this build is not the half that is behind"
+      (is (nil? (line {:behind nil :gateway-version "0.2.22" :client-version "0.2.22"})))
+      (is (nil? (line {:behind "gateway" :gateway-version "0.2.21" :client-version "0.2.22"}))))
+    (testing "a client says it once, however many times it attaches"
+      (reset! reported? false)
+      (try (is (some? (report! ahead)))
+           (is (nil? (report! ahead)) "the second attach repeats nothing")
+           (finally (reset! reported? false))))))

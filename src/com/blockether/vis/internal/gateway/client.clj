@@ -119,6 +119,10 @@
   ;; One version-driven restart per process, ever: see [[bounce-stale-daemon!]].
   (atom false))
 
+(defonce ^:private newer-daemon-reported?
+  ;; One notice per process, ever: see [[report-newer-daemon!]].
+  (atom false))
+
 (defn- db-target [] (config/resolve-db-spec))
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
@@ -283,12 +287,38 @@
     (when (and (= "gateway-too-old" reason) gateway-protocol)
       {"x-vis-min-gateway-protocol" (str gateway-protocol)})))
 
+(defn- newer-daemon-line
+  "The stderr line for a daemon running a strictly NEWER release than this build, or
+   nil when this build is not the half that is behind. Pure, so the copy is read in a
+   test without capturing a process stream."
+  [{:keys [behind gateway-version client-version]}]
+  (when (= "client" behind)
+    (str "vis-agent: gateway is running Vis "
+         gateway-version
+         " - this build is "
+         (or client-version "older")
+         ". Install it here with: vis-agent update")))
+
+(defn- report-newer-daemon!
+  "Say that line ONCE per process. Nothing is refused and nothing is restarted - the
+   protocols match, and a client never pulls a fresh daemon back to its own code
+   ([[bounce-stale-daemon!]]) - so without it the human is never told that a newer Vis
+   is already installed and serving them. Returns the line it said, nil for silence.
+   Never throws."
+  [verdict]
+  (when-let [line (newer-daemon-line verdict)]
+    (when (compare-and-set! newer-daemon-reported? false true)
+      (try (.println ^java.io.PrintStream System/err line) (catch Throwable _ nil))
+      line)))
+
 (defn- assert-compatible!
   "Refuse to drive a daemon whose wire protocol this build cannot speak, with the
-   rendered mismatch screen attached. Returns `entry` when compatible."
+   rendered mismatch screen attached. Returns `entry` when compatible - reporting a
+   compatible daemon that is simply a newer release ([[report-newer-daemon!]])."
   [entry]
   (let [v (compatibility)]
     (when-not (:is-compatible v) (throw (protocol/incompatible-ex v)))
+    (report-newer-daemon! v)
     entry))
 
 (defn- send-json-with-entry!

@@ -289,6 +289,27 @@
                                  (release-client!))
                                "vis-tui-gateway-shutdown"))))
 
+(def ^:private newer-gateway-notice-ttl-ms
+  "How long the header keeps the \"a newer Vis is running the gateway\" notice: long
+   enough to survive the first paint after startup, short enough that it clears
+   itself instead of waiting for a dismissal nobody asked for."
+  60000)
+
+(defn- report-newer-gateway!
+  "Raise the header notice when the gateway this app just probed runs a strictly
+   NEWER release than this build. Protocols match, so nothing is refused and nothing
+   is restarted - this notice is the only sign the human gets that a newer Vis is
+   installed and already serving them."
+  [{:keys [behind gateway-version client-version]}]
+  (when (= "client" behind)
+    (notifications/notify! (str "A newer Vis is running the gateway: "
+                                gateway-version
+                                " (this app runs "
+                                (or client-version "an older release")
+                                "). Install it with: vis-agent update")
+                           :level :warn
+                           :ttl-ms newer-gateway-notice-ttl-ms)))
+
 (defn- check-target!
   [entry]
   (when-not @target-checked?
@@ -319,6 +340,7 @@
           (when-not (:is-compatible verdict)
             (throw (ex-info "gateway protocol is incompatible"
                             {:type :gateway/incompatible :verdict verdict})))
+          (report-newer-gateway! verdict)
           (reset! target-checked? true))))))
 
 (defn- target!

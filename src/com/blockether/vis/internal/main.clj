@@ -2759,6 +2759,31 @@
                           ")")
                      "it is picked up once this one is no longer in use"))))))
 
+(defn- newer-daemon-note
+  "The line `gateway status` adds when the RUNNING daemon is newer code than this
+   runtime (`ours`, a handshake): the update is installed and this build is the half
+   that is behind. nil when it is not.
+
+   The mirror of [[stale-daemon-note]], and the only place this side says so: a
+   client never replaces a daemon that is ahead of it, so silence here would read as
+   \"nothing is new\". It applies to a remote gateway too, where the version a human
+   can act on is the one on THIS device."
+  [status ours]
+  (let [peer
+        (get status "protocol")
+
+        theirs
+        (get peer "version")]
+
+    (when ((requiring-resolve 'com.blockether.vis.contract.gateway/newer-release?)
+            theirs
+            (:version ours))
+      (str "a newer Vis is running the gateway: "
+           theirs
+           " - this build is "
+           (build-label ours)
+           " - install it here with: vis-agent update"))))
+
 (defn- cli-gateway-status!
   [parsed _residual]
   (config/init-cli!)
@@ -2790,9 +2815,12 @@
         ;; "why is my update not in effect yet" is what this command gets asked, and
         ;; the answer is already in the map. A --gateway target is another machine's
         ;; lifecycle, so nothing here is ever going to replace it.
-        (when-not ((requiring-resolve 'com.blockether.vis.internal.gateway.client/remote-gateway))
-          (when-let [note (stale-daemon-note m (this-handshake))]
-            (stdout! note))))
+        (let [ours (this-handshake)]
+          (when-let [note (newer-daemon-note m ours)]
+            (stdout! note))
+          (when-not ((requiring-resolve 'com.blockether.vis.internal.gateway.client/remote-gateway))
+            (when-let [note (stale-daemon-note m ours)]
+              (stdout! note)))))
       (stdout! (str "gateway stopped"
                     (when-let [db (get m "db")]
                       (str " db=" db)))))))

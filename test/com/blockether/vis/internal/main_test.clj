@@ -842,6 +842,34 @@
         (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
         (expect (nil? (note (running {"protocol" {"version" "dev"}})))))))
 
+;; Regression: a daemon running a NEWER release than this build was reported by
+;; nothing at all - no bounce, no note, no mismatch screen - so `gateway status` let
+;; somebody sit on the older half with no sign that the update was already serving
+;; them.
+(defdescribe gateway-status-newer-daemon-test
+             (let [ours
+                   {:version "0.1.40" :build "aaaaaaaaaaaa"}
+
+                   note
+                   (fn [status]
+                     (#'main/newer-daemon-note status ours))
+
+                   running
+                   (fn [m]
+                     (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
+
+               (it "names the newer release the running daemon already serves"
+                   (let [s (note (running {"protocol" {"version" "0.1.41"
+                                                       "build" "cccccccccccc"}}))]
+                     (expect (str/includes? s "0.1.41"))
+                     (expect (str/includes? s "this build is 0.1.40"))
+                     (expect (str/includes? s "vis-agent update"))))
+               (it "is silent unless the daemon is strictly newer"
+                   (expect (nil? (note (running {"protocol" {"version" "0.1.40"}}))))
+                   (expect (nil? (note (running {"protocol" {"version" "0.1.39"}}))))
+                   (expect (nil? (note (running {"protocol" {"version" "dev"}}))))
+                   (expect (nil? (note (running {})))))))
+
 (defdescribe pretty-trace-form-output-test
              (it "prints a completed Python form's stdout"
                  (let [lines (atom [])]

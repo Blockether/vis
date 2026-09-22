@@ -220,6 +220,39 @@
         (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
         :else nil))
 
+(defn- version-parts
+  "Numeric segments of a human release version, or nil when it carries no order at
+   all (`dev`, a git sha, nil). Only the leading dotted digits count and any
+   `-rc1`/`+build` suffix is dropped, so a prerelease ranks with the release it
+   precedes rather than pretending to be a different number."
+  [v]
+  (when-let [head (some-> v
+                          str
+                          str/trim
+                          not-empty
+                          (str/split #"[-+]")
+                          first)]
+    (let [segs (str/split head #"\.")]
+      (when (every? #(re-matches #"\d+" %) segs) (mapv #(Long/parseLong ^String %) segs)))))
+
+(defn newer-release?
+  "True when release `a` is STRICTLY newer than release `b`, compared segment by
+   segment as numbers (`0.1.10` > `0.1.9`) with the shorter one zero-padded, so
+   `0.2` and `0.2.0` are the same release rather than being ranked by length.
+
+   A version without order - `dev`, a checkout, nil, anything [[version-parts]]
+   cannot read - is neither newer nor older. That is deliberate: it makes the
+   comparison one-directional and total, so a source build never decides that a
+   released daemon is stale and two builds can never bounce each other in turn."
+  [a b]
+  (boolean (when-let [x (version-parts a)]
+             (when-let [y (version-parts b)]
+               (let [width (max (count x) (count y))
+                     pad (fn [v]
+                           (into v (repeat (- width (count v)) 0)))]
+
+                 (pos? (compare (pad x) (pad y))))))))
+
 (defn wire->handshake
   "Read a peer's advertised handshake from its canonical string-keyed wire map.
    Missing fields remain nil so [[verdict]] rejects an unversioned peer explicitly."
@@ -238,7 +271,12 @@
   "Pure compatibility verdict between a gateway and a client.
 
    Reasons are `ok`, `client-too-old`, `gateway-too-old`, or `unknown` when a peer
-   did not advertise a protocol. `:upgrade` names the half that must be updated."
+   did not advertise a protocol. `:upgrade` names the half that must be updated.
+
+   `:behind` names the half running the OLDER release when both halves advertise an
+   ordered version ([[newer-release?]]): a compatible pair where one side simply has
+   not been updated yet, which is the only way either half learns that a newer Vis
+   exists at all."
   [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
            client-version client-name]}]
   (let [gp
@@ -257,7 +295,12 @@
         (cond (or (nil? gp) (nil? cp)) "unknown"
               (< (long cp) (long gmin)) "client-too-old"
               (< (long gp) (long cmin)) "gateway-too-old"
-              :else "ok")]
+              :else "ok")
+
+        behind
+        (cond (newer-release? gateway-version client-version) "client"
+              (newer-release? client-version gateway-version) "gateway"
+              :else nil)]
 
     {:is-compatible (= "ok" reason)
      :reason reason
@@ -274,6 +317,7 @@
                       :else nil)
 
                 nil)
+     :behind behind
      :gateway-protocol gp
      :gateway-min-client gmin
      :gateway-version gateway-version
