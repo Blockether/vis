@@ -54,6 +54,8 @@ packages/vis-benchmark/swebench-harness/
 
 # Temporary agent UI previews and screenshots.
 /.vis/artifacts/
+# Local design-lab workspace (installed upstream skill + generated HTML explorations).
+/.vis/design/
 
 # Sessions / runtime data
 .omc/
