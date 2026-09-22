@@ -3882,6 +3882,20 @@
                         {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen))))))
+      ;; Regression, user report (paraphrased: "the No project header says one session and
+      ;; the pager under it says 128 pages"): `?root=` is a cut of its own - the sessions no
+      ;; project holds - and dropping a blank root to nil answered that shelf with the fleet.
+      (testing "and a root that is PRESENT and blank is the shelf of sessions no project holds"
+        (with-redefs [state/list-sessions-page
+                      (fn [channel opts]
+                        (reset! seen [channel opts])
+                        {:sessions [] :total 0 :limit 13 :next-cursor nil :has-more false})]
+          (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
+                                               {:query-params
+                                                {"limit" "13" "root" "" "grouped" "aside"}})))]
+            (is (= "" (:root (second @seen))))
+            (is (= 13 (:limit (second @seen))))
+            (is (= "" (get body "root"))))))
       (testing "and the ids this DEVICE holds unsent words in ride down with it"
         (with-redefs [state/list-sessions-page
                       (fn [channel opts]

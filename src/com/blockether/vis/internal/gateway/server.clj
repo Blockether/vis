@@ -2318,10 +2318,13 @@
         ;; page it slices locally is not a page: it needs the whole fleet downloaded
         ;; first. With `root` the gateway cuts the ordering to that project, so
         ;; `total`/`has_more` describe the project the pager is printing.
+        ;;
+        ;; A root that is PRESENT and BLANK is a cut of its own: the sessions no project
+        ;; holds, which the overview counts under the same blank root and a client paints
+        ;; as `No project`. Dropped to nil, that shelf was answered with the whole fleet -
+        ;; one session in its header over 128 pages of every other project's work.
         root
-        (some-> (get-in request [:query-params "root"])
-                str
-                not-empty)
+        (when (given? "root") (str (get-in request [:query-params "root"])))
 
         ;; The TUI asks this list two narrow questions - ONE project's tab set, and the
         ;; session a short id names - so both are CUTS of the gateway's ordering here
@@ -2356,7 +2359,7 @@
         ;; store. The head window is what it gets, and `next_cursor` carries anyone who
         ;; wants the rest.
         window-limit
-        (if (or (given? "limit") (seq root) (seq project-id) (seq id-prefix) (seq ids))
+        (if (or (given? "limit") (some? root) (seq project-id) (seq id-prefix) (seq ids))
           limit
           default-session-window)]
 

@@ -3150,6 +3150,53 @@
              (it "leaves the list whole when the window asks nothing of it"
                  (expect (= 3 (:total (three-session-window {}))))))
 
+;; Regression, user report (paraphrased: "the No project header says one session and the
+;; pager under it says 128 pages"): a session whose workspace does not resolve is counted
+;; under the BLANK root by `projects-overview`, and a client pages that shelf with `?root=`.
+;; Read as no cut at all, the gateway answered it with the whole fleet - one session in the
+;; header over every other project's pages, carrying their filed sessions with it.
+(defn- with-rootless-fleet
+  "A fleet of three sessions where one of them belongs to no project at all."
+  [f]
+  (with-redefs-fn {#'lp/db-info (constantly ::db)
+                   #'lp/projects (constantly [])
+                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'lp/by-channel (constantly [{:id "rooted-1" :title "One" :created-at 300}
+                                                {:id "loose" :title "Two" :created-at 200}
+                                                {:id "rooted-2" :title "Three" :created-at 100}])
+                   #'state/session-project-root (fn [_ sid]
+                                                  (when-not (= "loose" (str sid)) "/repo/a"))
+                   #'bus/live-turns (constantly {})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})}
+    f))
+
+(defdescribe
+  gateway-answers-the-shelf-of-rootless-sessions-test
+  (it "cuts a blank root to the sessions no project holds"
+      (with-rootless-fleet (fn []
+                             (let [got (state/list-sessions-page :all {:root ""})]
+                               (expect (= ["loose"] (mapv #(get % "id") (:sessions got))))
+                               (expect (= 1 (:total got)))))))
+  (it "still narrows a named root to that project alone"
+      (with-rootless-fleet (fn []
+                             (let [got (state/list-sessions-page :all {:root "/repo/a"})]
+                               (expect (= ["rooted-1" "rooted-2"]
+                                          (mapv #(get % "id") (:sessions got))))
+                               (expect (= 2 (:total got)))))))
+  (it "leaves the list whole when no root is named at all"
+      (with-rootless-fleet (fn []
+                             (expect (= 3 (:total (state/list-sessions-page :all {})))))))
+  (it "counts that shelf exactly as its own project header counts it"
+      (with-rootless-fleet (fn []
+                             (let [header (->> (:projects (state/projects-overview))
+                                               (filter #(= "" (get % "root")))
+                                               first)]
+                               (expect (= 1 (get header "session_count")))
+                               (expect (= (get header "session_count")
+                                          (:total (state/list-sessions-page :all {:root ""})))))))))
+
 ;; Regression, user report (paraphrased: "groups should be outside the paging, and there is
 ;; no way to tell whether a session is in a group at all"): a client painted its group bands
 ;; from the CURRENT PAGE, so a session filed deeper in the fleet was missing from its own

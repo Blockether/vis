@@ -5815,7 +5815,11 @@
    `:root` narrows the listing to ONE project before the window is cut, so a client
    paging a project asks the gateway for that project's page instead of downloading
    the fleet and slicing it locally. `total`/`has-more` then describe that project,
-   which is what a pager prints.
+   which is what a pager prints. `nil` names NO cut; a BLANK root is a cut of its own
+   - the sessions no project holds, the blank-root bucket `projects-overview` counts
+   and a client paints as `No project`. Read as no cut at all, that shelf was answered
+   with the whole fleet: a header counting one session over a pager of 128 pages,
+   carrying every session the machine had filed in a group.
 
    `:project-id`, `:id-prefix` and `:ids` answer the questions a channel used to answer
    by downloading the fleet and filtering it locally: ONE project's tab set, the session
@@ -5861,9 +5865,9 @@
 
          ranked
          (cond->> (session-ranking channel stats live unsent)
-           (and db (seq root))
+           (and db (some? root))
            (filterv (fn [row]
-                      (= root (session-project-root db (:id row)))))
+                      (= (str root) (str (session-project-root db (:id row))))))
 
            (seq (str project-id))
            (filterv (fn [row]
