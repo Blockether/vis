@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
@@ -156,5 +156,202 @@ describe('a fleet far deeper than one window', () => {
     expect(fleetReads).toHaveLength(2);
     expect(fleetReads.every(({ path }) => !path.includes('after='))).toBe(true);
     expect(new Set(fleetReads.map(({ machine }) => machine)).size).toBe(2);
+  });
+});
+
+// Regression, user report (paraphrased: the "1 live" in a project header was only
+// text — tapping it should open that live run, the way tapping its row does): the
+// count is now the door to the newest run the project still has going, and a run
+// parked on a human answer does not steal the tap.
+describe('the live count on a project band', () => {
+  const row = (title: string) =>
+    screen.getByText(title).closest('[data-session-id]') as HTMLElement;
+  const renderDeepLive = (opened: string[]) =>
+    renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ title: 'Another project', workspace: { root: '/Users/dev/other' } }),
+            ...Array.from({ length: 120 }, (_, index) =>
+              listSession({ id: `quiet-${index}`, title: `Quiet ${index}` }),
+            ),
+            listSession({ id: 'deep-live', title: 'Deep live run', live: true }),
+          ],
+        },
+      ],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+
+  it('opens the live run from the band, and the rows keep opening themselves', async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: 's1', title: 'Working', live: true }),
+            listSession({ id: 's2', title: 'Quiet' }),
+          ],
+        },
+      ],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+
+    const live = await screen.findByRole('button', { name: 'Open the live session' });
+    expect(live.textContent).toMatch(/^1 live$/);
+    fireEvent.click(live);
+    expect(opened).toEqual(['s1']);
+
+    fireEvent.click(screen.getByText('Quiet'));
+    expect(opened).toEqual(['s1', 's2']);
+  });
+
+  it('opens the newest run when several are live', async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          // A starred older run leads the list, but is not the newest live run.
+          sessions: [
+            listSession({
+              id: 'settled',
+              title: 'Settled earlier today',
+              modified_at: new Date('2024-05-01T11:00:00Z').toISOString(),
+            }),
+            listSession({
+              id: 'newer',
+              title: 'Newer run',
+              live: true,
+              modified_at: new Date('2024-05-01T10:00:00Z').toISOString(),
+            }),
+            listSession({
+              id: 'older',
+              title: 'Older run',
+              live: true,
+              favorite_rank: 0,
+              modified_at: new Date('2024-05-01T09:00:00Z').toISOString(),
+            }),
+          ],
+        },
+      ],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+
+    const live = await screen.findByRole('button', {
+      name: 'Open the newest of 2 live sessions',
+    });
+    expect(live.textContent).toMatch(/^2 live$/);
+    fireEvent.click(live);
+    expect(opened).toEqual(['newer']);
+  });
+
+  it('skips a run parked on input and opens the one still working', async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: 'parked', title: 'Parked', live: true, is_awaiting_input: true }),
+            listSession({ id: 'working', title: 'Working', live: true }),
+          ],
+        },
+      ],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+
+    // The band counts runs this device could watch, so the parked one — still
+    // waiting on its human — is not what the tap walks into.
+    const live = await screen.findByRole('button', { name: 'Open the live session' });
+    expect(live.textContent).toMatch(/^1 live$/);
+    fireEvent.click(live);
+    expect(opened).toEqual(['working']);
+    expect(within(row('Parked')).getByText('INPUT NEEDED')).toBeInTheDocument();
+  });
+
+  it('opens a live run outside the loaded window without expanding its project', async () => {
+    const opened: string[] = [];
+    const view = renderDeepLive(opened);
+    restore = view.restore;
+
+    await screen.findByRole('button', { name: 'Expand project' });
+    expect(screen.queryByText('Deep live run')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open the live session' }));
+    await waitFor(() => expect(opened).toEqual(['deep-live']));
+    expect(screen.getByRole('button', { name: 'Expand project' })).toBeVisible();
+    expect(
+      view.requests.some(({ path }) => path.includes('root=') && path.includes('after=')),
+    ).toBe(true);
+  });
+
+  it('allows retrying when the live-session lookup cannot reach the machine', async () => {
+    const opened: string[] = [];
+    const view = renderDeepLive(opened);
+    restore = view.restore;
+    const live = await screen.findByRole('button', { name: 'Open the live session' });
+    const fetchPage = globalThis.fetch;
+    globalThis.fetch = async () => {
+      throw new TypeError('Offline');
+    };
+
+    fireEvent.click(live);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not open the live session. Try again.',
+    );
+    expect(live).toBeEnabled();
+    expect(opened).toEqual([]);
+
+    globalThis.fetch = fetchPage;
+    fireEvent.click(live);
+    await waitFor(() => expect(opened).toEqual(['deep-live']));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('does not navigate after the list is hidden during a lookup', async () => {
+    const opened: string[] = [];
+    const view = renderDeepLive(opened);
+    restore = view.restore;
+    const live = await screen.findByRole('button', { name: 'Open the live session' });
+    view.holdList();
+    fireEvent.click(live);
+    fireEvent.click(live);
+    expect(live).toBeDisabled();
+    expect(live).toHaveAttribute('aria-busy', 'true');
+    const lookups = () => view.requests.filter(({ path }) => path.includes('limit=100'));
+    await waitFor(() => expect(lookups()).toHaveLength(1));
+
+    view.setVisible(false);
+    expect(lookups()[0].signal?.aborted).toBe(true);
+    await act(async () => view.releaseList());
+    expect(opened).toEqual([]);
+  });
+
+  it('explains when the counted run has already finished', async () => {
+    const opened: string[] = [];
+    const view = renderDeepLive(opened);
+    restore = view.restore;
+    const live = await screen.findByRole('button', { name: 'Open the live session' });
+    view.setRows(0, []);
+
+    fireEvent.click(live);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No sessions are running in this project now.',
+    );
+    expect(opened).toEqual([]);
+    expect(live).toBeEnabled();
+  });
+
+  it('does not show the active-live count while revealing the archive', async () => {
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [listSession({ title: 'Working', live: true })] }],
+    });
+    restore = view.restore;
+
+    await screen.findByRole('button', { name: 'Open the live session' });
+    fireEvent.click(screen.getByRole('button', { name: 'Groups in project' }));
+    fireEvent.click(await screen.findByText('Show archived'));
+    await screen.findByText('Archived');
+    expect(screen.queryByRole('button', { name: 'Open the live session' })).toBeNull();
   });
 });

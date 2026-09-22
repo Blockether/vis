@@ -42,7 +42,9 @@ import {
   machineKey,
   machineLabel,
   sessionIsArchived,
+  sessionIsLive,
   sessionMillis,
+  sessionNeedsInput,
   sessionRowKey,
   type FleetMachine,
   type ProjectGroupView,
@@ -101,6 +103,13 @@ function settled(
 function rowTitle(session: Session): string {
   const title = typeof session.title === 'string' ? session.title.trim() : '';
   return title === '' ? 'Untitled session' : title;
+}
+
+/** Running rows, newest first regardless of favorite or draft ordering. */
+function liveRuns(rows: Iterable<Session>): Session[] {
+  return Array.from(rows)
+    .filter((row) => sessionIsLive(row) && !sessionNeedsInput(row) && !sessionIsArchived(row))
+    .sort((a, b) => sessionMillis(b) - sessionMillis(a));
 }
 
 /** A group's colour where no rail carries it: one mark, beside a group's name in a menu. */
@@ -948,6 +957,52 @@ export const ProjectGroup = memo(function ProjectGroup({
       />
     ) : null;
 
+  // Use the same open command as a row. The gateway's count covers the whole project,
+  // so a run outside the loaded window must remain reachable from a collapsed band.
+  const running = Math.max(0, tally.live - (tally.awaiting ?? 0));
+  const [isOpeningLive, setIsOpeningLive] = useState(false);
+  const [liveFailure, setLiveFailure] = useState<string | null>(null);
+  const liveRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => liveRequest.current?.abort(), [conn, root, isVisible, isRevealing]);
+  const openLive = async () => {
+    if (liveRequest.current) return;
+    setLiveFailure(null);
+    const held = liveRuns(sessions);
+    if (held.length >= running && held[0]) {
+      void rowActions.commands.open(conn, held[0].id);
+      return;
+    }
+
+    const control = new AbortController();
+    liveRequest.current = control;
+    setIsOpeningLive(true);
+    try {
+      const api = getClient(conn);
+      const windows: ProjectWindows = new Map();
+      const found = new Map<string, Session>();
+      const visited = new Set<string>();
+      let after = '';
+      do {
+        visited.add(after);
+        const answer = await api.listProjectPage(root, 100, after, windows, control.signal);
+        if (control.signal.aborted) return;
+        // Without a band window, the sidecar includes every group's rows too.
+        for (const row of liveRuns([...answer.rows, ...answer.grouped])) found.set(row.id, row);
+        after = answer.nextCursor;
+      } while (found.size < running && after && !visited.has(after));
+      const target = liveRuns(found.values())[0];
+      if (target) void rowActions.commands.open(conn, target.id);
+      else setLiveFailure('No sessions are running in this project now.');
+    } catch {
+      if (!control.signal.aborted) setLiveFailure('Could not open the live session. Try again.');
+    } finally {
+      if (liveRequest.current === control) {
+        liveRequest.current = null;
+        setIsOpeningLive(false);
+      }
+    }
+  };
+
   const qualifier = (
     <span className="flex max-w-full min-w-0 items-center gap-2">
       {qualifierPath && (
@@ -966,10 +1021,10 @@ export const ProjectGroup = memo(function ProjectGroup({
         one thing on the line that is a VERB sat between the total and the states that
         qualify it, and the reader's eye had to cross it to reach `4 live`. */}
       <span className="flex min-w-0 items-center">
-        {/* THE TOTAL AND THE STATES ARE ONE RUN OF TEXT, and the arrival stands beside
+        {/* THE TOTAL AND THE STATES ARE ONE RUN OF TEXT, and what can TAP stands beside
             that run. `text-overflow` elides TEXT and drops an atomic box whole, so this
-            is what lets the smallest phone shorten `1464 sessions · 2 live` and still
-            hold the whole of the arrival the reader has to be able to tap. */}
+            is what lets the smallest phone shorten `1464 sessions · 2 needs input` and
+            still hold the whole of the live count and the arrival. */}
         <span className="min-w-0 truncate">
           {/* A REVEAL CARRIES ITS OWN TALLY, and none of the states beside it: the archive
               is another list, and a session that was put away is not running. */}
@@ -986,12 +1041,38 @@ export const ProjectGroup = memo(function ProjectGroup({
             </>
           ) : (
             <ProjectStatusCounts
-              live={tally.live}
+              // The pressable live count stands outside the eliding run below.
+              live={0}
               awaiting={tally.awaiting}
               unread={tally.unread}
             />
           )}
         </span>
+        {!isRevealing && running > 0 && (
+          <>
+            <span aria-hidden className="mx-2 shrink-0 @max-md:mx-1">
+              ·
+            </span>
+            <TextButton
+              isCaption
+              className="pointer-events-auto relative shrink-0 whitespace-nowrap font-bold"
+              aria-label={
+                running === 1
+                  ? 'Open the live session'
+                  : `Open the newest of ${running} live sessions`
+              }
+              disabled={isOpeningLive}
+              aria-busy={isOpeningLive}
+              onClick={() => void openLive()}
+            >
+              <span
+                aria-hidden="true"
+                className="mr-1 inline-block size-1.5 animate-pulse bg-ok align-[0.05em] motion-reduce:animate-none"
+              />
+              {running} live
+            </TextButton>
+          </>
+        )}
         {hasPending && (
           <>
             <span aria-hidden className="shrink-0 whitespace-pre"> | </span>
@@ -1071,6 +1152,14 @@ export const ProjectGroup = memo(function ProjectGroup({
             </IconButton>
           </HeaderActions>
         </SectionHeader>
+        {liveFailure && !isRevealing && (
+          <p
+            role="alert"
+            className="border-b border-edge px-4 py-3 font-mono text-meta text-dialog-hint"
+          >
+            {liveFailure}
+          </p>
+        )}
         {isShowing && archiveIsEmpty && (
           <p className="border-b border-edge px-4 py-3 font-mono text-meta text-dialog-hint">
             Nothing archived in this project.

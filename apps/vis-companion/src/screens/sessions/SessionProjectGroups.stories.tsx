@@ -127,7 +127,7 @@ export const AcceptNewerSession: Story = {
     await expect(updates.closest('button[aria-expanded]')).toBeNull();
     const total = within(header).getByText(`${args.group.tally.count} sessions`);
     const live = args.group.tally.live;
-    // The total and the states are one run of text; the arrival is the caption's last word.
+    // The live control follows the eliding total; arrivals remain the caption's last word.
     const run = total.parentElement!;
     const caption = updates.parentElement!;
     await expect(caption).toContainElement(total);
@@ -138,7 +138,8 @@ export const AcceptNewerSession: Story = {
     );
     const captionGap = () => total.getBoundingClientRect().top - title.getBoundingClientRect().bottom;
     const totalBounds = total.getBoundingClientRect();
-    const runBounds = run.getBoundingClientRect();
+    const liveControl = within(header).queryByRole('button', { name: /^Open the (live|newest)/ });
+    const runBounds = (liveControl ?? run).getBoundingClientRect();
     const updateBounds = updates.getBoundingClientRect();
     await expect(updateBounds.left).toBeGreaterThanOrEqual(runBounds.right);
     await expect(updateBounds.left - runBounds.right).toBeLessThan(32);
@@ -402,4 +403,48 @@ export const GroupVerbs: Story = {
       'true',
     );
   },
+};
+
+/** Tapping the live count uses the same open action as the session row. */
+export const LiveCountOpensTheRun: Story = {
+  args: {
+    group: {
+      root: fixture.root,
+      label: fixture.name,
+      projectId: fixture.projectId,
+      tally: { count: fixture.rows.length + 1, live: 1, awaiting: 0, unread: 0 },
+      sessions: [
+        ...fixture.rows,
+        { ...fixture.rows[0], id: 'live-run', title: 'Nightly fleet scan', live: true },
+      ],
+    },
+  },
+  play: async ({ canvasElement, args }) => {
+    const page = within(canvasElement);
+    const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
+    const header = heading.closest('header')!;
+    const live = within(header).getByRole('button', { name: 'Open the live session' });
+    await expect(live.textContent).toMatch(/^1 live$/);
+    // The caption still reads as one line of type: totals, the running count, arrivals.
+    await expect(live.parentElement).toHaveTextContent(
+      `${args.group.tally.count} sessions·1 live | 1 new`,
+    );
+    if ('__vitest_browser_runner__' in globalThis) {
+      const { userEvent: pointer } = await import('vitest/browser');
+      await pointer.click(live);
+    } else {
+      await userEvent.click(live);
+    }
+    await expect(args.context.actions.commands.open).toHaveBeenCalledWith(conn, 'live-run');
+    await expect(heading).toHaveAttribute('aria-expanded', 'true');
+  },
+};
+
+export const LiveCountInNarrowPane: Story = {
+  ...LiveCountOpensTheRun,
+  render: (args) => (
+    <div className="@container w-full max-w-[320px] bg-page">
+      <ProjectGroup {...args} />
+    </div>
+  ),
 };

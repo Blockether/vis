@@ -37,6 +37,7 @@ import {
   SidebarToggle,
   Switch,
   Text,
+  TextButton,
   ViewHeading,
   ViewLayout,
   ViewParagraph,
@@ -297,6 +298,20 @@ describe('HeaderTally', () => {
     for (const step of ['text-chip', 'text-meta', 'text-ui']) {
       expect(container.firstElementChild).not.toHaveClass(step);
     }
+  });
+});
+
+// A caption is ONE run of type: the arrival that ends a project header's caption steps
+// down with the line it ends (reported from the sessions list — the project's own count
+// was bold and a step too large, so the whole caption fell to the step a band counts in).
+describe('TextButton', () => {
+  it('steps down with a caption, and keeps the body step everywhere else', () => {
+    const { container, rerender } = render(<TextButton>1 new</TextButton>);
+    expect(container.firstElementChild).toHaveClass('text-ui');
+    expect(container.firstElementChild).not.toHaveClass('mouse:text-chip');
+
+    rerender(<TextButton isCaption>1 new</TextButton>);
+    expect(container.firstElementChild).toHaveClass('text-ui', 'mouse:text-chip');
   });
 });
 

@@ -1300,14 +1300,24 @@ export function MetaButton({
  * and tracking, and wears no face at all — a box inside a line of text reads as a
  * box — so it says it is pressable by underlining itself under the pointer. The
  * 44px touch reach lives in a pseudo-element, leaving the row its own height.
+ *
+ * `isCaption` is the same prose standing INSIDE a caption — a project header's arrival,
+ * beside the total it interrupts. A caption drops to the step a band counts in under a
+ * pointer, so prose left at the body's step would end that run a size too large and off
+ * the baseline of the words it belongs to.
  */
 export function TextButton({
   isToken = false,
   isBand = false,
+  isCaption = false,
   className = '',
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { isToken?: boolean; isBand?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  isToken?: boolean;
+  isBand?: boolean;
+  isCaption?: boolean;
+}) {
   const face = isBand
     ? 'relative select-none whitespace-nowrap font-bold uppercase tracking-[0.06em] text-white after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline disabled:opacity-60 mouse:after:content-none'
     : `px-1 text-dialog-foreground enabled:hover:text-accent-ink focus-visible:bg-hover ${
@@ -1316,7 +1326,7 @@ export function TextButton({
   return (
     <button
       type="button"
-      className={`min-w-0 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${face} ${className}`}
+      className={`min-w-0 text-left font-mono ${isCaption ? 'text-ui mouse:text-chip' : 'text-ui'} transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {children}
