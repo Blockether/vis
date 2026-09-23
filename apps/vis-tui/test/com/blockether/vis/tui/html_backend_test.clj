@@ -330,14 +330,15 @@
         (is (= 6 (count rows)))
         (let [painted (paint-activity-review! hs rows opened)]
           (is (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
-        (doseq [[row expected] (map vector
-                                    rows
-                                    ["greeting" "Hi" "greeting_test.clj" "captured" "disclosure"
-                                     "disclosure"])]
+        (doseq [[row expected disclosure?] (map vector
+                                                rows
+                                                ["presenter.clj" "Hi" "greeting_test.clj"
+                                                 "retained result" "disclosure" "disclosure"]
+                                                [false true true true true true])]
           (paint-activity-review! hs rows opened)
           (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
                                     (.current interactions/hit-map)))
-                expanded (toggle-review-region opened step)
+                expanded (if step (toggle-review-region opened step) opened)
                 _ (paint-activity-review! hs rows expanded)
                 _ (paint-activity-review! ts rows expanded)
                 grid (cell-grid terminal cols 80)
@@ -348,7 +349,7 @@
                                             %))
                                     grid))]
 
-            (is (some? step))
+            (is (= disclosure? (some? step)))
             (is (= (cell-grid html cols 80) grid))
             (is (str/includes? text expected))
             (is (not (re-find #"Thread id|Is pass" text)))

@@ -327,6 +327,8 @@ jobs:
       # Native smoke tests must not attach to the user's live gateway.
       - name: Create isolated build home
         run: |
+          # Apple tools need the runner's keychain preferences, not the smoke-test home.
+          echo "VIS_MACOS_SIGNING_HOME=$HOME" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/vis-native-home"
           echo "HOME=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
@@ -425,7 +427,7 @@ jobs:
         # Ahead of staging, so the smoke tests below, `-M:test-native` and the
         # published bundle all exercise the same Developer ID signed bytes.
         run: |
-          bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
+          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
             target/vis target/vis-agent-python
       - name: Stage wrapper bundle
         shell: bash
@@ -489,7 +491,7 @@ jobs:
           (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
           # The terminal client loads no foreign code, so it needs no
           # entitlements — only the same identity and notary ticket.
-          bin/sign-macos-release apps/vis-tui/target/vis-tui
+          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release apps/vis-tui/target/vis-tui
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null

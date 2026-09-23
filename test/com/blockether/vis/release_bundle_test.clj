@@ -3695,6 +3695,58 @@
                (expect (str/includes? output "no Mach-O") output))
              (finally (delete-tree! root)))))
   (it
+    "keeps the runner keychain home for signing while native smoke tests stay isolated"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-signing-home-test-"
+                                              (make-array FileAttribute 0)))
+
+          home
+          (doto (io/file root "runner-home") .mkdirs)
+
+          env-file
+          (io/file root "github-env")
+
+          steps
+          (get-in (yaml/load (slurp ".github/workflows/native-release.yml"))
+                  ["jobs" "macos" "steps"])
+
+          isolate
+          (first (filter #(= "Create isolated build home" (get % "name")) steps))
+
+          signing?
+          #(str/includes? (str (get % "run")) "bin/sign-macos-release")
+
+          signing-steps
+          (filter signing? steps)]
+
+      (try
+        ;; Vis #277: codesign cannot resolve even an explicitly named keychain
+        ;; under the synthetic HOME used to keep native smoke tests isolated.
+        (let [{:keys [exit output]}
+              (run-bash ["bash" "-c" (get isolate "run")]
+                        {"HOME" (.getAbsolutePath home)
+                         "RUNNER_TEMP" (.getAbsolutePath root)
+                         "GITHUB_ENV" (.getAbsolutePath env-file)})
+
+              exported
+              (into {} (map #(str/split % #"=" 2) (str/split-lines (slurp env-file))))
+
+              isolated-home
+              (.getAbsolutePath (io/file root "vis-native-home"))]
+
+          (expect (= 0 exit) output)
+          (expect (= isolated-home (get exported "HOME")))
+          (expect (= (str "-Duser.home=" isolated-home) (get exported "JAVA_TOOL_OPTIONS")))
+          (expect (= (.getAbsolutePath home) (get exported "VIS_MACOS_SIGNING_HOME")))
+          (expect (= 2 (count signing-steps)))
+          (doseq [step signing-steps]
+            (expect (str/includes? (get step "run")
+                                   "HOME=\"$VIS_MACOS_SIGNING_HOME\" bin/sign-macos-release")
+                    (get step "name")))
+          (doseq [step steps]
+            (expect (nil? (get-in step ["env" "HOME"])) (get step "name"))))
+        (finally (delete-tree! root)))))
+  (it
     "signs before staging in every release path, on the credentials the desktop DMG already uses"
     (let [workflow
           (slurp ".github/workflows/native-release.yml")
