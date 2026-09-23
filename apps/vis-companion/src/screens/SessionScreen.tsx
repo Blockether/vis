@@ -4087,7 +4087,12 @@ export function SessionScreen({
       title: selectedModel
         ? `${modelPref?.provider ?? defaultPref?.provider ?? ''}/${selectedModel}`
         : 'Change provider and model',
-      choose: () => setRouterOpen(true),
+      choose: () => {
+        // iOS keeps a focused textarea's caret above the model sheet even though
+        // the sheet covers the composer. Dismiss its keyboard before opening it.
+        composerRef.current?.blur();
+        setRouterOpen(true);
+      },
     },
     reasoning:
       reasoning && (reasoning.choices?.length ?? 0) > 0

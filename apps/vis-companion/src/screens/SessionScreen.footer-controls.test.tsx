@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { GatewayClient } from '../lib/gateway';
@@ -51,6 +51,21 @@ describe('composer response controls', () => {
     expect(container.querySelector('section > footer')).toHaveClass(
       'pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))]',
     );
+  });
+
+  // Regression: on iOS, the focused composer's native caret paints through the
+  // model sheet when a new session opens its picker without dismissing focus.
+  it('blurs the composer before opening the model picker', () => {
+    renderSessionScreen({ client: { onProviderLimits: () => () => {} } });
+    const composer = screen.getByRole('textbox', { name: 'Message Vis' });
+    composer.focus();
+    expect(document.activeElement).toBe(composer);
+
+    // A phone tap on a button need not move DOM focus off the textarea.
+    fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
+
+    expect(screen.getByRole('dialog', { name: 'Model' })).toBeInTheDocument();
+    expect(document.activeElement).not.toBe(composer);
   });
 
   // Regression, user report: cumulative token and price totals were repeated in the
