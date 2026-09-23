@@ -201,10 +201,10 @@ describe('ProjectGroup groups', () => {
   // arrive shut in the next one.
   beforeEach(() => window.localStorage.clear());
 
-  it('nests a group band under the project header, with its colour and the gateway count', async () => {
+  it('nests a group band under the project header, with its colour and filed rows', async () => {
     mount();
     const wallet = await band('Wallet work');
-    expect(within(wallet).getByText('2 sessions')).toBeInTheDocument();
+    expect(within(wallet).queryByText('2 sessions')).toBeNull();
     // The band wears its colour ONCE, as the rail down the leading edge it shares with
     // every row filed under it (BLO-167): band rail + one per filed row, nothing else.
     // A dot beside the name said the same thing a second time, so it is gone.
@@ -255,10 +255,9 @@ describe('ProjectGroup groups', () => {
     expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(3);
   });
 
-  // Requested in this Vis session (paraphrased: the groups and the sessions should be two
-  // different sets, and a session in a group is not in the sessions). Each set is named,
-  // and the count over the sessions is the gateway's LOOSE total — what the pager walks.
-  it('names both sets and keeps a filed session out of the session set', async () => {
+  // The two sets name their rows without repeating counts from the project header.
+  // Filing a session moves it into its group, not into the loose Sessions set.
+  it('names both sets without repeated tallies and keeps filed sessions out of Sessions', async () => {
     const page = {
       rows: [ROWS[2], ROWS[3]],
       total: 2,
@@ -271,20 +270,19 @@ describe('ProjectGroup groups', () => {
     const list = wallet.closest('[data-project-root]') as HTMLElement;
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
-    expect(within(groupsHeader).getByText('1 group')).toBeInTheDocument();
+    expect(within(groupsHeader).queryByText('1 group')).toBeNull();
     // Each headline is RULED on both edges, so the set it names reads as a strip over its
     // own rows instead of as the first of them.
     expect(groupsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-groups');
     expect(within(groupsHeader).getByText('Groups')).toHaveClass('text-ui', 'text-accent-ink');
-    expect(within(groupsHeader).getByText('1 group').parentElement).toHaveClass(
-      'text-meta',
-      'text-white',
-    );
-    // The tally over the sessions is the gateway's LOOSE total, not the band's own two.
+    expect(within(wallet).queryByText('2 sessions')).toBeNull();
+    // The project still owns its total; each set keeps only its own heading and actions.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
-    expect(within(sessionsHeader).getByText('2 sessions')).toBeInTheDocument();
+    expect(within(sessionsHeader).queryByText('2 sessions')).toBeNull();
     expect(sessionsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-sessions');
     expect(within(sessionsHeader).getByText('Sessions')).toHaveClass('text-ui', 'text-white');
+    const projectHeader = within(list).getByText(STORY_NEWER_PROJECT.name).closest('header')!;
+    expect(within(projectHeader).getByText('4 sessions')).toBeInTheDocument();
 
     // The session set starts under its own word and holds neither filed row.
     const loose: string[] = [];
@@ -495,10 +493,31 @@ describe('ProjectGroup groups', () => {
     expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
   });
 
-  // Regression, user report (paraphrased: the project's own count should not be bold and
-  // should be smaller): a header's total is a caption in the voice its bands count in, not
-  // a second heading standing under the project's name.
-  it('prints the project total in the quiet voice a band counts in', async () => {
+  // Only the project showing its sets gets the accented band; folding must return it
+  // to the same neutral surface used by unopened projects.
+  it('accents the expanded project and returns the neutral band when folded', async () => {
+    const { user } = mount();
+    const disclosure = await screen.findByRole('button', {
+      name: `Collapse ${STORY_NEWER_PROJECT.name}`,
+    });
+    const header = disclosure.closest('header')!;
+    expect(header).toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+    expect(header).not.toHaveClass('bg-project-header');
+    expect(header).toHaveClass('sticky', 'top-0', 'mouse:focus-within:bg-hover');
+    expect(header.className).toContain('var(--color-project-header-active)');
+
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(header).toHaveClass('bg-project-header');
+    expect(header).not.toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+    expect(header.className).toContain('var(--color-project-header)');
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(header).toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+  });
+
+  // The project total remains a quiet caption when the bands stop repeating counts.
+  it('keeps the project total in its quiet caption', async () => {
     mount();
     const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
     const total = within(header).getByText(`${ROWS.length} sessions`);
@@ -506,12 +525,8 @@ describe('ProjectGroup groups', () => {
     const caption = total.closest(`[title="${ROOT}"]`) as HTMLElement;
     expect(caption).toHaveClass('mouse:text-chip');
     expect(caption).not.toHaveClass('mouse:text-meta');
-    // A band still counts in its own label's weight: the tally takes the line it stands on.
     const wallet = await band('Wallet work');
-    expect(within(wallet).getByText('2 sessions').parentElement).toHaveClass(
-      'text-chip',
-      'font-bold',
-    );
+    expect(within(wallet).queryByText('2 sessions')).toBeNull();
   });
 
   it('folds one group without folding the project', async () => {
@@ -830,8 +845,8 @@ describe('ProjectGroup groups', () => {
     mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
 
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
-    // THE WALL IS WHAT IS COUNTED, not the ten bands of it on screen.
-    expect(within(groups).getByText('24 groups')).toBeInTheDocument();
+    // Removing the visible tally does not change the underlying number of group pages.
+    expect(within(groups).queryByText('24 groups')).toBeNull();
     const steps = within(groups).getByRole('navigation', {
       name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
     });

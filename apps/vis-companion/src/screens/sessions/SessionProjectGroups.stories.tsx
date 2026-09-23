@@ -10,6 +10,7 @@ import {
 } from '../../dev/story-data';
 import { machineKey } from '../../lib/fleet';
 import { projectFoldKey, writeProjectFold } from '../../lib/project-fold';
+import { THEMES } from '../../lib/themes.generated';
 import type { SessionGroup } from '../../lib/types';
 import { ProjectGroup } from './SessionProjectGroups';
 
@@ -369,7 +370,7 @@ export const Groups: Story = {
     await expect(groupsHeader.getBoundingClientRect().height).toBe(
       sessionsHeader.getBoundingClientRect().height,
     );
-    await expect(within(band).getByText('2 sessions')).toBeVisible();
+    await expect(within(band).queryByText('2 sessions')).toBeNull();
     await expect(band.querySelectorAll('[data-session-id]')).toHaveLength(2);
     await expect(page.getByRole('button', { name: /(Collapse|Expand) Receipts/ })).toBeVisible();
     // A group folds on its own, and the rest of the project stays where it was.
@@ -465,11 +466,11 @@ export const GroupDragAndDrop: Story = {
     canvasElement.ownerDocument.addEventListener('dragstart', watchDrag);
 
     await dragOnto(strip(fixture.rows[3].id), bandHeader());
-    await within(wallet()).findByText('3 sessions');
+    await waitFor(() => expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(3));
     await expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(3);
 
     await dragOnto(strip(GROUPED[0].id), page.getByText('Sessions').parentElement!);
-    await within(wallet()).findByText('2 sessions');
+    await waitFor(() => expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(2));
     await expect(wallet().querySelectorAll('[data-session-id]')).toHaveLength(2);
 
     canvasElement.ownerDocument.removeEventListener('dragstart', watchDrag);
@@ -659,6 +660,12 @@ export const StickySectionHeaders: Story = {
     const nextSessions = within(next as HTMLElement).getByText('Sessions').parentElement!;
     const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const style = (element: Element) => getComputedStyle(element);
+    // The expanded project's accent stays opaque and distinct from both set bands.
+    const accentEdge = getComputedStyle(project, '::before');
+    await expect(accentEdge.width).toBe('4px');
+    await expect(accentEdge.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    await expect(style(project).backgroundColor).toBe(style(nextProject).backgroundColor);
+    await expect(style(project).backgroundColor).not.toBe(style(groups).backgroundColor);
     // Distinct, opaque set surfaces keep the words readable over scrolling rows.
     for (const set of [groups, sessions]) {
       await expect(style(set).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
@@ -718,6 +725,15 @@ export const StickySectionHeaders: Story = {
       nextSessions.getBoundingClientRect().top + 12,
     );
     await expect(nextSessions.contains(nextHit)).toBe(true);
+    const expandedSurface = style(nextProject).backgroundColor;
+    const disclosure = within(nextProject).getByRole('button', { name: 'Collapse /After' });
+    await userEvent.click(disclosure);
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    await expect(style(nextProject).backgroundColor).not.toBe(expandedSurface);
+    await expect(getComputedStyle(nextProject, '::before').content).toBe('none');
+    await userEvent.click(disclosure);
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    await expect(style(nextProject).backgroundColor).toBe(expandedSurface);
   },
 };
 
@@ -733,7 +749,27 @@ export const StaticSectionHeadersDesktop: Story = {
     await within(first as HTMLElement).findByText('Session page row 0');
     await expect(getComputedStyle(groups).position).toBe('static');
     await expect(getComputedStyle(sessions).position).toBe('static');
+    const header = first.querySelector('header')!;
+    const paint = getComputedStyle(header).backgroundColor;
+    const disclosure = within(header).getByRole('button', { name: 'Collapse /CryptoSafe' });
+    await userEvent.tab();
+    disclosure.focus();
+    await expect(disclosure).toHaveFocus();
+    await expect(getComputedStyle(header).backgroundColor).not.toBe(paint);
+    await expect(getComputedStyle(header, '::before').width).toBe('4px');
+    disclosure.blur();
+    await expect(getComputedStyle(header).backgroundColor).toBe(paint);
   },
+};
+
+export const StaticSectionHeadersDesktopDark: Story = {
+  ...StaticSectionHeadersDesktop,
+  globals: { theme: 'blockether-dark', viewport: { value: 'desktop', isRotated: false } },
+};
+
+export const StaticSectionHeadersDesktopHighContrast: Story = {
+  ...StaticSectionHeadersDesktop,
+  globals: { theme: 'high-contrast-dark', viewport: { value: 'desktop', isRotated: false } },
 };
 
 export const StickySectionHeadersDark: Story = {
@@ -741,7 +777,44 @@ export const StickySectionHeadersDark: Story = {
   globals: { theme: 'blockether-dark' },
 };
 
-// A long project name, group name and a three-digit group count exercise the entire 320px rail.
+export const StickySectionHeadersHighContrast: Story = {
+  ...StickySectionHeaders,
+  globals: { theme: 'high-contrast-dark' },
+};
+
+// Each shipped palette must keep the open project distinct from neutral folded bands
+// and from its two set headers; the focused and sticky cases have their own plays.
+export const ExpandedHeaderAcrossThemes: Story = {
+  ...StickySectionHeaders,
+  play: async ({ canvasElement }) => {
+    const first = canvasElement.querySelector('[data-project-root="/CryptoSafe"]')!;
+    const next = canvasElement.querySelector('[data-project-root="/After"]')!;
+    await within(first as HTMLElement).findByText('Session page row 0');
+    await within(next as HTMLElement).findAllByText('Check transaction confirmations');
+    const expanded = first.querySelector('header')!;
+    const collapsed = next.querySelector('header')!;
+    const groups = within(first as HTMLElement).getByText('Groups').parentElement!;
+    const sessions = within(first as HTMLElement).getByText('Sessions').parentElement!;
+    await userEvent.click(within(collapsed).getByRole('button', { name: 'Collapse /After' }));
+    const root = canvasElement.ownerDocument.documentElement;
+    const previousTheme = root.dataset.theme;
+    const surface = (element: Element) => getComputedStyle(element).backgroundColor;
+    try {
+      for (const { id } of THEMES) {
+        root.dataset.theme = id;
+        await expect(surface(expanded)).not.toBe(surface(collapsed));
+        await expect(surface(expanded)).not.toBe(surface(groups));
+        await expect(surface(expanded)).not.toBe(surface(sessions));
+        await expect(getComputedStyle(expanded, '::before').width).toBe('4px');
+      }
+    } finally {
+      if (previousTheme === undefined) delete root.dataset.theme;
+      else root.dataset.theme = previousTheme;
+    }
+  },
+};
+
+// Long project and group names with a three-digit pager total still fit the 320px rail.
 const LONG_GROUPS: SessionGroup[] = [
   { ...GROUPED_BANDS[0], name: 'Wallet work: archived transactions and reconciliation' },
   ...GROUPED_BANDS.slice(1),
@@ -785,7 +858,7 @@ export const NarrowSectionHeaders: Story = {
     const project = pane.querySelector('header')!;
     const groups = page.getByText('Groups').parentElement!;
     const sessions = page.getByText('Sessions').parentElement!;
-    await expect(within(groups).getByText('123 groups')).toBeVisible();
+    await expect(within(groups).queryByText('123 groups')).toBeNull();
     await expect(longBand).toBeVisible();
     await expect(pane.clientWidth).toBe(320);
     await expect(pane.scrollWidth).toBe(pane.clientWidth);

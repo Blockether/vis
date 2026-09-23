@@ -2,7 +2,54 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HeaderActions, Pager, SectionHeader } from './SessionNavigator';
+import { HeaderActions, MachineMark, MachineTab, Pager, SectionHeader } from './SessionNavigator';
+import { MACHINE_COLORS } from '../lib/machine-colors';
+
+describe('machine selection', () => {
+  it('gives only an answering selected tile an accent face and edge without masking its identity or news', () => {
+    const color = MACHINE_COLORS[7]!;
+    const mark = <MachineMark color={color} />;
+    const { rerender } = render(
+      <MachineTab isOn hasUnread onClick={() => {}}>
+        {mark}tower
+      </MachineTab>,
+    );
+    const selected = screen.getByRole('button', { name: /tower\s*unread/ });
+    expect(selected).toHaveAttribute('aria-pressed', 'true');
+    expect(selected).toHaveClass(
+      'bg-accent-surface',
+      'text-accent-ink',
+      'ring-1',
+      'ring-inset',
+      'ring-accent-ink',
+    );
+    expect(selected).toHaveClass('focus-visible:outline-2', 'focus-visible:outline-accent-ink');
+    expect(selected.querySelector('[aria-hidden="true"]')).toHaveClass(color.dot);
+    expect(screen.getByText('unread').parentElement).toHaveClass('bg-accent-ink');
+
+    rerender(
+      <MachineTab isOn={false} hasUnread onClick={() => {}}>
+        {mark}tower
+      </MachineTab>,
+    );
+    const unread = screen.getByRole('button', { name: /tower\s*unread/ });
+    expect(unread).toHaveAttribute('aria-pressed', 'false');
+    expect(unread).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
+    expect(unread.querySelector('[aria-hidden="true"]')).toHaveClass(color.dot);
+    expect(screen.getByText('unread').parentElement).toHaveClass('bg-accent-ink');
+
+    rerender(
+      <MachineTab isOn hasUnread isDown label="Reconnect to tower" onClick={() => {}}>
+        <MachineMark color={color} isHollow />tower
+      </MachineTab>,
+    );
+    const retry = screen.getByRole('button', { name: 'Reconnect to tower' });
+    expect(retry).not.toHaveAttribute('aria-pressed');
+    expect(retry).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
+    expect(retry.querySelector('[aria-hidden="true"]')).toHaveClass(color.rail);
+    expect(screen.queryByText('unread')).toBeNull();
+  });
+});
 
 // Regression: the chosen header layout is `previous · current / total · next` on every device.
 describe('project pages', () => {

@@ -248,9 +248,7 @@
      already owns a colour rail there. Opaque, because the touch drawer's own slab has
      to be able to wear it. */
   --color-standing: color-mix(in oklab, var(--primary) 14%, var(--surface));
-  /* Project and set headings separate by neutral depth and a restrained theme tint.
-     Both set surfaces stay opaque when their headers stick over scrolling rows. */
-  --color-project-header: color-mix(in oklab, var(--fg) 14%, var(--surface));
+  /* Both set surfaces stay opaque when their headers stick over scrolling rows. */
   --color-set-groups: color-mix(in oklab, var(--primary) 8%, var(--surface));
   --color-set-sessions: color-mix(in oklab, var(--fg) 6%, var(--surface));
   --color-project-live: color-mix(in oklab, var(--ok) 50%, var(--fg));
@@ -268,6 +266,13 @@
   --shadow-float: 4px 4px 0 var(--dialog-shadow);
   --font-sans: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
+}
+
+/* Project headers are used again as the ground of their own focus/hover tint, so
+   these tokens remain CSS variables rather than inline Tailwind substitutions. */
+@theme {
+  --color-project-header: color-mix(in oklab, var(--fg) 14%, var(--surface));
+  --color-project-header-active: color-mix(in oklab, var(--warning) 25%, var(--surface));
 }
 
 /* Machine identity hues (see `src/lib/machine-colors.ts`). Sixteen categorical

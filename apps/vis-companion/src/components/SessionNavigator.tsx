@@ -25,7 +25,7 @@ const HEADER_TYPE = 'text-title';
  * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
+  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-white [--dialog-hint:var(--footer-strong)]';
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
@@ -94,10 +94,9 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 /**
  * One heading, standing in the band that carries the boundary (`HEADER_BAND`).
  *
- * It takes no rule argument. The band draws the same edge for every section it heads: a
- * coloured line for one of them was a second vocabulary for "a group starts here", and
- * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
- * Every session is in a project, so the list has ONE kind of section.
+ * Its border remains the same in every fold state. Expanded projects get a theme-derived
+ * warm surface and a leading accent edge; collapsed projects and loading placeholders stay
+ * neutral. Every session is in a project, so the list has ONE kind of section.
  *
  * A SECTION'S OWN CONTROLS OWN ITS TRAILING EDGE, AND A PAGER IS NOT ONE OF THEM.
  * Reported over the project header while the pager stood on that edge: a paged project
@@ -107,10 +106,20 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * the page over its sessions (`SetHeader`) — which leaves this band one shape, and the
  * row menu last on it, paged or not.
  */
-export function SectionHeader({ children }: { children: ReactNode }) {
+export function SectionHeader({
+  children,
+  isExpanded = false,
+}: {
+  children: ReactNode;
+  isExpanded?: boolean;
+}) {
   return (
     <header
-      className={`${HEADER_BAND} sticky top-0 flex [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      className={`${HEADER_BAND} sticky top-0 flex ${
+        isExpanded
+          ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))] before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-accent-ink before:content-[""]'
+          : 'bg-project-header [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))]'
+      } mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>
@@ -685,7 +694,8 @@ export function MachineMark({
 
 /**
  * One scrollable machine-state track plus a separate add action. `All` is the first tile
- * only for a fleet; selection is a raised tile, and overflow stays inside the track.
+ * only for a fleet; the selected tile has its own accent face and inset edge, while overflow
+ * stays inside the track.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
@@ -734,11 +744,11 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink motion-reduce:transition-none mouse:h-5 ${
         isDown
           ? 'text-dialog-hint hover:text-white'
           : isOn
-            ? 'bg-panel font-bold text-white'
+            ? 'bg-accent-surface font-bold text-accent-ink ring-1 ring-inset ring-accent-ink'
             : hasUnread
               ? 'font-bold text-white'
               : 'text-dialog-hint hover:text-white'
@@ -747,7 +757,7 @@ export function MachineTab({
       {children}
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
       {hasUnread && !isDown && (
-        <span className="inline-block size-1.5 shrink-0 bg-accent">
+        <span className="inline-block size-1.5 shrink-0 bg-accent-ink">
           <span className="sr-only">unread</span>
         </span>
       )}

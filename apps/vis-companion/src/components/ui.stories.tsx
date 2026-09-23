@@ -1241,7 +1241,53 @@ export const Machines: Story = {
     await expect(buttons[1]).toBeDisabled();
     await expect(buttons[1]).toHaveAttribute('aria-busy', 'true');
     await expect(buttons[2]).toBeDisabled();
+
+    const chosen = canvas.getByRole('button', { name: 'Switch to tower' });
+    const unread = canvas.getByRole('button', { name: 'Switch to macbook-pro-16-work' });
+    const down = canvas.getByRole('button', { name: 'Switch to mini' });
+    const track = chosen.parentElement!;
+    const style = (element: Element) => getComputedStyle(element);
+    const machineMark = (button: Element) => button.querySelector('span[aria-hidden="true"]')!;
+    const unreadHue = style(machineMark(unread)).backgroundColor;
+    await expect(chosen).toHaveAttribute('aria-pressed', 'true');
+    if (chosen.ownerDocument.documentElement.dataset.theme !== 'high-contrast-dark') {
+      await expect(style(chosen).backgroundColor).not.toBe(style(track).backgroundColor);
+    }
+    await expect(style(chosen).color).not.toBe(style(chosen).backgroundColor);
+    await expect(style(chosen).boxShadow).toContain('inset');
+    await expect(unread).toHaveAttribute('aria-pressed', 'false');
+    await expect(style(unread).backgroundColor).not.toBe(style(chosen).backgroundColor);
+    await expect(unread.querySelector('.sr-only')).toHaveTextContent('unread');
+    await expect(down).not.toHaveAttribute('aria-pressed');
+    await expect(parseFloat(style(machineMark(down)).borderTopWidth)).toBeGreaterThan(0);
+
+    await userEvent.click(unread);
+    await expect(unread).toHaveAttribute('aria-pressed', 'true');
+    await expect(chosen).toHaveAttribute('aria-pressed', 'false');
+    if (chosen.ownerDocument.documentElement.dataset.theme !== 'high-contrast-dark') {
+      await expect(style(unread).backgroundColor).not.toBe(style(track).backgroundColor);
+    }
+    await expect(style(unread).boxShadow).toContain('inset');
+    await expect(style(machineMark(unread)).backgroundColor).toBe(unreadHue);
+    await expect(style(unread.querySelector('span.bg-accent-ink')!).backgroundColor).toBe(
+      style(unread).color,
+    );
+
+    await userEvent.click(down);
+    await expect(down).not.toHaveAttribute('aria-pressed');
+    await expect(style(down).backgroundColor).toBe(style(chosen).backgroundColor);
+    await expect(style(down).boxShadow).toBe('none');
   },
+};
+
+export const MachinesDark: Story = {
+  ...Machines,
+  globals: { theme: 'blockether-dark' },
+};
+
+export const MachinesHighContrast: Story = {
+  ...Machines,
+  globals: { theme: 'high-contrast-dark' },
 };
 
 function SettingsChoiceDemo() {

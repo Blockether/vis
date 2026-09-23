@@ -22,7 +22,6 @@ import {
 import {
   HEADER_TRAIL,
   HeaderActions,
-  HeaderMeta,
   HeaderTally,
   LIST_MARK,
   Pager,
@@ -246,21 +245,12 @@ function SessionDropArea({
  */
 function SetHeader({
   label,
-  count,
-  unit,
   navigation,
   action,
   isArchived = false,
   isOver = false,
 }: {
   label: 'Groups' | 'Sessions';
-  /**
-   * How many rows are in THIS set. Left out where that is the number the band above just
-   * printed: a project with no group has one set, and saying its total twice, a hairline
-   * apart, is the second count a whole row of the list was once deleted for.
-   */
-  count?: number;
-  unit: string;
   /**
    * THIS SET'S OWN STEPS, on the trailing edge of its band. The bands and the loose
    * sessions under them are two lists cut apart, so each set carries the pager that
@@ -288,11 +278,6 @@ function SetHeader({
       {/* The verb of THIS drop, said while the row hovers: a lit bar alone reads as
           "file it here", and what actually happens is the session leaving its group. */}
       {isOver && <span className="font-mono text-meta text-white">Drop to ungroup</span>}
-      {count !== undefined && (
-        <HeaderMeta variant="set">
-          <HeaderTally count={count} unit={unit} />
-        </HeaderMeta>
-      )}
       {/* The set menu follows its own page controls on the trailing edge. */}
       {(action || navigation) && (
         <span className={`ml-auto ${HEADER_TRAIL}`}>
@@ -308,23 +293,19 @@ function SetHeader({
  * One group's own band, inside its project's list.
  *
  * A level quieter than the project header above it, and deliberately so: the project owns
- * the boundary rule, while a group owns its name, its colour, its own fold and the count
- * of what is filed under it. A band is never paged from the INSIDE — it is a shelf a
- * reader reads whole — but the WALL of bands is paged, and those steps stand on the
- * `Groups` header over them.
+ * the boundary rule, while a group owns its name, its colour and its own fold. A band is
+ * never paged from the INSIDE — it is a shelf a reader reads whole — but the WALL of bands
+ * is paged, and those steps stand on the `Groups` header over them.
  */
 function GroupBand({
   name,
   color,
-  count,
   isOpen,
   onToggle,
   onActions,
 }: {
   name: string;
   color: string | null;
-  /** The gateway's tally for the WHOLE group, which is also what stands under it. */
-  count: number;
   isOpen: boolean;
   onToggle: () => void;
   onActions: (anchor: HTMLElement) => void;
@@ -346,9 +327,6 @@ function GroupBand({
           <ChevronIcon open={isOpen} className="size-3 text-dialog-hint" />
         </span>
         <span className="min-w-0 truncate font-mono text-ui font-bold text-white">{name}</span>
-        <HeaderMeta>
-          <HeaderTally count={count} unit="session" />
-        </HeaderMeta>
       </button>
       <HeaderActions align="center">
         <IconButton
@@ -1372,7 +1350,6 @@ export const ProjectGroup = memo(function ProjectGroup({
   // actions on its own header, even when empty. A query shows one session set.
   const hasGroups = bands.length > 0;
   const listed = searching ? painted : filed.loose;
-  const listedCount = searching ? listed.length : (paged?.total ?? filed.loose.length);
   // Each archive answers for its own set, including when the other set has rows.
   const emptyGroups =
     isGroupRevealing &&
@@ -1393,7 +1370,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-project-root={root}
         className="[&+&]:pt-2"
       >
-        <SectionHeader>
+        <SectionHeader isExpanded={isShowing}>
           <ProjectCrumb
             name={project}
             qualifier={qualifier}
@@ -1423,12 +1400,6 @@ export const ProjectGroup = memo(function ProjectGroup({
               <div>
                 <SetHeader
                   label="Groups"
-                  // THE WALL IS WHAT IS COUNTED, not the page of it under this word: the
-                  // steps beside the number are what cut that page. A band this device
-                  // learned from a ROW is not in the gateway's count yet, so the larger of
-                  // the two numbers is the honest one.
-                  count={Math.max(groupTotal, bands.length)}
-                  unit="group"
                   isArchived={isGroupRevealing}
                   navigation={groupPager}
                   action={
@@ -1461,7 +1432,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                           <GroupBand
                             name={band.name}
                             color={band.color}
-                            count={band.count}
                             isOpen={isBandOpen}
                             onToggle={() => foldGroup(band.id, !isBandOpen)}
                             onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
@@ -1490,10 +1460,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {/* A band files into itself; this area takes a session back out. */}
                   <SetHeader
                     label="Sessions"
-                    // With groups, count loose sessions; under a query, count its hits.
-                    // Otherwise the project header already shows this same total.
-                    count={hasGroups || searching ? listedCount : undefined}
-                    unit="session"
                     isArchived={isSessionRevealing}
                     navigation={pager}
                     action={

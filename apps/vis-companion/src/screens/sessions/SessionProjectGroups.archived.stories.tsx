@@ -126,7 +126,7 @@ export const LiveList: Story = {
     // it, the archived group has no band here, and the archived loose session is not below.
     await expect(painted(wallet)).toEqual([FILED.id]);
     await expect(painted(canvasElement)).toEqual([FILED.id]);
-    await expect(within(wallet).getByText('1 session')).toBeVisible();
+    await expect(within(wallet).queryByText('1 session')).toBeNull();
     await expect(page.queryByRole('button', { name: 'Collapse Receipts' })).toBeNull();
   },
 };
