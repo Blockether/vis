@@ -19,7 +19,7 @@
 
         (expect (= :anthropic (:provider/id api-provider)))
         (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
-        (expect (= "claude-opus-5"
+        (expect (= "claude-opus-5-5"
                    (first (get-in api-provider [:provider/preset :default-models]))))
         (expect (contains? (set (get-in api-provider [:provider/preset :default-models]))
                            "claude-fable-5-1"))

@@ -9838,10 +9838,10 @@
                                                               name))
                                                    (= (str (:llm-model iteration-result))
                                                       (str (:name served))))
-                                limit (or (token-limit max-context-tokens)
-                                          (when known-served?
-                                            (or (token-limit (:input-limit served))
-                                                (token-limit (:context served)))))
+                                ;; Persist the same request budget as live CTX, including
+                                ;; output reserve and any tighter caller ceiling.
+                                limit (when (or known-served? (token-limit max-context-tokens))
+                                        effective-context-limit)
                                 budget (context-fold-budget limit)]
 
                             (cond-> {:session-turn-id session-turn-id

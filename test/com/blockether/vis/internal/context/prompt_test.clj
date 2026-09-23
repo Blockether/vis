@@ -648,9 +648,11 @@
                       "`r[\"exit\"]`"]]
           (expect (str/includes? text rule) rule))))
   ;; #239: pin type-directed access and recovery without adding another discovery preflight.
-  (it "distinguishes mapping keys from record attributes and inspects only unknown shapes"
-      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
-        (doseq [rule ["mappings `r['key']`, records `r.field`"
+  (it "names both result access spellings and inspects only unknown shapes"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq [rule ["every result answers BOTH spellings"
+                      "`r['key']` and `r.key` on a result map or `session`"
+                      "`r.field` and `r['field']` on a record"
                       "Inspect unknown shapes via keys/types or `dir(value)`"
                       "Use the keys and fields an error lists"]]
           (expect (str/includes? text rule) rule))))
@@ -793,7 +795,8 @@
       ;; 10.7k → 10.8k: user report — "you can delete the helper and it is not available in
       ;; `defs` then" was not what §2 said. Deletion now names what it removes and that a
       ;; restart restores only what is still defined. The lifecycle lands at 10 754.
-      (expect (< (count text) 10800))
+      ;; Frozen-record access and mutation recovery now take 10 881 characters.
+      (expect (< (count text) 10900))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]

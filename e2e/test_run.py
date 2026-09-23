@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 from e2e import run
 from e2e.run import cache_metric_failures, decode_usage_body, usage_percent
@@ -168,6 +168,65 @@ class SourceClasspathTest(unittest.TestCase):
                 self.assertEqual(1, resolve.call_count)
         finally:
             run.source_classpath.cache_clear()
+
+
+class NativeEngineTest(unittest.TestCase):
+    def test_native_agent_uses_the_requested_binary_and_workspace(self):
+        for magic in (
+            b"\x7fELF",
+            b"\xcf\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xca\xfe\xba\xbe",
+        ):
+            with (
+                self.subTest(magic=magic),
+                patch.object(run, "NATIVE_BIN", "/release/vis"),
+                patch("builtins.open", mock_open(read_data=magic)),
+            ):
+                self.assertEqual(
+                    ["/release/vis", "-Duser.dir=/tmp/fixture"],
+                    run.agent_prefix("/tmp/fixture"),
+                )
+
+    def test_native_gateway_still_uses_the_canonical_client(self):
+        with (
+            patch.object(run, "NATIVE_BIN", "/release/vis"),
+            patch("builtins.open", mock_open(read_data=b"\x7fELF")),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            run.gateway_eval({}, "(gateway-client/status)", 20, cwd="/tmp/fixture")
+        form = invoke.call_args.args[0][-1]
+        self.assertIn("gateway.discovery", form)
+        self.assertIn("with-redefs [gateway-discovery/base-argv", form)
+        self.assertIn('["/release/vis" "-Duser.dir=/tmp/fixture"]', form)
+        self.assertIn("(gateway-client/status)", form)
+
+    def test_native_mode_rejects_a_launcher_that_could_select_the_jvm(self):
+        with tempfile.TemporaryDirectory() as work:
+            launcher = Path(work) / "vis-agent"
+            launcher.write_text('#!/bin/sh\nexec clojure -M:vis "$@"\n')
+            with (
+                patch.object(run, "NATIVE_BIN", str(launcher)),
+                self.assertRaisesRegex(RuntimeError, "raw native executable"),
+            ):
+                run.agent_prefix(work)
+
+    def test_jvm_agent_keeps_the_source_classpath(self):
+        with (
+            patch.object(run, "NATIVE_BIN", None, create=True),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+        ):
+            self.assertEqual(
+                [
+                    run.CLOJURE,
+                    "-Scp",
+                    "/checkout/src",
+                    "-J-Duser.dir=/tmp/fixture",
+                    "-M:vis",
+                ],
+                run.agent_prefix("/tmp/fixture"),
+            )
 
 
 class ExtensionGatewayTest(unittest.TestCase):

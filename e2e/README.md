@@ -84,6 +84,19 @@ VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
 VIS_PROVIDER=github-copilot VIS_MODEL=gpt-6-astra VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-add-param
 ```
 
+To run the same scenarios against a built native engine, set
+`VIS_E2E_NATIVE_BIN` to the absolute raw native executable path, not the
+`vis-agent` launcher. Both agent turns and isolated fixture gateways then use
+that binary; the JVM only runs the canonical gateway client for startup,
+usage queries and cleanup. Missing binaries and launcher scripts fail the run
+rather than falling back to source. Also supply the matching Python sidecar.
+
+```sh
+VIS_E2E_NATIVE_BIN=/path/to/vis-agent-native \
+VIS_PYTHON_NATIVE_PATH=/path/to/vis-agent-python/libvispython.dylib \
+python3 e2e/run.py
+```
+
 Environment variables: `VIS_MODELS` (comma-separated models, default
 `VIS_MODEL`), `VIS_E2E_TIMEOUT` (explicit whole-scenario budget in seconds),
 `VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_REPEATS` (positive repetitions

@@ -280,15 +280,24 @@
                                [(str/lower-case (str k)) (vec v)]))
                         (.getRequestHeaders exchange))
 
+                  ;; Startup metadata refresh must not consume scripted inference replies.
+                  catalog?
+                  (and (= "GET" (.getRequestMethod exchange))
+                       (str/ends-with? (.getPath (.getRequestURI exchange)) "/models"))
+
                   stream?
                   (str/includes? (str/replace request " " "") "\"stream\":true")
 
                   payload
-                  (.getBytes ^String (if stream? (stream-body reply) (whole-body reply))
+                  (.getBytes ^String
+                             (cond catalog? "{\"data\":[]}"
+                                   stream? (stream-body reply)
+                                   :else (whole-body reply))
                              StandardCharsets/UTF_8)]
 
-              (swap! asked conj
-                {:path (.getPath (.getRequestURI exchange)) :body request :headers headers})
+              (when-not catalog?
+                (swap! asked conj
+                  {:path (.getPath (.getRequestURI exchange)) :body request :headers headers}))
               (.add (.getResponseHeaders exchange)
                     "Content-Type"
                     (if stream? "text/event-stream" "application/json"))
@@ -2010,3 +2019,147 @@
                (expect (str/includes? (:output result) "module: interactive input and EOF passed")
                        (:output result)))
              (finally (delete-tree! dir))))))
+
+(defn- native-context-case!
+  "Exercise token resources, independent input limits and a measured fold in the linked image."
+  [model tokenizer & [limits]]
+  (let
+    [dir
+     (temp-dir "vis-native-context-")
+
+     calls
+     (atom 0)
+
+     original-stream
+     stream-body
+
+     original-whole
+     whole-body
+
+     steps
+     [{:input 24000
+       :code (str "assert session['utilization']['model_input_limit'] == 36000\n"
+                  "print('お誕生日おめでとう Zażółć gęślą jaźń 👋 <|endoftext|> ' * 40)")}
+      {:input 28000
+       :code
+       (str
+         "fold_session('-t' + str(session['turn']) + '/i1', "
+         "'Native context evidence: Unicode and special-token literals counted; input cap 36000.')")}
+      {:input 5000
+       :code (str "u = session['utilization']\n"
+                  "assert u['model_input_limit'] == 36000, u\n" "assert u['fold_count'] == 1, u\n"
+                  "m = u['fold_measurement']\n" "assert m['status'] == 'measured', m\n"
+                  "assert m['before_input_tokens'] == 28000, m\n"
+                  "assert m['after_input_tokens'] == 5000, m\n"
+                  "assert m['net_reduction_tokens'] == 23000, m\n"
+                  "print('Native tokenizer and folding verified')")} {:input 5500}]
+
+     respond
+     (fn [stream? reply]
+       (let [index
+             (dec (long (swap! calls inc)))
+
+             {:keys [input code]}
+             (get steps index {:input 5500})
+
+             body
+             (if code
+               (python-call-body stream? (str "native-context-" index) code)
+               ((if stream? original-stream original-whole) reply))
+
+             usage
+             {"prompt_tokens" input "completion_tokens" 2 "total_tokens" (+ (long input) 2)}]
+
+         (if stream?
+           (str/replace body
+                        "data: [DONE]\n\n"
+                        (str "data: "
+                             (json/write-json-str {"choices" [] "usage" usage})
+                             "\n\ndata: [DONE]\n\n"))
+           (json/write-json-str (assoc (json/read-json body) "usage" usage)))))]
+
+    (try
+      (with-redefs [stream-body
+                    #(respond true %)
+
+                    whole-body
+                    #(respond false %)]
+
+        (let [{:keys [server port asked]} (start-stub-provider! "Native context complete.")]
+          (try
+            (.mkdirs (io/file dir ".vis"))
+            (spit (io/file dir ".vis/config.yml")
+                  (json/write-json-str {:default_provider "stub-local"
+                                        :default_model model
+                                        :providers
+                                        [{:id "stub-local"
+                                          :base_url (str "http://127.0.0.1:" port "/v1")
+                                          :compatibility "openai"
+                                          :models [(cond-> (merge {:name model :is_tool_call true}
+                                                                  (or limits
+                                                                      {:context 50000
+                                                                       :input_limit 36000
+                                                                       :output_limit 4000}))
+                                                     tokenizer
+                                                     (assoc :tokenizer tokenizer))]}]}))
+            (let [database (io/file dir "sessions")
+                  {:keys [finished? exit output]}
+                  (run-binary dir
+                              [(.getAbsolutePath (require-binary))
+                               (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                               (.getAbsolutePath database) "--raw"
+                               "Verify Unicode tokenization and fold the completed evidence."]
+                              240)]
+
+              (expect finished? output)
+              (expect (= 0 exit) output)
+              (expect (= 4 @calls) output)
+              (expect (str/includes? output "Native context complete.") output)
+              (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                (try
+                  (let [sid (:id (first (ps/db-list-sessions store :all)))
+                        forms (mapcat :forms
+                                      (mapcat #(ps/db-list-session-turn-iterations store (:id %))
+                                              (ps/db-list-session-turns store sid)))
+                        health (:health (ps/db-session-usage-stats store sid))
+                        requests (filter #(str/ends-with? (:path %) "/chat/completions") @asked)]
+
+                    (expect (= 3 (count forms))
+                            (pr-str {:forms (mapv #(select-keys % [:src :error]) forms)
+                                     :paths (mapv :path @asked)}))
+                    (expect (every? #(nil? (:error %)) forms) (pr-str forms))
+                    (expect (= "Native tokenizer and folding verified\n" (:stdout (last forms)))
+                            (pr-str (last forms)))
+                    (expect (= 36000 (:model-input-limit health)) (pr-str health))
+                    (expect (= 5500 (:last-request-tokens health)) (pr-str health))
+                    (expect (= 4 (count requests)))
+                    (let [before (str (json/read-json (:body (second requests))))
+                          after (str (json/read-json (:body (nth requests 2))))]
+
+                      (expect (str/includes? before "お誕生日おめでとう"))
+                      (expect (not (str/includes? after "お誕生日おめでとう")))
+                      (expect (str/includes? after "Native context evidence"))))
+                  (finally (ps/db-dispose-connection! store)))))
+            (finally (.stop ^HttpServer server 0)))))
+      (finally (delete-tree! dir)))))
+
+(defdescribe native-tokenizers-and-context-folding-test
+             (it "loads cl100k resources selected by model" (native-context-case! "gpt-4" nil))
+             (it "loads o200k resources selected by model" (native-context-case! "gpt-4o" nil))
+             (it "loads p50k resources selected by model"
+                 (native-context-case! "text-davinci-003" nil))
+             (it "loads r50k resources selected by model" (native-context-case! "davinci" nil))
+             (it "honors declared cl100k for an unknown model"
+                 (native-context-case! "native-future-model" "cl100k_base"))
+             (it "honors declared o200k for an unknown model"
+                 (native-context-case! "native-future-model" "o200k_base"))
+             (it "keeps unsupported tokenizer declarations on the honest local fallback"
+                 (native-context-case! "native-future-model" "provider-private-tokenizer"))
+             (it "does not subtract output twice from an independent input-only cap"
+                 (native-context-case! "native-future-model"
+                                       "cl100k_base"
+                                       {:input_limit 36000 :output_limit 4000}))
+             (it "reserves output from the total window even when the input cap is larger"
+                 (native-context-case! "native-future-model"
+                                       "o200k_base"
+                                       {:context 40000 :input_limit 48000 :output_limit 4000})))

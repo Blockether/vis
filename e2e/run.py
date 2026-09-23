@@ -53,6 +53,7 @@ from functools import cache
 HERE = os.path.dirname(os.path.abspath(__file__))  # <repo>/e2e
 REPO = os.path.dirname(HERE)
 CLOJURE = os.environ.get("VIS_E2E_CLOJURE", "clojure")
+NATIVE_BIN = os.environ.get("VIS_E2E_NATIVE_BIN")
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL = os.environ.get("VIS_MODEL", "glm-5.3-flash")
 REASONING_EFFORT = os.environ.get("VIS_REASONING_EFFORT", "").strip() or None
@@ -96,8 +97,35 @@ def literal_fold_keys(code):
     ]
 
 
+def agent_prefix(work):
+    """Choose the actual engine under test; never silently fall back to the JVM."""
+    if NATIVE_BIN:
+        binary = os.path.abspath(NATIVE_BIN)
+        with open(binary, "rb") as executable:
+            magic = executable.read(4)
+        if magic not in (
+            b"\x7fELF",
+            b"\xcf\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xca\xfe\xba\xbe",
+        ):
+            raise RuntimeError(
+                "VIS_E2E_NATIVE_BIN must be a raw native executable, not a launcher"
+            )
+        return [binary, f"-Duser.dir={work}"]
+    return [CLOJURE, "-Scp", source_classpath(), f"-J-Duser.dir={work}", "-M:vis"]
+
+
 def gateway_eval(env, form, timeout, *, cwd=REPO):
-    """Evaluate one canonical gateway-client form against the working tree."""
+    """Use the canonical client, spawning the selected engine in the fixture workspace."""
+    if NATIVE_BIN:
+        binary, workspace = map(json.dumps, agent_prefix(cwd))
+        form = (
+            "(require '[com.blockether.vis.internal.gateway.discovery :as gateway-discovery] "
+            "'[com.blockether.vis.internal.gateway.client :as gateway-client]) "
+            f"(with-redefs [gateway-discovery/base-argv (constantly [{binary} {workspace}])] "
+            f"{form})"
+        )
     return subprocess.run(
         [CLOJURE, "-Scp", source_classpath(), "-M", "-e", form],
         cwd=cwd,
@@ -880,12 +908,7 @@ def run_one(job):
         t0 = time.time()
         exit_code = None
         try:
-            command = [
-                CLOJURE,
-                "-Scp",
-                source_classpath(),
-                f"-J-Duser.dir={work}",
-                "-M:vis",
+            command = agent_prefix(work) + [
                 "--full-trace-json-stream",
                 "--provider",
                 PROVIDER,
@@ -1406,7 +1429,7 @@ def main():
     ]
     print(
         f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
-        f"through source gateway 127.0.0.1:{gateway['port']} "
+        f"through {NATIVE_BIN or 'source JVM'} gateway 127.0.0.1:{gateway['port']} "
         f"(reasoning-effort={REASONING_EFFORT or 'default'}) "
         f"(repeats={repeats}, workers={WORKERS}, default timeout={TIMEOUT}s)\n"
     )

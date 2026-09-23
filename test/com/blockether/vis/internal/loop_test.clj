@@ -12019,7 +12019,7 @@
 (defdescribe
   final-utilization-budget-test
   (it
-    "reports the served route's request budget in both live CTX and the final answer"
+    "reports the served request budget in live CTX, the final answer and persisted health"
     (let [router
           (svar/make-router
             [{:id :fixture
@@ -12029,7 +12029,7 @@
              {:id :peer
               :api-key "test"
               :base-url "http://127.0.0.1:1/v1"
-              :models [{:name "small" :context 100000 :input-limit 70000 :output-limit 20000}]}])
+              :models [{:name "small" :context 80000 :input-limit 70000 :output-limit 20000}]}])
 
           environment
           (lp/create-environment router {:db :memory})]
@@ -12043,13 +12043,18 @@
              (let [result (lp/iteration-loop environment
                                              "Return the result"
                                              {:routing {:provider :fixture :model "large"}
+                                              :extra-body {:max_tokens 20000}
                                               :session-turn-id
                                               (persistance/db-store-session-turn!
                                                 (:db-info environment)
                                                 {:parent-session-id (:session-id environment)
                                                  :user-request "Return the result"})})]
-               (expect (= 70000
+               (expect (= 60000
                           (get-in @(:ctx-atom environment)
                                   ["engine_utilization" "model_input_limit"])))
-               (expect (= 70000 (get-in result [:utilization "model_input_limit"])))))
+               (expect (= 60000 (get-in result [:utilization "model_input_limit"])))
+               (expect (= 60000
+                          (get-in (persistance/db-session-usage-stats (:db-info environment)
+                                                                      (:session-id environment))
+                                  [:health :model-input-limit])))))
            (finally (lp/dispose-environment! environment))))))
