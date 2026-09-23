@@ -5,6 +5,13 @@ import userEvent from '@testing-library/user-event';
 
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
+import {
+  DROP_TARGET_ATTRIBUTE,
+  beginLift,
+  carryOver,
+  dropTargetAt,
+  releaseLift,
+} from '../../lib/session-drag';
 import type { ArchiveView, BandWindow, Session, SessionGroup } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
@@ -690,8 +697,87 @@ describe('ProjectGroup groups', () => {
     );
   });
 
-  // THE OTHER HALF OF THE DRAG. A band only ever files INTO itself, so a filed row had
-  // nowhere to be dropped and could only leave its group through a menu.
+  it('files a session dropped onto any row in a group', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const row = strip(wallet, ROWS[0].id);
+    expect(wallet).toHaveAttribute('data-session-drop');
+    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    fireEvent.dragOver(row, { dataTransfer });
+    expect(wallet).toHaveClass('bg-white/10');
+    // Crossing between rows is still inside this group's drop area.
+    const leave = new Event('dragleave', { bubbles: true });
+    Object.defineProperty(leave, 'relatedTarget', { value: strip(wallet, ROWS[1].id) });
+    fireEvent(row, leave);
+    expect(wallet).toHaveClass('bg-white/10');
+    fireEvent.drop(row, { dataTransfer });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
+    );
+  });
+
+  it('takes a session out of its group over a loose row or the rest of the Sessions area', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const sessions = screen.getByText('Sessions').parentElement!.parentElement as HTMLElement;
+    const row = strip(sessions, LOOSE.id);
+    expect(sessions).toHaveAttribute('data-session-drop');
+    const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
+    fireEvent.dragOver(row, { dataTransfer });
+    expect(sessions).toHaveClass('bg-white/10');
+    expect(within(sessions).getByText('Drop to ungroup')).toBeInTheDocument();
+    fireEvent.drop(row, { dataTransfer });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[0].id, null));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${ROWS[0].id}"]`)).toHaveLength(0),
+    );
+
+    const other = ROWS[1].id;
+    fireEvent.drop(sessions, {
+      dataTransfer: { getData: () => other, setData: vi.fn(), dropEffect: '' },
+    });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(other, null));
+  });
+  it('finds the full group and Sessions areas under a carried row on touch', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const sessions = screen.getByText('Sessions').parentElement!.parentElement as HTMLElement;
+    // jsdom does not lay out the list; give the two real drop areas their screen boxes.
+    for (const [area, top, bottom] of [
+      [wallet, 100, 400],
+      [sessions, 400, 700],
+    ] as const) {
+      vi.spyOn(area, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        right: 390,
+        top,
+        bottom,
+        width: 390,
+        height: bottom - top,
+      } as DOMRect);
+    }
+    const at = (y: number) =>
+      dropTargetAt({ x: 100, y }, document.querySelectorAll(`[${DROP_TARGET_ATTRIBUTE}]`));
+    expect(at(260)).toBe(wallet.getAttribute(DROP_TARGET_ATTRIBUTE));
+    expect(at(550)).toBe(sessions.getAttribute(DROP_TARGET_ATTRIBUTE));
+
+    act(() => {
+      beginLift(LOOSE.id);
+      carryOver(at(260));
+      releaseLift();
+    });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
+
+    act(() => {
+      beginLift(ROWS[0].id);
+      carryOver(at(550));
+      releaseLift();
+    });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[0].id, null));
+  });
+
+  // A group's area files into itself; the loose Sessions area takes a filed row back out.
   it('takes a session out of its group when it is dropped on the ungrouped set', async () => {
     const { client } = mount();
     const wallet = await band('Wallet work');

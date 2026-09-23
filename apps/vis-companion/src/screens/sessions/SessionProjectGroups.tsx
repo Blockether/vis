@@ -10,6 +10,7 @@ import {
   useState,
   type DragEvent,
   type ReactNode,
+  type Ref,
 } from 'react';
 
 import {
@@ -172,8 +173,8 @@ function NameForm({
 
 /**
  * A PLACE THAT TAKES A DRAGGED ROW. It lights while the pointer is over it, so the
- * reader sees where the session lands before letting go. A group's band files the row
- * it takes; the set of ungrouped sessions takes one back OUT of the group it is in.
+ * reader sees where the session lands before letting go. A group's whole area files the
+ * row it takes; the ungrouped sessions area takes one back OUT of its group.
  */
 function useSessionDrop(onDropSession?: (sid: string) => void) {
   const [isOver, setIsOver] = useState(false);
@@ -191,7 +192,11 @@ function useSessionDrop(onDropSession?: (sid: string) => void) {
         event.dataTransfer.dropEffect = 'move';
         setIsOver(true);
       },
-      onDragLeave: () => setIsOver(false),
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) return;
+        setIsOver(false);
+      },
       onDrop: (event: DragEvent<HTMLElement>) => {
         if (!onDropSession) return;
         event.preventDefault();
@@ -201,6 +206,31 @@ function useSessionDrop(onDropSession?: (sid: string) => void) {
       },
     },
   };
+}
+
+/** The band, rows and open space of one set all take the same drop. */
+function SessionDropArea({
+  onDropSession,
+  areaRef,
+  minHeight,
+  children,
+}: {
+  onDropSession?: (sid: string) => void;
+  areaRef?: Ref<HTMLDivElement>;
+  minHeight?: number;
+  children: (isOver: boolean) => ReactNode;
+}) {
+  const { isOver, dropProps } = useSessionDrop(onDropSession);
+  return (
+    <div
+      ref={areaRef}
+      style={{ minHeight }}
+      className={isOver ? 'bg-white/10' : undefined}
+      {...dropProps}
+    >
+      {children(isOver)}
+    </div>
+  );
 }
 
 /**
@@ -215,7 +245,7 @@ function SetHeader({
   unit,
   navigation,
   action,
-  onDropSession,
+  isOver = false,
 }: {
   label: string;
   /**
@@ -239,19 +269,11 @@ function SetHeader({
    * grows the page under this word.
    */
   action?: ReactNode;
-  /**
-   * Called with the session a reader DROPPED on this header. A band only ever files
-   * INTO itself, so the ungrouped set is the one place a drag can put a filed row to
-   * take it back out. Absent: the header takes no drops.
-   */
-  onDropSession?: (sid: string) => void;
+  /** Whether the ungrouped set is offering to take a carried row. */
+  isOver?: boolean;
 }) {
-  const { isOver, dropProps } = useSessionDrop(onDropSession);
   return (
-    <div
-      className={`flex min-h-14 items-center gap-2 border-y border-edge py-1 pl-4 mouse:min-h-10 ${isOver ? 'bg-white/10' : ''}`}
-      {...dropProps}
-    >
+    <div className="flex min-h-14 items-center gap-2 border-y border-edge py-1 pl-4 mouse:min-h-10">
       <span className="font-mono text-chip font-bold tracking-[0.08em] text-dialog-hint uppercase">
         {label}
       </span>
@@ -293,7 +315,6 @@ function GroupBand({
   onActions,
   onNewSession,
   isCreating = false,
-  onDropSession,
 }: {
   name: string;
   color: string | null;
@@ -308,17 +329,9 @@ function GroupBand({
   onNewSession?: () => void;
   /** A create started from THIS band is still in flight. */
   isCreating?: boolean;
-  /** Called with the session a reader DROPPED on this band. Absent: the band takes no drops. */
-  onDropSession?: (sid: string) => void;
 }) {
-  // A ROW DRAGGED ONTO THE BAND IS FILED INTO IT, and the band lights while the pointer
-  // is over it: the reader sees WHERE the session lands before letting go.
-  const { isOver, dropProps } = useSessionDrop(onDropSession);
   return (
-    <div
-      className={`flex items-stretch border-t border-edge ${isOver ? 'bg-white/10' : ''}`}
-      {...dropProps}
-    >
+    <div className="flex items-stretch border-t border-edge">
       {/* The band and its rows share one coloured edge, so a group reads as a place
           rather than as a caption. That rail is the ONLY place this colour is painted
           in the list: a dot beside the name repeated what the edge already says. */}
@@ -1041,9 +1054,9 @@ export const ProjectGroup = memo(function ProjectGroup({
   }, [rowActions.commands.archive]);
   const fileSession = (session: Session, gid: string | null, back: MenuStep | 'close') =>
     void attempt(() => assignGroup(session, gid), back);
-  // One session's row, wherever it stands: inside a group's band, or under the
-  // project itself with everything nobody filed.
-  // A ROW DROPPED ON A BAND RUNS THE SAME FILING VERB the sheet's `Move to...` does.
+  // One session's row, wherever it stands: inside a group's area, or under the
+  // project itself with everything nobody filed. A drop onto either area runs the
+  // same filing verb as the row's `Move to...` action.
   const dropSession = (sid: string, gid: string | null) => {
     const found = painted.find((one) => one.id === sid);
     if (!found || (found.group_id ?? null) === gid) return;
@@ -1092,8 +1105,8 @@ export const ProjectGroup = memo(function ProjectGroup({
         }
       : null;
     return (
-      // DRAG IS THE LIST'S OWN MOVE: the row carries its session id and a band takes the
-      // drop, so filing by hand needs no menu at all.
+      // DRAG IS THE LIST'S OWN MOVE: the row carries its session id and a group's
+      // area takes the drop, so filing by hand needs no menu at all.
       <SessionRow
         key={session.id}
         session={session}
@@ -1392,47 +1405,57 @@ export const ProjectGroup = memo(function ProjectGroup({
                 const held = filed.byGroup.get(band.id) ?? NO_ROWS;
                 const isBandOpen = isGroupOpen(band.id);
                 return (
-                  <div key={band.id}>
-                    <GroupBand
-                      name={band.name}
-                      color={band.color}
-                      count={band.count}
-                      isOpen={isBandOpen}
-                      onToggle={() => foldGroup(band.id, !isBandOpen)}
-                      machine={machineLabel(conn)}
-                      onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
-                      // A session started HERE is minted inside this group, so it opens
-                      // at the top of this band instead of loose in the project.
-                      onNewSession={() => void onNewSession(conn, root, band.id)}
-                      isCreating={creating?.at === creationKey(base, root, band.id)}
-                      onDropSession={(sid) => dropSession(sid, band.id)}
-                    />
-                    {isBandOpen && held.map(row)}
-                  </div>
+                  <SessionDropArea
+                    key={band.id}
+                    onDropSession={(sid) => dropSession(sid, band.id)}
+                  >
+                    {() => (
+                      <>
+                        <GroupBand
+                          name={band.name}
+                          color={band.color}
+                          count={band.count}
+                          isOpen={isBandOpen}
+                          onToggle={() => foldGroup(band.id, !isBandOpen)}
+                          machine={machineLabel(conn)}
+                          onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                          // A session started HERE is minted inside this group, so it opens
+                          // at the top of this band instead of loose in the project.
+                          onNewSession={() => void onNewSession(conn, root, band.id)}
+                          isCreating={creating?.at === creationKey(base, root, band.id)}
+                        />
+                        {isBandOpen && held.map(row)}
+                      </>
+                    )}
+                  </SessionDropArea>
                 );
               })}
-            <div
-              ref={sessionSetRef}
-              style={{
-                minHeight:
-                  pageCount > 1 && pageFootprint?.layout === pageLayout
-                    ? pageFootprint.height
-                    : undefined,
-              }}
+            <SessionDropArea
+              areaRef={sessionSetRef}
+              minHeight={
+                pageCount > 1 && pageFootprint?.layout === pageLayout
+                  ? pageFootprint.height
+                  : undefined
+              }
+              onDropSession={hasGroups ? (sid) => dropSession(sid, null) : undefined}
             >
-              {/* A band files into itself; this header takes a session back out. */}
-              <SetHeader
-                label="Sessions"
-                // With groups, count loose sessions; under a query, count its hits.
-                // Otherwise the project header already shows this same total.
-                count={hasGroups || searching ? listedCount : undefined}
-                unit="session"
-                navigation={pager}
-                action={createSession}
-                onDropSession={hasGroups ? (sid) => dropSession(sid, null) : undefined}
-              />
-              {listed.map(row)}
-            </div>
+              {(isOver) => (
+                <>
+                  {/* A band files into itself; this area takes a session back out. */}
+                  <SetHeader
+                    label="Sessions"
+                    // With groups, count loose sessions; under a query, count its hits.
+                    // Otherwise the project header already shows this same total.
+                    count={hasGroups || searching ? listedCount : undefined}
+                    unit="session"
+                    navigation={pager}
+                    action={createSession}
+                    isOver={isOver}
+                  />
+                  {listed.map(row)}
+                </>
+              )}
+            </SessionDropArea>
           </div>
         )}
       </section>
