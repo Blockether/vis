@@ -66,13 +66,12 @@ describe('app bar', () => {
   // is the screen, not a filter parked in a corner of it.
   it('turns the bar into the search page and hands it a way back', () => {
     const page = app.slice(app.indexOf('{isSearching ? ('), app.indexOf('aria-label="Vis"'));
-    expect(page).toContain('<BackButton label="Close search"');
+    expect(labelledTag(page, 'Close search')).toContain('<BackButton');
     expect(page).toContain('label="Search sessions on every machine"');
     expect(page).toContain('placeholder="Search all machines…"');
-    // The feature owns this one-use field; the call site only positions it.
-    const field = classes(page.slice(page.indexOf('<HeaderSearchField')));
-    expect(field.every((c) => ['ml-3', 'min-w-0', 'flex-1'].includes(c))).toBe(true);
-    expect(field).toContain('flex-1');
+    // The feature owns this one-use field; its wrapper places it below the notch on iPhone.
+    expect(page).toContain('ml-3 min-w-0 flex-1');
+    expect(page).toContain('col-span-2 row-start-2');
   });
 
   // Opening a page that a human still has to tap into asks for the tap twice, and a

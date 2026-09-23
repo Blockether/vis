@@ -31,6 +31,21 @@ function fleet(onSearch: (() => void) | null) {
 }
 
 describe('pulling the sessions list down', () => {
+  // Regression: the idle hint sat at safe-area-inset-top minus its own height,
+  // painting an opaque strip across the app bar beside the iPhone notch.
+  it('parks the idle hint completely above the screen, not over the app bar', async () => {
+    const view = fleet(() => {});
+    try {
+      await listOf(view);
+      expect(view.getByText('Pull to search')).toHaveClass(
+        '-translate-y-[calc(100%+env(safe-area-inset-top))]',
+      );
+    } finally {
+      view.restore();
+      view.unmount();
+    }
+  });
+
   it('opens the search page when the pull is released', async () => {
     const onSearch = vi.fn();
     const view = fleet(onSearch);

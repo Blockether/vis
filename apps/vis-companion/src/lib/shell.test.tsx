@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
+import { Capacitor } from '@capacitor/core';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderApp } from '../app-harness';
 import { renderSessionScreen } from '../screens/session-screen-harness';
@@ -136,6 +137,34 @@ describe('the app bar', () => {
     expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
     view.unmount();
     view.restore();
+  });
+
+  // Regression: hiding the native iOS clock left an empty safe-area band above
+  // the app bar on both iPad and iPhone. The bar itself must reach the top.
+  it('puts the iOS app bar at the top without hiding its edge controls', async () => {
+    const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
+    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    try {
+      const view = await mount();
+      try {
+        const header = view.baseElement.querySelector('header')!;
+        expect(header.className).not.toContain('pt-[env(safe-area-inset-top)]');
+        expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible();
+        expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
+        await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+        expect(
+          screen.getByRole('searchbox', { name: 'Search sessions on every machine' }).parentElement
+            ?.parentElement,
+        ).toHaveClass('row-start-2');
+        expect(screen.getByRole('button', { name: 'Close search' })).toHaveClass('row-start-1');
+      } finally {
+        view.unmount();
+        view.restore();
+      }
+    } finally {
+      native.mockRestore();
+      platform.mockRestore();
+    }
   });
 
   // Regression: a centered 1400px cap pulled the app controls away from wide-window edges.

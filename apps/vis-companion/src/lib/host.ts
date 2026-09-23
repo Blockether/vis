@@ -19,6 +19,11 @@ interface VisHostPlugin {
 
 let isMac = false;
 
+/** Is the native iOS app, whose status bar is hidden before the web view loads? */
+export function isIosNativeApp(): boolean {
+  return Capacitor.getPlatform() === 'ios' && Capacitor.isNativePlatform();
+}
+
 /** Is this iOS build a Mac window? `false` until `loadHost` has answered. */
 export function isIosAppOnMac(): boolean {
   return isMac;

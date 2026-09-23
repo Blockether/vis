@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { Capacitor } from '@capacitor/core';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -66,6 +67,29 @@ describe('SessionHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
     expect(screen.queryByRole('button', { name: /artifacts/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Copy session id/ })).toBeInTheDocument();
+  });
+
+  // Regression: after hiding the iOS clock the notch safe area was an empty band.
+  // Keep the session title below the island while placing navigation beside it.
+  it('uses the iPhone notch row for edge actions, with the title below it', () => {
+    const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
+    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    try {
+      render(<SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+      const header = screen.getByRole('heading', { name: model.title }).closest('header')!;
+      expect(header.className).toContain('grid');
+      expect(header.className).not.toContain('pt-[env(safe-area-inset-top)]');
+      expect(screen.getByRole('heading', { name: model.title }).parentElement).toHaveClass(
+        'row-start-2',
+      );
+      expect(screen.getByRole('button', { name: 'Back to sessions' })).toHaveClass('row-start-1');
+      expect(
+        screen.getByRole('button', { name: 'Session actions, 3 artifacts' }).parentElement,
+      ).toHaveClass('row-start-1');
+    } finally {
+      native.mockRestore();
+      platform.mockRestore();
+    }
   });
 
   // Regression, user report (paraphrased): the trailing mark's dots ran across instead

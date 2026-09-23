@@ -43,7 +43,7 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
       ref={ref}
       aria-hidden="true"
       className={`pointer-events-none ${position} inset-x-0 top-[env(safe-area-inset-top)] z-40 flex min-h-12 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
-        isShown ? 'translate-y-0' : '-translate-y-full'
+        isShown ? 'translate-y-0' : '-translate-y-[calc(100%+env(safe-area-inset-top))]'
       } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
     >
       <SearchIcon

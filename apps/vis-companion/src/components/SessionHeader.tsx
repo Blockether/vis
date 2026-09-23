@@ -3,6 +3,7 @@ import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contr
 import type { SessionGoal } from '../lib/types';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
+import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import { AlertIcon, CheckIcon, ClipIcon, CopyIcon, DotsIcon } from './icons';
@@ -71,6 +72,7 @@ export function SessionHeader({
   // puts the list away, or brings it back, takes that leading column; only a desk
   // with no list to toggle lets the title claim the edge.
   const isDesk = useDeskRail();
+  const nativeIos = isIosNativeApp();
   const [goalDetails, setGoalDetails] = useState(false);
   /** Where the session's own menu hangs, and `null` while it is closed. */
   const [menu, setMenu] = useState<MenuPosition | null>(null);
@@ -121,12 +123,29 @@ export function SessionHeader({
   }
   const goal = model.goal;
   return (
-    /* The notch strip stands above the 52px band via box-content. Edge controls
-       own horizontal safe-area padding so the header's paper still reaches the glass. */
-    <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:pt-0">
-      {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
+    /* On native iPhone the status bar is hidden. Put edge controls beside the
+       island, then the session title below its safe-area inset. On iPad they
+       share one row; browsers keep their visible status-bar padding. */
+    <header
+      className={`z-10 min-h-13 shrink-0 gap-0 border-b border-dialog-edge bg-panel-2 ${
+        nativeIos
+          ? 'grid grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[max(3.25rem,env(safe-area-inset-top))_auto] sm:flex sm:items-stretch'
+          : 'flex items-stretch box-content pt-[env(safe-area-inset-top)] mouse:pt-0'
+      }`}
+    >
+      {!isDesk && (
+        <BackButton
+          label="Back to sessions"
+          onClick={commands.back}
+          className={nativeIos ? 'row-start-1' : ''}
+        />
+      )}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
-      <div className="min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1">
+      <div
+        className={`min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1 ${
+          nativeIos ? 'col-span-3 row-start-2 sm:col-auto sm:row-auto' : ''
+        }`}
+      >
         {/* The title is the sentence the screen is about. It stays one step above
             the connection line by size and weight — all in the app's one mono face. */}
         <h1 className="truncate text-title font-semibold text-white mouse:text-body">
@@ -156,7 +175,11 @@ export function SessionHeader({
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
+      <div
+        className={`flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))] ${
+          nativeIos ? 'col-start-3 row-start-1 sm:col-auto sm:row-auto' : ''
+        }`}
+      >
         {team}
         <IconButton
           label={menuLabel}
