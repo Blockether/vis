@@ -652,6 +652,24 @@
              "print(any(n in __vis_docs__ or n in __vis_sigs__ or n in __vis_keys__ for n in ('find', 'find_files')))"))]
         (expect (= "grep ['a']\nFalse False\nFalse\n" (:stdout result)))))))
 
+(defdescribe inline-tool-text-concat-test
+             (it "settles cat and grep text results inside string concatenation"
+                 (let [calls (atom [])]
+                   (tpc/with-own [ctx
+                                  {'cat (fn [& args]
+                                          (swap! calls conj [:cat (vec args)])
+                                          "text")
+                                   'grep (fn [& args]
+                                           (swap! calls conj [:grep (vec args)])
+                                           "matches")}]
+                                 (let [result
+                                       (ep/run-python-block
+                                         ctx
+                                         "print('head:' + cat('doc'), grep('term') + ':tail')")]
+                                   (expect (nil? (:error result)) (pr-str result))
+                                   (expect (= "head:text matches:tail\n" (:stdout result)))
+                                   (expect (= [[:cat ["doc"]] [:grep ["term"]]] @calls)))))))
+
 (defdescribe
   gathered-grep-options-test
   ;; Regression, issue #166: a grep dispatched by `gather` lost its session on
