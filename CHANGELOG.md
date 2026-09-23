@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.2.24] - 2026-09-23
+## [v0.2.25] - 2026-09-23
 
 ### Added
 - Archive sessions and groups, browse archived sessions on demand, and keep archived conversations
@@ -25,7 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Keep read Activities concise while opening the requested file range. Show complete live logs and
   preserve terminal history-page boundaries while scrolling.
 - Improve companion session-list transitions, Markdown layout, menus, pairing and live-session links.
-  Prefer loopback gateway addresses on the host and sign and notarize macOS native packages.
+  Prefer loopback gateway addresses on the host.
+- Sign and notarize macOS native packages, including embedded Python, and verify the online
+  notarization ticket for command-line executables before publication.
+
+## [v0.2.24] - 2026-09-23
+
+This version was not published. Its changes are included in v0.2.25.
 
 ## [v0.2.23] - 2026-09-22
 
