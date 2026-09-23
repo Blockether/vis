@@ -13,15 +13,19 @@ let glyphWidth = 8;
 let resize: ResizeObserverCallback;
 let disconnect: ReturnType<typeof vi.fn>;
 let measure: ReturnType<typeof vi.spyOn>;
-let fonts: EventTarget & { ready: Promise<void> };
+let fonts: EventTarget & { ready: Promise<void>; status: 'loaded' | 'loading' };
 const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+const originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect');
 const nativeStyle = window.getComputedStyle;
 
 beforeEach(() => {
   width = 240;
   glyphWidth = 8;
   disconnect = vi.fn();
-  fonts = Object.assign(new EventTarget(), { ready: Promise.resolve() });
+  fonts = Object.assign(new EventTarget(), {
+    ready: Promise.resolve(),
+    status: 'loading' as 'loaded' | 'loading',
+  });
   Object.defineProperty(document, 'fonts', { configurable: true, value: fonts });
   vi.stubGlobal(
     'ResizeObserver',
@@ -54,6 +58,12 @@ beforeEach(() => {
   ) {
     return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
   });
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: vi.fn(function (this: Range) {
+      return { width: this.toString().length * glyphWidth } as DOMRect;
+    }),
+  });
 });
 
 afterEach(() => {
@@ -61,6 +71,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts);
   else Reflect.deleteProperty(document, 'fonts');
+  if (originalRangeRect)
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRangeRect);
+  else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
 });
 
 async function composed(element: Element) {
@@ -79,6 +92,67 @@ describe('Justice prose', () => {
     expect(prose).toHaveAttribute('data-justice');
     expect(prose.children.length).toBeGreaterThan(1);
     expect(prose.textContent).toBe(paragraph);
+  });
+
+  it('measures plain prose without laying out every word separately', async () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    expect(prose.textContent).toBe(paragraph);
+    expect(measure.mock.calls.length).toBeLessThan(6);
+  });
+
+  it('defers distant prose while keeping its source text and composes before it enters view', async () => {
+    let notify: IntersectionObserverCallback = () => {};
+    const observe = vi.fn();
+    const unobserve = vi.fn();
+    const disconnect = vi.fn();
+    const create = vi.fn();
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          create();
+          notify = callback;
+        }
+        observe = observe;
+        unobserve = unobserve;
+        disconnect = disconnect;
+      },
+    );
+    measure.mockImplementation(function (this: HTMLElement) {
+      if (this.tagName === 'P')
+        return { width, top: 3000, bottom: 3040 } as DOMRect;
+      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
+    });
+
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    expect(prose).not.toHaveAttribute('data-justice');
+    expect(prose.textContent).toBe(paragraph);
+    expect(observe).toHaveBeenCalledWith(prose);
+    expect(measure.mock.instances).toEqual([prose]);
+    const second = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const next = second.container.querySelector('p')!;
+    expect(create).toHaveBeenCalledOnce();
+    expect(observe).toHaveBeenCalledWith(next);
+    expect(measure.mock.instances).toEqual([prose, next]);
+
+    act(() =>
+      notify(
+        [{ isIntersecting: true, target: prose } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    );
+    await composed(prose);
+    expect(prose.textContent).toBe(paragraph);
+    expect(unobserve).toHaveBeenCalledWith(prose);
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(next).not.toHaveAttribute('data-justice');
+    second.unmount();
+    expect(unobserve).toHaveBeenCalledWith(next);
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it('keeps the initial composition on the first ResizeObserver delivery', async () => {
@@ -126,6 +200,21 @@ describe('Justice prose', () => {
     act(() => fonts.dispatchEvent(new Event('loadingdone')));
     await waitFor(() => expect(measure.mock.calls.length).toBeGreaterThan(measurements));
     expect(prose.textContent).toBe(paragraph);
+  });
+
+  it('does not remeasure when fonts were already loaded at composition', async () => {
+    fonts.status = 'loaded';
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    expect(prose).toHaveAttribute('data-justice');
+    const measurements = measure.mock.calls.length;
+    await act(async () => {
+      await fonts.ready;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(measure.mock.calls.length).toBe(measurements);
+    act(() => fonts.dispatchEvent(new Event('loadingdone')));
+    await waitFor(() => expect(measure.mock.calls.length).toBeGreaterThan(measurements));
   });
 
   it('wraps natively while its column is moving and composes where it lands', async () => {
@@ -288,6 +377,11 @@ describe('Justice prose', () => {
       measured.push({ text: this.textContent ?? '', width });
       return { width } as DOMRect;
     });
+    vi.spyOn(Range.prototype, 'getBoundingClientRect').mockImplementation(function (this: Range) {
+      const width = advance(this.cloneContents());
+      measured.push({ text: this.toString(), width });
+      return { width } as DOMRect;
+    });
     const text = 'Read echo echo echo carefully and keep each repeated word in its own style.';
     const view = render(
       <JustifiedProse>
@@ -314,6 +408,36 @@ describe('Justice prose', () => {
     expect(prose.querySelector('strong')).toBeNull();
     expect(measured.length).toBeGreaterThan(count);
     expect(prose.textContent).toBe(text);
+  });
+
+  it('measures rich prose without rebuilding layout for each word', async () => {
+    const text =
+      'Measure every styled word while repeated requests make the whole transcript expensive to compose again and again.';
+    const view = render(
+      <JustifiedProse>
+        Measure every <strong>styled word</strong> while repeated requests make the whole transcript
+        expensive to compose again and again.
+      </JustifiedProse>,
+    );
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    expect(prose.textContent).toBe(text);
+    expect(measure.mock.calls.length).toBeLessThan(6);
+  });
+
+  it('measures prose around inline code without reflowing every ordinary word', async () => {
+    const text =
+      'The plain words before and after inline code still need one shared layout when this transcript opens again.';
+    const view = render(
+      <Markdown>
+        {'The plain words before and after `inline code` still need one shared layout when this transcript opens again.'}
+      </Markdown>,
+    );
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    expect(prose.textContent).toBe(text);
+    expect(prose.querySelector('code')).toHaveTextContent('inline code');
+    expect(measure.mock.calls.length).toBeLessThan(6);
   });
 
   it('retains styled partial words, explicit hyphens, graphemes and link actions', async () => {

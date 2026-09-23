@@ -126,6 +126,41 @@ describe('GatewayClient event-stream hard deadline', () => {
       stop();
     }
   });
+  it('keeps fleet frame numbers out of watched-session replay cursors', async () => {
+    vi.useFakeTimers();
+    const frames = [
+      { type: 'subscription.ready', session_id: 's1', cursor: 4, seq: 4 },
+      { type: 'subscription.ready', scope: 'fleet', seq: 0 },
+      { type: 'session.status', scope: 'fleet', session_id: 's1', seq: 900 },
+      { type: 'turn.completed', session_id: 's1', seq: 5 },
+    ];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''),
+          ),
+        );
+      },
+    });
+    const fetches = vi.fn(async (_input: string) => new Response(body));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const cursors = new Map([['s1', 3]]);
+    const seen: string[] = [];
+    const stop = client.streamSessionEvents(cursors, (event) => seen.push(event.type), {
+      includeFleet: true,
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(new URL(fetches.mock.calls[0]![0]).searchParams.get('scope')).toBe('both');
+      expect(seen).toEqual(frames.map((frame) => frame.type));
+      expect(cursors.get('s1')).toBe(5);
+    } finally {
+      stop();
+    }
+  });
 });
 
 // Regression: a cold-start client used to re-download the complete session list.

@@ -60,6 +60,40 @@ describe('a queued turn after a failed request', () => {
     await waitFor(() => expect(resumeQueue).toHaveBeenCalledWith('s1'));
   });
 
+  it('refreshes the queued snapshot with one inclusive session reconciliation request', async () => {
+    vi.useFakeTimers();
+    let cachedRows: typeof waiting[] = [];
+    let cachedPause: typeof paused | null = null;
+    let reads = 0;
+    const readSession = vi.fn(async (_sid: string, _signal?: AbortSignal, includeQueued = false) => {
+      reads += 1;
+      if (reads > 1 && includeQueued) {
+        cachedRows = [waiting];
+        cachedPause = paused;
+      }
+      return sessionFixture();
+    });
+    const queuedTurns = vi.fn(async () => ({ turns: [waiting], paused }));
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: readSession,
+          cachedQueuedTurns: () => cachedRows,
+          cachedQueuePaused: () => cachedPause,
+          queuedTurns,
+        },
+      });
+    });
+    expect(screen.queryByText('Queue paused')).toBeNull();
+
+    await advance(5000);
+    expect(readSession).toHaveBeenCalledTimes(2);
+    expect(readSession).toHaveBeenLastCalledWith('s1', undefined, true);
+    expect(queuedTurns).not.toHaveBeenCalled();
+    expect(screen.getByText('Next request')).toBeVisible();
+    expect(screen.getByText('1 held · turn failed')).toBeVisible();
+  });
+
   it.each([
     ['session', 'queue.resumed'],
     ['session', 'queue.paused'],
@@ -71,14 +105,15 @@ describe('a queued turn after a failed request', () => {
     const staleRead = deferred<void>();
     const resumes = type === 'queue.resumed';
     const snapshotPause = resumes ? paused : null;
+    let reads = 0;
     const readSession = vi.fn(async () => {
-      if (source === 'session') await staleRead.promise;
+      reads += 1;
+      if ((source === 'session' && reads === 1) || (source === 'backlog' && reads === 2)) {
+        await staleRead.promise;
+      }
       return sessionFixture();
     });
-    const queuedTurns = vi.fn(async () => {
-      await staleRead.promise;
-      return { turns: [waiting], paused: snapshotPause };
-    });
+    const queuedTurns = vi.fn(async () => ({ turns: [waiting], paused: snapshotPause }));
     const resumeQueue = vi.fn().mockResolvedValue(undefined);
     await act(async () => {
       renderSessionScreen({
@@ -95,7 +130,8 @@ describe('a queued turn after a failed request', () => {
     expect(readSession).toHaveBeenCalled();
     if (source === 'backlog') {
       await advance(5000);
-      expect(queuedTurns).toHaveBeenCalledOnce();
+      expect(readSession).toHaveBeenCalledTimes(2);
+      expect(queuedTurns).not.toHaveBeenCalled();
     }
 
     if (resumes) {
@@ -121,11 +157,7 @@ describe('a queued turn after a failed request', () => {
     expect(screen.queryByText('Queue paused') !== null).toBe(!resumes);
     expect(screen.getByText('Next request')).toBeInTheDocument();
 
-    // A later read still repairs a pause/resume whose live frame was missed.
-    queuedTurns.mockResolvedValue({
-      turns: [waiting],
-      paused: resumes ? paused : null,
-    });
+    // A later inclusive read still repairs a pause/resume whose live frame was missed.
     await advance(5000);
     expect(screen.queryByText('Queue paused') !== null).toBe(resumes);
   });

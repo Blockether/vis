@@ -73,7 +73,7 @@ describe('multiplexed session subscriptions', () => {
       const stopSecond = hub.subscribeSession('session-2', second);
       expect(stream).toHaveBeenCalledTimes(1);
       const [cursors, emit] = stream.mock.calls[0]!;
-      expect([...cursors]).toEqual([
+      expect([...cursors].sort(([a], [b]) => a.localeCompare(b))).toEqual([
         ['session-1', -1],
         ['session-2', -1],
       ]);
@@ -103,8 +103,8 @@ describe('multiplexed session subscriptions', () => {
 });
 
 // Regression, Vis session 1bd4284d-861b-48e6-8639-ef8eafb22f0a: killing the gateway
-// while the app was backgrounded left WebKit holding both fetch streams; after resume,
-// opening or creating another session waited behind those parked sockets until restart.
+// while the app was backgrounded left WebKit holding its fetch stream; after resume,
+// opening or creating another session waited behind that parked socket until restart.
 describe('gateway streams across native backgrounding', () => {
   it('retires them before suspension and opens fresh streams after resume', async () => {
     const { SessionSubscriptionHub } = await import('./subscriptions');
@@ -113,25 +113,25 @@ describe('gateway streams across native backgrounding', () => {
     hub.watchSessions(['session-1']);
     hub.subscribeFleet(() => {});
     expect(state).toEqual({
-      sessionOpened: 1,
-      sessionStopped: 0,
-      fleetOpened: 1,
+      sessionOpened: 2,
+      sessionStopped: 1,
+      fleetOpened: 0,
       fleetStopped: 0,
     });
 
     native.get('appStateChange')?.({ isActive: false });
-    expect(state.sessionStopped).toBe(1);
-    expect(state.fleetStopped).toBe(1);
+    expect(state.sessionStopped).toBe(2);
+    expect(state.fleetStopped).toBe(0);
 
     // The supervisor must not undo the retirement while the app is still away.
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(state.sessionOpened).toBe(1);
-    expect(state.fleetOpened).toBe(1);
+    expect(state.sessionOpened).toBe(2);
+    expect(state.fleetOpened).toBe(0);
 
     native.get('appStateChange')?.({ isActive: true });
     await vi.advanceTimersByTimeAsync(250);
-    expect(state.sessionOpened).toBe(2);
-    expect(state.fleetOpened).toBe(2);
+    expect(state.sessionOpened).toBe(3);
+    expect(state.fleetOpened).toBe(0);
 
     hub.dispose();
   });

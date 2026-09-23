@@ -43,13 +43,9 @@ describe('session deletion across app clients', () => {
       const draft = draftMessageKey(client.base, 's1');
       writeDraftMessage(draft, { text: 'Unsent message' });
       const streams: { cursors: Map<string, number>; emit: (event: SseEvent) => void }[] = [];
-      let fleet: (event: SseEvent) => void = () => {};
+      const fleetStream = vi.spyOn(client, 'streamFleetStatus').mockImplementation(() => vi.fn());
       vi.spyOn(client, 'streamSessionEvents').mockImplementation((cursors, emit) => {
         streams.push({ cursors, emit });
-        return vi.fn();
-      });
-      vi.spyOn(client, 'streamFleetStatus').mockImplementation((emit) => {
-        fleet = emit;
         return vi.fn();
       });
       hub = new SessionSubscriptionHub(client);
@@ -58,11 +54,17 @@ describe('session deletion across app clients', () => {
       hub.subscribeSession('s1', sessionSeen);
       hub.watchSessions(['s2']);
       hub.subscribeFleet(fleetSeen);
+      expect(fleetStream).not.toHaveBeenCalled();
       const stream = streams.at(-1)!;
       stream.emit({ type: 'turn.started', session_id: 's1', turn_id: 'turn-1', seq: 4 });
       sessionSeen.mockClear();
       fleetSeen.mockClear();
-      const deleted: SseEvent = { type: 'session.deleted', session_id: 's1', seq: 5 };
+      const deleted: SseEvent = {
+        type: 'session.deleted',
+        session_id: 's1',
+        seq: 5,
+        ...(channel === 'fleet' ? { scope: 'fleet' } : {}),
+      };
       if (channel === 'reconnect') {
         stream.cursors.set('s1', 4);
         const opened = streams.length;
@@ -72,10 +74,10 @@ describe('session deletion across app clients', () => {
         // A missing session answers the reconnect with deletion, without a ready frame.
         streams.at(-1)!.emit(deleted);
       } else {
-        (channel === 'session' ? stream.emit : fleet)(deleted);
+        stream.emit(deleted);
       }
       stream.emit(deleted);
-      fleet(deleted);
+      stream.emit({ type: 'session.deleted', session_id: 's1', seq: 5 });
       stream.emit({ type: 'turn.started', session_id: 's1', turn_id: 'late', seq: 6 });
 
       expect(sessionSeen.mock.calls).toEqual([[deleted]]);
@@ -104,4 +106,24 @@ describe('session deletion across app clients', () => {
       expect(streams).toHaveLength(opened);
     },
   );
+  it('keeps the list on polling until fleet-only takes over after the last deletion', () => {
+    const client = new GatewayClient({ url: 'http://delete-last.example.com' });
+    const sessionFrames: Array<(event: SseEvent) => void> = [];
+    vi.spyOn(client, 'streamSessionEvents').mockImplementation((_cursors, emit) => {
+      sessionFrames.push(emit);
+      return vi.fn();
+    });
+    const fleetStream = vi.spyOn(client, 'streamFleetStatus').mockImplementation(() => vi.fn());
+    hub = new SessionSubscriptionHub(client);
+    const states: boolean[] = [];
+    hub.subscribeFleetState((live) => states.push(live));
+    hub.watchSessions(['s1']);
+    hub.subscribeFleet(() => {});
+    sessionFrames.at(-1)!({ type: 'subscription.ready', scope: 'fleet', seq: 0 });
+    expect(states).toEqual([false, true]);
+
+    sessionFrames.at(-1)!({ type: 'session.deleted', scope: 'fleet', session_id: 's1', seq: 1 });
+    expect(fleetStream).toHaveBeenCalledOnce();
+    expect(states).toEqual([false, true, false]);
+  });
 });

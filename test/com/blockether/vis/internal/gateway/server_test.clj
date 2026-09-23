@@ -2148,6 +2148,65 @@
       (fn []
         (is (= 400 (:status ((rv 'multi-events-handler) {:query-params {} :headers {}}))))))))
 
+(deftest combined-event-stream-keeps-both-feeds-on-one-connection
+  ;; Regression: three visible HTTP/1.1 tabs filled six event slots and stalled GETs.
+  (let [sid
+        (random-uuid)
+
+        subscribed
+        (atom [])
+
+        fleet-attached?
+        (atom false)
+
+        out
+        (java.io.ByteArrayOutputStream.)]
+
+    (with-server-state!
+      {}
+      (fn []
+        (with-redefs-fn {#'server/stop! (constantly nil)
+                         #'state/soul (fn [id]
+                                        (when (= sid id) {"id" (str sid)}))
+                         #'state/current-turn-id (constantly nil)
+                         #'state/current-seq (constantly 4)
+                         #'state/replay-floor (constantly 0)
+                         #'state/subscribe!
+                         (fn [id _ _ cursor]
+                           (swap! subscribed conj [id cursor])
+                           [{"schema" 1 "type" "turn.started" "session_id" (str id) "seq" 5}])
+                         #'state/unsubscribe! (fn [& _])
+                         #'state/subscribe-fleet! (fn [_ sink]
+                                                    (reset! fleet-attached? true)
+                                                    (sink {"schema" 1
+                                                           "type" "session.status"
+                                                           "session_id" (str sid)
+                                                           "seq" 900
+                                                           "is_live" true}))
+                         #'state/unsubscribe-fleet! (fn [_]
+                                                      (reset! fleet-attached? false))
+                         (rv 'pump-sse!)
+                         (fn [_ queue _ write!]
+                           (loop []
+
+                             (when-let [event (.poll ^java.util.concurrent.ArrayBlockingQueue
+                                                     queue)]
+                               (write! event)
+                               (recur))))}
+          (fn []
+            (let [response ((rv 'multi-events-handler)
+                             {:query-params {"sids" (str sid ":4") "scope" "both"} :headers {}})]
+              (is (= 200 (:status response)))
+              (ring-protocols/write-body-to-stream (:body response) {} out))))))
+    (let [frames (sse-jobs (.toString out "UTF-8"))]
+      (is (= [[sid 4]] @subscribed))
+      (is (false? @fleet-attached?))
+      (is (= ["subscription.ready" "turn.started" "subscription.ready" "session.status"]
+             (mapv #(get % "type") frames)))
+      (is (= [nil nil "fleet" "fleet"] (mapv #(get % "scope") frames)))
+      (is (= 4 (get (first frames) "cursor")))
+      (is (= [5 0 900] (mapv #(get % "seq") (rest frames)))))))
+
 (deftest fleet-ready-follows-subscription
   ;; Reconnecting clients resync on ready; changes from that instant must be queued.
   (with-server-state!

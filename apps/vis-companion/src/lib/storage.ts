@@ -323,7 +323,7 @@ export async function setSpeechRate(rate: number): Promise<void> {
 }
 
 const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';
-const MAX_SUBSCRIBED_SESSIONS = 24;
+export const MAX_SUBSCRIBED_SESSIONS = 24;
 
 type SubscriptionStore = Record<string, string[]>;
 

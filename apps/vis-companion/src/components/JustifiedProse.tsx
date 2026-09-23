@@ -151,12 +151,60 @@ function prepareInline(
   prepared.endHangs.fill(0);
   prepared.startHangs.fill(0);
   const cache = new Map<string, number>();
+  // A Range reads ordinary styled tokens from one laid-out inline tree. Replacing
+  // the probe for every word forces a full layout and style recalculation per token.
+  probe.replaceChildren(...measuredSlice(source, 0, content.text.length));
+  const range = document.createRange();
+  const leaves: Text[] = [];
+  const offsets = [0];
+  const boxed: { node: Element; start: number; end: number }[] = [];
+  const walker = document.createTreeWalker(probe, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const leaf = walker.currentNode as Text;
+    if (!leaf.length) continue;
+    leaves.push(leaf);
+    const start = offsets[offsets.length - 1];
+    offsets.push(start + leaf.length);
+    // Code and controls have padding or borders. Measure those tokens as boxes.
+    const box = leaf.parentElement?.closest('code, button');
+    const last = boxed[boxed.length - 1];
+    if (box && last?.node === box) last.end = start + leaf.length;
+    else if (box) boxed.push({ node: box, start, end: start + leaf.length });
+  }
+  if (offsets[offsets.length - 1] !== content.text.length)
+    throw new RangeError('Inline source mismatch');
+  let boxProbe: HTMLElement | null = null;
+  const locate = (index: number): readonly [Text, number] => {
+    let low = 0;
+    let high = leaves.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (offsets[middle + 1] <= index) low = middle + 1;
+      else high = middle;
+    }
+    return [leaves[low], index - offsets[low]];
+  };
   const measure = (start: number, end: number) => {
     const key = `${start}:${end}`;
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    probe.replaceChildren(...measuredSlice(source, start, end));
-    const width = probe.getBoundingClientRect().width;
+    let width: number;
+    if (boxed.some((box) => start < box.end && end > box.start)) {
+      // Keep the ranged tree untouched while preserving the full code/control box.
+      // An out-of-flow child cannot affect its parent's inline measurement.
+      if (!boxProbe) {
+        boxProbe = probe.cloneNode(false) as HTMLElement;
+        probe.appendChild(boxProbe);
+      }
+      boxProbe.replaceChildren(...measuredSlice(source, start, end));
+      width = boxProbe.getBoundingClientRect().width;
+    } else {
+      const [startNode, startOffset] = locate(start);
+      const [endNode, endOffset] = locate(end);
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      width = range.getBoundingClientRect().width;
+    }
     if (!Number.isFinite(width) || width < 0) throw new RangeError('Invalid inline width');
     cache.set(key, width);
     return width;
@@ -196,6 +244,42 @@ type Composition = { content: InlineContent; lines: ProseLine[]; spaceFont: CSSP
  */
 const SETTLE_MS = 80;
 
+const nearby = new Map<Element, () => void>();
+let nearbyObserver: IntersectionObserver | null = null;
+
+function disconnectNearbyObserver() {
+  if (nearby.size) return;
+  nearbyObserver?.disconnect();
+  nearbyObserver = null;
+}
+
+/** One observer wakes only paragraphs approaching the viewport, not the entire transcript. */
+function observeNearby(element: Element, compose: () => void): () => void {
+  if (!nearbyObserver) {
+    nearbyObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const wake = nearby.get(entry.target);
+          if (!wake) continue;
+          nearby.delete(entry.target);
+          nearbyObserver?.unobserve(entry.target);
+          wake();
+        }
+        disconnectNearbyObserver();
+      },
+      { rootMargin: `${window.innerHeight}px 0px` },
+    );
+  }
+  nearby.set(element, compose);
+  nearbyObserver.observe(element);
+  return () => {
+    nearby.delete(element);
+    nearbyObserver?.unobserve(element);
+    disconnectNearbyObserver();
+  };
+}
+
 /** Compose opening prose before paint; React keeps ownership of all visible text. */
 export function JustifiedProse({
   as: Tag = 'p',
@@ -227,8 +311,24 @@ export function JustifiedProse({
     let prepared: Prepared | undefined;
     let fontKey = '';
     let lastWidth = 0;
+    // Keep the opening viewport synchronous. Distant paragraphs remain native and
+    // accessible until the shared observer reaches them ahead of scrolling.
+    let bounds: DOMRect | null = null;
+    if (typeof IntersectionObserver === 'function') {
+      try {
+        bounds = element.getBoundingClientRect();
+      } catch {
+        // Measurement is unavailable; compose() already falls back to native text.
+      }
+    }
+    const margin = window.innerHeight;
+    let active =
+      !bounds ||
+      !Number.isFinite(bounds.top) ||
+      !Number.isFinite(bounds.bottom) ||
+      (bounds.bottom >= -margin && bounds.top <= window.innerHeight + margin);
     /** Seed the initial width so the observer's first delivery is not a resize. */
-    let seenWidth = parseFloat(getComputedStyle(element).width) || 0;
+    let seenWidth = active ? parseFloat(getComputedStyle(element).width) || 0 : 0;
     let settleTimer = 0;
     /** True while the box is moving and the paragraph is left to wrap natively. */
     let riding = false;
@@ -301,12 +401,7 @@ export function JustifiedProse({
         probe.setAttribute('aria-hidden', 'true');
         element.appendChild(probe);
         try {
-          prepared = content.rich
-            ? prepareInline(engine, content, source, probe)
-            : engine.prepare(text, (word) => {
-                probe.textContent = word;
-                return probe.getBoundingClientRect().width;
-              });
+          prepared = prepareInline(engine, content, source, probe);
           fontKey = nextFont;
         } finally {
           probe.remove();
@@ -367,8 +462,8 @@ export function JustifiedProse({
       }
     };
     const schedule = () => {
-      // Nothing is composed while the box is moving; `rest` comes back for it.
-      if (riding) return;
+      // Nothing is composed while the box is moving or outside the preload range.
+      if (riding || !active) return;
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(compose);
     };
@@ -384,6 +479,7 @@ export function JustifiedProse({
      * column that just gained width — is composed straight away and never waits.
      */
     const resized = () => {
+      if (!active) return;
       // A selected passage keeps the composition it was selected in, moving or not.
       if (isSelected()) return;
       const width = parseFloat(getComputedStyle(element).width) || 0;
@@ -409,24 +505,37 @@ export function JustifiedProse({
       prepared = undefined;
       schedule();
     };
-    // Commit the first line layout synchronously, before the browser can paint it.
-    compose();
+    // Commit visible text before paint; distant text needs no composition yet.
+    let stopObserving: (() => void) | undefined;
+    if (active) compose();
+    else {
+      stopObserving = observeNearby(element, () => {
+        active = true;
+        seenWidth = parseFloat(getComputedStyle(element).width) || 0;
+        compose();
+      });
+    }
     const observer = new ResizeObserver(resized);
     observer.observe(element);
     window.addEventListener('resize', schedule);
     document.addEventListener('selectionchange', schedule);
-    document.fonts?.addEventListener('loadingdone', fontsChanged);
-    void document.fonts?.ready.then(() => {
-      if (!disposed) fontsChanged();
-    });
+    const fontSet = document.fonts;
+    fontSet?.addEventListener('loadingdone', fontsChanged);
+    // A resolved ready promise does not mean the already-loaded face changed.
+    if (fontSet && fontSet.status !== 'loaded') {
+      void fontSet.ready.then(() => {
+        if (!disposed) fontsChanged();
+      });
+    }
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
+      stopObserving?.();
       observer.disconnect();
       window.removeEventListener('resize', schedule);
       document.removeEventListener('selectionchange', schedule);
-      document.fonts?.removeEventListener('loadingdone', fontsChanged);
+      fontSet?.removeEventListener('loadingdone', fontsChanged);
     };
   }, [content]);
 

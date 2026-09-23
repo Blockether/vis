@@ -995,14 +995,14 @@
 
 (defn- multi-sse-body
   "SSE body fanning MANY sessions down ONE connection — the multiplexed twin
-   of [[sse-body]]. Every event already carries `:session_id`, so the client
-   demuxes by session. Same single-writer discipline: every session registers
-   the SAME non-blocking enqueue sink onto one bounded queue, and this body
-   thread is the only socket writer. A per-session `last-seq` guard dedups
-   each session's monotonic stream independently. Replays each session
-   (events past its cursor) then drains live; an idle gap emits the shared
-   heartbeat, and a dead client's IO error → unsubscribe of every session."
-  [sid+cursors proxied? owner-pid]
+   of [[sse-body]]. Every session registers the SAME non-blocking enqueue sink
+   onto one bounded queue; this body thread is the only socket writer. A
+   per-session `last-seq` guard dedups each session independently. Optionally
+   carries the fleet status feed on that same connection, marked with
+   `scope=fleet` so its independent sequence cannot advance a session cursor.
+   Replays each session past its cursor, then drains live and heartbeats; a
+   dead client unsubscribes every feed."
+  [sid+cursors proxied? owner-pid & [include-fleet?]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -1027,7 +1027,8 @@
               unsubscribe-all!
               (fn []
                 (doseq [[sid _] sid+cursors]
-                  (state/unsubscribe! sid sub-id)))
+                  (state/unsubscribe! sid sub-id))
+                (when include-fleet? (state/unsubscribe-fleet! sub-id)))
 
               close!
               (sse-closer out queue dead? unsubscribe-all!)
@@ -1037,11 +1038,15 @@
 
               write!
               (fn [event]
-                (let [esid (str (get event "session_id"))]
-                  (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
-                    (.write out (.getBytes (sse/sse-frame (outbound event)) StandardCharsets/UTF_8))
-                    (.flush out)
-                    (swap! last-seqs assoc esid (long (get event "seq"))))))]
+                (if (= "fleet" (get event "scope"))
+                  (do (.write out (.getBytes (sse/sse-frame event) StandardCharsets/UTF_8))
+                      (.flush out))
+                  (let [esid (str (get event "session_id"))]
+                    (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
+                      (.write out
+                              (.getBytes (sse/sse-frame (outbound event)) StandardCharsets/UTF_8))
+                      (.flush out)
+                      (swap! last-seqs assoc esid (long (get event "seq")))))))]
 
           (swap! server-state (fn [st]
                                 (-> st
@@ -1070,6 +1075,15 @@
                                (inc (max 0 (long requested-cursor) (long (or cursor 0))))
                                (util/now-ms)
                                "session.deleted")))))
+               (when include-fleet?
+                 ;; Register before ready: a list read on ready overlaps the live
+                 ;; feed, so a transition cannot fall between the two.
+                 (state/subscribe-fleet! sub-id #(sink (assoc % "scope" "fleet")))
+                 (write! {"schema" 1
+                          "type" "subscription.ready"
+                          "scope" "fleet"
+                          "seq" 0
+                          "ts" (util/now-ms)}))
                (pump-sse! out queue dead? write!)
                (catch Throwable _ nil)
                (finally (unsubscribe-all!)
@@ -1140,30 +1154,35 @@
                      (try (.close out) (catch Throwable _ nil))))))))
 
 (defn- multi-events-handler
-  "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
-   session's events, so a client watching N sessions holds ONE connection +
-   ONE server heartbeat thread instead of N. Demuxed client-side by each
-   event's `:session_id`.
-
-   GET /v1/events?scope=fleet — the same route asked the OTHER question: not what
-   happens inside a session but WHICH sessions changed state. That is the session
-   list's feed, and it lives here rather than on a route of its own because a
-   client already holds exactly one events connection and one heartbeat."
+  "GET /v1/events?sids=a:10,b,c:3 carries every listed session on one SSE
+   connection. Add scope=both to carry whole-machine status changes on that
+   connection too. scope=fleet remains the fleet-only feed."
   [request]
-  (let [proxied? (boolean (some #(get-in request [:headers %])
-                                ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
-    (if (= "fleet"
-           (some-> (get-in request [:query-params "scope"])
-                   str/trim))
-      {:status 200
-       :headers sse-headers
-       :body (fleet-sse-body proxied? (request-client-pid request))}
-      (let [sid+cursors (parse-multi-sids request)]
-        (if (seq sid+cursors)
+  (let [proxied?
+        (boolean (some #(get-in request [:headers %])
+                       ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
+
+        scope
+        (some-> (get-in request [:query-params "scope"])
+                str/trim)
+
+        fleet?
+        (= "fleet" scope)
+
+        combined?
+        (= "both" scope)
+
+        sid+cursors
+        (parse-multi-sids request)]
+
+    (cond fleet? {:status 200
+                  :headers sse-headers
+                  :body (fleet-sse-body proxied? (request-client-pid request))}
+          (seq sid+cursors)
           {:status 200
            :headers sse-headers
-           :body (multi-sse-body sid+cursors proxied? (request-client-pid request))}
-          (error-response 400 :bad-request "no valid sids"))))))
+           :body (multi-sse-body sid+cursors proxied? (request-client-pid request) combined?)}
+          :else (error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)
 

@@ -585,6 +585,8 @@ const SNAPSHOT_KIND_LIMITS = new Map<string, number>([
   ['transcript', SESSION_CACHE_LIMIT],
   ['queued', SESSION_CACHE_LIMIT],
   ['live', SESSION_CACHE_LIMIT],
+  // Streaming bubbles are memory-only but can retain whole generated answers.
+  ['running-turn', SESSION_CACHE_LIMIT],
   // The head list seeds model pins for up to one complete session-list window.
   ['model', 100],
 ]);
@@ -2907,15 +2909,16 @@ export class GatewayClient {
    * into `turn`, so the reader can drop a replay it has already applied.
    */
   cachedRunningTurn<T>(sid: string): { turn: T; seq: number } | null {
-    const cached = snapshots.get(this.snapshotKey('running-turn', sid));
-    return (cached as { turn: T; seq: number } | undefined) ?? null;
+    return readSnapshot<{ turn: T; seq: number }>(this.snapshotKey('running-turn', sid));
   }
 
   rememberRunningTurn(sid: string, turn: unknown, seq: number): void {
     if (this.isSessionDeleted(sid)) return;
     const key = this.snapshotKey('running-turn', sid);
-    if (turn === null) snapshots.delete(key);
-    else snapshots.set(key, { turn, seq });
+    snapshots.delete(key);
+    if (turn === null) return;
+    snapshots.set(key, { turn, seq });
+    trimSnapshotKind(key);
   }
 
   /**
@@ -4646,12 +4649,14 @@ export class GatewayClient {
   /**
    * Multiplex many watched sessions over one SSE connection. A cursor of -1
    * requests live-only delivery; reconnects resume each session independently.
+   * When requested, fleet status shares this connection but never its cursors.
    */
   streamSessionEvents(
     cursors: Map<string, number>,
     onEvent: (event: SseEvent) => void,
     opts: {
       signal?: AbortSignal;
+      includeFleet?: boolean;
       onOpen?: () => void;
       onError?: (error: unknown) => void;
       /** Fired once the retry loop has ENDED — the stream is no longer running. */
@@ -4695,8 +4700,11 @@ export class GatewayClient {
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
           const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
+          // An older gateway ignores scope=both and still serves sessions. Fleet
+          // stays unready, so the list keeps its existing polling safety net.
+          const scope = opts.includeFleet ? '&scope=both' : '';
           const response = await raceAbort(
-            fetch(`${this.base}/v1/events?sids=${encodeURIComponent(spec)}`, {
+            fetch(`${this.base}/v1/events?sids=${encodeURIComponent(spec)}${scope}`, {
               headers: this.headers({ Accept: 'text/event-stream' }),
               signal: attemptSignal,
             }),
@@ -4733,16 +4741,20 @@ export class GatewayClient {
                         : '';
                   // Deliver FIRST, then advance the cursor: an event whose
                   // handler failed must replay on reconnect, never be skipped.
+                  // Fleet frames use an independent sequence, even when they name
+                  // a watched session. Only session frames own replay cursors.
                   onEvent(event);
-                  if (
-                    sid &&
-                    cursors.has(sid) &&
-                    event.type === 'subscription.ready' &&
-                    typeof event.cursor === 'number'
-                  ) {
-                    cursors.set(sid, event.cursor);
-                  } else if (sid && cursors.has(sid) && typeof event.seq === 'number') {
-                    cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                  if (event.scope !== 'fleet') {
+                    if (
+                      sid &&
+                      cursors.has(sid) &&
+                      event.type === 'subscription.ready' &&
+                      typeof event.cursor === 'number'
+                    ) {
+                      cursors.set(sid, event.cursor);
+                    } else if (sid && cursors.has(sid) && typeof event.seq === 'number') {
+                      cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                    }
                   }
                 } catch {
                   // Ignore one malformed frame without ending sibling sessions.

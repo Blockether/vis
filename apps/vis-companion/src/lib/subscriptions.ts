@@ -1,4 +1,5 @@
 import type { GatewayClient } from './gateway';
+import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
 import type { SseEvent } from './types';
 
@@ -36,7 +37,7 @@ const RECONNECT_GRACE_MS = 4_000;
 const SUPERVISOR_INTERVAL_MS = 10_000;
 
 /**
- * One long-lived, multiplexed gateway subscription for every visited session.
+ * One long-lived, multiplexed gateway subscription for recent visited sessions.
  * Session views may mount/unmount without stopping their stream; a bounded
  * current-turn buffer lets a revisited chat immediately catch up.
  */
@@ -83,12 +84,29 @@ export class SessionSubscriptionHub {
 
   watchSessions(sessionIds: Iterable<string>): void {
     let changed = false;
-    for (const sid of sessionIds) {
-      if (!sid || this.watched.has(sid) || this.deleted.has(sid)) continue;
+    // Storage lists most recent first. Set insertion order is oldest first so
+    // trimming leaves the same recent window alive across visits and reloads.
+    for (const sid of Array.from(sessionIds).reverse()) {
+      if (!sid || this.deleted.has(sid)) continue;
+      if (this.watched.delete(sid)) {
+        this.watched.add(sid);
+        continue;
+      }
       this.watched.add(sid);
       // -1 is the gateway's efficient live-only sentinel. subscription.ready
       // replaces it with the effective cursor before normal events arrive.
       this.cursors.set(sid, -1);
+      changed = true;
+    }
+    for (const sid of this.watched) {
+      if (this.watched.size <= MAX_SUBSCRIBED_SESSIONS) break;
+      // A mounted screen must keep its event feed even if another visit pushes
+      // its session outside the recent window.
+      if (this.sessionListeners.get(sid)?.size) continue;
+      this.watched.delete(sid);
+      this.cursors.delete(sid);
+      this.buffers.delete(sid);
+      this.ended.delete(sid);
       changed = true;
     }
     if (changed) this.restart();
@@ -149,23 +167,26 @@ export class SessionSubscriptionHub {
   }
 
   /**
-   * EVERY session's lifecycle on this machine, not only the visited ones.
+   * EVERY session's lifecycle on this machine, not only visited sessions.
+   * The fleet feed shares the session socket while sessions are watched; a list
+   * without watched sessions uses its own fleet-only stream. Either way, the
+   * feed runs only while somebody is listening.
    *
-   * A list used to learn about a run it had never opened by re-reading its whole
-   * window on a timer; the gateway's `?scope=fleet` stream carries those
-   * transitions as small frames instead (`GatewayClient.streamFleetStatus`). The
-   * stream runs only while somebody is listening — behind an open transcript the
-   * list is off the glass, and a machine must not stream to nobody.
-   *
-   * Frames from the multiplexed SESSION stream still arrive here too: that is the
-   * older, narrower channel, and it reaches only what this device has visited.
+   * Frames from the multiplexed session stream also reach these listeners.
    */
   subscribeFleet(listener: FleetListener): () => void {
     this.fleetListeners.add(listener);
-    this.ensureFleetStream();
+    if (this.cursors.size > 0) {
+      if (this.fleetListeners.size === 1) this.restart({ graceful: true });
+    } else {
+      this.ensureFleetStream();
+    }
     return () => {
       this.fleetListeners.delete(listener);
-      if (this.fleetListeners.size === 0) this.stopFleet();
+      if (this.fleetListeners.size === 0) {
+        this.stopFleet();
+        if (this.cursors.size > 0) this.restart({ graceful: true });
+      }
     };
   }
 
@@ -198,11 +219,12 @@ export class SessionSubscriptionHub {
     const now = Date.now();
     if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
     this.lastResyncAt = now;
-    // The fleet stream parks on a backgrounded webview exactly as the session one
-    // does, and it has no cursor to catch up with: replace it and let the list read
-    // its window once.
-    this.restartFleet();
-    if (this.cursors.size === 0) return;
+    // Reconnect the active transport once: a combined session/fleet stream
+    // resubscribes both feeds, while a fleet-only stream refreshes its window.
+    if (this.cursors.size === 0) {
+      this.restartFleet();
+      return;
+    }
     // Graceful: this is a precaution, not an observed failure — do not paint one.
     this.restart({ graceful: true });
   }
@@ -234,6 +256,9 @@ export class SessionSubscriptionHub {
     this.fleetListeners.clear();
     this.fleetStateListeners.clear();
     this.connectionListeners.clear();
+    this.watched.clear();
+    this.cursors.clear();
+    this.deleted.clear();
     this.buffers.clear();
     this.ended.clear();
   }
@@ -261,19 +286,42 @@ export class SessionSubscriptionHub {
     } else {
       this.setConnected(false);
     }
-    if (this.cursors.size === 0) return;
-    const stop = this.client.streamSessionEvents(this.cursors, (event) => this.ingest(event), {
-      onOpen: () => this.setConnected(true),
-      onError: () => this.setConnected(false),
-      // Only clear the handle when it is still OURS: a later restart() has
-      // already installed its own stream and must not be torn down by the
-      // old one's exit.
-      onClosed: () => {
-        if (this.stopStream !== stop) return;
-        this.stopStream = null;
-        this.setConnected(false);
+    if (this.cursors.size === 0) {
+      this.setFleetStreaming(false);
+      this.ensureFleetStream();
+      return;
+    }
+    const includeFleet = this.fleetListeners.size > 0;
+    if (includeFleet) this.stopFleet();
+    const stop = this.client.streamSessionEvents(
+      this.cursors,
+      (event) => {
+        if (event.scope === 'fleet') {
+          if (event.type === 'subscription.ready') this.setFleetStreaming(true);
+          if (event.type === 'session.deleted') this.ingest(event);
+          else for (const listener of [...this.fleetListeners]) listener(event);
+        } else {
+          this.ingest(event);
+        }
       },
-    });
+      {
+        includeFleet,
+        onOpen: () => this.setConnected(true),
+        onError: () => {
+          this.setConnected(false);
+          if (includeFleet) this.setFleetStreaming(false);
+        },
+        // Only clear the handle when it is still OURS: a later restart() has
+        // already installed its own stream and must not be torn down by the
+        // old one's exit.
+        onClosed: () => {
+          if (this.stopStream !== stop) return;
+          this.stopStream = null;
+          this.setConnected(false);
+          if (includeFleet) this.setFleetStreaming(false);
+        },
+      },
+    );
     this.stopStream = stop;
   }
 
@@ -284,8 +332,15 @@ export class SessionSubscriptionHub {
    * of looking connected.
    */
   private ensureFleetStream(): void {
-    if (this.disposed || this.suspended || this.stopFleetStream || this.fleetListeners.size === 0)
+    if (
+      this.disposed ||
+      this.suspended ||
+      this.cursors.size > 0 ||
+      this.stopFleetStream ||
+      this.fleetListeners.size === 0
+    ) {
       return;
+    }
     const stop = this.client.streamFleetStatus(
       (event) => {
         if (event.type === 'session.deleted') this.ingest(event);
@@ -326,6 +381,7 @@ export class SessionSubscriptionHub {
   private ingest(event: SseEvent): void {
     const sid = event.session_id ?? event.sid;
     if (!sid || this.deleted.has(sid)) return;
+    if (event.type !== 'session.deleted' && !this.watched.has(sid)) return;
     if (event.type === 'session.deleted') {
       this.deleted.add(sid);
       this.client.forgetDeletedSession(sid);

@@ -1858,14 +1858,22 @@ export function SessionScreen({
       const runningTurnIdBefore = runningTurnBefore?.id ?? '';
       const runningBefore = runningRef.current;
       const submitBefore = submitsInFlightRef.current > 0;
+      // The same read repairs missed queue events. Preserve live deltas that arrive
+      // while its inclusive session snapshot is in flight.
+      const backlogReadAt = Date.now();
+      const queuePausedRevision = queuePausedRevisionRef.current;
       let next: Session;
       try {
-        next = await client.session(sid);
+        next = await client.session(sid, undefined, true);
       } catch {
         return;
       }
       if (cancelled) return;
       setSession(next);
+      acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
+      if (queuePausedRevisionRef.current === queuePausedRevision) {
+        setQueuePaused(client.cachedQueuePaused(sid));
+      }
       const gatewayRunning = next.live !== undefined ? next.live : next.status === 'running';
       // Safety net: on wake we ALWAYS refetch the transcript and check whether
       // the streamed running turn has already been persisted while we were
@@ -1909,22 +1917,6 @@ export function SessionScreen({
         // The row's own pixels land over the frames AFTER this batch; carry a
         // following reader across them.
         followThroughHandover();
-      }
-      // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
-      // by a suspended stream would otherwise leave the tray lying until the
-      // row drained. Gateway truth wins outright — we never merge in a local
-      // guess.
-      try {
-        const backlogReadAt = Date.now();
-        const queuePausedRevision = queuePausedRevisionRef.current;
-        const backlog = await client.queuedTurns(sid);
-        if (cancelled) return;
-        acceptQueueBacklog(backlog.turns, backlogReadAt);
-        if (queuePausedRevisionRef.current === queuePausedRevision) {
-          setQueuePaused(backlog.paused);
-        }
-      } catch {
-        /* Keep the last known backlog; the next tick retries. */
       }
       const currentRunningTurn = runningTurnRef.current;
       const showsWork =
