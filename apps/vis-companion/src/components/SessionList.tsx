@@ -306,7 +306,8 @@ export const SessionRow = memo(function SessionRow({
   // abandoned session never comes. STOPPED takes the status mark for itself, ahead
   // of the NEW that mark would otherwise carry, so a cut-off row never says both.
   const stopped = !live && sessionWasInterrupted(session) && unread > 0;
-  const status = statusLabel(session, stopped, hasUnsent, unread);
+  const isPutAway = sessionIsArchived(session) || group?.archived_at != null;
+  const status = statusLabel(session, stopped, hasUnsent, unread, isPutAway);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
@@ -387,7 +388,7 @@ export const SessionRow = memo(function SessionRow({
   // A session still working keeps its row and is told so here, with nothing sent: archiving
   // it would hide work a human is waiting on, and the gateway refuses it for that same
   // reason (409 `session-busy`), which the row reads back the same way.
-  const isPutAway = sessionIsArchived(session);
+  const groupIsArchived = group?.archived_at != null;
   const [archiveError, setArchiveError] = useState('');
   const toggleArchive = useCallback(() => {
     const archive = commands.archive;
@@ -405,7 +406,7 @@ export const SessionRow = memo(function SessionRow({
       }
     })();
   }, [commands, conn, isPutAway, session]);
-  const archiving: SwipeAction[] = commands.archive
+  const archiving: SwipeAction[] = commands.archive && !groupIsArchived
     ? [
         {
           key: 'archive',
@@ -665,12 +666,12 @@ export const SessionRow = memo(function SessionRow({
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
                       status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${statusTone(session, stopped, hasUnsent, unread)}`}
+                    } ${statusTone(session, stopped, hasUnsent, unread, isPutAway)}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
-                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread, isPutAway)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
                     <span className="sr-only @sm:not-sr-only">
                       {renameBusy ? 'Saving' : status}
@@ -1019,12 +1020,12 @@ export function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
 }
 
-function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
+function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unread: number, isPutAway: boolean): string {
   // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
   // exactly what made the row look like it was getting on with it.
   // PUT AWAY outranks everything below: an archived session takes no new work at the
   // gateway, so whatever the row was doing when it was filed is no longer news.
-  if (sessionIsArchived(session)) return 'ARCHIVED';
+  if (isPutAway) return 'ARCHIVED';
   if (sessionNeedsInput(session)) {
     // …and HOW MANY are open: answering one of two has to show, or the badge
     // reads exactly the same as it did before the answer.
@@ -1044,8 +1045,8 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unr
   return 'IDLE';
 }
 
-function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
-  if (sessionIsArchived(session)) return 'text-muted';
+function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unread: number, isPutAway: boolean): string {
+  if (isPutAway) return 'text-muted';
   if (sessionNeedsInput(session)) return 'text-warn';
   if (sessionIsLive(session)) return 'text-ok';
   if (stopped) return 'text-err';
@@ -1055,10 +1056,9 @@ function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unre
   return 'text-dialog-hint';
 }
 
-function statusDot(session: Session, stopped: boolean, hasUnsent: boolean, unread: number): string {
-  // Filled and dimmed: put away is a state the row IS in, not the absence of one, so
-  // it takes a solid mark rather than IDLE's hollow square.
-  if (sessionIsArchived(session)) return 'bg-muted';
+function statusDot(session: Session, stopped: boolean, hasUnsent: boolean, unread: number, isPutAway: boolean): string {
+  // Filled and dimmed: put away is a state the row IS in, not the absence of one.
+  if (isPutAway) return 'bg-muted';
   if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   // Solid, never pulsing: an interrupted session is the opposite of live.

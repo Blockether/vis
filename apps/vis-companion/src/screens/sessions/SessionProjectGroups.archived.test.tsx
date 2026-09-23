@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 
 import type { SessionRowCommands } from '../../components/SessionList';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
-import type { GatewayClient } from '../../lib/gateway';
+import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
@@ -128,6 +128,48 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
   };
 }
 
+/** The gateway changes a group's view without stamping the sessions on its shelf. */
+function archivableMachine() {
+  const client = machine(EMPTY_PAGE, []);
+  let archived = false;
+  return {
+    ...client,
+    updateSessionGroup: vi.fn(async (_gid: string, fields: { archived: boolean }) => {
+      archived = fields.archived;
+      return { ...WALLET, archived_at: archived ? 1730000400 : null };
+    }),
+    listProjectPage: vi.fn(async (
+      _root: string,
+      _limit: number,
+      _after: string,
+      _pins: Map<string, string>,
+      _signal?: AbortSignal,
+      _persistHead?: boolean,
+      view: ArchiveView = 'exclude',
+    ) => (view === 'only'
+      ? { ...EMPTY_PAGE, grouped: archived ? [ACTIVE] : [] }
+      : archived ? EMPTY_PAGE : ACTIVE_PAGE)),
+    listSessionGroups: vi.fn(async (
+      _root: string,
+      _signal?: AbortSignal,
+      view: ArchiveView = 'exclude',
+    ) => {
+      const groups = (view === 'only') === archived
+        ? [{ ...WALLET, session_count: 1, archived_at: archived ? 1730000400 : null }]
+        : [];
+      return {
+        project_id: STORY_NEWER_PROJECT.projectId,
+        groups,
+        total: groups.length,
+        session_total: groups.length,
+        limit: BANDS.limit,
+        offset: BANDS.offset,
+        has_more: false,
+      };
+    }),
+  };
+}
+
 function mount(
   client: Machine = machine(),
   held: Session[] = [ACTIVE],
@@ -232,6 +274,79 @@ describe('a project shows the sessions it archived', () => {
       'only',
       BANDS,
     );
+  });
+
+  it('archives a whole group and restores its unstamped sessions from the archive', async () => {
+    const client = archivableMachine();
+    const { user } = mount(client);
+    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(screen.getByRole('dialog', { name: MENU })).getByText('Archive group'));
+    await waitFor(() => expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET.id, { archived: true }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull());
+    expect(painted()).toEqual([]);
+
+    await press(user, 'Show archived');
+    const wallet = await band('Wallet work');
+    await waitFor(() => expect(painted(wallet)).toEqual([ACTIVE.id]));
+    expect(within(wallet).getByText('ARCHIVED')).toBeInTheDocument();
+    expect(within(wallet).queryByRole('button', { name: 'New session in Wallet work' })).toBeNull();
+    expect(within(wallet).queryByRole('button', { name: 'Unarchive' })).toBeNull();
+    await user.click(within(wallet).getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(screen.getByRole('dialog', { name: MENU })).getByText('Unarchive group'));
+    await waitFor(() => expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET.id, { archived: false }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull());
+
+    await press(user, 'Hide archived');
+    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+  });
+
+  it('accepts a later gateway restoration instead of keeping its own archive answer forever', async () => {
+    const client = archivableMachine();
+    const { user } = mount(client);
+    await band('Wallet work');
+    const pageReads = client.listProjectPage.mock.calls.length;
+    const groupReads = client.listSessionGroups.mock.calls.length;
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(screen.getByRole('dialog', { name: MENU })).getByText('Archive group'));
+    await waitFor(() => expect(client.listProjectPage.mock.calls.length).toBeGreaterThan(pageReads));
+    await waitFor(() => expect(client.listSessionGroups.mock.calls.length).toBeGreaterThan(groupReads));
+    // Another client restores the group without notifying this view.
+    await client.updateSessionGroup(WALLET.id, { archived: false });
+
+    await press(user, 'Show archived');
+    await press(user, 'Hide archived');
+    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+  });
+
+  it('shows empty archived groups so they can be restored', async () => {
+    const empty = { ...RECEIPTS, session_count: 0 };
+    const { user } = mount(machine(EMPTY_PAGE, [empty]));
+    await band('Wallet work');
+    await press(user, 'Show archived');
+    const receipts = await band('Receipts');
+    expect(painted(receipts)).toEqual([]);
+    await user.click(within(receipts).getByRole('button', { name: 'Actions for Receipts' }));
+    expect(within(screen.getByRole('dialog', { name: MENU })).getByText('Unarchive group')).toBeInTheDocument();
+  });
+  it('opens the archive when no active sessions remain in the project', async () => {
+    const { user } = mount(machine(), []);
+    await press(user, 'Show archived');
+    expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
+  });
+  it('keeps a busy group visible and explains why archiving was refused', async () => {
+    const client = archivableMachine();
+    client.updateSessionGroup.mockRejectedValueOnce(
+      new GatewayError(409, 'session-busy', { error: { type: 'session-busy', session_id: ACTIVE.id } }),
+    );
+    const { user } = mount(client);
+    const wallet = await band('Wallet work');
+    await user.click(within(wallet).getByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(screen.getByRole('dialog', { name: MENU })).getByText('Archive group'));
+    expect(await screen.findByText('A session in this group is still active. Archive it once its turn is done.')).toBeInTheDocument();
+    expect(painted(wallet)).toEqual([ACTIVE.id]);
   });
 
   it('leaves a session archived inside an active group to that group', async () => {

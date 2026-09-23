@@ -369,6 +369,25 @@ describe('GatewayClient project-page snapshots', () => {
     expect(wall).toContain('offset=20');
   });
 
+  it('sends group archive and restoration as PATCH requests', async () => {
+    const fetches = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ id: 'wallet', archived_at: null })),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.updateSessionGroup('group/wallet', { archived: true });
+    await client.updateSessionGroup('group/wallet', { archived: false });
+
+    for (const [index, archived] of [true, false].entries()) {
+      const [url, init] = fetches.mock.calls[index]!;
+      expect(String(url)).toContain('/v1/session-groups/group%2Fwallet');
+      expect(init.method).toBe('PATCH');
+      expect(JSON.parse(String(init.body))).toEqual({ archived });
+    }
+  });
+
   it('never reuses a project validator for a different draft overlay', async () => {
     const fetches = vi.fn().mockImplementation(() =>
       Promise.resolve(

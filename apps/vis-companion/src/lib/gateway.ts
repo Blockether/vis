@@ -3712,10 +3712,10 @@ export class GatewayClient {
     return this.request('POST', '/v1/session-groups', color ? { root, name, color } : { root, name });
   }
 
-  /** Rename, recolour or reorder a group. `color` is a palette token, never a hex string. */
+  /** Rename, recolour, reorder, archive or restore a group. */
   updateSessionGroup(
     gid: string,
-    fields: { name?: string; color?: string; position?: number },
+    fields: { name?: string; color?: string; position?: number; archived?: boolean },
   ): Promise<SessionGroup> {
     return this.request('PATCH', `/v1/session-groups/${encodeURIComponent(gid)}`, fields);
   }
