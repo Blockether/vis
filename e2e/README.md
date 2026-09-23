@@ -61,6 +61,13 @@ e2e/
   sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
   Invalid, missing or impossible token counts fail; a cold cache does not. This
   does not require a particular cache rate or report a request-level hit percentage.
+- **want_goal_complete** — require the persisted gateway goal to be complete after
+  the scenario, not just a model claim or a tool-call attempt.
+- **want_stdout_recovery** — require an oversized raw stdout, then a later
+  `read_session()` block that selects its original scope and tool-call ID while a
+  goal is active. Check the recovered UTF-8 SHA-256 digest, length and middle
+  against the raw output. Use `min_chars`, `head`, `middle` and `tail` to identify
+  the original. The model-facing result is clipped; the saved raw output is not.
 - **files_from** — reuse a sibling scenario's input files without copying its source.
   The known-contract case reuses the original fixture with a supplied unchanged
   contract. It tests recovered-contract reuse, not cross-turn memory retention.

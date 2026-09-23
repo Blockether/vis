@@ -1785,7 +1785,7 @@
                 (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
             :form-result
-            (let [stdout (form/clip-to-wire (:stdout chunk))
+            (let [stdout (form/clip-to-wire (:stdout chunk) chunk)
                   duration-ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
                                 (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
                                   (max 0 (- (long finished-at-ms) (long started-at-ms)))))]

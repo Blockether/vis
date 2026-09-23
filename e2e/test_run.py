@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -149,6 +150,108 @@ class CacheMetricValidationTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "no usage object"):
             decode_usage_body('{"usage":null}')
+
+
+class StdoutGoalRecoveryTest(unittest.TestCase):
+    def test_scenario_requires_goal_cache_and_exact_read_back(self):
+        scenario = run.load_scenarios(["stdout-goal-cache"])[0]
+        self.assertTrue(scenario["prompt"].startswith("/goal "))
+        self.assertTrue(scenario["want_goal_complete"])
+        self.assertTrue(scenario["want_cache_metrics"])
+        self.assertTrue(scenario["want_cache_read"])
+        self.assertIn("read_session()", scenario["want_forms"])
+
+    def test_requires_later_session_backed_exact_output_not_just_the_raw_print(self):
+        expected = {
+            "min_chars": 25,
+            "head": "HEAD-",
+            "middle": "record-03500;",
+            "tail": "-END",
+        }
+        raw = "HEAD-" + "x" * 30 + "record-03500;" + "-END\n"
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        outputs = [
+            {
+                "scope": "t1/i1/f1",
+                "iteration": 1,
+                "tool_call_id": "call_abc123",
+                "stdout": raw,
+            },
+            {
+                "scope": "t1/i2/f1",
+                "iteration": 2,
+                "stdout": f"LEN: {len(raw)}\nSHA256: {digest}\nrecord-03500;\nGOAL_STATUS: active\n",
+            },
+        ]
+        readers = [
+            {
+                "scope": "t1/i2/f1",
+                "iteration": 2,
+                "code": (
+                    "r = await read_session(); "
+                    'b = next(b for t in r["transcript"]["turns"] '
+                    'for i in t["iterations"] for b in i["blocks"] '
+                    'if b.get("scope") == "t1/i1" and '
+                    'b.get("svar_tool_call_id") == "call_abc123"); '
+                    's = b["stdout"]; '
+                    'print("SHA256:", hashlib.sha256(s.encode()).hexdigest())'
+                ),
+            }
+        ]
+        self.assertEqual([], run.stdout_recovery_failures(outputs, readers, expected))
+        self.assertTrue(run.stdout_recovery_failures(outputs[:1], readers, expected))
+        self.assertTrue(run.stdout_recovery_failures(outputs, [], expected))
+        self.assertTrue(run.stdout_recovery_failures(outputs[1:], readers, expected))
+        self.assertTrue(
+            run.stdout_recovery_failures(
+                outputs,
+                [
+                    {
+                        **readers[0],
+                        "code": readers[0]["code"].replace("call_abc123", "call_other"),
+                    }
+                ],
+                expected,
+            )
+        )
+        self.assertTrue(
+            run.stdout_recovery_failures(
+                outputs,
+                [{**readers[0], "code": readers[0]["code"].replace("t1/i1", "t1/i9")}],
+                expected,
+            )
+        )
+        self.assertTrue(
+            run.stdout_recovery_failures(
+                [
+                    outputs[0],
+                    {
+                        **outputs[1],
+                        "stdout": outputs[1]["stdout"].replace(digest, "0" * 64),
+                    },
+                ],
+                readers,
+                expected,
+            )
+        )
+
+    def test_goal_status_is_read_from_canonical_gateway_client(self):
+        sid = "00000000-0000-0000-0000-000000000000"
+        fake = type(
+            "Response",
+            (),
+            {
+                "returncode": 0,
+                "stdout": 'VIS_E2E_SOUL\t200\t{"goal":{"status":"complete"}}\n',
+            },
+        )()
+        with patch.object(run, "gateway_eval", return_value=fake) as query:
+            self.assertEqual(
+                (200, {"status": "complete"}), run.fetch_session_goal({}, sid, 12344)
+            )
+        command = query.call_args.args[1]
+        self.assertIn("gateway-client/request!", command)
+        self.assertIn("/v1/sessions/" + sid, command)
 
 
 class SourceClasspathTest(unittest.TestCase):

@@ -395,16 +395,8 @@
                           (expect (false? (t/enabled? "test_wire_bool")))))))
 
 (defdescribe compact-model-stdout-toggle-test
-             (it "is a persisted, default-off experiment visible in settings"
-                 (let [spec (t/toggle-spec "compact_model_stdout")]
-                   (expect (= :boolean (:type spec)))
-                   (expect (false? (:default spec)))
-                   (expect (true? (:experimental? spec)))
-                   (expect (true? (:persist? spec)))
-                   (expect (toggle-contract/settings-description? (:description spec)))
-                   (doseq [channel [:tui :web]]
-                     (expect (some #(= "compact_model_stdout" (:id %))
-                                   (t/toggles-for-channel channel)))))))
+             (it "is retired in favor of the universal stdout projection"
+                 (expect (nil? (t/toggle-spec "compact_model_stdout")))))
 
 (defdescribe plans-toggle-test
              (it "is one persisted opt-in switch exposed in both clients"

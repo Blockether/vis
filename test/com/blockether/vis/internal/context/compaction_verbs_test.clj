@@ -1210,7 +1210,7 @@
 
 ;; ── layer 5b: what a fold is WORTH — the per-iteration wire residence ────────
 
-(def ^:private form-wire-chars (var-get #'lp/form-wire-chars))
+(def ^:private form-wire-text (var-get #'lp/form-wire-text))
 
 (def ^:private stamp-iter-universe! (var-get #'lp/stamp-iter-universe!))
 
@@ -1228,27 +1228,26 @@
 
 (defdescribe
   fold-wire-residence-test
-  ;; Observed failure: a fold that removed ~131k tokens of wire announced `saved ~46k`.
-  ;; The weight behind that card counted ONLY stdout, at 4 chars per token, so the
-  ;; model's own code and thinking rode the wire for free and dense tool output was
-  ;; billed at half rate — the card read as if folding barely helped.
-  (it "counts the code the model sent, not only what the program printed"
-      (expect (= 1300 (form-wire-chars {:code (filler 300) :stdout (filler 1000)}))))
-  (it "keeps the runaway-output ceiling and still counts the code"
-      (expect (= (+ 65536 10) (form-wire-chars {:code (filler 10) :stdout (filler 200000)}))))
-  (it "prices an error as that form's output"
-      (expect (= 16 (form-wire-chars {:code (filler 10) :error "boom!!"}))))
-  (it "a fold breadcrumb costs the iteration nothing"
-      (expect (zero? (form-wire-chars {:summary? true :summary-gist (filler 400)}))))
-  (it "an iteration is worth its thinking, its code and its results"
-      ;; 250 + 400 + 4000 chars at the measured ~3.25 chars per token, plus the one
-      ;; message frame the assistant/tool_result pair costs whatever it carried.
-      (expect (= 1680
-                 (weight-of {:thinking (filler 250)
-                             :forms-vec
-                             [{:scope "t1/i1/f1" :code (filler 400) :stdout (filler 4000)}]}))))
-  (it "costs its message frame even when the step printed almost nothing"
-      (expect (= 253 (weight-of {:forms-vec [{:scope "t1/i1/f1" :code (filler 10)}]}))))
+  (it "prices bounded stdout and source using the same tokenizer fallback"
+      (let [form
+            {:scope "t1/i1" :code (filler 300) :stdout (filler 200000)}
+
+            rec
+            {:thinking (filler 250) :forms-vec [form]}
+
+            text
+            (form-wire-text form)]
+
+        (expect (str/starts-with? text (filler 300)))
+        (expect (str/includes? text "stdout clipped"))
+        (expect (< (count text) 33000))
+        (expect (= (+ 250 (svar-router/count-tokens "unknown" (str (:thinking rec) "\n" text)))
+                   (weight-of rec)))))
+  (it "includes errors and excludes a fold breadcrumb"
+      (expect (str/includes? (form-wire-text {:code "print(1)" :error "boom!!"}) "boom!!"))
+      (expect (nil? (form-wire-text {:summary? true :summary-gist (filler 400)}))))
+  (it "costs a message frame even if the step printed almost nothing"
+      (expect (>= (weight-of {:forms-vec [{:scope "t1/i1/f1" :code (filler 10)}]}) 250)))
   (it "an already collapsed iteration is worth nothing"
       (let [raw {:thinking (filler 250)
                  :forms-vec [{:scope "t1/i1/f1" :code (filler 400) :stdout (filler 4000)}]}]

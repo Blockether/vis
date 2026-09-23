@@ -1,0 +1,25 @@
+{
+  "lang": "python",
+  "prompt": "/goal Verify clipped tool stdout and exact read-back while a goal and provider cache are active. First use python_execution to print one large value: \"HEAD-\" + \"\".join(f\"record-{i:05d};\" for i in range(7000)) + \"-END\". Do not print or inspect any smaller sample before this first result. In the next iteration, use the recovery instruction in that clipped result with read_session() to retrieve the exact saved stdout for that tool call; do not reconstruct it from the first Python variable. Print its character length as LEN: <number>, hashlib.sha256(s.encode()).hexdigest() as SHA256: <hex> (hashlib is prebound), the substring around record number 3500, its ending, and session[\"goal\"][\"status\"] as GOAL_STATUS: <status>. Confirm the recovered value has the HEAD, middle record, and END markers and that the goal is active. Then call update_goal with the id/version in session[\"goal\"] and status=\"complete\", reason=\"RECOVERED record-03500; from full stdout; goal active during model continuation; cache accounting checked\". Do not edit fixture files.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "RECOVERED",
+    "record-03500;"
+  ],
+  "want_forms": [
+    "read_session()",
+    "update_goal("
+  ],
+  "want_requested_route": true,
+  "want_cache_read": true,
+  "want_cache_metrics": true,
+  "want_goal_complete": true,
+  "want_stdout_recovery": {
+    "min_chars": 90000,
+    "middle": "record-03500;",
+    "tail": "-END",
+    "head": "HEAD-"
+  },
+  "timeout_s": 600
+}

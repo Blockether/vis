@@ -1,0 +1,1 @@
+Fixture for isolated goal/cache stdout recovery.

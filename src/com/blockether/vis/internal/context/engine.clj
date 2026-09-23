@@ -947,6 +947,9 @@
            (some? (:stdout block))
            (assoc :stdout (:stdout block))
 
+           (some? (:llm-model block))
+           (assoc :llm-model (:llm-model block))
+
            (some? (:error block))
            (assoc :error (:error block))
 

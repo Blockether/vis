@@ -8,6 +8,7 @@
    `form/display-keys` but a boundary stops carrying it, `survives-the-gateway`
    fails — no more chasing it through tmux."
   (:require [clojure.string :as str]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
             [com.blockether.vis.contract.wire :as wire]
@@ -42,30 +43,67 @@
   [payload]
   (wire/canonical payload))
 
-;; ONE form body, ONE ceiling. The same printed output reaches three surfaces — the
-;; model's tool result, the card a channel paints, and the gateway's copy of it on
-;; `block.output` — and each used to hand-roll its own cut at its own size.
 (defdescribe
   clip-to-wire-test
-  (it "keeps a body under the ceiling verbatim and answers nil for a blank one"
+  (it "keeps short output verbatim and returns nil for a blank body"
       (expect (= "printed" (form/clip-to-wire "printed  \n")))
       (expect (nil? (form/clip-to-wire "   \n")))
       (expect (nil? (form/clip-to-wire nil))))
-  (it "announces what it dropped"
+  (it "includes the recovery address inside the token budget"
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_A" :llm-model "glm-5.3"}
+
+            body
+            (str (apply str (repeat 6000 "source path: \"quoted\"\n")) "LAST")
+
+            projected
+            (form/clip-to-wire body f)]
+
+        (expect (str/starts-with? projected "source"))
+        (expect (str/ends-with? projected "LAST"))
+        (expect (str/includes? projected "kept "))
+        (expect (str/includes? projected "r = await read_session()"))
+        (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
+        (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
+  (it "uses the persisted iteration scope for a live /fN result"
       (let [body
-            (apply str (repeat (* 2 (long form/MAX_FORM_WIRE_CHARS)) "x"))
+            (apply str (repeat 6000 "printed token "))
 
-            clipped
-            (form/clip-to-wire body)]
+            live
+            {:scope "t1/i2/f1" :svar/tool-call-id "call_A" :llm-model "glm-5.3"}
 
-        (expect (str/includes?
-                  clipped
-                  (str "output clipped at " form/MAX_FORM_WIRE_CHARS "/" (count body) " chars")))
-        (expect (< (count clipped) (count body)))))
-  (it "carries the calling surface's own advice in the marker"
-      (let [body (apply str (repeat (* 2 (long form/MAX_FORM_WIRE_CHARS)) "x"))]
-        (expect (str/ends-with? (form/clip-to-wire body "narrow next time.")
-                                " chars — narrow next time.")))))
+            projected
+            (form/clip-to-wire body live)]
+
+        (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
+        (expect (not (str/includes? projected "b.get(\"scope\") == \"t1/i2/f1\"")))))
+  (it "does not let an oversized call id exceed the whole token ceiling"
+      (let [body
+            (apply str (repeat 6000 "printed token "))
+
+            call-id
+            (apply str (repeat 10000 "q_"))
+
+            projected
+            (form/clip-to-wire body
+                               {:scope "t1/i2" :svar/tool-call-id call-id :llm-model "glm-5.3"})]
+
+        (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
+        (expect (not (str/includes? projected "read_session()")))))
+  (it "bounds oversized artifact fences before rendering them as a card"
+      (let [f
+            {:scope "t1/i2"
+             :svar/tool-call-id "call_A"
+             :llm-model "glm-5.3"
+             :stdout (str "````vis-doc\n" (apply str (repeat 30000 "content\n")) "````")}
+
+            body
+            (:body (form/stdout-display f))]
+
+        (expect (str/includes? body "stdout clipped"))
+        (expect (not (str/starts-with? body "````vis-doc")))
+        (expect (<= (svar-router/count-tokens "glm-5.3" (form/clip-to-wire (:stdout f) f))
+                    form/MAX_FORM_OUTPUT_TOKENS)))))
 
 (defdescribe
   form-gateway-roundtrip-test

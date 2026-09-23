@@ -3656,102 +3656,10 @@
                                             " read_attachment(id) opens it)."))))
                         (recur more (conj out line))))))))))
 
-(def ^:private WIRE_CHARS_PER_TOKEN
-  "FALLBACK characters per token for the no-model fold estimate and experimental
-   replay-savings marker. MEASURED, not the prose rule of thumb of 4: a turn of
-   agent work is source, paths, EDN/JSON and tool output, which tokenizes far
-   denser than English. Solving two measured folds of one session (they reclaimed
-   87k and 142k provider-counted tokens) yields 3.17 chars/token and ~277 tokens
-   of frame; 3.25 keeps the text term on the conservative side. This proxy is
-   not billed usage; resolved-model estimates use the canonical token counter."
-  3.25)
-
-(defn- compact-model-stdout
-  "Experimental, model-only projection of an oversized printed result. The form's
-   full stdout remains in the session transcript, and the human card is untouched.
-   Require the read_session binding as well as the experiment flag: without an
-   exact recovery path the ordinary head clip is safer. Current iteration scopes
-   need the provider call id to distinguish multiple blocks; a legacy /fN form
-   scope already identifies its block. Missing identifiers fall back."
-  [f text]
-  (let [scope
-        (:scope f)
-
-        call-id
-        (:svar/tool-call-id f)
-
-        call-id
-        (when (and (string? call-id) (re-matches #"[A-Za-z0-9_|-]+" call-id)) call-id)
-
-        form-scope?
-        (and (string? scope) (re-matches #"t[1-9]\d*/i[1-9]\d*/f[1-9]\d*" scope))
-
-        iteration-scope?
-        (and (string? scope) (re-matches #"t[1-9]\d*/i[1-9]\d*" scope))
-
-        s
-        (str/trimr (str text))
-
-        n
-        (count s)]
-
-    (when (and (toggles/enabled? "compact_model_stdout")
-               (toggles/enabled? "introspection")
-               (or form-scope? (and iteration-scope? call-id))
-               (> n 8192))
-      (let [head
-            (util/truncate s 1024)
-
-            start
-            (- n 4096)
-
-            start
-            (if (Character/isLowSurrogate (.charAt ^String s start)) (inc start) start)
-
-            tail
-            (subs s start)
-
-            recovery
-            (str "# Recover exact stdout: r = await read_session(); "
-                 "s = next(b[\"stdout\"] for t in r[\"transcript\"][\"turns\"] "
-                 "for i in t[\"iterations\"] for b in i[\"blocks\"] "
-                 "if b.get(\"scope\") == "
-                 (pr-str scope)
-                 (when call-id (str " and b.get(\"svar_tool_call_id\") == " (pr-str call-id)))
-                 "); print(s[0:4096]) "
-                 "# adjust the slice as needed")
-
-            summary
-            (str "# ⋯ model replay compacted stdout "
-                 scope
-                 ": "
-                 n
-                 " chars; first "
-                 (count head)
-                 " and last "
-                 (count tail)
-                 " kept")
-
-            body
-            (str head "\n" summary ".\n" recovery "\n" tail)
-
-            old
-            (form/clip-to-wire s "narrow next time (slice/filter before reading).")
-
-            saved
-            (max 0 (long (/ (double (- (count old) (count body))) WIRE_CHARS_PER_TOKEN)))]
-
-        (str head
-             "\n" summary
-             "; estimated " saved
-             " replay tokens saved vs the ordinary clip (" WIRE_CHARS_PER_TOKEN
-             " chars/token proxy).\n" recovery
-             "\n" tail)))))
-
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
-   answers its `tool_use`(s): the program's printed stdout (or its optional
-   compact model-only projection), plus errors and any `summarize`/`drop` fold lines.
+   answers its `tool_use`(s): the canonical stdout projection, plus errors and
+   any `summarize`/`drop` fold lines.
    One `tool_result` block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
    by `:svar/tool-call-id`), because one reply may carry several
    `python_execution` calls.
@@ -3793,23 +3701,14 @@
                          (when g (str " · " g))))))
               forms)
 
-        ;; What becomes context: ONLY what the program PRINTED, shown RAW. A bare
-        ;; expression's value is NOT auto-echoed — print() to see it.
-        ;; Errors always surface (the model must see a failure even if nothing
-        ;; printed). A clipped value still lives in the sandbox to re-slice.
-        clip-wire
-        (fn [s]
-          (form/clip-to-wire s "narrow next time (slice/filter before reading)."))
-
-        ;; A form has exactly one successful output channel: `:stdout`, what the
-        ;; block printed. Bare trailing values are discarded. An error does not erase
-        ;; stdout emitted before the failure, so model replay reads output first and
-        ;; then the clean error text.
+        ;; Printed stdout is the only successful output. The same bounded projection
+        ;; reaches model replay, live gateway events and human cards. A restored
+        ;; iteration provides its serving model even for older forms without the key.
         stdout-wire
         (fn [f]
           (when-not (str/blank? (str (:stdout f)))
-            (let [text (elide-table-fences (:stdout f))]
-              (or (compact-model-stdout f text) (clip-wire text)))))
+            (form/clip-to-wire (elide-table-fences (:stdout f))
+                               (assoc f :llm-model (or (:llm-model f) (:llm-model iter-record))))))
 
         form-output
         (fn [f]
@@ -4337,33 +4236,13 @@
   ([trailer-iters target opts]
    (into [] (mapcat second) (conversation-suffix-groups trailer-iters target opts))))
 
-(defn- form-wire-chars
-  "Approximate the wire residence of ONE form — everything a fold of its iteration
-   actually removes: the CODE the model sent (the assistant message's `tool_use`
-   input) plus the bounded stdout/error that answered it. Output alone undercounted
-   every fold card by the model's own source, which sits on the wire for exactly as
-   long as its result does. The iteration's `ctx-diff` is deliberately NOT counted:
-   `apply-summaries` keeps it beside the breadcrumb, so a fold never frees it."
+(defn- form-wire-text
+  "The visible source, bounded stdout and error removed when this form is folded."
   [f]
-  (if (:summary? f)
-    0
-    (let [out
-          (long (if (some? (:error f)) (count (str (:error f))) (count (str (:stdout f)))))
-
-          ;; The no-model fold estimator must price the actual flagged projection;
-          ;; otherwise it may fold a small replay as though it still held 64 KB.
-          compact
-          (when (and (toggles/enabled? "compact_model_stdout")
-                     (toggles/enabled? "introspection")
-                     (> (count (str (:stdout f))) 8192))
-            (compact-model-stdout f (elide-table-fences (:stdout f))))
-
-          visible
-          (if compact
-            (+ (count compact) (if (:error f) out 0))
-            (min out (long form/MAX_FORM_WIRE_CHARS)))]
-
-      (+ visible (long (count (str (:code f))))))))
+  (when-not (:summary? f)
+    (str (:code f)
+         "\n" (form/clip-to-wire (elide-table-fences (:stdout f)) f)
+         "\n" (when (:error f) (error->display (:error f))))))
 
 (def ^:private MESSAGE_FRAME_TOKENS
   "What ONE iteration costs BESIDE its text, for the same fallback: the assistant
@@ -4375,14 +4254,15 @@
   250)
 
 (defn- estimated-iteration-tokens
-  "Character-derived price of one visible iteration — the fallback reached only when
-   no model has been resolved. Otherwise the canonical messages use Svar's tokenized
-   estimate."
+  "Tokenizer-backed fallback for an iteration before its model is resolved. The
+   same Svar unknown-model fallback prices the canonical bounded stdout."
   ^long [wire-rec]
-  (let [chars (+ (long (count (str (:thinking wire-rec))))
-                 (long
-                   (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec wire-rec))))))]
-    (+ (long MESSAGE_FRAME_TOKENS) (long (/ (double chars) (double WIRE_CHARS_PER_TOKEN))))))
+  (+ (long MESSAGE_FRAME_TOKENS)
+     (long (svar-router/count-tokens
+             "unknown"
+             (str (:thinking wire-rec)
+                  "\n"
+                  (str/join "\n" (keep form-wire-text (:forms-vec wire-rec))))))))
 
 (defn- measured-iteration-tokens
   "`{pos tokens}` for the visible projection, tokenized from the canonical messages
@@ -6076,21 +5956,24 @@
 
                 ;; Stream each block result immediately, except model-facing preflight rejections.
                 (when (and on-chunk (not preflight-error))
-                  (on-chunk {:phase :form-result
-                             :iteration iteration-position
-                             :position idx
-                             :count total-blocks
-                             :scope scope
-                             :code expr
-                             :render-segments render-segments
-                             ;; Provider-call identity for pairing this form with its tool_use.
-                             :vis/tool-name (:vis/tool-name entry)
-                             :stdout (:stdout execution*)
-                             :error (:error execution*)
-                             :envelope (:envelope execution*)
-                             :role (:role execution*)
-                             :timeout? (boolean (:timeout? execution*))
-                             :repaired? (boolean (:repaired? execution*))}))
+                  (on-chunk
+                    {:phase :form-result
+                     :iteration iteration-position
+                     :position idx
+                     :count total-blocks
+                     :scope scope
+                     :code expr
+                     :render-segments render-segments
+                     ;; The live card and replay use the same serving model and call.
+                     :vis/tool-name (:vis/tool-name entry)
+                     :svar/tool-call-id (:svar/tool-call-id entry)
+                     :llm-model (actual-llm-model resolved-model ask-result)
+                     :stdout (:stdout execution*)
+                     :error (:error execution*)
+                     :envelope (:envelope execution*)
+                     :role (:role execution*)
+                     :timeout? (boolean (:timeout? execution*))
+                     :repaired? (boolean (:repaired? execution*))}))
                 {:block expr
                  :execution execution*
                  :render-segments render-segments
@@ -6120,6 +6003,7 @@
                              ;; One block = one tool call, so this is the call's whole
                              ;; stdout (no per-form split).
                              :stdout (:stdout execution)
+                             :llm-model (actual-llm-model resolved-model ask-result)
                              ;; Artifacts the block PRODUCED (an `attach` call),
                              ;; captured at the SOURCE into the sandbox sink —
                              ;; carried down so the DB attachment OWNS the bytes.

@@ -38,6 +38,7 @@ Runs are parallel. Usage:
 import ast
 import collections
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
@@ -747,35 +748,96 @@ def cache_metric_failures(usage, result_tokens, provider_call_count, folded_pref
     return failures
 
 
-def fetch_session_usage(env, session_id, gateway_port):
-    """Read persisted usage through the canonical authenticated gateway client."""
+def fetch_session_resource(env, session_id, gateway_port, resource):
+    """Read a persisted session resource through the canonical authenticated client."""
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", str(session_id or "")):
         raise ValueError(f"invalid persisted session id {session_id!r}")
-    path = f"/v1/sessions/{session_id}/usage"
+    path = f"/v1/sessions/{session_id}" + ("/usage" if resource == "usage" else "")
+    marker_prefix = f"VIS_E2E_{resource.upper()}\t"
     form = (
         "(require '[com.blockether.vis.internal.gateway.client :as gateway-client]) "
         f'(gateway-client/ensure-gateway! {{:host "127.0.0.1" :port {gateway_port}}}) '
         f'(let [response (gateway-client/request! :get "{path}" {{:timeout-ms 30000}})] '
-        '(println (str "VIS_E2E_USAGE\t" (:status response) "\t" (:body response))))'
+        f'(println (str "{marker_prefix}" (:status response) "\t" (:body response))))'
     )
     try:
         result = gateway_eval(env, form, 60)
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"usage query timed out after {exc.timeout}s") from exc
+        raise RuntimeError(f"{resource} query timed out after {exc.timeout}s") from exc
     marker = next(
         (
             line
             for line in reversed(result.stdout.splitlines())
-            if line.startswith("VIS_E2E_USAGE\t")
+            if line.startswith(marker_prefix)
         ),
         None,
     )
     if result.returncode or marker is None:
         lines = (result.stderr or result.stdout or "").strip().splitlines()
         suffix = f": {lines[-1]}" if lines else ""
-        raise RuntimeError(f"usage query exited {result.returncode}{suffix}")
+        raise RuntimeError(f"{resource} query exited {result.returncode}{suffix}")
     _, status, body = marker.split("\t", 2)
-    return int(status), decode_usage_body(body)
+    return int(status), body
+
+
+def fetch_session_usage(env, session_id, gateway_port):
+    """Read persisted usage through the canonical authenticated gateway client."""
+    status, body = fetch_session_resource(env, session_id, gateway_port, "usage")
+    return status, decode_usage_body(body)
+
+
+def fetch_session_goal(env, session_id, gateway_port):
+    """Read the saved goal from the session soul, not the model's assertion."""
+    status, body = fetch_session_resource(env, session_id, gateway_port, "soul")
+    payload = json.loads(body)
+    goal = payload.get("goal") if isinstance(payload, dict) else None
+    return status, goal
+
+
+def stdout_recovery_failures(form_outputs, form_events, expected):
+    """Require exact saved stdout, recovered by its original scope and tool-call id."""
+    minimum = expected["min_chars"]
+    head, middle, tail = (expected[key] for key in ("head", "middle", "tail"))
+    originals = [
+        item
+        for item in form_outputs
+        if len(item["stdout"]) >= minimum
+        and item["stdout"].startswith(head)
+        and middle in item["stdout"]
+        and item["stdout"].rstrip().endswith(tail)
+    ]
+    if not originals:
+        return ["no oversized raw stdout with the expected head, middle and tail"]
+    first = originals[0]
+    scope = first["scope"].split("/f", 1)[0]
+    call_id = first.get("tool_call_id")
+    if not scope or not call_id:
+        return ["oversized stdout has no recoverable scope and tool-call id"]
+    digest = hashlib.sha256(first["stdout"].encode("utf-8")).hexdigest()
+    readers = {
+        event["scope"]
+        for event in form_events
+        if isinstance(event["iteration"], int)
+        and event["iteration"] > first["iteration"]
+        and "read_session()" in event["code"]
+        and ("['stdout']" in event["code"] or '["stdout"]' in event["code"])
+        and "svar_tool_call_id" in event["code"]
+        and any(f"{q}{scope}{q}" in event["code"] for q in ('"', "'"))
+        and any(f"{q}{call_id}{q}" in event["code"] for q in ('"', "'"))
+    }
+    if not any(
+        item["scope"] in readers
+        and item["iteration"] > first["iteration"]
+        and f"LEN: {len(first['stdout'])}" in item["stdout"]
+        and f"SHA256: {digest}" in item["stdout"]
+        and middle in item["stdout"]
+        and "GOAL_STATUS: active" in item["stdout"]
+        for item in form_outputs
+    ):
+        return [
+            "no later read_session() block verified the exact stdout while the goal was active"
+        ]
+    return []
 
 
 def decode_usage_body(body):
@@ -946,6 +1008,7 @@ def run_one(job):
 
         forms = []
         form_events = []
+        form_outputs = []
         provider_calls = []
         tools = []
         largest_form_output = 0
@@ -1044,10 +1107,17 @@ def run_one(job):
                     elif row.get("state") in {"failed", "cancelled"}:
                         activities[row["id"]] = {**row, "scope": scope}
             elif ph == "form-result":
-                largest_form_output = max(
-                    largest_form_output, len(pl.get("stdout") or "")
+                stdout = pl.get("stdout") or ""
+                form_outputs.append(
+                    {
+                        "scope": pl.get("scope", ""),
+                        "iteration": pl.get("iteration"),
+                        "stdout": stdout,
+                        "tool_call_id": pl.get("tool-call-id"),
+                    }
                 )
-                total_form_output += len(pl.get("stdout") or "")
+                largest_form_output = max(largest_form_output, len(stdout))
+                total_form_output += len(stdout)
                 if pl.get("error"):
                     surfaced_scopes.add(pl.get("scope", ""))
                     e = pl.get("error")
@@ -1113,6 +1183,12 @@ def run_one(job):
             if not any(needle in form for form in forms):
                 correct = False
                 detail.append(f"form containing {needle!r} not used")
+        if sc.get("want_stdout_recovery"):
+            detail.extend(
+                stdout_recovery_failures(
+                    form_outputs, form_events, sc["want_stdout_recovery"]
+                )
+            )
         detail.extend(structured_failures(sc, work, answer, activity_rows))
         discovery = {}
         if "discovery" in sc:
@@ -1285,6 +1361,29 @@ def run_one(job):
                         if metric_failures:
                             correct = False
                             detail.extend(metric_failures)
+        goal_state = None
+        if sc.get("want_goal_complete"):
+            if not result_session_id:
+                correct = False
+                detail.append("goal run returned no persisted session id")
+            else:
+                try:
+                    goal_status, goal_state = fetch_session_goal(
+                        run_env, result_session_id, gateway_port
+                    )
+                except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                    correct = False
+                    detail.append(f"could not read persisted goal: {exc}")
+                else:
+                    if (
+                        goal_status != 200
+                        or not isinstance(goal_state, dict)
+                        or goal_state.get("status") != "complete"
+                    ):
+                        correct = False
+                        detail.append(
+                            f"goal status is not complete (HTTP {goal_status})"
+                        )
         toolset = {t for t in tools if t}
         for t in sc.get("want_tools") or []:
             if t not in toolset:
@@ -1330,6 +1429,10 @@ def run_one(job):
         if sc.get("want_cache_read"):
             evidence.append(
                 f"cache-read={cached_tokens}/{tokens.get('input', 'unavailable')} input tokens"
+            )
+        if isinstance(goal_state, dict):
+            evidence.append(
+                f"goal={goal_state.get('status')} after {goal_state.get('iterations_used')} iterations"
             )
         if isinstance(cache_usage, dict):
             samples = cache_usage.get("prompt_cache_sample_count")

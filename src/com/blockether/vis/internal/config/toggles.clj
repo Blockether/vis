@@ -629,16 +629,6 @@
        :owner :vis
        :group :experimental
        :persist? true})
-    (register-toggle!
-      {:id "compact_model_stdout"
-       :label "Compact model stdout"
-       :description
-       "Shorten oversized model replay only when session introspection can recover the full output."
-       :default false
-       :experimental? true
-       :owner :vis
-       :group :experimental
-       :persist? true})
     (register-toggle! {:id "improve"
                        :label "Improve"
                        :description

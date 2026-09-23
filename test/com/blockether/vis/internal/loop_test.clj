@@ -4133,7 +4133,8 @@
           ;; A collapsed iteration keeps its identity in the universe but no longer
           ;; contributes its historical raw weight to a later broad fold.
           (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
-          (expect (= {"t1/i1" 0 "t1/i2" 373} (get @ca "engine_iter_weights")))
+          (expect (= {"t1/i1" 0 "t1/i2" (#'lp/estimated-iteration-tokens (second (second wire)))}
+                     (get @ca "engine_iter_weights")))
           (expect (nil? (get @ca "engine_iter_ntr")))))
     ;; Phantom-reclaim regression (session 881eb071…): the FIRST `{"through" …}`
     ;; fold of a new turn sweeps in every prior-turn seed iteration that was never
@@ -4162,7 +4163,9 @@
               (atom {})]
 
           (stamp-iter-universe! ca trailer)
-          (expect (= {"t1/i1" 0 "t2/i1" 1480 "t3/i1" 1480} (get @ca "engine_iter_weights")))))
+          (let [expected (#'lp/estimated-iteration-tokens (second (nth trailer 1)))]
+            (expect (= {"t1/i1" 0 "t2/i1" expected "t3/i1" expected}
+                       (get @ca "engine_iter_weights"))))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never
@@ -6042,117 +6045,77 @@
           (expect (str/includes? body "rack-01,120"))))))
 
 (defdescribe
-  compact-model-stdout-test
-  "A disabled model-only experiment replays a bounded head/tail and a durable scope
-   pointer only when session introspection makes exact read-back available."
-  (let [render
-        (fn [out scope error]
-          (let [form (cond-> {:scope scope :svar/tool-call-id "A" :stdout out}
-                       error
-                       (assoc :error {:message error}))]
-            (get-in (#'lp/iteration-results-message
-                     {:tool-calls [{:id "A" :name "python_execution"}] :forms-vec [form]})
-                    [:content 0])))
+  canonical-stdout-projection-test
+  "Every stdout surface uses one tokenizer-priced excerpt; raw forms stay intact."
+  (let [stdout
+        (str "HEAD\n" (apply str (repeat 5000 "code = '🚀'\n")) "TAIL-ONLY")
 
-        long-out
-        (str (apply str (repeat 1023 "h"))
-             "🚀"
-             (apply str (repeat 14000 "middle"))
-             "🚀"
-             (apply str (repeat 4095 "T"))
-             "TAIL")]
+        f
+        {:scope "t2/i3" :svar/tool-call-id "call_A|fc_123" :llm-model "glm-5.3" :stdout stdout}
 
-    (it "keeps a Unicode-safe head and tail, full error, recovery address and token estimate"
-        (with-redefs [toggles/enabled? #(contains? #{"compact_model_stdout" "introspection"} %)]
-          (let [{:keys [content is_error]} (render long-out "t1/i2/f3" "ValueError: last failure")]
-            (expect is_error)
-            (expect (< (count content) 7000))
-            (expect (str/includes? content "model replay compacted"))
-            (expect (str/includes? content "read_session()"))
-            (expect (str/includes? content
-                                   (str "b.get(" (pr-str "scope") ") == " (pr-str "t1/i2/f3"))))
-            (expect (str/includes? content "estimated"))
-            (expect (str/starts-with? (second (str/split-lines content))
-                                      (apply str (repeat 1023 "h"))))
-            (expect (str/includes? content "TAIL"))
-            (expect (not (str/includes? content "middlemiddlemiddle")))
-            (expect (not (some #(Character/isSurrogate %) content)))
-            (expect (str/ends-with? content "✗ error: ValueError: last failure")))))
-    (it
-      "addresses current tN/iN scopes by tool-call id when calls share an iteration"
-      (with-redefs [toggles/enabled? (constantly true)]
-        (let [other (str (apply str (repeat 12000 "Z")) "SECOND")
-               forms [{:scope "t1/i2" :svar/tool-call-id "call_A|fc_123" :stdout long-out}
-                      {:scope "t1/i2" :svar/tool-call-id "call_B|fc_456" :stdout other}]
-               calls [{:id "call_A|fc_123" :name "python_execution"}
-                      {:id "call_B|fc_456" :name "python_execution"}]
-              output (:content (#'lp/iteration-results-message
-                                {:tool-calls calls :forms-vec forms}))
-              first-out (:content (first output))
-              second-out (:content (second output))]
+        render
+        (fn [form error]
+          (get-in (#'lp/iteration-results-message
+                   {:llm-model "glm-5.3"
+                    :tool-calls [{:id (:svar/tool-call-id form) :name "python_execution"}]
+                    :forms-vec [(cond-> form
+                                  error
+                                  (assoc :error {:message error}))]})
+                  [:content 0]))]
 
-          (expect (every? #(str/includes? (:content %) "model replay compacted") output))
-          (expect (str/includes? first-out
-                                 (str "b.get(" (pr-str "scope") ") == " (pr-str "t1/i2"))))
-          (expect (str/includes? first-out
-                                  (str "b.get(" (pr-str "svar_tool_call_id") ") == " (pr-str "call_A|fc_123"))))
-          (expect (str/includes? second-out
-                                  (str "b.get(" (pr-str "svar_tool_call_id") ") == " (pr-str "call_B|fc_456"))))
-          (expect (not (str/includes? first-out "SECOND")))
-          (expect (str/ends-with? second-out "SECOND")))))
-    (it "preserves the old 65,536-character wire exactly when flag or read-back is off"
-        (let [old
-              (with-redefs [toggles/enabled? (constantly false)]
-                (render long-out "t1/i2/f3" nil))
+    (it "keeps the same head and tail in model, card and gateway with a real budget"
+        (with-redefs [toggles/enabled? (constantly false)]
+          (let [model (:content (render f nil))
+                projected (form/clip-to-wire stdout f)
+                display (:body (form/stdout-display f))]
 
-              no-reader
-              (with-redefs [toggles/enabled? #(= "compact_model_stdout" %)]
-                (render long-out "t1/i2/f3" nil))
+            (expect (str/includes? model projected))
+            (expect (str/includes? display projected))
+            (expect (str/starts-with? projected "HEAD"))
+            (expect (str/ends-with? projected "TAIL-ONLY"))
+            (expect (str/includes? projected "read_session()"))
+            (expect (str/includes? projected "r = await read_session()"))
+            (expect (str/includes? projected "b.get(\"svar_tool_call_id\") == \"call_A|fc_123\""))
+            (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
+            (expect (< (count projected) (count stdout)))
+            (expect (= stdout (:stdout f))))))
+    (it "pairs two same-scope calls with their own recovery identities"
+        (let [other
+              (assoc f
+                :svar/tool-call-id "call_B|fc_456"
+                :stdout (str (apply str (repeat 5000 "second\n")) "SECOND-ONLY"))
 
-              no-scope
-              (with-redefs [toggles/enabled? (constantly true)]
-                (render long-out nil nil))]
+              calls
+              [{:id "call_A|fc_123" :name "python_execution"}
+               {:id "call_B|fc_456" :name "python_execution"}]
 
-          (expect (nil? (with-redefs [toggles/enabled? (constantly true)]
-                          (#'lp/compact-model-stdout {:scope "t1/i2"} long-out))))
-          (expect (= old no-reader))
-          (expect (str/includes? (:content old) "output clipped at"))
-          (expect (not (str/includes? (:content old) "model replay compacted")))
-          (expect (str/includes? (:content no-scope) "output clipped at"))))
-    (it "uses compacted output size for the no-model fold estimate"
-        (let [f
-              {:scope "t1/i2" :svar/tool-call-id "call_A|fc_123" :stdout long-out :code "print('long')"}
+              [a b]
+              (:content (#'lp/iteration-results-message
+                         {:llm-model "glm-5.3" :tool-calls calls :forms-vec [f other]}))]
 
-              normal
-              (with-redefs [toggles/enabled? (constantly false)]
-                (#'lp/form-wire-chars f))
+          (expect (str/includes? (:content a) "call_A|fc_123"))
+          (expect (not (str/includes? (:content a) "SECOND-ONLY")))
+          (expect (str/includes? (:content b) "call_B|fc_456"))
+          (expect (str/includes? (:content b) "SECOND-ONLY"))))
+    (it "does not split an astral character, loses no error, and works without scope"
+        (let [unicode
+              (str (apply str (repeat 6000 "line 🚀\n")) "🚀END")
 
-              compact
-              (with-redefs [toggles/enabled? (constantly true)]
-                (#'lp/form-wire-chars f))]
+              out
+              (form/clip-to-wire unicode (assoc f :stdout unicode))
 
-          (expect (> (- normal compact) 50000))
-          (expect (= normal
-                     (with-redefs [toggles/enabled? #(= "compact_model_stdout" %)]
-                       (#'lp/form-wire-chars f))))))
-    (it "keeps a complete astral character in the retained tail"
-        (with-redefs [toggles/enabled? (constantly true)]
-          (let [out (str (apply str (repeat 9000 "lines")) "🚀END")
-                content (:content (render out "t1/i2/f3" nil))]
+              error
+              (render (assoc f :stdout unicode) "ValueError: last failure")
 
-            (expect (str/ends-with? content "🚀END")))))
-    (it "does not change the saved form or human card"
-        (let [form
-              {:scope "t1/i2/f3" :stdout long-out}
+              anonymous
+              (form/clip-to-wire unicode {})]
 
-              human
-              (form/stdout-display form)]
-
-          (with-redefs [toggles/enabled? (constantly true)]
-            (render long-out "t1/i2/f3" nil)
-            (expect (= long-out (:stdout form)))
-            (expect (= human (form/stdout-display form)))
-            (expect (str/includes? (:body human) "output clipped at")))))))
+          (expect (str/ends-with? out "🚀END"))
+          (expect (= out (String. (.getBytes ^String out "UTF-8") "UTF-8")))
+          (expect (:is_error error))
+          (expect (str/ends-with? (:content error) "✗ error: ValueError: last failure"))
+          (expect (str/includes? anonymous "slice or filter"))
+          (expect (not (str/includes? anonymous "read_session()")))))))
 
 (defdescribe
   repeated-actions-continue-test

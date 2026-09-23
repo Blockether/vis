@@ -13,6 +13,7 @@
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
   (:require [clojure.string :as str]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.python.format :as pyfmt]
             [com.blockether.vis.internal.util :as util]))
 
@@ -37,8 +38,9 @@
    ;; display projections
    [:render-segments "render_segments"] [:result-kind "result_kind"]
    [:result-detail "result_detail"] [:tag "tag"]
-   ;; tool-call linkage + status flags channels surface
-   [:svar/tool-call-id "tool_call_id"] [:timeout? "is_timeout"] [:repaired? "is_repaired"]])
+   ;; tool-call linkage, serving model for tokenizer-aware stdout, and status
+   [:svar/tool-call-id "tool_call_id"] [:llm-model "llm_model"] [:timeout? "is_timeout"]
+   [:repaired? "is_repaired"]])
 
 (def display-keys
   "The canonical engine keys projected by `->display` and recovered by `<-wire`."
@@ -58,70 +60,115 @@
              (nat-int? (:finished-at-ms envelope)))
     (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
-(def MAX_FORM_WIRE_CHARS
-  "Per-block printed-output ceiling. A block's stdout is head-clipped to this
-   many chars in the tool result — a universal backstop for a runaway print()
-   that tool-level caps don't catch (the model can `print(open-ended
-   composition)`). The block's values still live in the sandbox (persistent REPL
-   vars the model can re-slice and print less of). ~64KB ≈ 16k tokens: generous
-   for an intentional full-file read, tight enough that one runaway print can't
-   blow the request."
-  65536)
+(def MAX_FORM_OUTPUT_TOKENS
+  "Maximum estimated tokens in one printed result, including its recovery pointer."
+  4096)
+
+(def ^:private MAX_FORM_PREVIEW_CHARS
+  "Additional work bound for unusually compressible text before token counting."
+  32768)
 
 (defn clip-to-wire
-  "Head-clip one form BODY to `MAX_FORM_WIRE_CHARS`, announcing what it dropped —
-   the default clip shared by the model's tool result, the card a channel paints,
-   and the gateway's `stdout` copy. An optional model-only compact projection in
-   `loop` uses a smaller head/tail with a read-back pointer; the stored form stays
-   complete and the human card still uses this ceiling. Each surface previously
-   hand-rolled a cut at its own ceiling, so one print rode an event twice.
-
-   `hint` is the calling surface's own advice, appended to the marker — the model
-   is told to narrow its next read, a human card just says what was dropped. The
-   cut is `util/truncate`, so it never splits a surrogate pair. nil for a string
-   that is blank once trailing space is gone."
-  ([s] (clip-to-wire s nil))
-  ([s hint]
+  "Project one stdout body for model replay, gateway wire and human display. The
+   same Svar tokenizer selection used for request estimates prices the body and its
+   marker; a head/tail binary search keeps the entire excerpt inside the budget.
+   Raw stdout remains in the saved form. `form` supplies the serving model and
+   recoverable iteration scope/tool-call identity. Live events may add `/fN` to
+   the display scope; saved `read_session()` blocks use only `tN/iM`."
+  ([s] (clip-to-wire s {}))
+  ([s form]
    (let [s
-         (str/trimr (str s))
+         (str/trimr (str (or s "")))
 
          n
-         (long (count s))]
+         (count s)
+
+         model
+         (or (:llm-model form) "unknown")
+
+         tokens
+         #(long (svar-router/count-tokens model %))
+
+         scope
+         (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))
+
+         call-id
+         (:svar/tool-call-id form)
+
+         addressable?
+         (and (string? scope)
+              (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)
+              (string? call-id)
+              (<= (count call-id) 512)
+              (re-matches #"[A-Za-z0-9_|-]+" call-id))
+
+         recovery
+         (if addressable?
+           (str "# Recover exact stdout: r = await read_session(); "
+                "b = next(b for t in r[\"transcript\"][\"turns\"] "
+                "for i in t[\"iterations\"] for b in i[\"blocks\"] "
+                "if b.get(\"scope\") == "
+                (pr-str scope)
+                " and b.get(\"svar_tool_call_id\") == "
+                (pr-str call-id)
+                "); print(b[\"stdout\"][0:4096]) # adjust the slice as needed")
+           "# To see more, slice or filter the result in the sandbox and print less.")
+
+         preview
+         (fn [kept]
+           (let [head-len
+                 (quot kept 4)
+
+                 head
+                 (util/truncate s head-len)
+
+                 tail-start
+                 (- n (- kept head-len))
+
+                 tail-start
+                 (if (and (< tail-start n)
+                          (Character/isLowSurrogate (.charAt ^String s tail-start)))
+                   (inc tail-start)
+                   tail-start)
+
+                 tail
+                 (subs s tail-start)]
+
+             (str head
+                  "\n# ⋯ stdout clipped: kept " (+ (count head) (count tail))
+                  "/" n
+                  " chars (" MAX_FORM_OUTPUT_TOKENS
+                  " estimated-token ceiling).\n" recovery
+                  "\n" tail)))]
 
      (when (pos? n)
-       (if (> n (long MAX_FORM_WIRE_CHARS))
-         (let [head (util/truncate s MAX_FORM_WIRE_CHARS)]
-           (str head
-                "\n# ⋯ output clipped at " (count head)
-                "/" n
-                " chars" (when hint (str " — " hint))))
-         s)))))
+       (if (and (<= n MAX_FORM_PREVIEW_CHARS) (<= (tokens s) MAX_FORM_OUTPUT_TOKENS))
+         s
+         (loop [low
+                0
+
+                high
+                (min n MAX_FORM_PREVIEW_CHARS)]
+
+           (if (< low high)
+             (let [mid (inc (quot (+ low high) 2))]
+               (if (<= (tokens (preview mid)) MAX_FORM_OUTPUT_TOKENS)
+                 (recur mid high)
+                 (recur low (dec mid))))
+             (preview low))))))))
 
 (defn stdout-display
-  "The human-channel DISPLAY for one executed form as `{:body}`. `:stdout` is
-   the only successful output a Python form or `!cmd` form can publish; an
-   unprinted Python value never reaches the form, database, or wire.
-
-   A wall-clock timeout gets no card of its own: it is an error like any other,
-   while output printed before the timeout remains the ordinary stdout body.
-   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there is
-   nothing to show.
-
-   This is a pure local projection of the form's `:stdout`, so live wire and a
-   database-restored envelope paint the same card without storing or transporting
-   a rendered string."
+  "Project a form's printed stdout into a human card. Artifact fences are passed
+   through only when complete; clipped fences become ordinary fenced text, never a
+   broken inline image, document or table. Model, gateway and card all use the same
+   tokenizer-bounded stdout projection."
   [form]
-  (let [stdout (str (:stdout form))]
-    (cond
-      ;; These bounded artifact fences ride stdout as Markdown so channels can
-      ;; paint them inline; wrapping one in another fence would escape it.
-      (or (str/includes? stdout "````vis-image")
-          (str/includes? stdout "````vis-doc")
-          (str/includes? stdout "````vis-table"))
-      {:body stdout}
-      ;; Plain output is not Markdown: fence it so CommonMark preserves newlines.
-      (not (str/blank? stdout)) {:body (util/fenced (clip-to-wire stdout))}
-      :else nil)))
+  (when-let [stdout (clip-to-wire (:stdout form) form)]
+    (let [artifact? (and (= stdout (str/trimr (str (:stdout form))))
+                         (or (str/includes? stdout "````vis-image")
+                             (str/includes? stdout "````vis-doc")
+                             (str/includes? stdout "````vis-table")))]
+      {:body (if artifact? stdout (util/fenced stdout))})))
 
 (defn result-card
   "Canonical result CARD descriptor derived only from the form's `:stdout`:

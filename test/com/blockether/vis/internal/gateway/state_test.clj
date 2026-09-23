@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -902,6 +903,25 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(1)" :stdout printed})]
 
         (expect (= (form/clip-to-wire printed) (:stdout payload)))))
+  (it "block.output recovery selects the saved iteration, not the live form scope"
+      (let [printed
+            (apply str (repeat 6000 "printed token "))
+
+            [_ _ payload]
+            (#'state/chunk->event
+             {:phase :form-result
+              :iteration 3
+              :position 0
+              :scope "t1/i3/f1"
+              :svar/tool-call-id "call_A"
+              :llm-model "glm-5.3"
+              :code "print(1)"
+              :stdout printed})]
+
+        (expect (str/includes? (:stdout payload) "b.get(\"scope\") == \"t1/i3\""))
+        (expect (str/includes? (:stdout payload) "b.get(\"svar_tool_call_id\") == \"call_A\""))
+        (expect (<= (svar-router/count-tokens "glm-5.3" (:stdout payload))
+                    form/MAX_FORM_OUTPUT_TOKENS))))
   ;; Activity has one event type for both timing classes: live revisions are
   ;; transient but materialized last-one-wins; the settled revision is durable.
   ;; `block.output` owns only the execution result.
