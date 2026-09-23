@@ -15,8 +15,8 @@ import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
  * and the sheet stands at the line the press named, with an editor icon for the
  * machine that actually holds the tree.
  *
- * What the gateway refuses — a path outside this session's workspace, a file that
- * is gone, a binary file — is shown in its own words rather than as an empty box.
+ * What the gateway refuses — a path this session cannot read, a file that is
+ * gone, a binary file — is shown in its own words rather than as an empty box.
  */
 export function FilePreview({
   client,

@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -5119,11 +5120,24 @@
       (testing "a session this gateway does not have has no banner"
         (is (= 404 (:status (handler {:path-params {:sid (str (random-uuid))}}))))))))
 
-(deftest a-pressed-path-opens-only-inside-the-session-workspace
-  ;; BLO-172: a step reports the files it touched by path, and a reader who can only
-  ;; LOOK at that path has to find the file again by hand. The press hands it to the
-  ;; editor on the machine that ran the step — and only a file inside that session's
-  ;; own workspace, whatever the client asks for.
+(defn- file-handler-test-dir
+  "Repository fixture directory outside the mocked session workspace."
+  ^java.io.File []
+  (let [dir (io/file (System/getProperty "user.dir") "target")]
+    (.mkdirs dir)
+    dir))
+
+(defn- ungranted-test-file
+  []
+  (.toFile (java.nio.file.Files/createTempFile (.toPath (file-handler-test-dir))
+                                               "vis-outside"
+                                               ".md"
+                                               (make-array java.nio.file.attribute.FileAttribute
+                                                           0))))
+
+(deftest a-pressed-path-opens-only-when-the-session-can-read-it
+  ;; BLO-172 and #284: the press hands a session-readable file to the editor
+  ;; on the machine that ran the step; ungranted paths never reach the editor.
   (let [sid
         (random-uuid)
 
@@ -5136,7 +5150,7 @@
         (io/file root "notes.md")
 
         outside
-        (java.io.File/createTempFile "vis-outside" ".md")
+        (ungranted-test-file)
 
         opened
         (atom [])
@@ -5152,6 +5166,10 @@
                            #'state/session-workspace-info (fn [id]
                                                             (when (= session id)
                                                               {"root" workspace}))
+                           #'lp/env-for (fn [_]
+                                          {:workspace {:root workspace :repo-root workspace}
+                                           :security-policy {:jail-enabled true :process-jail {}}
+                                           :security/filesystem-roots []})
                            #'external-opener/open-file-in-editor! (fn [path]
                                                                     (swap! opened conj path)
                                                                     outcome)}
@@ -5166,9 +5184,11 @@
          (testing "an absolute path inside the workspace is the same file"
            (is (= 200 (:status (answer {"path" (.getPath inside)} {:status :ok}))))
            (is (= 2 (count @opened))))
-         (testing "nothing outside the session's workspace is opened, however it is asked for"
+         (testing "an ungranted path is never opened, including a relative escape"
            (reset! opened [])
-           (doseq [asked [(.getPath outside) "../escape.md"]]
+           (doseq [asked [(.getPath outside)
+                          (str (.relativize (.toPath (.getCanonicalFile root))
+                                            (.toPath (.getCanonicalFile outside))))]]
              (is (= 403 (:status (answer {"path" asked} {:status :ok})))))
            (is (= 404 (:status (answer {"path" "absent.md"} {:status :ok}))))
            (is (= [] @opened)))
@@ -5208,7 +5228,7 @@
         (io/file root "logo.png")
 
         outside
-        (java.io.File/createTempFile "vis-outside" ".md")
+        (ungranted-test-file)
 
         handler
         (rv 'read-file-handler)
@@ -5219,7 +5239,11 @@
                                           (when (= session id) {"id" (str id)}))
                            #'state/session-workspace-info (fn [id]
                                                             (when (= session id)
-                                                              {"root" workspace}))}
+                                                              {"root" workspace}))
+                           #'lp/env-for (fn [_]
+                                          {:workspace {:root workspace :repo-root workspace}
+                                           :security-policy {:jail-enabled true :process-jail {}}
+                                           :security/filesystem-roots []})}
             #(handler {:path-params {:sid (str sid)} :query-params query})))
 
         window
@@ -5252,8 +5276,10 @@
            (is (= [2000] (mapv count (get (window {"path" "wide.txt"}) "lines")))))
          (testing "a binary file is refused instead of answered as text"
            (is (= 415 (:status (answer {"path" "logo.png"})))))
-         (testing "nothing outside the session's workspace is read, however it is asked for"
-           (doseq [asked [(.getPath outside) "../escape.md"]]
+         (testing "an ungranted path is not read, including a relative escape"
+           (doseq [asked [(.getPath outside)
+                          (str (.relativize (.toPath (.getCanonicalFile root))
+                                            (.toPath (.getCanonicalFile outside))))]]
              (is (= 403 (:status (answer {"path" asked})))))
            (is (= 404 (:status (answer {"path" "absent.md"}))))
            (is (= 400 (:status (answer {"path" "  "}))))
@@ -5267,6 +5293,179 @@
                   (.delete picture)
                   (.delete root)
                   (.delete outside)))))
+
+(deftest session-readable-external-file-preview-test
+  ;; Regression #284: previews and editor opens follow the session's live read scope,
+  ;; not just its primary workspace. Deny rules and private draft copies still win.
+  (let [sid
+        (random-uuid)
+
+        base
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   (.toPath (file-handler-test-dir))
+                   "vis-session-files-"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        root
+        (io/file base "workspace")
+
+        extra
+        (io/file base "extra")
+
+        denied
+        (io/file base "denied")
+
+        trunk
+        (io/file base "trunk")
+
+        clone
+        (io/file base "clone")
+
+        _
+        (doseq [dir [root extra denied trunk clone]]
+          (.mkdir dir))
+
+        readable
+        (io/file extra "visible.txt")
+
+        blocked
+        (io/file denied "blocked.txt")
+
+        local
+        (io/file root "local.txt")
+
+        trunk-file
+        (io/file trunk "draft.txt")
+
+        clone-file
+        (io/file clone "draft.txt")
+
+        outside-link
+        (io/file root "outside-link.txt")
+
+        mapped-link
+        (io/file clone "mapped-link.txt")
+
+        env*
+        (atom {:workspace {:root (.getPath root) :repo-root (.getPath root) :filesystem-roots []}
+               :security-policy {:jail-enabled true :process-jail {}}
+               :security/filesystem-roots [(.getPath extra)]})
+
+        opened
+        (atom [])
+
+        preview-handler
+        (rv 'read-file-handler)
+
+        open-handler
+        (rv 'open-file-handler)
+
+        request-base
+        {:path-params {:sid (str sid)}}
+
+        preview
+        (fn [path]
+          (preview-handler (assoc request-base :query-params {"path" path})))
+
+        open
+        (fn [path]
+          (with-redefs-fn {(rv 'body-json) (constantly {"path" path})}
+            #(open-handler request-base)))
+
+        lines
+        (fn [response]
+          (get (wire/parse-json (:body response)) "lines"))]
+
+    (spit readable "outside the primary workspace")
+    (spit blocked "never reveal this")
+    (spit local "in the workspace")
+    (spit trunk-file "live original")
+    (spit clone-file "private copy")
+    (java.nio.file.Files/createSymbolicLink (.toPath outside-link)
+                                            (.toPath blocked)
+                                            (make-array java.nio.file.attribute.FileAttribute 0))
+    (java.nio.file.Files/createSymbolicLink (.toPath mapped-link)
+                                            (.toPath blocked)
+                                            (make-array java.nio.file.attribute.FileAttribute 0))
+    (try
+      (with-redefs [state/soul
+                    (fn [id]
+                      (when (= sid id) {"id" (str sid)}))
+
+                    state/session-workspace-info
+                    (fn [_]
+                      {"root" (get-in @env* [:workspace :root])})
+
+                    lp/env-for
+                    (fn [_]
+                      @env*)
+
+                    external-opener/open-file-in-editor!
+                    (fn [path]
+                      (swap! opened conj path)
+                      {:status :ok})]
+
+        (testing "a configured read root works for preview and editor open"
+          (is (= ["outside the primary workspace"] (lines (preview (.getPath readable)))))
+          (is (= 200 (:status (preview "../extra/visible.txt"))))
+          (is (= 200 (:status (open (.getPath readable)))))
+          (is (= [(.getCanonicalPath readable)] @opened))
+          (is (= ["in the workspace"] (lines (preview "local.txt")))))
+        (testing "an ungranted path and a symlink leaving the roots stay closed"
+          (is (= 403 (:status (preview (.getPath blocked)))))
+          (is (= 403 (:status (preview (.getPath outside-link)))))
+          (is (= 403 (:status (open (.getPath outside-link)))))
+          (is (= 1 (count @opened))))
+        (testing "removing a live root revokes both file actions"
+          (swap! env* assoc :security/filesystem-roots [])
+          (is (= 403 (:status (preview (.getPath readable)))))
+          (is (= 403 (:status (open (.getPath readable)))))
+          (is (= 1 (count @opened)))
+          (swap! env* assoc :security/filesystem-roots [(.getPath extra)]))
+        (testing "configured deny-read rules win over allowed roots"
+          (swap! env* assoc-in
+            [:security-policy :process-jail :deny-read-rules]
+            [(.getCanonicalPath readable)])
+          (is (= 403 (:status (preview (.getPath readable)))))
+          (is (= 403 (:status (open (.getPath readable)))))
+          (is (= 1 (count @opened)))
+          (swap! env* assoc-in [:security-policy :process-jail] {}))
+        (testing "extension file-read gates protect previews and opens alike"
+          (let [calls (atom [])]
+            (with-redefs [extension/gate-hooked? (constantly true)
+                          extension/run-gate-hooks (fn [_ _ context]
+                                                     (swap! calls conj context)
+                                                     {:reason "file is protected"})]
+
+              (is (= 403 (:status (preview (.getPath readable)))))
+              (is (= 403 (:status (open (.getPath readable)))))
+              (is (= [{:operation "file-read" :path (.getCanonicalPath readable)}
+                      {:operation "file-read" :path (.getCanonicalPath readable)}]
+                     @calls))
+              (is (= 1 (count @opened))))))
+        (testing "a draft reads and opens its private copy even with the host root granted"
+          (reset! env* {:workspace
+                        {:root (.getPath clone) :repo-root (.getPath trunk) :filesystem-roots []}
+                        :security-policy {:jail-enabled false
+                                          :process-jail {}
+                                          :draft-policies {(.getPath denied) :not-allowed
+                                                           (.getPath extra) :copy-only}}
+                        :security/filesystem-roots [(.getPath denied) (.getPath extra)]})
+          (is (= ["private copy"] (lines (preview (.getPath trunk-file)))))
+          (is (= 200 (:status (open (.getPath trunk-file)))))
+          (is (= (.getCanonicalPath clone-file) (last @opened)))
+          (is (= 403 (:status (preview (.getPath blocked)))))
+          (is (= 403 (:status (preview (.getPath readable)))))
+          (is (= 403 (:status (open (.getPath blocked)))))
+          (is (= 2 (count @opened))))
+        (testing "a mapped file may not follow a clone symlink into a withheld root"
+          (is (= 403 (:status (preview (.getPath (io/file trunk "mapped-link.txt"))))))
+          (is (= 403 (:status (open (.getPath (io/file trunk "mapped-link.txt"))))))
+          (is (= 2 (count @opened)))))
+      (finally (doseq [file [mapped-link outside-link readable blocked local trunk-file clone-file]]
+                 (.delete file))
+               (doseq [dir [clone trunk denied extra root base]]
+                 (.delete dir))))))
 
 (deftest voice-model-preload-follows-its-toggle
   ;; #275 follow-up: the gateway warms the transcription model once it is already

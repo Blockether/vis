@@ -47,6 +47,7 @@
     [com.blockether.vis.internal.provider.auth :as provider-auth]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -2790,39 +2791,54 @@
                                     :mkdir-failed "could not create that folder"
                                     :path (.getAbsolutePath made)))))))
 
-(defn- workspace-file
-  "The file `requested` names inside the session's own workspace, resolved through
-   symlinks — or the error response that refuses it.
-
-   A press from a phone reaches a file this session already works in, never an
-   arbitrary path on the host, so opening a file and reading one confine the same
-   way and refuse the same way."
+(defn- session-readable-file
+  "Resolve a file using the session's live filesystem roots and read gates. The same
+   resolver serves previews and editor opens, so neither can bypass draft or deny rules."
   [sid requested]
   (let [root (get (state/session-workspace-info sid) "root")]
-    (cond (or (not (string? requested)) (str/blank? requested))
-          {:error (error-response 400 :invalid-request "path must be a non-blank string")}
-          (str/blank? (str root))
-          {:error (error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
-          :else
-          (try
-            (let [^java.io.File anchor (.getCanonicalFile (io/file root))
-                  ^java.io.File asked (io/file (expand-user requested))
-                  ^java.io.File target (.getCanonicalFile
-                                         (if (.isAbsolute asked) asked (io/file anchor requested)))
-                  inside? (or (= anchor target)
-                              (str/starts-with? (.getPath target)
-                                                (str (.getPath anchor) java.io.File/separator)))]
+    (cond
+      (or (not (string? requested)) (str/blank? requested))
+      {:error (error-response 400 :invalid-request "path must be a non-blank string")}
+      (str/blank? (str root))
+      {:error (error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
+      :else
+      (try
+        (let [env (lp/env-for sid)
+              ws (if-let [a (:workspace-atom env)]
+                   @a
+                   (:workspace env))
+              active-root (workspace/normalize-root (or (:root ws) (:workspace/root env)))]
 
-              (cond (not inside?) {:error (error-response
-                                            403
-                                            :outside-workspace
-                                            "that file is outside this session's workspace"
-                                            :path (.getPath target))}
-                    (not (.isFile target))
-                    {:error (error-response 404 :not-a-file "no such file" :path (.getPath target))}
-                    :else {:file target}))
-            (catch java.io.IOException _
-              {:error (error-response 400 :invalid-request "that path could not be resolved")})))))
+          (if (or (nil? env) (nil? active-root) (not= active-root (workspace/normalize-root root)))
+            {:error (error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
+            (binding [workspace/*workspace-root* active-root
+                      workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
+
+              (let [^java.io.File target (workspace/resolve-file-path requested)
+                    path (.getPath target)
+                    refusal (or (when-let [reason (process-jail/deny-refusal env "file-read" path)]
+                                  {:reason reason})
+                                (when (extension/gate-hooked? :fs/access)
+                                  (extension/run-gate-hooks :fs/access
+                                                            env
+                                                            {:operation "file-read" :path path})))]
+
+                (cond refusal
+                      {:error (error-response 403 :file-access-denied (:reason refusal) :path path)}
+                      (not (.isFile target))
+                      {:error (error-response 404 :not-a-file "no such file" :path path)}
+                      :else {:file target})))))
+        (catch clojure.lang.ExceptionInfo e
+          (let [type (:type (ex-data e))]
+            {:error (case type
+                      (:workspace/path-escape :workspace/path-denied)
+                      (error-response 403 :file-access-denied (ex-message e))
+
+                      (error-response 400 :invalid-request "that path could not be resolved"))}))
+        (catch java.io.IOException _
+          {:error (error-response 400 :invalid-request "that path could not be resolved")})
+        (catch java.nio.file.InvalidPathException _
+          {:error (error-response 400 :invalid-request "that path could not be resolved")})))))
 
 (defn- open-file-handler
   "POST /v1/sessions/:sid/fs/actions/open {path} — open ONE file this session
@@ -2833,14 +2849,13 @@
    The machine already knows where it is, so it hands it to the operator's
    editor — the same press the TUI gives a path on the transcript.
 
-   CONFINED to the session's own workspace, resolved through symlinks: a press
-   from a phone opens a file this session already works in, never an arbitrary
-   path on the host."
+   Access follows the session's live read roots, draft mappings and file gates —
+   never the client's filesystem scope."
   [request]
   (let [sid (path-sid request)]
     (if-not (and sid (state/soul sid))
       (session-404 (get-in request [:path-params :sid]))
-      (let [found (workspace-file sid (get (body-json request) "path"))
+      (let [found (session-readable-file sid (get (body-json request) "path"))
             ^java.io.File target (:file found)]
 
         (or (:error found)
@@ -2879,29 +2894,36 @@
 (defn- file-window
   "The previewed lines of `file` from line `from`, each clipped, under the byte
    cap — with `is-truncated` when the cap stopped the read before the window ended."
-  [^java.io.File file from]
-  (let [last-line (+ from (dec preview-line-limit))]
+  [^java.io.File file ^long from]
+  (let [last-line
+        (+ from (dec (long preview-line-limit)))
+
+        byte-limit
+        (long preview-byte-limit)
+
+        line-length
+        (long preview-line-length)]
+
     (with-open [^java.io.BufferedReader reader (io/reader file)]
       (loop [number 1
              bytes 0
              taken (transient [])]
 
-        (let [line (when (and (<= number last-line) (< bytes preview-byte-limit))
-                     (.readLine reader))]
+        (let [line (when (and (<= number last-line) (< bytes byte-limit)) (.readLine reader))]
           (if (nil? line)
             {:lines (persistent! taken)
-             :is-truncated (and (<= number last-line) (>= bytes preview-byte-limit))}
+             :is-truncated (and (<= number last-line) (>= bytes byte-limit))}
             (recur (inc number)
                    (+ bytes (count line) 1)
                    (if (>= number from)
                      (conj! taken
                             (cond-> line
-                              (> (count line) preview-line-length)
+                              (> (count line) line-length)
                               (subs 0 preview-line-length)))
                      taken))))))))
 
 (defn- read-file-handler
-  "GET /v1/sessions/:sid/fs/file?path=…&line=… — the LINES of one workspace file
+  "GET /v1/sessions/:sid/fs/file?path=…&line=… — the LINES of one session-readable file
    around the line a press named.
 
    A path in a transcript names a file on the machine that ran the step. Opening
@@ -2912,14 +2934,14 @@
 
    A PREVIEW, NOT A DOWNLOAD. One window of lines, each clipped, under a byte cap,
    and never a binary file — the route cannot become a way to pull a repository
-   through the gateway one file at a time. Confinement is `workspace-file`'s."
+   through the gateway one file at a time. Both actions use `session-readable-file`."
   [request]
   (let [sid (path-sid request)]
     (if-not (and sid (state/soul sid))
       (session-404 (get-in request [:path-params :sid]))
       (let [asked-line (not-empty (str (get-in request [:query-params "line"])))
             line (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
-            found (workspace-file sid (get-in request [:query-params "path"]))
+            found (session-readable-file sid (get-in request [:query-params "path"]))
             ^java.io.File target (:file found)]
 
         (cond (:error found) (:error found)

@@ -370,122 +370,31 @@
 
 ;; Path safety
 
-(def ^:private temp-roots
-  "System temp dirs (`/tmp` and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`) the file
-   tools may ALWAYS reach, independent of the workspace roots. Canonical (symlinks
-   resolved, so macOS `/tmp` -> `/private/tmp`), computed once on first use; a
-   non-existent/unresolvable entry is dropped."
-  (delay (->> [(System/getProperty "java.io.tmpdir") "/tmp"]
-              (keep (fn [s]
-                      (when-not (str/blank? (str s))
-                        (try (.toPath (.getCanonicalFile (java.io.File. ^String (str s))))
-                             (catch Throwable _ nil)))))
-              distinct
-              vec)))
-
-(def ^:private vis-always-roots
-  "The `~/.vis` directory tree that file tools may always reach, independent of
-   workspace roots. Canonical paths are computed once on first use; entries
-   are dropped when `user.home` is unset."
-  (delay (->> [".vis"]
-              (keep (fn [^String sub]
-                      (some-> (System/getProperty "user.home")
-                              (java.io.File. sub))))
-              (keep (fn [^java.io.File f]
-                      (try (.toPath (.getCanonicalFile f)) (catch Throwable _ nil))))
-              distinct
-              vec)))
-
 (defn- safe-path
   ^File [p]
-  ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
-  ;; workspace cwd plus any extra filesystem roots bound for this turn. Relative
-  ;; paths resolve against the primary root; an absolute path is taken as-is so
-  ;; it may land under an added filesystem root. The confinement check runs on
-  ;; CANONICAL paths (symlinks resolved, e.g. macOS /tmp -> /private/tmp) so it
-  ;; matches the canonical allowed roots AND a symlink that points outside every
-  ;; root is rejected. `..` traversal that escapes all roots is rejected too.
-  (when (str/blank? (str p))
-    (throw
-      (ex-info
-        "Path is nil or blank - ls/grep/cat take a concrete path string; grep answers anchored TEXT, not a map, so take a path from its per-path header or an anchor from a `line:hash` row, never the result itself"
-        {:type :ext.foundation.editing/blank-path :path p})))
-  (let
-    [cwd
-     (workspace/cwd)
+  (try
+    (workspace/resolve-file-path p)
+    (catch clojure.lang.ExceptionInfo e
+      ;; Keep file-tool error types and the actionable blank-path hint stable.
+      (let [type (:type (ex-data e))]
+        (throw
+          (ex-info
+            (if (= type :workspace/blank-path)
+              "Path is nil or blank - ls/grep/cat take a concrete path string; grep answers anchored TEXT, not a map, so take a path from its per-path header or an anchor from a `line:hash` row, never the result itself"
+              (ex-message e))
+            (assoc (ex-data e)
+              :type (case type
+                      :workspace/blank-path
+                      :ext.foundation.editing/blank-path
 
-     canon
-     (fn ^java.nio.file.Path [x]
-       (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+                      :workspace/path-denied
+                      :ext.foundation.editing/path-denied
 
-     ^java.nio.file.Path cwd-canon
-     (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
+                      :workspace/path-escape
+                      :ext.foundation.editing/path-escape
 
-     ;; relative → under cwd; absolute → as-is. Canonical throughout so
-     ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
-     ^java.nio.file.Path canonical
-     (.toPath (.getCanonicalFile
-                (.toFile (.normalize (.toAbsolutePath (fs/path cwd (paths/expand-home (str p))))))))
-
-     ;; A root this draft may not touch is refused OUTRIGHT — before any root
-     ;; acceptance. With the jail disabled every host root is granted, so this
-     ;; is the only thing standing between a drafted session and a `not-allowed`
-     ;; root (or a copy-policy root with no clone minted for this draft).
-     _denied
-     (when (some (fn [denied]
-                   (let [^java.nio.file.Path dp (canon denied)]
-                     (.startsWith canonical dp)))
-                 (workspace/denied-roots))
-       (throw
-         (ex-info
-           (str
-             "Path '"
-             p
-             "' lies in a filesystem root this draft may not touch (workspace.filesystem `draft` policy)")
-           {:type :ext.foundation.editing/path-denied :path (str p)})))
-
-     mappings
-     (workspace/filesystem-root-mappings)
-
-     ;; Roots the session works on through a PRIVATE copy: the model addresses a
-     ;; context file by its REAL (trunk) path, and the edit must land in the
-     ;; clone. Kept separate — and checked FIRST — because a broad allowed root
-     ;; (`/` when the jail is disabled) would otherwise accept the trunk path
-     ;; verbatim and let a drafted session write straight into the real tree.
-     isolated
-     (filterv (fn [{:keys [trunk clone]}]
-                (and trunk clone (not= (str (canon trunk)) (str (canon clone)))))
-       mappings)
-
-     ^java.nio.file.Path target
-     (or (some (fn [{:keys [trunk clone]}]
-                 (let [^java.nio.file.Path cp
-                       (canon clone)
-
-                       ^java.nio.file.Path tp
-                       (canon trunk)]
-
-                   ;; Already inside the clone → keep it (a clone nested under
-                   ;; its own trunk must never remap twice).
-                   (cond (.startsWith canonical cp) canonical
-                         (.startsWith canonical tp) (.resolve cp (.relativize tp canonical)))))
-               isolated)
-         (when (.startsWith canonical cwd-canon) canonical)
-         (some (fn [{:keys [clone]}]
-                 (let [^java.nio.file.Path cp (canon clone)]
-                   (when (.startsWith canonical cp) canonical)))
-               mappings)
-         ;; system temp dirs (/tmp, $TMPDIR) + Vis's own ~/.vis tree are ALWAYS
-         ;; reachable, independent of workspace roots — config and diagnostics work.
-         ;; LAST so an isolated draft's trunk↔clone remap still wins first.
-         (some (fn [^java.nio.file.Path tr]
-                 (when (.startsWith canonical tr) canonical))
-               (concat @temp-roots @vis-always-roots)))]
-
-    (when-not target
-      (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
-                      {:type :ext.foundation.editing/path-escape :path (str p)})))
-    (.toFile target)))
+                      type))
+            e))))))
 
 (defn- ensure-existing-file!
   ^File [^File f]
