@@ -24,6 +24,18 @@
 
                    (expect (str/starts-with? frame "id: 7\nevent: iteration.completed\ndata: "))
                    (expect (= event data))))
+             (it "does not normalize a canonical event again while framing"
+                 (let [event (wire/canonical {:seq 8
+                                              :type "content.delta"
+                                              :nested {:tool-name "shell" :is-live true}})]
+                   (with-redefs [wire/->wire (fn [_]
+                                               (throw (ex-info "reconverted" {})))]
+                     (expect (= event
+                                (-> (sse/sse-frame event)
+                                    (str/split-lines)
+                                    (nth 2)
+                                    (subs 6)
+                                    wire/parse-json))))))
              (it "frames current job state without a session cursor"
                  (let [frame (sse/job-sse-frame gateway-contract/voice-job-event
                                                 {"id" "vj_1" "phase" "transcribing"})]

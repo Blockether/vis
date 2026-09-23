@@ -104,14 +104,21 @@
     BiConsumer
       (accept [_ writer value] (json/default-object-writer writer value))))
 
-(defn json-str
-  "Encode any engine value as a JSON string via [[->wire]]."
+(defn canonical-json-str
+  "Encode a value that is already in the canonical wire shape, without walking
+   it again. Callers must supply data returned by [[canonical]] or [[parse-json]];
+   this function does not normalize arbitrary engine values."
   ^String [x]
   ;; The sink is already in memory; Charred's convenience writer adds a redundant buffer.
   (let [out (StringWriter.)]
     (with-open [writer (JSONWriter. out true true true nil json-object-writer)]
-      (.writeObject writer (->wire x)))
+      (.writeObject writer x))
     (.toString out)))
+
+(defn json-str
+  "Encode any engine value as a JSON string via [[->wire]]."
+  ^String [x]
+  (canonical-json-str (->wire x)))
 
 (defn parse-json
   "Parse a JSON string into the canonical wire shape: snake_case STRING map

@@ -144,15 +144,28 @@
                  {:v Double/POSITIVE_INFINITY} {:v (float 0.5)} {:v (/ 1 3)} {:v (biginteger 10)}
                  {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
         (expect (= (wire/canonical x) (wire/parse-json (wire/json-str x)))
-                (str "roundtrip differs for " (pr-str x))))))
+                (str "roundtrip differs for " (pr-str x)))
+        (let [canonical (wire/canonical x)]
+          (expect (= (wire/json-str canonical) (wire/canonical-json-str canonical)))))))
 
 (defdescribe json-writer-encoding-test
              (it "preserves Charred's default escaping for small and large gateway frames"
                  (doseq [payload [nil rich-fixture {:text "Zażółć / \" \n \t \u2028 😀"}
                                   {:text (apply str (repeat 10000 "Zażółć / 😀\n"))}]]
                    (expect (= (json/write-json-str (wire/->wire payload)) (wire/json-str payload)))
-                   (expect (= (wire/canonical payload)
-                              (wire/parse-json (wire/json-str payload)))))))
+                   (expect (= (wire/json-str payload)
+                              (wire/canonical-json-str (wire/canonical payload))))
+                   (expect (= (wire/canonical payload) (wire/parse-json (wire/json-str payload))))))
+             (it "skips normalization of an already-canonical value"
+                 (let [canonical
+                       (wire/canonical rich-fixture)
+
+                       expected
+                       (wire/json-str canonical)]
+
+                   (with-redefs [wire/->wire (fn [_]
+                                               (throw (ex-info "reconverted" {})))]
+                     (expect (= expected (wire/canonical-json-str canonical)))))))
 
 (defdescribe json-writer-allocation-test
              (it "small gateway frames do not allocate a redundant 16 KiB character buffer"

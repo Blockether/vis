@@ -4142,7 +4142,9 @@
 (defn- events-since-handler
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:events (state/events-since sid (sse-cursor request))})
+    {:status 200
+     :headers {"Content-Type" "application/json"}
+     :body (wire/canonical-json-str {"events" (state/events-since sid (sse-cursor request))})}
     (session-404 (get-in request [:path-params :sid]))))
 
 ;; Speech — canonical transcription and synthesis through the built-in local

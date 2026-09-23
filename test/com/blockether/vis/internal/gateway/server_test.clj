@@ -86,6 +86,32 @@
   [sym]
   (ns-resolve 'com.blockether.vis.internal.gateway.server sym))
 
+(deftest events-since-encodes-canonical-events-without-renormalizing
+  (let [sid
+        (random-uuid)
+
+        event
+        (wire/canonical
+          {:seq 1 :type "content.delta" :nested {:tool-name "shell" :ratio (/ 0.0 0.0)}})
+
+        handler
+        (rv 'events-since-handler)]
+
+    (with-redefs [state/events-since
+                  (fn [id cursor]
+                    (is (= sid id))
+                    (is (= 0 cursor))
+                    [event])
+
+                  wire/->wire
+                  (fn [_]
+                    (throw (ex-info "reconverted" {})))]
+
+      (let [response (handler {:path-params {:sid (str sid)}})]
+        (is (= 200 (:status response)))
+        (is (= "application/json" (get-in response [:headers "Content-Type"])))
+        (is (= {"events" [event]} (wire/parse-json (:body response))))))))
+
 (defn- server-state [] @(rv 'server-state))
 
 (defn- with-server-state!

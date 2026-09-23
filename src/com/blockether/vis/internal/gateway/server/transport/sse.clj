@@ -12,7 +12,7 @@
        (get event "type")
        "\n"
        "data: "
-       (wire/json-str event)
+       (wire/canonical-json-str event)
        "\n\n"))
 
 (defn job-sse-frame

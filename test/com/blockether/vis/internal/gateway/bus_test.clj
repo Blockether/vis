@@ -57,6 +57,27 @@
                   (spit file (str/join (map #(str (wire/json-str %) "\n") events))))))
            (finally (bus/set-deliver-fn! prev))))))
 
+(defdescribe canonical-journal-encoding-test
+             (it "writes a canonical event without normalizing it again"
+                 (with-temp-journal
+                   (fn [_capture _write!]
+                     (let [sid
+                           "canonical-journal"
+
+                           event
+                           (wire/canonical {:schema 1
+                                            :seq 1
+                                            :type "content.delta"
+                                            :nested {:is-live true :ratio (/ 0.0 0.0)}})]
+
+                       (with-redefs [wire/->wire (fn [_]
+                                                   (throw (ex-info "reconverted" {})))]
+                         (#'bus/write-event! sid event {:store? true}))
+                       (let [row (wire/parse-json (first (str/split-lines (slurp (#'bus/session-file
+                                                                                  sid)))))]
+                         (expect (= event (select-keys row (keys event))))
+                         (expect (true? (get row "_store")))))))))
+
 (defn- turn-started
   [prod pid sid tid]
   {:_producer prod

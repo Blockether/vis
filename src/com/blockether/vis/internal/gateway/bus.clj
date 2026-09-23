@@ -545,7 +545,7 @@
              (session-file sid)
 
              line
-             (str (wire/json-str
+             (str (wire/canonical-json-str
                     (gateway-contract/stamp-journal-line event (producer-id) (producer-pid) store?))
                   "\n")]
 
