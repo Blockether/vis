@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttribut
 import {
   Banner,
   Button,
+  Checkbox,
   ChoiceRow,
   DialogFrame,
   Input,
@@ -344,19 +345,8 @@ export function HumanInputSheet({
   );
 }
 
-function FieldShell({
-  field,
-  error,
-  controlId,
-  children,
-}: {
-  field: HumanInputField;
-  error?: string;
-  /** The native control this visible label names; choice groups name themselves. */
-  controlId?: string;
-  children: React.ReactNode;
-}) {
-  const label = (
+function HumanInputFieldLabel({ field }: { field: HumanInputField }) {
+  return (
     <>
       {field.label}
       {/* The web's own mark, and the TUI band now draws the same one: a red `*`,
@@ -372,16 +362,36 @@ function FieldShell({
       )}
     </>
   );
+}
+
+function FieldShell({
+  field,
+  error,
+  controlId,
+  labelInControl = false,
+  children,
+}: {
+  field: HumanInputField;
+  error?: string;
+  /** The native control this visible label names; choice groups name themselves. */
+  controlId?: string;
+  /** The control already shows the label beside its own mark. */
+  labelInControl?: boolean;
+  children: React.ReactNode;
+}) {
   const labelClass = 'block font-mono text-ui uppercase tracking-[0.08em] text-dialog-hint';
   return (
     <div className="min-w-0 space-y-1">
-      {controlId ? (
-        <label className={labelClass} htmlFor={controlId}>
-          {label}
-        </label>
-      ) : (
-        <span className={labelClass}>{label}</span>
-      )}
+      {!labelInControl &&
+        (controlId ? (
+          <label className={labelClass} htmlFor={controlId}>
+            <HumanInputFieldLabel field={field} />
+          </label>
+        ) : (
+          <span className={labelClass}>
+            <HumanInputFieldLabel field={field} />
+          </span>
+        ))}
       {field.description && (
         <p
           id={controlId ? `${controlId}-description` : undefined}
@@ -401,9 +411,8 @@ function FieldShell({
 }
 
 /**
- * One row of the form. The field set is the engine's closed one, and every row
- * carries the marks the TUI band draws, from the one table both surfaces read:
- * `●`/`○` for an exclusive choice, `[✓]`/`[ ]` for an inclusive one.
+ * A field row uses a drawn checkbox for inclusive choices and circular marks for
+ * exclusive choices, while keeping the values and validation supplied by the engine.
  */
 function HumanInputFieldRow({
   field,
@@ -482,16 +491,23 @@ function HumanInputFieldRow({
   if (field.type === 'checkbox') {
     const on = value === true;
     return (
-      <FieldShell field={field} {...(error ? { error } : {})}>
-        <ChoiceRow
+      <FieldShell
+        field={field}
+        controlId={controlId}
+        labelInControl
+        {...(error ? { error } : {})}
+      >
+        <Checkbox
+          id={controlId}
           isOn={on}
           disabled={disabled}
-          aria-pressed={on}
-          mark={on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff}
+          aria-required={field.is_required || undefined}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
           onClick={() => onChange(field.id, !on)}
         >
-          {field.label}
-        </ChoiceRow>
+          <HumanInputFieldLabel field={field} />
+        </Checkbox>
       </FieldShell>
     );
   }
@@ -503,29 +519,33 @@ function HumanInputFieldRow({
         <div className="space-y-1" role={isMulti ? 'group' : 'radiogroup'} aria-label={field.label}>
           {options.map((option) => {
             const on = isMulti ? chosen.includes(option.value) : value === option.value;
-            return (
+            return isMulti ? (
+              <Checkbox
+                key={option.value}
+                isOn={on}
+                disabled={disabled}
+                onClick={() =>
+                  onChange(
+                    field.id,
+                    toggleHumanInputOption(field, { [field.id]: chosen }, option.value),
+                  )
+                }
+              >
+                {option.label}
+              </Checkbox>
+            ) : (
               <ChoiceRow
                 key={option.value}
                 isOn={on}
                 disabled={disabled}
-                {...(isMulti ? { 'aria-pressed': on } : { role: 'radio', 'aria-checked': on })}
+                role="radio"
+                aria-checked={on}
                 mark={
-                  isMulti
-                    ? on
-                      ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
-                      : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
-                    : on
-                      ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
-                      : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff
+                  on
+                    ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
+                    : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff
                 }
-                onClick={() =>
-                  onChange(
-                    field.id,
-                    isMulti
-                      ? toggleHumanInputOption(field, { [field.id]: chosen }, option.value)
-                      : option.value,
-                  )
-                }
+                onClick={() => onChange(field.id, option.value)}
               >
                 {option.label}
               </ChoiceRow>

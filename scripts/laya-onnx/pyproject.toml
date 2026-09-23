@@ -1,0 +1,21 @@
+[project]
+name = "vis-laya-onnx"
+version = "0.0.0"
+description = "Laya ModernBERT ONNX export and end-to-end validation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "laya[serve]==0.3.7",
+    "torch==2.10.0",
+    "transformers==5.0.0",
+    "onnx>=1.19,<2",
+    "onnxruntime>=1.23,<2",
+    "httpx>=0.28,<1",
+    "pytest>=8,<10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "-raP --disable-warnings"
+testpaths = ["."]

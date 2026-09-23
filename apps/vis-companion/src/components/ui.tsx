@@ -909,11 +909,50 @@ export function BandTally({
 }
 
 /**
- * A checkbox or select option with a decorative mark and a wrapping label.
+ * A checkbox with a visible square and wrapping label.
+ *
+ * The caller owns the selected value. This component exposes a checkbox role and
+ * draws a filled, checked face without relying on color or terminal glyphs alone.
+ */
+export function Checkbox({
+  isOn,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isOn: boolean }) {
+  return (
+    <ChoiceRow
+      {...props}
+      isOn={isOn}
+      role="checkbox"
+      aria-checked={isOn}
+      className={className}
+      mark={
+        <span
+          className={`grid size-5 shrink-0 place-items-center border transition-colors duration-150 motion-reduce:transition-none ${
+            isOn
+              ? 'border-accent bg-accent text-accent-foreground'
+              : 'border-edge-strong bg-transparent text-transparent'
+          }`}
+        >
+          <CheckIcon
+            className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${
+              isOn ? 'scale-100' : 'scale-75'
+            }`}
+          />
+        </span>
+      }
+    >
+      {children}
+    </ChoiceRow>
+  );
+}
+
+/**
+ * A choice row with a decorative mark and a wrapping label.
  *
  * The caller owns selection and ARIA semantics. The shared face keeps a 44px
  * touch target (28px with a mouse); long labels grow the row rather than truncate.
- * `HUMAN_INPUT_CHOICE_MARKS` supplies the exclusive or inclusive choice glyph.
  */
 export function ChoiceRow({
   isOn,

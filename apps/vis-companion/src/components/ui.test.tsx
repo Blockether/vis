@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BackButton,
   BandButton,
+  Checkbox,
   Chip,
   ChoiceCell,
   ChoiceRow,
@@ -599,6 +600,25 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
       </Disclosure>,
     );
     expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('Checkbox announces its checked state and disabled face', () => {
+    render(
+      <>
+        <Checkbox isOn>Keep the run log</Checkbox>
+        <Checkbox isOn={false} disabled>
+          Wait for approval
+        </Checkbox>
+      </>,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Keep the run log' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const disabled = screen.getByRole('checkbox', { name: 'Wait for approval' });
+    expect(disabled).toHaveAttribute('aria-checked', 'false');
+    expect(disabled).toBeDisabled();
   });
 
   it('ChoiceRow turns amber when it is the answer, and the glyph is decoration', () => {

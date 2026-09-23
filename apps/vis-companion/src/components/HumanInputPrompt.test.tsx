@@ -236,14 +236,14 @@ describe('human input sheet', () => {
     }
   });
 
-  it('masks a password and shows a checkbox as a pressed toggle', () => {
+  it('masks a password and gives a checkbox a drawn, accessible mark', () => {
     const html = markup('slider');
     expect(html).toContain('type="password"');
-    // The checkbox is a TUI-style `[✓]` toggle, so the state has to reach
-    // assistive tech through aria-pressed rather than a checked input.
-    expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
-    expect(html).toContain('Halt on the first regression');
+    const checkbox = screen.getByRole('checkbox', { name: 'Halt on the first regression' });
+    expect(checkbox).toHaveAttribute('aria-checked', 'true');
+    expect(checkbox).not.toHaveAttribute('aria-pressed');
+    expect(screen.getAllByText('Halt on the first regression')).toHaveLength(1);
+    expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
   });
 
   // The question IS the dialog's title, and the shared frame clipped it to one
@@ -423,15 +423,16 @@ describe('the engine’s whole node vocabulary', () => {
     expect(html).toContain('<textarea');
     expect(html).toContain('type="password"');
     expect(html).toContain('Notify');
-    // select vs multiselect: exclusive dots, inclusive boxes.
+    // Selects use radio dots; multiselects and boolean fields use real checkbox roles.
     expect(html).toContain('role="radiogroup"');
     expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOn);
     expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOff);
     expect(html).toContain('Staging');
-    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOff);
-    // checkbox: the fixture's is defaulted ON, so it renders as pressed.
-    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
-    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('role="checkbox"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
+    expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOff);
     // range: the field's own track, not the engine's percentage default.
     const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
     expect(slider).toContain('min="0"');

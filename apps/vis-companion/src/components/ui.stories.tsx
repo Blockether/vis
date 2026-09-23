@@ -23,6 +23,7 @@ import {
   BandTally,
   Banner,
   Button,
+  Checkbox,
   Chip,
   ChoiceCell,
   ChoiceRow,
@@ -841,20 +842,13 @@ function ChoiceRowDemo() {
       </div>
       <div className="flex flex-col gap-1" role="group" aria-label="What to run">
         {['tests', 'lint'].map((value) => (
-          <ChoiceRow
-            key={value}
-            isOn={any.includes(value)}
-            aria-pressed={any.includes(value)}
-            mark={
-              any.includes(value)
-                ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
-                : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
-            }
-            onClick={() => toggle(value)}
-          >
+          <Checkbox key={value} isOn={any.includes(value)} onClick={() => toggle(value)}>
             {value}
-          </ChoiceRow>
+          </Checkbox>
         ))}
+        <Checkbox isOn={false} disabled>
+          Request a signing key that is unavailable on this device
+        </Checkbox>
       </div>
     </div>
   );
@@ -863,7 +857,7 @@ function ChoiceRowDemo() {
 export const Selection: Story = {
   render: () => (
     <Sheet>
-      <Group of="ChoiceRow — pick one, then pick any">
+      <Group of="ChoiceRow and Checkbox — choose one or any">
         <ChoiceRowDemo />
       </Group>
       <Group of="ConfirmRow — the question, and what committing costs">
@@ -882,9 +876,14 @@ export const Selection: Story = {
     await userEvent.click(staging);
     await expect(staging).toHaveAttribute('aria-checked', 'true');
 
-    const lint = canvas.getByRole('button', { name: 'lint' });
+    const lint = canvas.getByRole('checkbox', { name: 'lint' });
     await userEvent.click(lint);
-    await expect(lint).toHaveAttribute('aria-pressed', 'true');
+    await expect(lint).toHaveAttribute('aria-checked', 'true');
+    await expect(
+      canvas.getByRole('checkbox', {
+        name: 'Request a signing key that is unavailable on this device',
+      }),
+    ).toBeDisabled();
   },
 };
 

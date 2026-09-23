@@ -53,9 +53,9 @@ export const MarkdownDescription: Story = {
     } finally {
       dialog.style.width = originalWidth;
     }
-    const confirm = body.getByRole('button', { name: 'Proceed with this command' });
+    const confirm = body.getByRole('checkbox', { name: 'Proceed with this command' });
     await userEvent.click(confirm);
-    await expect(confirm).toHaveAttribute('aria-pressed', 'true');
+    await expect(confirm).toHaveAttribute('aria-checked', 'true');
     await expect(body.getByRole('button', { name: 'Run' })).toBeEnabled();
   },
 };
