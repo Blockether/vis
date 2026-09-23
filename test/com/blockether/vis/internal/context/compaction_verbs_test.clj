@@ -10,10 +10,8 @@
      3. What the LLM actually SEES — `apply-summaries` over a trailer: which
         iterations collapse off the wire, where the single gist breadcrumb lands,
         and that a broader re-fold supersedes a finer one.
-     4. Session-bag reflection — a landed fold surfaces INSIDE `session_utilization`
-        as two string leaves: `folds` (stable gists, one structural delta per fold)
-        and `now` (volatile position + budget + live, re-emitted each iteration),
-        via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
+     4. Session-bag reflection — fold counts and the diagnostic ledger are not
+        echoed in the per-iteration model-facing utilization delta."
   (:require [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
@@ -970,16 +968,13 @@
    "session_scope" {"turn" 4 "iter" 3 "next_form" 1}
    "session_workspace" {"root" "/x"}
    "engine_utilization" {"saturation" 8}
-   ;; the live wire's iteration universe, stamped by `stamp-iter-universe!`, so
-   ;; `folds-view` resolves selectors + computes the still-live ledger.
+   ;; Diagnostic fold accounting may still resolve this universe on demand.
    "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i5" "t3/i1"]})
 
 (defdescribe
   fold-session-ctx-reflection-test
-  ;; The fold GIST lives ONCE in the transcript breadcrumb (rendered where the step
-  ;; collapsed, with its file:line anchors). The ONLY thing merged into
-  ;; `"session_utilization"` is the tiny volatile `"now"` budget leaf (saved + live,
-  ;; NO gists) — there is no `"folds"` leaf, so the heavy gist is never echoed.
+  ;; Gists live once in transcript breadcrumbs. The diagnostic `folds-view`
+  ;; can still price them, but no fold ledger rides the model-facing delta.
   (it "folds-view resolves selectors into the single volatile `now` budget leaf"
       (let [uni
             ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]
@@ -1098,60 +1093,22 @@
         ;; Q/A weight alone (no iteration weights) still yields the clause
         (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
                    (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil {1 6000})))))
-  (it "projects recorded folds without provider usage, receipts or a summary ledger"
-      (expect (= {"fold_count" 2}
-                 (get (eng/session-view {"engine_fold_count" 2}) "session_utilization"))))
-  (it "emits a count-only utilization delta even when the summary ledger is unchanged"
-      (let [before
-            (assoc base-ctx "engine_fold_count" 0)
+  (it "keeps recorded fold operations out of the model-facing utilization"
+      (expect (nil? (get (eng/session-view {"engine_fold_count" 2}) "session_utilization"))))
+  (it "does not emit utilization deltas for changes in fold counts or summaries"
+      (let [with-count
+            (assoc base-ctx "engine_fold_count" 2)
 
-            after
-            (assoc before "engine_fold_count" 2)]
-
-        (expect (= "session[\"utilization\"][\"fold_count\"] = 2"
-                   (cr/render-ctx-delta (delta-map before) (delta-map after))))))
-  (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
-      (expect (not (contains? (eng/session-view base-ctx) "fold_sessions")))
-      (let [util (get (eng/session-view (assoc base-ctx
-                                          "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}]))
-                      "session_utilization")]
-        (expect (not (contains? util "folds")))
-        (expect (contains? util "now"))))
-  (it "a landed fold emits a session[\"utilization\"][\"now\"] budget delta, NO gist echoed"
-      (let [c1
-            (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
-
-            d
-            (cr/render-ctx-delta (delta-map base-ctx) (delta-map c1))]
-
-        (expect (re-find #"session\[\"utilization\"\]\[\"now\"\] = " d))
-        ;; the gist is NOT in the utilization delta — it rides only the breadcrumb
-        (expect (not (re-find #"mapped" d)))
-        (expect (not (re-find #"\[\"folds\"\]" d)))))
-  (it "universe grows with NO new fold -> `now` re-emits, and there is never a `folds` leaf"
-      (let [folded
-            (assoc base-ctx "session_summaries" [{"scopes" #{"t1/i1" "t1/i2"} "gist" "mapped"}])
+            with-summary
+            (assoc with-count "session_summaries" [{"scopes" #{"t1/i1"} "gist" "g"}])
 
             grown
-            (update folded "engine_iter_universe" conj "t3/i2")
+            (update with-summary "engine_iter_universe" conj "t3/i2")]
 
-            d
-            (cr/render-ctx-delta (delta-map folded) (delta-map grown))]
-
-        (expect (re-find #"session\[\"utilization\"\]\[\"now\"\]" d))
-        (expect (not (re-find #"\[\"folds\"\]" d)))
-        (expect (not (re-find #"mapped" d)))))
-  (it "no summaries -> no now/folds subkeys in utilization, no delta"
-      (expect (not (contains? (get (delta-map base-ctx) "utilization") "now")))
-      (expect (not (contains? (get (delta-map base-ctx) "utilization") "folds")))
-      (expect (nil? (cr/render-ctx-delta (delta-map base-ctx) (delta-map base-ctx)))))
-  (it "the live bound session bag (project-ctx) carries the `now` budget inside utilization"
-      (expect (contains? (get (cr/project-ctx (eng/session-view (assoc base-ctx
-                                                                  "session_summaries"
-                                                                  [{"scopes" #{"t1/i1"}
-                                                                    "gist" "g"}])))
-                              "utilization")
-                         "now"))))
+        (expect (nil? (cr/render-ctx-delta (delta-map base-ctx) (delta-map with-count))))
+        (expect (nil? (cr/render-ctx-delta (delta-map with-count) (delta-map with-summary))))
+        (expect (nil? (cr/render-ctx-delta (delta-map with-summary) (delta-map grown))))
+        (expect (not (contains? (cr/project-ctx (eng/session-view grown)) "utilization"))))))
 
 (defdescribe
   over-budget-hint-test
@@ -1220,11 +1177,19 @@
         (expect (nil? (eng/over-budget-hint advisory 6 nil)))
         (expect (nil? (eng/over-budget-hint under 6 6)))
         (expect (nil? (eng/over-budget-hint {"last_request_tokens" 210000} 6 6))))
-    (it "session-view surfaces the hint only while pressure is armed"
-        (let [ctx {"session_id" "s" "session_turn" 7 "engine_utilization" advisory}]
-          (expect (= (eng/over-budget-hint advisory 7 6)
-                     (get-in (eng/session-view (assoc ctx "engine_overbudget_hint_turn" 6))
-                             ["session_utilization" "hint"])))
+    (it "session-view surfaces only the compact budget and an armed hint"
+        (let [ctx
+              {"session_id" "s" "session_turn" 7 "engine_utilization" advisory}
+
+              hint
+              (eng/over-budget-hint advisory 7 6)]
+
+          (expect (= {"last_request_input_tokens" 150000
+                      "auto_compress_above" 200000
+                      "model_input_limit" 1000000
+                      "hint" hint}
+                     (get (eng/session-view (assoc ctx "engine_overbudget_hint_turn" 6))
+                          "session_utilization")))
           (expect (not (contains? (get (eng/session-view ctx) "session_utilization") "hint")))))
     (it "stamp-utilization! arms at 75%, holds, clears below, and re-arms"
         (let [a (atom {"session_turn" 5})]

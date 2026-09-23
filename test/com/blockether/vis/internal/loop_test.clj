@@ -653,78 +653,69 @@
              "print('sandbox-fold-measurement:', session['utilization'].get('fold_measurement'))")}
           {:input 20736}]]
 
-     (try (with-redefs [svar/ask-code!
-                        (fn [_ opts]
-                          (let [idx (count @requests)
-                                {:keys [input code]} (nth steps idx)]
+     (try
+       (with-redefs [svar/ask-code!
+                     (fn [_ opts]
+                       (let [idx (count @requests)
+                             {:keys [input code]} (nth steps idx)]
 
-                            (swap! requests conj (:messages opts))
-                            (swap! snapshots conj (ctx-loop/session-snapshot environment))
-                            ;; Capture data here: test failures must not become provider errors.
-                            (when (= idx 2)
-                              (swap! checkpoints conj
-                                [(get @(:ctx-atom environment) "session_summaries")
-                                 (get (persistance/db-load-latest-ctx db sid)
-                                      "session_summaries")]))
-                            (merge {:api-usage {:input-tokens input :output-tokens 1}
-                                    :routed/provider-id :lmstudio
-                                    :routed/model "model"
-                                    :tokens {}}
-                                   (if code
-                                     {:stop-reason :tool-calls
-                                      :tool-calls [{:id (str "call-" idx)
-                                                    :name "python_execution"
-                                                    :input {:code code}}]}
-                                     {:stop-reason :end :tool-calls [] :content "done"}))))]
-            (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
-          (expect (= 4 (count @requests)))
-          ;; A successful fold must survive before the turn finalizer runs.
-          (doseq [[live saved] @checkpoints]
-            (expect (= live saved)))
-          (let [wire
-                (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
+                         (swap! requests conj (:messages opts))
+                         (swap! snapshots conj (ctx-loop/session-snapshot environment))
+                         ;; Capture data here: test failures must not become provider errors.
+                         (when (= idx 2)
+                           (swap! checkpoints conj
+                             [(get @(:ctx-atom environment) "session_summaries")
+                              (get (persistance/db-load-latest-ctx db sid) "session_summaries")]))
+                         (merge {:api-usage {:input-tokens input :output-tokens 1}
+                                 :routed/provider-id :lmstudio
+                                 :routed/model "model"
+                                 :tokens {}}
+                                (if code
+                                  {:stop-reason :tool-calls
+                                   :tool-calls [{:id (str "call-" idx)
+                                                 :name "python_execution"
+                                                 :input {:code code}}]}
+                                  {:stop-reason :end :tool-calls [] :content "done"}))))]
+         (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
+       (expect (= 4 (count @requests)))
+       ;; A successful fold must survive before the turn finalizer runs.
+       (doseq [[live saved] @checkpoints]
+         (expect (= live saved)))
+       (let [wire
+             (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
 
-                readings
-                (re-seq #"last_request_tokens[^\n]*?(\d+)" wire)
+             readings
+             (re-seq #"last_request_input_tokens[^\n]*?(\d+)" wire)
 
-                folds
-                (:fold-count (persistance/db-session-usage-stats db sid))]
+             folds
+             (:fold-count (persistance/db-session-usage-stats db sid))]
 
-            (expect (= [prior-folds prior-folds folds folds]
-                       (mapv #(get-in % ["session_utilization" "fold_count"]) @snapshots)))
-            ;; Blockether/vis#174: report the next request's provider-measured net
-            ;; reduction, once for all folds issued between the same two requests.
-            (if (> folds prior-folds)
-              (do (expect (= "pending"
-                             (get-in (nth @snapshots 2)
-                                     ["session_utilization" "fold_measurement" "status"])))
-                  (expect (= {"status" "measured"
-                              "source" "provider_usage"
-                              "before_input_tokens" 157843
-                              "after_input_tokens" 15614
-                              "net_reduction_tokens" 142229
-                              "fold_count" (- folds prior-folds)}
-                             (select-keys
-                               (get-in (last @snapshots) ["session_utilization" "fold_measurement"])
-                               ["status" "source" "before_input_tokens" "after_input_tokens"
-                                "net_reduction_tokens" "fold_count"])))
-                  (expect (= (get-in (last @snapshots) ["session_utilization" "fold_measurement"])
-                             (get-in (persistance/db-session-usage-stats db sid)
-                                     [:health :fold-measurement])))
-                  (expect (re-find #"sandbox-fold-measurement: [^\n]*'net_reduction_tokens': 142229"
-                                   wire)))
-              (expect (nil? (get-in (last @snapshots) ["session_utilization" "fold_measurement"]))))
-            (expect (str/includes? wire (str "sandbox-fold-count: " folds)))
-            {:latest-input (some-> readings
-                                   last
-                                   second
-                                   parse-long)
-             :wire-folds (some-> (re-seq #"sandbox-fold-count: (\d+)" wire)
-                                 last
-                                 second
-                                 parse-long)
-             :folds folds})
-          (finally (lp/dispose-environment! environment))))))
+         (expect (every? #(not (contains? (get % "session_utilization") "fold_count")) @snapshots))
+         ;; Blockether/vis#174: provider-measured net change is retained in
+         ;; request health, once for folds issued between the same two requests.
+         (if (> folds prior-folds)
+           (let [measurement (get-in (persistance/db-session-usage-stats db sid)
+                                     [:health :fold-measurement])]
+             (expect (= {"status" "measured"
+                         "source" "provider_usage"
+                         "before_input_tokens" 157843
+                         "after_input_tokens" 15614
+                         "net_reduction_tokens" 142229
+                         "fold_count" (- folds prior-folds)}
+                        (select-keys measurement
+                                     ["status" "source" "before_input_tokens" "after_input_tokens"
+                                      "net_reduction_tokens" "fold_count"])))
+             (expect (= (get @(:ctx-atom environment) "engine_fold_measurement") measurement)))
+           (expect (nil? (get-in (persistance/db-session-usage-stats db sid)
+                                 [:health :fold-measurement]))))
+         (expect (str/includes? wire "sandbox-fold-count: None"))
+         (expect (str/includes? wire "sandbox-fold-measurement: None"))
+         {:latest-input (some-> readings
+                                last
+                                second
+                                parse-long)
+          :folds folds})
+       (finally (lp/dispose-environment! environment))))))
 
 (defdescribe
   post-fold-utilization-and-accounting-test
@@ -757,23 +748,23 @@
         (expect (= [157843] @baselines))))
   ;; Regression: a successful fold looked ineffective because the next request
   ;; still carried pre-fold usage, and an unprinted receipt counted as zero folds.
-  (it "publishes fresh provider usage and counts a fold without its printed receipt"
-      (expect (= {:latest-input 15614 :folds 1 :wire-folds 1}
+  (it "keeps fresh provider usage and counts a fold without its printed receipt"
+      (expect (= {:latest-input 15614 :folds 1}
                  (fold-usage-scenario
                    "fold_session('-t1/i1', 'evidence retained')\nprint('folded')"))))
-  (it "publishes the fold count when the Python block prints nothing"
-      (expect (= {:latest-input 15614 :folds 1 :wire-folds 1}
+  (it "counts folds invoked when the Python block prints nothing"
+      (expect (= {:latest-input 15614 :folds 1}
                  (fold-usage-scenario "fold_session('-t1/i1', 'silent checkpoint')"))))
-  (it "seeds resumed utilization from recorded operations before the first request"
-      (expect (= {:latest-input 15614 :folds 4 :wire-folds 4}
+  (it "seeds resumed fold statistics before the first request"
+      (expect (= {:latest-input 15614 :folds 4}
                  (fold-usage-scenario "fold_session('-t2/i1', 'resumed checkpoint')" 3))))
   (it "counts folds invoked through a helper even when a later statement fails"
-      (expect (= {:latest-input 15614 :folds 2 :wire-folds 2}
+      (expect (= {:latest-input 15614 :folds 2}
                  (fold-usage-scenario (str
                                         "def compact():\n    fold_session('-t1/i1', 'checkpoint')\n"
                                         "compact()\ncompact()\nraise ValueError('after folds')")))))
   (it "does not count fabricated receipts or a refused live-step fold"
-      (expect (= {:latest-input 15614 :folds 0 :wire-folds 0}
+      (expect (= {:latest-input 15614 :folds 0}
                  (fold-usage-scenario
                    (str "example = \"fold_session('-t1/i1', 'unused')\"\n"
                         "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
@@ -918,8 +909,8 @@
                        (select-keys measurement ["status" "reason" "net_reduction_tokens"])))
             (expect (= 1 (get measurement "fold_count")))
             (expect (= "provider_usage" (get measurement "source")))
-            (expect (= measurement
-                       (get-in (eng/session-view @ctx) ["session_utilization" "fold_measurement"])))
+            (expect (nil? (get-in (eng/session-view @ctx)
+                                  ["session_utilization" "fold_measurement"])))
             ;; A later response must not settle the same fold again, even when the
             ;; first post-fold response had no usage or a different route.
             (swap! ctx #'lp/record-provider-input response)
@@ -7989,9 +7980,9 @@
 ;; of rendering the current, route-scoped status already measured by Svar.
 (defdescribe
   prompt-cache-status-render-test
-  "Vis treats Svar's prompt-cache status as opaque current-process telemetry."
+  "Vis keeps Svar's prompt-cache status for diagnostics, not the model."
   (let [stamp! @#'lp/stamp-prompt-cache-status!]
-    (it "passes Svar's status through without inventing another cache metric"
+    (it "retains Svar's status without projecting provider-cache metrics"
         (let [status {:kind :provider-prompt-cache
                       :provider-id :openai-codex
                       :model "gpt-5.6-sol"
@@ -8004,18 +7995,17 @@
                               "engine_utilization" {"last_request_tokens" 1000}})]
 
           (stamp! ctx-atom status)
-          (let [util (get (eng/session-view @ctx-atom) "session_utilization")]
-            (expect (= {"kind" "provider-prompt-cache"
-                        "provider_id" "openai-codex"
-                        "model" "gpt-5.6-sol"
-                        "is_fresh" true
-                        "sample_count" 2
-                        "token_read_percent" 82
-                        "request_hit_percent" 50}
-                       (get util "prompt_cache")))
-            (expect (not (contains? util "cache_hit_rate")))
-            (expect (not (contains? util "cache_hit_window")))
-            (expect (not (contains? (eng/session-view @ctx-atom) eng/prompt-cache-status-key))))))
+          (expect (= {"kind" "provider-prompt-cache"
+                      "provider_id" "openai-codex"
+                      "model" "gpt-5.6-sol"
+                      "is_fresh" true
+                      "sample_count" 2
+                      "token_read_percent" 82
+                      "request_hit_percent" 50}
+                     (get @ctx-atom eng/prompt-cache-status-key)))
+          (expect (= {"last_request_input_tokens" 1000}
+                     (get (eng/session-view @ctx-atom) "session_utilization")))
+          (expect (not (contains? (eng/session-view @ctx-atom) eng/prompt-cache-status-key)))))
     (it "omits prompt-cache telemetry before Svar measures this process and turn"
         (let [util (eng/utilization 1000 200000 1000 100000)]
           (expect (= util (eng/with-prompt-cache-status util nil)))

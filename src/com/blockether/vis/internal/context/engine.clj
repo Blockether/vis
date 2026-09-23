@@ -32,8 +32,8 @@
                           (assoc "next_form" 1)))))
 
 (def prompt-cache-status-key
-  "Engine-only slot for Svar's latest provider prompt-cache status. The value is
-   already a complete metric; Vis only projects it into `session_utilization`."
+  "Engine-only slot for Svar's latest provider prompt-cache status. Kept for
+   request diagnostics, not projected into model-facing utilization."
   "engine_prompt_cache_status")
 
 ;; --- GC TTL constants ----------------------------------------------------
@@ -124,31 +124,17 @@
   {:ctx ctx :warnings []})
 
 (defn utilization
-  "Pure: the `\"session_utilization\"` map the model reads to see how much
-   of the context window the LAST request consumed. Keys are spelled out
-   so they can't be misread:
-     last_request_tokens  input size of the most recent model call
-     model_input_limit    HARD per-call ceiling (provider rejects above)
-     saturation           last-request / model-input-limit, as a rounded
-                          percentage — how FULL the per-call window is
-     headroom_tokens      tokens still free before the ceiling
-                          (model_input_limit - last request); the
-                          actionable 'can I keep going or must I fold?'
-     auto_compress_above  soft guardrail threshold for request size
-     turn_total_tokens    cumulative input this turn (billing, NOT a
-                          per-call limit — may exceed the limit safely)
-     prompt_cache        Svar's fresh, route- and cache-scope-specific provider
-                           prompt-cache status. It reports token-read and request-hit
-                           percentages separately; WebSocket continuation is a
-                           different transport metric. Vis only renders this opaque
-                           status and omits it until Svar measures the current turn
-      hint                 throttled compaction nudge, present ONLY when the
-                          handled context has grown past `auto_compress_above`
-                          (a bigger task) — the actionable partner to the passive
-                          ceiling numbers; added by `session-view` from
-                          `over-budget-hint`, self-silences after 3 turns
-   Returns nil until a request has actually been measured (req <= 0), so
-   the first iter of a turn shows nothing rather than a bogus 0%."
+  "Internal utilization from the most recent provider request. The measured
+   `last_request_tokens` counts input (prompt, context and tool history), not
+   output tokens or cumulative turn input. On overflow it can be the rejected
+   request’s reported input, not a live estimate for the next one. `turn_total_tokens` is cumulative
+   billing input; `saturation` and `headroom_tokens` compare against the hard
+   provider limit. `auto_compress_above` is the soft operating budget.
+
+   `session-view` projects only the three decision-making fields, naming the
+   measured input `last_request_input_tokens` for the model. Other fields remain
+   internal for request health and diagnostics.
+   Returns nil until a request is measured (req <= 0)."
   [request-tokens window-tokens turn-tokens fold-cap]
   (let [req
         (long (or request-tokens 0))
@@ -711,48 +697,19 @@
   (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
 
 (defn- fmt-toks
-  "Compact token count for the model-facing budget: `1000+` → `\"<n>k\"`, else the
-   raw integer. Matches the `fold_session` card's `~<n>k tokens` spelling so the
-   once-per-fold card and the per-iteration `now` budget read the same way."
+  "Compact token count for fold hints and diagnostic budgets: `1000+` →
+   `<n>k`, else the raw integer."
   [t]
   (let [t (long t)]
     (if (>= t 1000) (str (Math/round (/ (double t) 1000.0)) "k") (str t))))
 
 (defn folds-view
-  "Model-facing LIVE BUDGET derived from the recorded `fold_session` intents.
-
-   The GIST of each fold lives ONCE — in its transcript breadcrumb, rendered in
-   place where the collapsed content was, carrying its file:line anchors (see
-   `pretty-scopes`). So this view deliberately holds NO gists; echoing them here
-   would duplicate the breadcrumb that is already on the wire. It emits only the
-   volatile budget signal:
-
-     `\"now\"`  VOLATILE but TINY — shaped `\"context <U>% · saved <C>/<T> (<P>%, ~<toks> tok) · live <scopes>\"`:
-              `saved` how much of the wire (`<T>` = every `tN/iN` still on the
-              wire, so folded scopes that already scrolled off the trailer never
-              inflate it) is folded away, priced BOTH in scopes (`<C>/<T>`) AND —
-              when `weights` are stamped — in reclaimed context (`~<toks> tok`,
-               summed from `engine_iter_weights`, which a live send MEASURES with
-               the tokenizer over the very messages it sends, PLUS the Q/A
-              recaps of explicitly whole-turn-folded turns priced from
-              `turn-weights` / `engine_turn_weights`); and `live` the
-              compressed scopes STILL on the wire (accounting only; current-turn
-              scopes are not foldable). No gists. `context` is the
-              LIVE per-call saturation (`util`'s `saturation`), so the same delta
-              carries how full the window is now. No gists, no position (the `# tN/iN`
-              step tag the model already sees carries that) — so re-emitting it every
-              iteration costs a handful of tokens.
-
-   Returns `{\"now\" …}` when a `universe` (the live `tN/iN` scopes this send) is
-   stamped: selectors resolved (`expand-through`), covered folds dropped
-   (`supersede-summaries`), budget computed against the live wire. Without one
-   (resume / fresh seed, before the first live send) returns `{}` — the
-   breadcrumbs still carry every gist until the next send re-stamps the universe.
-   The token clause is best-effort: no `weights` (or a scope not yet weighed)
-   simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
-   `turn-weights` (optional fifth arg, `{turn-number → ~tokens}`) prices the
-   removed Q/A recap of every whole-turn-folded turn into the same clause.
-   Pure."
+  "Diagnostic fold budget derived from recorded `fold_session` intents.
+   Returns a `now` summary when a live iteration universe is available and `{}`
+   before the next send stamps one. The value summarizes collapsed and live
+   scopes and estimated token savings without repeating any fold gist. It is
+   not included in the model-facing utilization projection; the gists remain
+   in the transcript breadcrumbs. Token prices are best-effort. Pure."
   ([summaries universe weights util] (folds-view summaries universe weights util nil))
   ([summaries universe weights util turn-weights]
    (let [universe
@@ -870,64 +827,29 @@
         "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view
-  "THE single projection from engine-internal ctx to the model-facing
-   `session_*` view.
-
-   Both consumers derive from this, so the rendered `<context>` block and the
-   Python `session` dict are the same map by construction:
-     - `ctx-renderer/render-ctx` serializes this view
-     - `ctx-loop/session-snapshot` binds this view as read-only `session`
-
-   Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
-   projects `engine_utilization` → `session_utilization`. Its `fold_count`
-   is the session's executed-operation count, independent of receipts, summary
-   supersession and provider measurements. `fold_measurement` reports the latest
-   fold batch's net provider-input reduction once the next response arrives.
-   The second arity ignores legacy `warnings`.
+  "The single projection from engine-internal ctx to the model-facing
+   `session_*` view. Both rendered context and the sandbox `session` bag use it.
+   Only the latest provider-measured input, soft budget, hard limit and an armed
+   hint enter `session_utilization`. Internal telemetry and fold statistics stay
+   in engine state and request health. The second arity ignores legacy `warnings`.
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
-   ;; The fold BUDGET is merged INTO `"session_utilization"` (as the sibling leaf
-   ;; `"now"`), not a second top-level key: tokens-now + how-much-folded + what's-
-   ;; still-live are ONE readout riding the SAME per-iteration delta. The heavy
-   ;; part — each fold's GIST — is NOT here: it lives once in the transcript
-   ;; breadcrumb where the step collapsed (with its file:line anchors), so nothing
-   ;; is echoed. Before any request is measured (no universe) `folds-view` yields
-   ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
-   (let [fold-count
-         (get ctx "engine_fold_count")
-
-         fold-measurement
-         (get ctx "engine_fold_measurement")
-
-         budget
-         (when (seq (get ctx "session_summaries"))
-           (folds-view (get ctx "session_summaries")
-                       (get ctx "engine_iter_universe")
-                       (get ctx "engine_iter_weights")
-                       (get ctx "engine_utilization")
-                       (get ctx "engine_turn_weights")))
+   (let [measured
+         (get ctx "engine_utilization")
 
          hint
-         (over-budget-hint (get ctx "engine_utilization")
+         (over-budget-hint measured
                            (get ctx "session_turn")
                            (get ctx "engine_overbudget_hint_turn"))
 
          util
-         (-> (cond-> (or (get ctx "engine_utilization")
-                         (when (or (seq budget) (some? fold-count) fold-measurement) {}))
-               (some? fold-count)
-               (assoc "fold_count" fold-count)
+         (cond-> (select-keys measured ["auto_compress_above" "model_input_limit"])
+           (contains? measured "last_request_tokens")
+           (assoc "last_request_input_tokens" (get measured "last_request_tokens"))
 
-               fold-measurement
-               (assoc "fold_measurement" fold-measurement)
-
-               (seq budget)
-               (merge budget)
-
-               hint
-               (assoc "hint" hint))
-             (with-prompt-cache-status (get ctx prompt-cache-status-key)))]
+           hint
+           (assoc "hint" hint))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)

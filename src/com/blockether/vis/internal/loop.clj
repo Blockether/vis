@@ -2583,7 +2583,7 @@
           (assoc "net_reduction_tokens" (- (long before) (long after))))))))
 
 (defn- stamp-prompt-cache-status!
-  "Store Svar's opaque current-turn prompt-cache status for model-facing rendering."
+  "Store Svar's opaque current-turn prompt-cache status for diagnostics."
   [ctx-atom status]
   (when (and ctx-atom (map? status))
     (swap! ctx-atom assoc ctx-engine/prompt-cache-status-key (wire/->wire status))))
@@ -3473,13 +3473,12 @@
                          :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
                (tel/log! {:level :info :id ::fold-session :data {:intent intent}}
                          "model folded scopes")
-               (str
-                 "folded "
-                 label
-                 note
-                 (when (get ctx "engine_provider_input")
-                   " · provider net change pending in session['utilization']['fold_measurement']")
-                 (when g (str " → " g)))))
+               (str "folded "
+                    label
+                    note
+                    (when (get ctx "engine_provider_input")
+                      " · provider net change pending in request health after the next response")
+                    (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
 
 (defn- iteration-record-scope

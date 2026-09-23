@@ -125,11 +125,14 @@
                                                       "session_turn" 7
                                                       "engine_utilization"
                                                       {"last_request_tokens" 1200
+                                                       "auto_compress_above" 8000
                                                        "model_input_limit" 10000
                                                        "saturation" 12})})]
         (expect (str/includes? boundary "session[\"turn\"] = 7"))
         (expect (str/includes? boundary "session[\"utilization\"]"))
-        (expect (str/includes? boundary "\"saturation\": 12"))))
+        (expect (str/includes? boundary "\"last_request_input_tokens\": 1200"))
+        (expect (str/includes? boundary "\"auto_compress_above\": 8000"))
+        (expect (not (str/includes? boundary "\"saturation\"")))))
   ;; Regression: `/goal` persists ~13 ms AFTER the frozen standing block was
   ;; rendered, so iteration 1 of the turn that SETS a goal used to read a
   ;; session without one and spent a step re-checking whether it saved.
@@ -147,6 +150,48 @@
   (it "omits the goal line for a session without a goal"
       (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]
         (expect (not (str/includes? boundary "session[\"goal\"]"))))))
+
+(defdescribe
+  model-facing-utilization-test
+  (let [ctx
+        (assoc base-ctx
+          "engine_utilization" {"last_request_tokens" 32000
+                                "auto_compress_above" 200000
+                                "model_input_limit" 272000
+                                "turn_total_tokens" 90000
+                                "saturation" 12
+                                "headroom_tokens" 240000}
+          "engine_fold_count" 2
+          "engine_fold_measurement" {"status" "measured" "fold_count" 2}
+          ctx-engine/prompt-cache-status-key {"token_read_percent" 75}
+          "session_summaries" [{"scopes" #{"t1/i1"} "gist" "done"}]
+          "engine_iter_universe" ["t1/i1" "t2/i1"])
+
+        expected
+        {"last_request_input_tokens" 32000 "auto_compress_above" 200000 "model_input_limit" 272000}]
+
+    (it "sends only three measured budget fields in every model-facing context surface"
+        (expect (= expected (get (ctx-engine/session-view ctx) "session_utilization")))
+        (expect (= expected (get (cr/project-ctx (ctx-engine/session-view ctx)) "utilization")))
+        (expect (= expected (get (cr/ctx-delta-map {:ctx ctx}) "utilization")))
+        (let [boundary
+              (cr/render-turn-boundary {:ctx ctx})
+
+              delta
+              (cr/render-ctx-delta (cr/ctx-static-map {:ctx base-ctx})
+                                   (cr/ctx-delta-map {:ctx ctx}))]
+
+          (expect (str/includes? boundary "last_request_input_tokens"))
+          (expect (str/includes? delta "last_request_input_tokens"))
+          (doseq [removed ["last_request_tokens" "turn_total_tokens" "saturation" "headroom_tokens"
+                           "fold_count" "prompt_cache" "now" "fold_measurement"]]
+            (expect (not (str/includes? boundary (str "\"" removed "\""))))
+            (expect (not (str/includes? delta (str "\"" removed "\"")))))))
+    (it "retains full measurements in engine state for metrics and request health"
+        (expect (= 90000 (get-in ctx ["engine_utilization" "turn_total_tokens"])))
+        (expect (= 2 (get ctx "engine_fold_count")))
+        (expect (= 2 (get-in ctx ["engine_fold_measurement" "fold_count"])))
+        (expect (= 75 (get-in ctx [ctx-engine/prompt-cache-status-key "token_read_percent"]))))))
 
 (defdescribe
   freeze-semantics-test

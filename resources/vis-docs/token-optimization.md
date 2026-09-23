@@ -120,26 +120,33 @@ selects the history: `"t2"` for a whole turn, `"t2/i4-i5"` for a range, or
 `"-t3/i9"` for everything through an iteration. Comma-separated keys select
 multiple ranges. The current iteration cannot be folded.
 
-The model monitors `session["utilization"]`. `last_request_tokens` is compared
-with `auto_compress_above`, normally 200k tokens and reduced for smaller input
-windows. A `hint` begins at 75% of that budget, becomes more urgent at 90%, and
-requires folding above 100%. It remains while usage is high. `saturation` and
-`headroom_tokens` are measured against the model's hard input limit.
+The model uses `session["utilization"]` to watch its context budget. The
+`last_request_input_tokens` is the provider-reported **input** of the most
+recently measured request, including its context. On an overflow it can report
+the size of a rejected request. It does not include output tokens, sum the
+whole turn or measure a request still being assembled. Compare it with
+`auto_compress_above`, normally 200k tokens and
+reduced for smaller windows. `model_input_limit` is the hard per-request input
+limit. A conditional `hint` starts at 75% of the soft budget, becomes more
+urgent at 90%, and requires folding above 100% while usage remains high.
 
-A fold receipt estimates removal with the local tokenizer. The next provider
-response supplies the actual post-fold input count, without an extra model call.
-`session["utilization"]["fold_measurement"]` then reports `status: "measured"`,
-`before_input_tokens`, `after_input_tokens` and their signed difference,
-`net_reduction_tokens`. A positive difference means less input; a negative one
-means growth. This is the net change of the whole request, including the gist,
-new tool traffic and other prompt changes, not isolated fold savings or money saved.
+Detailed metrics do not need to ride in every model request. Session statistics
+still count successful folds, and request health retains detailed usage and
+fold measurements for diagnostics. A fold receipt estimates removal with the
+local tokenizer. The next provider response measures the net input change
+without an extra model call. Request health records the latest
+`fold_measurement`: `status: "measured"`, `before_input_tokens`,
+`after_input_tokens` and their signed difference, `net_reduction_tokens`.
+A positive difference means less input; a negative one means growth. This is
+the change for the whole request, including the gist, new tool traffic and
+other prompt changes, not isolated fold savings or money saved.
 
-All `fold_session` calls between those two requests share one measurement and a
-`fold_count`; the reduction is not credited to each fold separately. Until the response arrives,
-the status is `pending`. Missing input usage, an unknown or changed provider/model,
-or a turn change makes the measurement `unavailable`, with a `reason`, rather
-than reusing an older count. The latest result is also stored in request health
-as `fold_measurement` for session introspection.
+All `fold_session` calls between those two requests share one measurement and
+its `fold_count`; the reduction is not credited to each fold separately. Until
+the response arrives, the status is `pending`. Missing input usage, an unknown
+or changed provider/model, or a turn change makes the measurement `unavailable`
+with a `reason`, rather than reusing an older count. You can inspect request
+health through session diagnostics when you need that detail.
 
 ## Example editing workflow
 

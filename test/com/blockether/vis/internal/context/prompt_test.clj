@@ -864,19 +864,12 @@
                "Inspect unknown shapes" "keep the reproduction as a suite test"
                "rerun it after the fix" "Cover changed behavior with tests"
                "Write only files the task asked" "Commit and push" "Treat context as a budget"
-               ;; Regression, user report: cross-validating §6 against the runtime. The
-               ;; utilization line named no field, and the two fields a model reads first
-               ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
-               ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
-               ;; Name the ratio the fold triggers actually use.
-               "pressure is `last_request_tokens`" "`auto_compress_above`"
-               "`saturation`/`headroom_tokens` price"
-               "`hint` only arms at 75% of that operating budget"
-               "`fold_count` is how many folds you executed"
-               ;; Svar owns prompt-cache policy; the core tells the model which explicit
-               ;; provider-cache fields it receives and separates transport continuation.
-               "`prompt_cache.token_read_percent`" "`request_hit_percent`"
-               "WebSocket delta continuation is separate transport telemetry"
+               ;; The model must know that this is the LAST provider-measured input,
+               ;; not a live token count or cumulative turn usage. Fold pressure
+               ;; compares it to the soft budget, not to the hard input ceiling.
+               "`last_request_input_tokens`" "not a live count" "`auto_compress_above`"
+               "`model_input_limit`" "`hint` arms at 75%"
+               "provider-cache metrics are available in diagnostics"
                ;; `session_drop` is gone: omitting the gist IS the discard, and a model
                ;; that does not know that writes a useless gist instead of dropping.
                "the gist discards outright"
@@ -1526,38 +1519,35 @@
              ;; Regression: after grep started answering ONE anchored TEXT block the
              ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
              ;; model kept treating the answer as a keyed map.
-             (it "says grep answers anchored TEXT, models context, and spends several hits at once"
-                 (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "answers an anchored STRING"))
-                   (expect (not (str/includes? text "returns a MAP")))
-                   ;; Several hits in ONE file are ONE patch call now, so there is no
-                   ;; order left for the caller to compute.
-                   (expect (not (str/includes? text "bottom-up")))
-                   (expect (str/includes? text "`patch(path, edits)`, ONE call per file"))
-                   (expect (str/includes? text "FRESH ANCHOR"))
-                   ;; User reports: recent sessions copied the primary grep example without
-                   ;; context even though nearby lines often answered the question outright.
-                   ;; Naming the default was still ambiguous: context is counted independently
-                   ;; above and below every match, not split between the two sides.
-                   (expect (str/includes?
-                             text
-                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
-                   (expect (str/includes? text "`context`: lines per side (default 3)"))
-                   ;; User report: §3 taught the grep call and stopped — a capped page and a
-                   ;; query that matches everywhere had no next step, so the same search ran
-                   ;; again instead of paging or asking WHICH files match.
-                   (expect (str/includes? text "A capped page continues itself with `next(r)`"))
-                   (expect
-                     (str/includes?
-                       text
-                       "`is_files_only: True` answers one row per matching file and its count"))
-                   ;; Regression, user report: a capped page taught `offset` and stopped
-                   ;; there, so the next call carried that offset onto a DIFFERENT query
-                   ;; and read the empty page as proof the symbol does not exist.
-                   (expect
-                     (str/includes?
-                       text
-                       "`offset` resumes THAT SAME query, never a new one"))))
+             (it
+               "says grep answers anchored TEXT, models context, and spends several hits at once"
+               (let [text (prompt/build-system-prompt {})]
+                 (expect (str/includes? text "answers an anchored STRING"))
+                 (expect (not (str/includes? text "returns a MAP")))
+                 ;; Several hits in ONE file are ONE patch call now, so there is no
+                 ;; order left for the caller to compute.
+                 (expect (not (str/includes? text "bottom-up")))
+                 (expect (str/includes? text "`patch(path, edits)`, ONE call per file"))
+                 (expect (str/includes? text "FRESH ANCHOR"))
+                 ;; User reports: recent sessions copied the primary grep example without
+                 ;; context even though nearby lines often answered the question outright.
+                 ;; Naming the default was still ambiguous: context is counted independently
+                 ;; above and below every match, not split between the two sides.
+                 (expect (str/includes?
+                           text
+                           "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
+                 (expect (str/includes? text "`context`: lines per side (default 3)"))
+                 ;; User report: §3 taught the grep call and stopped — a capped page and a
+                 ;; query that matches everywhere had no next step, so the same search ran
+                 ;; again instead of paging or asking WHICH files match.
+                 (expect (str/includes? text "A capped page continues itself with `next(r)`"))
+                 (expect (str/includes?
+                           text
+                           "`is_files_only: True` answers one row per matching file and its count"))
+                 ;; Regression, user report: a capped page taught `offset` and stopped
+                 ;; there, so the next call carried that offset onto a DIFFERENT query
+                 ;; and read the empty page as proof the symbol does not exist.
+                 (expect (str/includes? text "`offset` resumes THAT SAME query, never a new one"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".
