@@ -23,7 +23,8 @@
    Lazy: the proxy listener and the CA keygen happen only on first `ensure-proxy!` /
    `ensure-ca!` — a gateway that never jails a shell child opens neither."
   (:require [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
-            [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]))
+            [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]
+            [taoensso.telemere :as tel]))
 
 ;; token -> 0-arg policy fn (returns the session's compiled policy value, or nil)
 (defonce ^:private registry (atom {}))
@@ -127,6 +128,17 @@
   []
   (select-keys (ensure-ca-capability!) [:java-trust-store :java-trust-store-password]))
 
+(defn- denial-details
+  "Only safe context for a proxy refusal; paths, headers and filter reasons may hold secrets."
+  [{:keys [allow? phase host]}]
+  (when (false? allow?) {:source :vis-proxy :phase phase :host host}))
+
+(defn- log-egress-decision!
+  [event]
+  (when-let [details (denial-details event)]
+    (tel/log! {:level :warn :id ::egress-denied :data details}
+              "Vis egress proxy denied a request")))
+
 (defn ensure-proxy!
   "Lazily start the ONE shared loopback egress proxy bound to the token-keyed
    resolver + the shared CA. Returns its port. Idempotent + thread-safe."
@@ -135,6 +147,7 @@
       (locking proxy-lock
         (or (:port @proxy-state)
             (let [srv (egress/start! {:policy-fn resolve-policy
+                                      :on-log log-egress-decision!
                                       :mitm (fn []
                                               @ca-state)})]
               (reset! proxy-state srv)
@@ -155,6 +168,7 @@
         (or (get-in @session-proxy-states [token :port])
             (let [srv (egress/start! {:policy-fn (fn [_]
                                                    (resolve-policy token))
+                                      :on-log log-egress-decision!
                                       :mitm (fn []
                                               @ca-state)})]
               (swap! session-proxy-states assoc token srv)

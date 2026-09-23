@@ -61,6 +61,36 @@
          (is (:deny-all? (gs/resolve-policy "sess-A"))))
        (finally (gs/shutdown!))))
 
+(deftest denied-egress-diagnostics-omit-private-request-data
+  (let [denied {:phase :connect
+                :host "repo.clojars.org"
+                :allow? false
+                :reason "private detail"
+                :path "/?token=secret"
+                :headers {"proxy-authorization" "secret"}}]
+    (is (= {:source :vis-proxy :phase :connect :host "repo.clojars.org"}
+           (#'gs/denial-details denied)))
+    (is (nil? (#'gs/denial-details (assoc denied :allow? true))))))
+
+(deftest both-proxies-install-denial-logging
+  (let [started
+        (atom [])
+
+        token
+        "log-test"]
+
+    (with-redefs [ep/start! (fn [options]
+                              (swap! started conj options)
+                              {:port (+ 10000 (count @started))
+                               :stop! (fn []
+                                        nil)})]
+      (try (gs/register-session! token (constantly nil))
+           (gs/ensure-proxy!)
+           (gs/ensure-session-proxy! token)
+           (is (= 2 (count @started)))
+           (is (every? (comp fn? :on-log) @started))
+           (finally (gs/shutdown!))))))
+
 ;; Wire round-trip — token attribution through the ONE shared proxy
 
 (defn- start-origin!
