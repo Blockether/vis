@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.26 (6650) — 2026-09-23
+<!-- commit: b22b85e69423b5bdf33fc9487a2d5fbddb9576b2 -->
+
+- Hide iOS status bar
+- Align settings header actions
+- Clear NEW after opening a session
+- Blur composer when opening model picker
+- Tighten session headline spacing
+- V0.2.26 (#280)
+- V0.2.25
+- V0.2.24
+- Simplify read activity headers
+- Simplify file preview header
+- Add an amber-shadow header wordmark
+- Keep reads summary-only and open ranged files
+- Centre the app bar mark on its ink
+- Page a project's bands and file a row by finger
+- Compose Markdown before first paint #282
+- Optimize rich Markdown artifact paragraphs
+- Render Markdown descriptions in both clients #282
+- Put the session list away faster and without stutter
+- Open the run from the LIVE word ending its band
+- Open live sessions from the project count
+
 ## 0.2.8 (6354) — 2026-09-17
 <!-- commit: 72afec37eecb23ba7d391a4cd7a6a7870f10b996 -->
 
