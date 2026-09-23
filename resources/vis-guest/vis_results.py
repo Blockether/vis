@@ -3,7 +3,7 @@
 Only presentation lives here. The runtime still owns result identity, shell handles,
 paging and execution. Installation changes the session-local result class, never
 builtins.dict or a process-global runtime class. Unknown operations keep dict repr.
-Use dict(r), r.keys(), or json.dumps(r) for the complete data.
+Use the variable holding a result to inspect keys, or pass it to dict()/json.dumps().
 """
 
 from collections import Counter
@@ -16,7 +16,7 @@ def _bounded(value, source, limit):
     half = limit // 2
     return (
         text[:half]
-        + f"\n… {len(text) - 2 * half} chars omitted; full text: {source}\n"
+        + f"\n… {len(text) - 2 * half} chars omitted; full field on this result: {source}\n"
         + text[-half:]
     )
 
@@ -27,7 +27,7 @@ def _duration(ms):
 
 def _details(result):
     return [
-        f"{key}: {_bounded(result[key], f'r[{key!r}]', 600)}"
+        f"{key}: {_bounded(result[key], f'[{key!r}]', 600)}"
         for key in ("error", "hint", "note", "warning")
         if result.get(key)
     ]
@@ -44,15 +44,19 @@ def _shell(result):
         parts.append("wait timed out" if waiting else "timed_out")
     lines = ["; ".join(parts)]
     if result.get("out"):
-        lines.append(_bounded(result["out"], "r['out']", 4000))
+        lines.append(_bounded(result["out"], "['out']", 4000))
     lines.extend(_details(result))
     if result.get("out_omitted_chars"):
         lines.append(
             f"{result['out_omitted_chars']} log chars omitted by the host; "
-            "read r.logs(offset=0), or r['log_path']."
+            "call .logs(offset=0) on the saved shell handle, "
+            "or read ['log_path'] on this result."
         )
     if result.get("is_eof") is False:
-        lines.append(f"Continue log: r.logs(offset={result.get('next_offset', 0)}).")
+        lines.append(
+            f"Continue log: call .logs(offset={result.get('next_offset', 0)}) "
+            "on the saved shell handle."
+        )
     return "\n".join(lines)
 
 
@@ -66,7 +70,7 @@ def _session(result):
         )
     turns = (transcript or {}).get("turns") or []
     failures = result.get("failures") or []
-    title = _bounded(session.get("title") or "untitled", "r['session']['title']", 160)
+    title = _bounded(session.get("title") or "untitled", "['session']['title']", 160)
     lines = [
         f"read_session {ident}: {title}",
         f"{len(turns)} transcript turns; {len(failures)} failures",
@@ -78,14 +82,17 @@ def _session(result):
         lines.append("Transcript unavailable.")
     if result.get("diagnosis"):
         lines.append(
-            "Diagnosis: " + _bounded(result["diagnosis"], "r['diagnosis']", 600)
+            "Diagnosis: " + _bounded(result["diagnosis"], "['diagnosis']", 600)
         )
     lines.extend(_details(result))
     lines.append(
-        "History: r['transcript']['turns'] → iterations → blocks (code/stdout/error)."
+        "History: ['transcript']['turns'] → iterations → blocks "
+        "(code/stdout/error) on this result."
     )
     lines.append(
-        "Full data: " + ", ".join(result.keys()) + "; inspect r[key] or dict(r)."
+        "Full data: "
+        + ", ".join(result.keys())
+        + "; field paths are relative to this result; use the variable holding it."
     )
     return "\n".join(lines)
 
@@ -130,6 +137,15 @@ def _council_entry(entry, source):
             )
     if entry.get("content"):
         lines.append(_bounded(entry["content"], f"{source}['content']", 600))
+        if (
+            entry.get("entry_id") is not None
+            and len(str(entry["content"]).rstrip("\n")) > 600
+        ):
+            lines.append(
+                f"To read full content without the original variable: "
+                f"entry = await council.get({entry['entry_id']}); "
+                "print(entry['content'])."
+            )
     return lines
 
 
@@ -147,27 +163,28 @@ def _council(result):
                 f"Page reply_required=True: {required}; replies: {_reply_counts(replies) or 'none'}."
             )
         for index, entry in enumerate(entries[:5]):
-            lines.extend(_council_entry(entry, f"r['entries'][{index}]"))
+            lines.extend(_council_entry(entry, f"['entries'][{index}]"))
         if len(entries) > 5:
             key = "thread_id" if op == "council.threads" else "entry_id"
             identities = ", ".join(f"#{entry[key]}" for entry in entries[5:])
             lines.append(
                 f"… {len(entries) - 5} more entries ({key}: {identities}); "
-                "full messages and reply states: r['entries']."
+                "full messages and reply states: ['entries'] on this result."
             )
         if result["has_more"]:
             lines.append(
                 f"Next page: {op}(after={result['after']}) with the same filters."
             )
     elif "entry_id" in result:
-        lines = [op] + _council_entry(result, "r")
+        lines = [op] + _council_entry(result, "")
     elif result.get("error"):
         lines = [f"{op}: error"]
     else:
         return dict.__repr__(result)
     lines.extend(_details(result))
     lines.append(
-        "Full data: inspect r[key] or dict(r); retrieve an entry with await council.get(entry_id)."
+        "Full data: field paths above start from this result; use the variable holding it. "
+        "To retrieve an entry, call council.get with its displayed ID."
     )
     return "\n".join(lines)
 

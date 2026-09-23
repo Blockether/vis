@@ -102,10 +102,11 @@
                                "next_offset" 321
                                "note" "waiting for input"
                                "error" "fixture diagnostic"}
-                              "print([r])")]
+                              "q = r\ndel r\nprint([q])")]
         (doseq [text ["running" "wait timed out" "120" "logs(offset=0)" "321" "waiting for input"
-                      "fixture diagnostic"]]
-          (expect (str/includes? out text)))))
+                      "fixture diagnostic" "saved shell handle"]]
+          (expect (str/includes? out text)))
+        (expect (not (str/includes? out "r.logs")))))
   (it "bounds long output, retains both ends and tells the caller what to read"
       (let [out (check-result {"op" "shell"
                                "id" "demo"
@@ -114,10 +115,11 @@
                                "out" (str "first diagnostic\n"
                                           (apply str (repeat 20000 "x"))
                                           "\nlast diagnostic")}
-                              "assert len(r['out']) > 20000\nprint(r)")]
+                              "q = r\ndel r\nassert len(q['out']) > 20000\nprint(q)")]
         (expect (< (count out) 5000))
-        (doseq [text ["exit=1" "first diagnostic" "last diagnostic" "omitted" "r['out']"]]
-          (expect (str/includes? out text))))))
+        (doseq [text ["exit=1" "first diagnostic" "last diagnostic" "omitted" "['out']"]]
+          (expect (str/includes? out text)))
+        (expect (not (str/includes? out "r['out']"))))))
 
 (defdescribe
   compact-session-result-test
@@ -131,11 +133,12 @@
           "session" {"id" "demo" "title" "Fixture" "turn_count" 2}
           "failures" [{"message" "failure"}]
           "transcript" {"turns" [{"iterations" [{"blocks" [{"stdout" "private history"}]}]}]}}
-         "assert r['transcript']['turns'][0]['iterations'][0]['blocks'][0]['stdout'] == 'private history'\nprint(r)")]
+         "q = r\ndel r\nassert q['transcript']['turns'][0]['iterations'][0]['blocks'][0]['stdout'] == 'private history'\nprint(q)")]
       (expect (str/includes? out "read_session demo"))
       (expect (str/includes? out "Fixture"))
       (expect (str/includes? out "1 failures"))
-      (expect (str/includes? out "r['transcript']['turns']"))
+      (expect (str/includes? out "['transcript']['turns']"))
+      (expect (not (str/includes? out "r['transcript']")))
       (expect (not (str/includes? out "private history")))))
   (it "reports missing sessions and leaves unfamiliar result shapes unchanged"
       (expect (str/includes? (check-result {"op" "read_session" "session" nil "transcript" nil}
@@ -161,39 +164,55 @@
   compact-council-result-test
   (it "prints entry identity, message and reply state without changing raw data"
       (doseq [op ["council.publish" "council.get"]]
-        (let [out (check-result
-                    (assoc (council-entry 7)
-                      "op" op
-                      "reply_required" true
-                      "reply_to" 3
-                      "ping" ["notified-peer"]
-                      "replies" [{"session_id" "peer-a" "state" "pending"}
-                                 {"session_id" "peer-b" "state" "delivered"}
-                                 {"session_id" "peer-c" "state" "replied" "reply_entry_id" 8}])
-                    (str "before = json.dumps(r)\nprint([r])\n" "assert json.dumps(r) == before\n"
-                         "assert json.loads(before) == dict(r)\n"
-                         "assert r['replies'][2]['reply_entry_id'] == 8"))]
+        (let [out (check-result (assoc (council-entry 7)
+                                  "op" op
+                                  "reply_required" true
+                                  "reply_to" 3
+                                  "ping" ["notified-peer"]
+                                  "replies"
+                                  [{"session_id" "peer-a" "state" "pending"}
+                                   {"session_id" "peer-b" "state" "delivered"}
+                                   {"session_id" "peer-c" "state" "replied" "reply_entry_id" 8}])
+                                (str "q = r\ndel r\nbefore = json.dumps(q)\nprint([q])\n"
+                                     "assert json.dumps(q) == before\n"
+                                     "assert json.loads(before) == dict(q)\n"
+                                     "assert q['replies'][2]['reply_entry_id'] == 8"))]
           (doseq [text [op "Entry #7" "thread #1" "coordination" "fixture-group" "fixture-author"
                         "Review cancellation" "Keep the existing cancellation boundary."
                         "reply_required=True" "reply_to=#3" "pending=1" "delivered=1" "peer-a"
                         "replied=1" "reply_entry_id=8" "Ping: 1 recipients" "notified-peer"
-                        "dict(r)"]]
-            (expect (str/includes? out text) text)))))
-  (it "bounds long messages and recipient lists with explicit read-back paths"
-      (let [out (check-result
-                  (assoc (council-entry 9)
-                    "op" "council.get"
-                    "ping" (mapv #(str "notified-peer-" %) (range 256))
-                    "content"
-                    (str "first diagnostic\n" (apply str (repeat 20000 "x")) "\nlast diagnostic")
-                    "replies" (vec (concat (for [n (range 255)]
-                                             {"session_id" (str "peer-" n) "state" "pending"})
-                                           [{"session_id" "last-peer" "state" "unavailable"}])))
-                  "assert len(r['content']) > 20000\nassert len(r['replies']) == 256\nprint(r)")]
-        (expect (< (count out) 4000))
-        (doseq [text ["Ping: 256 recipients" "r['ping']" "first diagnostic" "last diagnostic"
-                      "omitted" "r['content']" "r['replies']" "pending=255" "unavailable=1"]]
-          (expect (str/includes? out text) text))))
+                        "field paths above start from this result"
+                        "council.get with its displayed ID"]]
+            (expect (str/includes? out text) text))
+          (expect (not (str/includes? out "council.get(entry_id)"))))))
+  (it
+    "bounds long messages and recipient lists with explicit read-back paths"
+    (let
+      [out
+       (check-result
+         (assoc (council-entry 9)
+           "op" "council.get"
+           "ping" (mapv #(str "notified-peer-" %) (range 256))
+           "content" (str "first diagnostic\n" (apply str (repeat 20000 "x")) "\nlast diagnostic")
+           "replies" (vec (concat (for [n (range 255)]
+                                    {"session_id" (str "peer-" n) "state" "pending"})
+                                  [{"session_id" "last-peer" "state" "unavailable"}])))
+         "q = r\ndel r\nassert len(q['content']) > 20000\nassert len(q['replies']) == 256\nprint(q)")]
+      (expect (< (count out) 4000))
+      (doseq [text ["Ping: 256 recipients" "['ping']" "first diagnostic" "last diagnostic" "omitted"
+                    "['content']" "['replies']" "pending=255" "unavailable=1"
+                    "await council.get(9)"]]
+        (expect (str/includes? out text) text))
+      (expect (not (str/includes? out "r['")))))
+  (it "uses a stable entry id rather than a guessed variable for omitted content"
+      (let [out (check-result (assoc (council-entry 7093)
+                                "op" "council.get"
+                                "content" (apply str (repeat 737 "x")))
+                              "q = r\ndel r\nprint(q)")]
+        (expect (str/includes? out "137 chars omitted"))
+        (expect (str/includes? out "full field on this result: ['content']"))
+        (expect (str/includes? out "await council.get(7093)"))
+        (expect (not (str/includes? out "r['content']")))))
   (it "bounds pages while retaining cursors, omitted IDs and all reply-state counts"
       (let [entries
             (mapv #(assoc (council-entry %) "content" (apply str (repeat 20000 "x"))) (range 1 51))
@@ -207,13 +226,14 @@
 
             out
             (check-result {"op" "council.read" "entries" entries "after" 50 "has_more" true}
-                          (str "assert len(r['entries']) == 50\n"
-                               "assert len(r['entries'][49]['content']) == 20000\nprint(r)"))]
+                          (str "q = r\ndel r\nassert len(q['entries']) == 50\n"
+                               "assert len(q['entries'][49]['content']) == 20000\nprint(q)"))]
 
         (expect (< (count out) 9000))
-        (doseq [text ["50 entries" "after=50" "has_more=True" "#50" "45 more entries" "r['entries']"
+        (doseq [text ["50 entries" "after=50" "has_more=True" "#50" "45 more entries" "['entries']"
                       "same filters" "unavailable=1" "interrupted=1" "reply_required=True: 1"]]
-          (expect (str/includes? out text) text))))
+          (expect (str/includes? out text) text))
+        (expect (not (str/includes? out "r['entries']")))))
   (it "distinguishes thread lists, empty pages and failures"
       (let [out (check-result {"op" "council.threads"
                                "entries" [{"thread_id" 7
