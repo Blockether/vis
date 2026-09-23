@@ -1,22 +1,13 @@
 /**
- * Where the sessions list was left, across the unmount that loses it.
+ * Where the sessions list was left while another screen covers it.
  *
- * Opening a session replaces the whole list screen, so returning to it mounts a
- * brand new scroller parked at `scrollTop = 0`. Reading down a fleet of a
- * hundred rows then meant finding your place again after every single visit.
+ * A phone keeps the list mounted behind a session, but its hidden scroll box
+ * can lose its offset. Remember the last visible position before that happens.
+ * An anchor names the row under the top edge so a reordered list can put it
+ * back; the pixel offset is a fallback when that row has gone away.
  *
- * The position is remembered TWICE, because a pixel alone lies: the session you
- * just left comes back with a fresher timestamp and jumps up the list, shifting
- * every row below it. So the mark also names the row that was under the top
- * edge; put that row back where it was and the frame looks unchanged even
- * though the order is not. The pixel is the fallback for when that row is gone
- * (deleted, or filtered away) and the seed for a list that is still hydrating.
- *
- * The mark outlives the screen in a module variable and outlives a RELOAD in
- * `sessionStorage` (see `lib/parked`): pressing reload runs no cleanup and
- * unmounts nothing, so a place kept only in memory was lost by the one gesture
- * a reader repeats all day. It still dies with the visit, which is right — a
- * cold start has no reading position to honour.
+ * The mark also survives a reload in `sessionStorage` (see `lib/parked`).
+ * It dies with the visit, so a cold start has no reading position to honour.
  */
 
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
@@ -143,37 +134,49 @@ export function rowOffset(viewport: HTMLElement | null, id: string): number | nu
 }
 
 /**
- * Keep `viewport`'s place parked for as long as this screen owns it.
+ * Keep the list's last visible place across screen changes and reloads.
  *
- * Three exits, one measurement. A screen UNMOUNT (opening a session) runs the
- * cleanup; a RELOAD or a navigation away runs no cleanup at all and only
- * `pagehide` is left; an iOS tab or app discarded in the background may never
- * fire either, so `visibilitychange` takes the mark the moment the screen stops
- * being looked at. Measuring the live scroller is the only truthful answer, so
- * all three end in the same read.
+ * A scroll event records the position without a storage write. When the list
+ * goes behind another screen, the browser may reset its hidden scroll box, so
+ * park that last visible reading position rather than measuring the hidden DOM.
+ * Pagehide and backgrounding also park the live position for a reload; an
+ * unmount captures it only while the list was still visible.
  *
- * `onReaderScrolled` fires when the reader takes over with a wheel or a finger:
- * the mark is dropped, because a restore that lands after that is fighting them.
+ * `onReaderScrolled` fires when the reader takes over with a wheel or finger:
+ * the mark is dropped, because a late restore would fight them.
  */
 export function useListScrollPark(
   viewport: RefObject<HTMLElement | null>,
   onReaderScrolled: () => void,
+  isVisible: boolean,
 ): void {
-  // The callback is read only from an event, so it is kept in a ref rather than
-  // in the wiring effect's dependencies: re-subscribing four listeners on every
-  // render of a list this long is a cost with nothing to show for it.
+  // Rewiring listeners on every list render costs more than reading the latest
+  // callback and visibility from refs when an event actually happens.
   const abandoned = useRef(onReaderScrolled);
+  const visible = useRef(isVisible);
+  const lastVisible = useRef<ListScrollMark | null>(null);
   useEffect(() => {
     abandoned.current = onReaderScrolled;
   }, [onReaderScrolled]);
 
   useLayoutEffect(() => {
+    if (visible.current && !isVisible) rememberListScroll(lastVisible.current);
+    visible.current = isVisible;
+  }, [isVisible]);
+
+  useLayoutEffect(() => {
     const element = viewport.current;
     if (!element) return;
     const capture = () => {
-      if (element.isConnected) rememberListScroll(markListScroll(element, topVisibleRow(element)));
+      if (!visible.current || !element.isConnected) return;
+      lastVisible.current = markListScroll(element, topVisibleRow(element));
+      rememberListScroll(lastVisible.current);
+    };
+    const onScroll = () => {
+      if (visible.current) lastVisible.current = markListScroll(element, topVisibleRow(element));
     };
     const abandon = () => {
+      if (!visible.current) return;
       forgetListScroll();
       abandoned.current();
     };
@@ -181,17 +184,18 @@ export function useListScrollPark(
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') capture();
     };
+    element.addEventListener('scroll', onScroll, { passive: true });
     element.addEventListener('wheel', abandon, { passive: true });
     element.addEventListener('touchstart', abandon, { passive: true });
     window.addEventListener('pagehide', onHide);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      element.removeEventListener('scroll', onScroll);
       element.removeEventListener('wheel', abandon);
       element.removeEventListener('touchstart', abandon);
       window.removeEventListener('pagehide', onHide);
       document.removeEventListener('visibilitychange', onVisibility);
-      // A layout cleanup still runs against the live DOM, which is the last
-      // moment this scroller can be measured at all.
+      // A layout cleanup still runs against the live DOM when the list unmounts.
       capture();
     };
   }, [viewport]);

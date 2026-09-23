@@ -9,9 +9,9 @@ import {
   type ScrollBox,
 } from './list-scroll';
 
-// Regression: opening a session UNMOUNTS the sessions list, and the remount
-// started at `scrollTop = 0`. A reader forty rows down came back to the top of
-// the fleet and had to find their place again on every single return.
+// Regression: when opening a session unmounted the list, a reader forty rows
+// down returned to `scrollTop = 0`. The mark also restores the same row when a
+// mounted list's hidden scroll box loses its offset.
 
 function box(scrollTop: number, scrollHeight: number, clientHeight: number): ScrollBox {
   return { scrollTop, scrollHeight, clientHeight };

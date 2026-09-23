@@ -13,9 +13,15 @@ import { useListScrollPark } from './list-scroll';
 // one that lost their place — on a screen whose docstring promised to keep it.
 
 /** A list whose scroller is real enough to be measured, with rows to anchor on. */
-function List({ onReaderScrolled = () => {} }: { onReaderScrolled?: () => void }) {
+function List({
+  onReaderScrolled = () => {},
+  isVisible = true,
+}: {
+  onReaderScrolled?: () => void;
+  isVisible?: boolean;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useListScrollPark(ref, onReaderScrolled);
+  useListScrollPark(ref, onReaderScrolled, isVisible);
   return (
     <div ref={ref} data-testid="list">
       {['s1', 's2', 's3'].map((id) => (
@@ -75,13 +81,31 @@ describe('the sessions list across a reload', () => {
     expect((await afterReload()).parkedListScroll()?.top).toBe(900);
   });
 
-  it('still parks it on the unmount that opening a session performs', async () => {
+  it('parks a visible list when its screen unmounts', async () => {
     const { getByTestId, unmount } = render(<List />);
     scrolledToRow(getByTestId('list'), 640);
 
     unmount();
 
     expect((await afterReload()).parkedListScroll()?.top).toBe(640);
+  });
+
+  it('does not overwrite the last visible place after the hidden scroller resets', async () => {
+    const { getByTestId, rerender, unmount } = render(<List />);
+    const list = getByTestId('list');
+    scrolledToRow(list, 900);
+    fireEvent.scroll(list);
+
+    rerender(<List isVisible={false} />);
+    list.scrollTop = 0;
+    fireEvent.scroll(list);
+    fireEvent(window, new Event('pagehide'));
+    unmount();
+
+    expect((await afterReload()).parkedListScroll()).toEqual({
+      top: 900,
+      anchor: { id: 's1', offset: -20 },
+    });
   });
 
   it('drops the mark the moment the reader takes over with a finger', async () => {

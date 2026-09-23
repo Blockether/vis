@@ -1016,19 +1016,16 @@ export function SessionsScreen({
     if (offset !== null) viewport.scrollTop += offset - anchor.offset;
   }, [machines]);
 
-  // Coming back to the list means coming back to WHERE you were in it. Opening a
-  // session unmounts this screen, so the mark outlives it in a module (see
-  // `lib/list-scroll`) and is put back on the first paint that has the rows to
-  // put it back on: a cached fleet repaints instantly, a cold one lands a beat
-  // later, and either way the row that was under the top edge goes back under it
-  // even though the session just visited has jumped to the top of the list.
+  // A phone keeps this list mounted behind a session, but the hidden webview
+  // may reset its scroller. Restore the last visible mark when it comes back,
+  // once the rows are ready; a fresh gesture always takes precedence.
+  const wasVisibleRef = useRef(isVisible);
   useLayoutEffect(() => {
-    if (restoredRef.current) return;
-    // Off the glass there is no layout to restore INTO, and a mark spent where the
-    // reader cannot see where it landed is their place lost: the warm-up above fills
-    // this list behind an open session, so the fleet can now finish loading while it is
-    // hidden — and finishing is what gives up on a mark that does not fit yet.
-    if (!isVisible) return;
+    if (isVisible && !wasVisibleRef.current) restoredRef.current = false;
+    wasVisibleRef.current = isVisible;
+  }, [isVisible]);
+  useLayoutEffect(() => {
+    if (restoredRef.current || !isVisible) return;
     const mark = parkedListScroll();
     if (!mark) {
       restoredRef.current = true;
@@ -1036,9 +1033,8 @@ export function SessionsScreen({
     }
     const viewport = listRef.current;
     if (!viewport) return;
-    // Once every machine in scope has answered, this IS the list: a mark that
-    // still does not fit points at rows that are gone, and retrying it on every
-    // later paint would fight the reader instead of serving them.
+    // A mark that cannot fit after every machine answered names rows that are
+    // gone; retrying it on later paints would fight the reader.
     if (
       applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) ||
       isFleetLoaded(machines, scope)
@@ -1049,9 +1045,13 @@ export function SessionsScreen({
   });
 
   // The reader scrolling is the reader deciding: stop trying to restore.
-  useListScrollPark(listRef, () => {
-    restoredRef.current = true;
-  });
+  useListScrollPark(
+    listRef,
+    () => {
+      restoredRef.current = true;
+    },
+    isVisible,
+  );
 
   // AT THE TOP OF THE LIST, A PULL IS A QUESTION ABOUT SEARCH. The glass that opens
   // the search page sits in the far top corner of the app bar; the thumb already
