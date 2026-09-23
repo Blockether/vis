@@ -123,29 +123,15 @@ export function SessionHeader({
   }
   const goal = model.goal;
   return (
-    /* On native iPhone the status bar is hidden. Put edge controls beside the
-       island, then the session title below its safe-area inset. On iPad they
-       share one row; browsers keep their visible status-bar padding. */
+    /* On iPhone the entire session row sits below the island, with the header
+       background extending behind it. iPad has no island; browsers keep their
+       visible status-bar inset. */
     <header
-      className={`z-10 min-h-13 shrink-0 gap-0 border-b border-dialog-edge bg-panel-2 ${
-        nativeIos
-          ? 'grid grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[max(3.25rem,env(safe-area-inset-top))_auto] sm:flex sm:items-stretch'
-          : 'flex items-stretch box-content pt-[env(safe-area-inset-top)] mouse:pt-0'
-      }`}
+      className={`z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
     >
-      {!isDesk && (
-        <BackButton
-          label="Back to sessions"
-          onClick={commands.back}
-          className={nativeIos ? 'row-start-1' : ''}
-        />
-      )}
+      {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
-      <div
-        className={`min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1 ${
-          nativeIos ? 'col-span-3 row-start-2 sm:col-auto sm:row-auto' : ''
-        }`}
-      >
+      <div className="min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1">
         {/* The title is the sentence the screen is about. It stays one step above
             the connection line by size and weight — all in the app's one mono face. */}
         <h1 className="truncate text-title font-semibold text-white mouse:text-body">
@@ -175,11 +161,7 @@ export function SessionHeader({
           )}
         </div>
       </div>
-      <div
-        className={`flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))] ${
-          nativeIos ? 'col-start-3 row-start-1 sm:col-auto sm:row-auto' : ''
-        }`}
-      >
+      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
         {team}
         <IconButton
           label={menuLabel}

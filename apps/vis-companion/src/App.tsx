@@ -1443,12 +1443,12 @@ export function Header({
   useEffect(() => {
     if (isSearching) searchRef.current?.focus();
   }, [isSearching]);
-  // The native iOS status bar is hidden, so its safe inset is not a blank row.
-  // Keep the browser/PWA inset: those still have a visible status bar.
+  // Reserve the iPhone island inside the header background so every action sits
+  // below it. iPad has no island; browsers keep their visible status-bar inset.
   const nativeIos = isIosNativeApp();
   return (
     <header
-      className={`relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 ${nativeIos ? '' : 'pt-[env(safe-area-inset-top)]'}`}
+      className={`relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : ''}`}
     >
       {/* SEARCH IS A PAGE, AND THE BAR IS ITS DOOR.
 
@@ -1463,21 +1463,9 @@ export function Header({
           Leaving the page clears the query, so the list a human comes back to is the
           one they left rather than a silently filtered copy of it. */}
       {isSearching ? (
-        <div
-          className={`w-full pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1rem,env(safe-area-inset-right))] ${
-            nativeIos
-              ? 'grid grid-cols-[auto_minmax(0,1fr)] grid-rows-[max(3.25rem,env(safe-area-inset-top))_3rem] sm:flex sm:h-12 sm:items-stretch'
-              : 'flex h-12 items-stretch'
-          }`}
-        >
-          <BackButton
-            label="Close search"
-            onClick={onCloseSearch}
-            className={nativeIos ? 'row-start-1' : ''}
-          />
-          <div
-            className={`ml-3 min-w-0 flex-1 ${nativeIos ? 'col-span-2 row-start-2 mr-3 flex items-center sm:mr-0' : ''}`}
-          >
+        <div className="flex h-12 w-full items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
+          <BackButton label="Close search" onClick={onCloseSearch} />
+          <div className="ml-3 min-w-0 flex-1">
             <HeaderSearchField
               inputRef={searchRef}
               value={query}

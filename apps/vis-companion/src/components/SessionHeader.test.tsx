@@ -69,23 +69,20 @@ describe('SessionHeader', () => {
     expect(screen.getByRole('button', { name: /^Copy session id/ })).toBeInTheDocument();
   });
 
-  // Regression: after hiding the iOS clock the notch safe area was an empty band.
-  // Keep the session title below the island while placing navigation beside it.
-  it('uses the iPhone notch row for edge actions, with the title below it', () => {
+  // Regression: moving controls beside the iPhone island obscured their intended
+  // row. Give the whole session header a safe inset so its actions sit below it.
+  it('keeps iPhone session actions below the island', () => {
     const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
     const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
     try {
       render(<SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
       const header = screen.getByRole('heading', { name: model.title }).closest('header')!;
-      expect(header.className).toContain('grid');
-      expect(header.className).not.toContain('pt-[env(safe-area-inset-top)]');
-      expect(screen.getByRole('heading', { name: model.title }).parentElement).toHaveClass(
-        'row-start-2',
-      );
-      expect(screen.getByRole('button', { name: 'Back to sessions' })).toHaveClass('row-start-1');
+      expect(header).toHaveClass('flex', 'pt-[env(safe-area-inset-top)]', 'sm:pt-0');
+      expect(header).not.toHaveClass('grid');
+      expect(screen.getByRole('button', { name: 'Back to sessions' })).not.toHaveClass('row-start-1');
       expect(
         screen.getByRole('button', { name: 'Session actions, 3 artifacts' }).parentElement,
-      ).toHaveClass('row-start-1');
+      ).not.toHaveClass('row-start-1');
     } finally {
       native.mockRestore();
       platform.mockRestore();

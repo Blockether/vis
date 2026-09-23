@@ -69,9 +69,10 @@ describe('app bar', () => {
     expect(labelledTag(page, 'Close search')).toContain('<BackButton');
     expect(page).toContain('label="Search sessions on every machine"');
     expect(page).toContain('placeholder="Search all machines…"');
-    // The feature owns this one-use field; its wrapper places it below the notch on iPhone.
+    // The header reserves the island; the field shares one row with its way back.
+    expect(page).toContain('flex h-12 w-full items-stretch');
     expect(page).toContain('ml-3 min-w-0 flex-1');
-    expect(page).toContain('col-span-2 row-start-2');
+    expect(page).not.toContain('row-start-1');
   });
 
   // Opening a page that a human still has to tap into asks for the tap twice, and a

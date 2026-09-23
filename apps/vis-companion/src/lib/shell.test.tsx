@@ -139,24 +139,24 @@ describe('the app bar', () => {
     view.restore();
   });
 
-  // Regression: hiding the native iOS clock left an empty safe-area band above
-  // the app bar on both iPad and iPhone. The bar itself must reach the top.
-  it('puts the iOS app bar at the top without hiding its edge controls', async () => {
+  // Regression: after removing the notch overlay, the iOS controls sat on both
+  // sides of the island instead of below it. Keep the safe inset inside the
+  // header background, with the full app bar and search field underneath.
+  it('keeps iPhone app actions and search below the island', async () => {
     const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
     const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
     try {
       const view = await mount();
       try {
         const header = view.baseElement.querySelector('header')!;
-        expect(header.className).not.toContain('pt-[env(safe-area-inset-top)]');
+        expect(header).toHaveClass('pt-[env(safe-area-inset-top)]', 'sm:pt-0');
+        expect(header.firstElementChild).toHaveClass('flex', 'w-full');
         expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible();
         expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
         await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-        expect(
-          screen.getByRole('searchbox', { name: 'Search sessions on every machine' }).parentElement
-            ?.parentElement,
-        ).toHaveClass('row-start-2');
-        expect(screen.getByRole('button', { name: 'Close search' })).toHaveClass('row-start-1');
+        expect(header.firstElementChild).toHaveClass('flex', 'h-12');
+        expect(header.firstElementChild).not.toHaveClass('grid');
+        expect(screen.getByRole('button', { name: 'Close search' })).not.toHaveClass('row-start-1');
       } finally {
         view.unmount();
         view.restore();
