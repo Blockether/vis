@@ -749,15 +749,22 @@ export function SessionScreen({
     setVisibleTurnCount((count) => count + 1);
     setHydratedTurnCount((count) => count + 1);
   }, []);
-  // Finished turns visible on this screen count as read, including a terminal bubble
-  // awaiting persistence. Never pre-read the running turn.
+  // Opening a conversation reads every answer the gateway has already settled, even
+  // when this device has not fetched the session detail or transcript yet. Later marks
+  // name only answers actually visible here, including a terminal bubble awaiting its row.
+  const markedOpenRef = useRef(false);
   const readTurns = useMemo(
     () => visibleAnsweredTurnCount(session, turns, runningTurn?.status, runningTurn?.requestKind),
     [session, turns, runningTurn],
   );
   useEffect(() => {
-    if (document.visibilityState !== 'hidden') void client.markSessionRead(sid, readTurns);
-    // Coming back to a screen that stayed mounted through a suspend is also a read.
+    if (!markedOpenRef.current) {
+      markedOpenRef.current = true;
+      void client.markSessionRead(sid);
+    } else if (document.visibilityState !== 'hidden') {
+      void client.markSessionRead(sid, readTurns);
+    }
+    // A mounted session may stay in the background through a suspend. Waking is a read.
     return onWake(() => void client.markSessionRead(sid, readTurns));
   }, [client, sid, readTurns]);
   // Turns that exist on the gateway BEFORE the window we hold. The transcript is
