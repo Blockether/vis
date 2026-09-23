@@ -32,7 +32,6 @@ import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
-import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
 import livePrimitivesWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
@@ -57,20 +56,15 @@ import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
 import type { ProviderAuth } from '../components/ProviderAuth';
 
-/** A hue by its palette name, so a story names a colour the way the fleet does. */
-export function storyHue(name: string): MachineColor {
-  return MACHINE_COLORS.find((one) => one.name === name) ?? MACHINE_COLORS[0];
-}
-
 /**
- * THE FLEET EVERY STORY SHARES. Three machines, because two never show that the
- * switcher scrolls; one of them is down, because a drained mark is the state the
- * palette is actually asked about; and one name is long enough to truncate.
+ * The fleet every story shares. Three machines, because two never show that the
+ * switcher scrolls; one is down, one has unread activity, and one name is long
+ * enough to truncate.
  */
 export const STORY_MACHINES = [
-  { name: 'tower', color: storyHue('teal'), live: 2, unread: 0, isDown: false },
-  { name: 'macbook-pro-16-work', color: storyHue('violet'), live: 0, unread: 4, isDown: false },
-  { name: 'mini', color: storyHue('orange'), live: 0, unread: 0, isDown: true },
+  { name: 'tower', live: 2, unread: 0, isDown: false },
+  { name: 'macbook-pro-16-work', live: 0, unread: 4, isDown: false },
+  { name: 'mini', live: 0, unread: 0, isDown: true },
 ] as const;
 
 /** Interleaved calls from the shared grouping contract, including a failed and a running shell call. */

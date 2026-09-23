@@ -48,7 +48,6 @@ import {
   HeaderTally,
   HeaderTitle,
   MachineGap,
-  MachineMark,
   MachineProjectsButton,
   MachineTab,
   NewSessionButton,
@@ -58,7 +57,6 @@ import {
   RowDisclosure,
 } from './SessionNavigator';
 import { MenuHeading } from './Menu';
-import { MACHINE_COLORS } from '../lib/machine-colors';
 
 describe('settings headers', () => {
   it('leaves a heading inert while its trailing switch owns the interaction', () => {
@@ -354,33 +352,6 @@ describe('RowDisclosure', () => {
   });
 });
 
-// The mark's whole job is the hue it paints, so its states are pinned by the
-// token they render: solid when heard from, breathing outline until then, and a
-// still outline once the machine is down (down wins over checking).
-describe('MachineMark', () => {
-  const hue = MACHINE_COLORS[7]!;
-  const mark = (props: { isHollow?: boolean; isChecking?: boolean } = {}) =>
-    render(<MachineMark color={hue} {...props} />).container.firstElementChild!;
-
-  it('is decoration only, solid when the machine has answered', () => {
-    const { container } = render(<MachineMark color={hue} />);
-    expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
-    expect(mark()).toHaveClass(hue.dot);
-  });
-
-  it('keeps the outline breathing while the machine is being checked', () => {
-    const checking = mark({ isChecking: true });
-    expect(checking).toHaveClass(hue.rail);
-    expect(checking).toHaveClass('animate-pulse');
-  });
-
-  it('goes still once the machine is down', () => {
-    const down = mark({ isHollow: true, isChecking: true });
-    expect(down).toHaveClass(hue.rail);
-    expect(down).not.toHaveClass('animate-pulse');
-  });
-});
-
 describe('MachineTab', () => {
   it('says whether it is the machine that is on', () => {
     const { rerender } = render(
@@ -401,9 +372,8 @@ describe('MachineTab', () => {
     expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'false');
   });
 
-  // Regression: the tab carried live and unread counts, so the reader had to learn
-  // a colour code to tell two numbers apart. News is a HIGHLIGHT.
-  it('marks unread with one mark and the word, never a number', () => {
+  // Regression: news belongs to the whole tile, not a count or a dot at its edge.
+  it('names unread activity without displaying a number or an extra mark', () => {
     render(
       <MachineTab isOn={false} hasUnread onClick={() => {}}>
         tower
@@ -412,6 +382,8 @@ describe('MachineTab', () => {
 
     const tab = screen.getByRole('button', { name: /tower\s*unread/ });
     expect(tab.textContent).not.toMatch(/\d/);
+    expect(tab.querySelector('.sr-only')).toHaveTextContent('unread');
+    expect(tab.querySelectorAll('span')).toHaveLength(1);
   });
 
   // Regression (reported: offline tabs stayed live and scoped the screen to a

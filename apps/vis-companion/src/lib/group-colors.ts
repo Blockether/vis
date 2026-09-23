@@ -9,7 +9,7 @@
  * of a hole where one belongs.
  *
  * Class names are written out in full because Tailwind scans SOURCE TEXT: a
- * `bg-group-${color}` template would compile to no CSS at all (`lib/machine-colors.ts`).
+ * `bg-group-${color}` template would compile to no CSS at all.
  */
 
 /** Every token a group may carry, in the order a picker offers them. */

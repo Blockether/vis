@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { Banner, Button, overlayLayer } from '../components/ui';
 import {
   MachineGap,
-  MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
   MachineTab,
@@ -32,7 +31,6 @@ import { onWake } from '../lib/wake';
 import { unreadTurnCount } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { notifyDesktopFleet } from '../lib/desktop-notify';
-import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import {
   applyListScroll,
@@ -1380,14 +1378,6 @@ export function SessionsScreen({
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
 
-  // One hue per paired machine, assigned from the machine's own key, so a rail
-  // keeps its colour across reloads and reorderings and two machines side by side
-  // never share one. Colour is what the eye reads before the name, and the same
-  // hue rides the scope chip above the list and the rail down its left.
-  const machineColors = useMemo(
-    () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
-    [machines],
-  );
   // Connectivity never changes positions. The app supplies the server's cached order.
   const switcherMachines = useMemo(() => {
     const ordered = [...machines];
@@ -1747,16 +1737,12 @@ export function SessionsScreen({
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
                 const name = machineLabel(machine.conn);
-                // A MACHINE THAT IS NOT ANSWERING IS NOT A PLACE TO GO. Its tile used
-                // to scope the whole screen to a machine with nothing to show, under
-                // the word "offline" — the only label here that grew when its machine
-                // got worse. Drained, it is dropped from `All`, and the press is the
-                // one thing that machine can still do: ask it again. The name and the
-                // transport's own reason ride the title, where the block cannot speak.
+                // A machine that is not answering cannot scope the screen to stale rows.
+                // Keep its name in place; its error-toned tile retries the connection,
+                // and the transport reason remains available in the title.
                 const isDown = Boolean(machine.error);
-                // A MACHINE PAINTED FROM CACHE HAS NOT BEEN HEARD FROM YET. Its tile keeps
-                // its place and its press, but the mark stays an outline until the first
-                // read of this run lands (see `COLD_PROBE_TIMEOUT_MS`).
+                // A cached machine has not answered this run. Keep its pending state in
+                // the title; cached unread activity may still tint the tile.
                 const isChecking = !isDown && !machine.answered;
                 const retry = isDown ? retries.get(key) : undefined;
                 return (
@@ -1783,11 +1769,6 @@ export function SessionsScreen({
                     }
                     onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
                   >
-                    <MachineMark
-                      color={machineColor(machineColors, key)}
-                      isHollow={isDown}
-                      isChecking={isChecking}
-                    />
                     {name}
                   </MachineTab>
                 );

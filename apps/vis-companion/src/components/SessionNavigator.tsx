@@ -13,7 +13,6 @@ import {
   type Ref,
 } from 'react';
 
-import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
 import { IconButton, overlayLayer } from './ui';
@@ -652,50 +651,9 @@ export function ProjectStatusCounts({
 }
 
 /**
- * The machine's hue as a solid block, worn by its banner and its scope chip, so
- * the chip you tapped and the rail you got back are visibly the same machine.
- */
-export function MachineMark({
-  color,
-  size = 'inline',
-  isHollow,
-  isChecking,
-}: {
-  color: MachineColor;
-  size?: 'inline' | 'banner';
-  /**
-   * The machine is not answering: the SAME hue, drained to an outline.
-   *
-   * A machine that is down keeps its identity — it is still that computer, and
-   * still that colour — so its mark is not recoloured and not removed, it is
-   * emptied. Nothing is behind it, which is exactly what the block says.
-   */
-  isHollow?: boolean;
-  /**
-   * The machine has not been heard from yet this run: the same outline, breathing.
-   *
-   * Its rows are painted from what it said last time, and a solid block over them
-   * claimed a reachability nobody had checked. The outline is the one honest thing
-   * the mark can say until the first read lands — it fills when the machine
-   * answers and goes still when it does not. Down wins: a verdict never breathes.
-   */
-  isChecking?: boolean;
-}) {
-  // A machine's identity block used to be `size-1.5` everywhere — the same 6px square,
-  // at the same size, as the LIVE / WAITING / IDLE dot on every session row beneath
-  // it. One shape meaning two things, and the SMALLEST glyph marking the HIGHEST
-  // level. In a banner it is the mark of a whole computer and takes the glyph column;
-  // riding inside a scope chip's text it stays the 6px it has to be.
-  const box = size === 'banner' ? 'size-2.5' : 'size-1.5';
-  const face = isHollow || isChecking ? `border ${color.rail}` : color.dot;
-  const breath = isChecking && !isHollow ? ' animate-pulse motion-reduce:animate-none' : '';
-  return <span className={`${box} shrink-0 ${face}${breath}`} aria-hidden="true" />;
-}
-
-/**
  * One scrollable machine-state track plus a separate add action. `All` is the first tile
- * only for a fleet; the selected tile has its own accent face and inset edge, while overflow
- * stays inside the track.
+ * only for a fleet; selection and unread activity paint the tile, while overflow stays
+ * inside the track.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
@@ -706,8 +664,8 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 }
 
 /**
- * Machine state tile. Unread activity is a highlight, not a count. A machine known down
- * becomes a retry action with no pressed state and reports only an active retry/failure.
+ * Machine state tile. Unread activity fills the tile rather than adding a glyph. A
+ * machine known down becomes a retry action with no pressed state or unread tint.
  */
 export function MachineTab({
   isOn,
@@ -722,7 +680,7 @@ export function MachineTab({
 }: {
   isOn: boolean;
   hasUnread?: boolean;
-  /** Not answering: drained face, never the scope, and the press is a retry. */
+  /** Not answering: retry instead of selecting; an error-toned name replaces the removed mark. */
   isDown?: boolean;
   /** The word this tile earned by being pressed, and only then. */
   note?: string | null;
@@ -744,23 +702,19 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-5 ${
         isDown
-          ? 'text-dialog-hint hover:text-white'
-          : isOn
-            ? 'bg-accent-surface font-bold text-accent-ink ring-1 ring-inset ring-accent-ink'
-            : hasUnread
-              ? 'font-bold text-white'
-              : 'text-dialog-hint hover:text-white'
+          ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
+          : hasUnread
+            ? `bg-machine-unread font-bold text-white focus-visible:outline-white ${isOn ? 'ring-1 ring-inset ring-white' : ''}`
+            : isOn
+              ? 'bg-accent-surface font-bold text-accent-ink ring-1 ring-inset ring-accent-ink focus-visible:outline-accent-ink'
+              : 'text-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
-      {hasUnread && !isDown && (
-        <span className="inline-block size-1.5 shrink-0 bg-accent-ink">
-          <span className="sr-only">unread</span>
-        </span>
-      )}
+      {hasUnread && !isDown && <span className="sr-only">unread</span>}
     </button>
   );
 }

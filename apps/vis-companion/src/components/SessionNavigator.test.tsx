@@ -2,51 +2,53 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HeaderActions, MachineMark, MachineTab, Pager, SectionHeader } from './SessionNavigator';
-import { MACHINE_COLORS } from '../lib/machine-colors';
+import { HeaderActions, MachineTab, Pager, SectionHeader } from './SessionNavigator';
 
 describe('machine selection', () => {
-  it('gives only an answering selected tile an accent face and edge without masking its identity or news', () => {
-    const color = MACHINE_COLORS[7]!;
-    const mark = <MachineMark color={color} />;
+  // Regression, user report (the leading square was crossed out and the right dot
+  // should become a full-tile notification tint): one chip, two independent states.
+  it('tints the entire unread tile without a trailing mark and keeps selection visible', () => {
     const { rerender } = render(
-      <MachineTab isOn hasUnread onClick={() => {}}>
-        {mark}tower
-      </MachineTab>,
-    );
-    const selected = screen.getByRole('button', { name: /tower\s*unread/ });
-    expect(selected).toHaveAttribute('aria-pressed', 'true');
-    expect(selected).toHaveClass(
-      'bg-accent-surface',
-      'text-accent-ink',
-      'ring-1',
-      'ring-inset',
-      'ring-accent-ink',
-    );
-    expect(selected).toHaveClass('focus-visible:outline-2', 'focus-visible:outline-accent-ink');
-    expect(selected.querySelector('[aria-hidden="true"]')).toHaveClass(color.dot);
-    expect(screen.getByText('unread').parentElement).toHaveClass('bg-accent-ink');
-
-    rerender(
       <MachineTab isOn={false} hasUnread onClick={() => {}}>
-        {mark}tower
+        tower
       </MachineTab>,
     );
     const unread = screen.getByRole('button', { name: /tower\s*unread/ });
     expect(unread).toHaveAttribute('aria-pressed', 'false');
+    expect(unread).toHaveClass('bg-machine-unread', 'text-white', 'font-bold');
     expect(unread).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
-    expect(unread.querySelector('[aria-hidden="true"]')).toHaveClass(color.dot);
-    expect(screen.getByText('unread').parentElement).toHaveClass('bg-accent-ink');
+    expect(screen.getByText('unread')).toHaveClass('sr-only');
+    expect(unread.querySelector('.bg-accent-ink')).toBeNull();
+
+    rerender(
+      <MachineTab isOn hasUnread onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    const selectedUnread = screen.getByRole('button', { name: /tower\s*unread/ });
+    expect(selectedUnread).toHaveAttribute('aria-pressed', 'true');
+    expect(selectedUnread).toHaveClass('bg-machine-unread', 'ring-1', 'ring-inset', 'ring-white');
+    expect(selectedUnread).not.toHaveClass('bg-accent-surface');
+    expect(selectedUnread).toHaveClass('focus-visible:outline-2', 'focus-visible:outline-white');
+
+    rerender(
+      <MachineTab isOn onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    const selectedRead = screen.getByRole('button', { name: 'tower' });
+    expect(selectedRead).toHaveClass('bg-accent-surface', 'text-accent-ink', 'ring-accent-ink');
+    expect(screen.queryByText('unread')).toBeNull();
 
     rerender(
       <MachineTab isOn hasUnread isDown label="Reconnect to tower" onClick={() => {}}>
-        <MachineMark color={color} isHollow />tower
+        tower
       </MachineTab>,
     );
     const retry = screen.getByRole('button', { name: 'Reconnect to tower' });
     expect(retry).not.toHaveAttribute('aria-pressed');
-    expect(retry).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
-    expect(retry.querySelector('[aria-hidden="true"]')).toHaveClass(color.rail);
+    expect(retry).toHaveClass('text-err-ink');
+    expect(retry).not.toHaveClass('bg-machine-unread', 'bg-accent-surface', 'ring-accent-ink');
     expect(screen.queryByText('unread')).toBeNull();
   });
 });

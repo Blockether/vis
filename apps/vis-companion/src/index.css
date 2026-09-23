@@ -275,13 +275,9 @@
   --color-project-header-active: color-mix(in oklab, var(--warning) 25%, var(--surface));
 }
 
-/* Machine identity hues (see `src/lib/machine-colors.ts`). Sixteen categorical
-   colours at ONE oklch lightness (L 0.62), so a machine's rail carries the same
-   weight whichever hue it drew, and a single hex works in BOTH palettes: every
-   entry clears 3:1 on the light page (#faf3eb) and 4.7:1 on the dark one
-   (#0f1117). These are the only colours in the app that do NOT come from the
-   shipped themes — a machine's identity must not change when the palette does.
-   Hues 130-168 are missing on purpose: green is LIVE on this screen. */
+/* Stable categorical hues still used by artifact chips (`src/components/ArtifactsSheet.tsx`).
+   Keep these distinct on light and dark pages; a chip's assigned hue is not a theme
+   accent. Green remains reserved for live status in the sessions list. */
 @theme {
   --color-machine-teal: #019d7e;
   --color-machine-aqua: #0a9a96;
@@ -301,13 +297,16 @@
   --color-machine-olive: #8e8b10;
 }
 
+/* Unread activity colours the whole machine tile. The link hue is distinct from
+   the warm selection accent and green live status; foreground ink stays legible on
+   its theme-derived, opaque tint. Monochrome themes retain the contrast in value. */
+@theme {
+  --color-machine-unread: color-mix(in oklab, var(--link-fg) 27%, var(--surface));
+}
+
 /* Session-group hues (see `src/lib/group-colors.ts`). The gateway keeps the palette
-   closed, so these eight names are the whole set. Six of them ARE the machine ramp's
-   own hues above, at the same lightness; `slate` and `green` are the two that ramp
-   does not carry — it skips green because green is LIVE on a machine's rail, while a
-   group wears the colour a human picked for it on purpose. Like the machine hues,
-   these do not come from the shipped themes: a group's colour must not change when
-   the palette does. */
+   closed, so these eight names are the whole set. They do not come from the shipped
+   themes: a group's colour must not change when the palette does. */
 @theme {
   --color-group-slate: #7c8798;
   --color-group-blue: #1b88e8;

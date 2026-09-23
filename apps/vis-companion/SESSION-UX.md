@@ -41,7 +41,7 @@ identified by their selection.
 10. Review proposals at phone and desktop sizes, in light and dark themes,
     including a state that could invalidate the design.
 11. Use production components in proposals. On phones, menus use bottom sheets
-    with a scrim, not floating popovers. Use `Button`, `MachineMark` and
+    with a scrim, not floating popovers. Use `Button`, `MachineTab` and
     `PencilIcon` rather than custom copies or font characters. Keep labels in
     sentence case and emphasize only the primary action.
 12. Import existing machine, project and session components. Preserve their

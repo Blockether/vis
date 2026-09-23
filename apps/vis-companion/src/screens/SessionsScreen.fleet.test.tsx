@@ -23,14 +23,6 @@ const fleet = () => [
 
 const section = (machine: string) => screen.getByLabelText(`${machine} projects`);
 
-/** The palette name a machine is wearing, off whatever class carries the hue. */
-const hue = (element: Element | null | undefined, property: 'border' | 'bg') =>
-  element?.className.match(new RegExp(`${property}-machine-([a-z]+)`))?.[1] ?? null;
-
-/** The hue the LIST wears for a machine: none — the mark on the switch carries it. */
-const listHue = (machine: string) =>
-  hue(section(machine).querySelector("[class*='border-machine-']"), 'border');
-
 const named = (pattern: RegExp) =>
   screen.queryAllByRole('button').filter((button) => {
     const name = button.getAttribute('aria-label') ?? button.textContent ?? '';
@@ -66,30 +58,44 @@ describe('the machine scope always has one active machine', () => {
     expect(beta.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it("keeps every tab's distinct colour when switching machines", async () => {
-    const view = renderSessionsScreen({ machines: fleet() });
+  // Regression, user report (the leading machine square was crossed out): the
+  // switcher names machines, and the whole tile carries news rather than a dot.
+  it('renders name-only tiles and carries unread through scope changes', async () => {
+    const machines = fleet();
+    machines[1] = {
+      ...machines[1],
+      sessions: [
+        listSession({
+          id: 'b1',
+          title: 'Second',
+          workspace: { root: '/w/two' },
+          turn_count: 2,
+          answer_count: 1,
+          is_unread: true,
+          unread_answers: 1,
+        }),
+      ],
+    };
+    const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText('First');
 
     const strip = within(screen.getByLabelText('Machines'));
     const alpha = strip.getByRole('button', { name: /^alpha/ });
-    const beta = strip.getByRole('button', { name: /^beta/ });
-    const alphaHue = hue(alpha.querySelector("[class*='bg-machine-']"), 'bg');
-    const betaHue = hue(beta.querySelector("[class*='bg-machine-']"), 'bg');
-    expect(alphaHue).toMatch(/^[a-z]+$/);
-    expect(betaHue).toMatch(/^[a-z]+$/);
-    expect(alphaHue).not.toBe(betaHue);
-    // Regression, user report (paraphrased: bin that rail on the left): the list used to
-    // echo the tab's hue as a 2px frame down everything that machine owned.
-    expect(listHue('alpha')).toBeNull();
+    const beta = strip.getByRole('button', { name: /^beta.*unread/ });
+    expect(alpha).toHaveClass('bg-accent-surface');
+    expect(beta).toHaveClass('bg-machine-unread');
+    expect(alpha.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(beta.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(beta.querySelector('.bg-accent-ink')).toBeNull();
+    expect(section('alpha').querySelector("[class*='border-machine-']")).toBeNull();
 
     await userEvent.click(beta);
     await screen.findByText('Second');
-    const chosen = within(screen.getByLabelText('Machines')).getByRole('button', {
-      name: /^beta/,
-    });
-    expect(hue(chosen.querySelector("[class*='bg-machine-']"), 'bg')).toBe(betaHue);
-    expect(listHue('beta')).toBeNull();
+    expect(beta).toHaveAttribute('aria-pressed', 'true');
+    expect(beta).toHaveClass('bg-machine-unread', 'ring-white');
+    expect(alpha).not.toHaveClass('bg-accent-surface');
+    expect(section('beta').querySelector("[class*='border-machine-']")).toBeNull();
   });
 
   it('keeps unavailable machines in their assigned positions', async () => {

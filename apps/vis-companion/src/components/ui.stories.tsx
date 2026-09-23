@@ -62,7 +62,6 @@ import {
   HeaderTally,
   HeaderTitle,
   MachineGap,
-  MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
   MachineTab,
@@ -1113,7 +1112,6 @@ export const Bands: Story = {
     <Sheet>
       <Group of="A machine's own band: the name IS the rename control">
         <HeaderTitle
-          mark={<MachineMark color={STORY_MACHINES[0].color} />}
           name={STORY_MACHINES[0].name}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
@@ -1160,7 +1158,7 @@ export const Bands: Story = {
   ),
 };
 
-/** The machine whose first read of the run has not landed: painted from cache, outline breathing. */
+/** The machine whose first read of this run has not landed: the title explains the pending check. */
 const STORY_CHECKING = STORY_MACHINES[1].name;
 
 function MachineSwitcherDemo() {
@@ -1175,17 +1173,18 @@ function MachineSwitcherDemo() {
             isOn={on === machine.name}
             hasUnread={machine.unread > 0}
             isDown={machine.isDown}
-            label={`Switch to ${machine.name}`}
+            label={machine.isDown ? `Reconnect to ${machine.name}` : undefined}
             title={
               machine.isDown
                 ? `${machine.name} is not answering`
                 : isChecking
                   ? `Checking ${machine.name}…`
-                  : machine.name
+                  : undefined
             }
-            onClick={() => setOn(machine.name)}
+            onClick={() => {
+              if (!machine.isDown) setOn(machine.name);
+            }}
           >
-            <MachineMark color={machine.color} isHollow={machine.isDown} isChecking={isChecking} />
             {machine.name}
           </MachineTab>
         );
@@ -1195,22 +1194,12 @@ function MachineSwitcherDemo() {
 }
 
 /**
- * A MACHINE IS A HUE AND A NAME, never a hue alone. Down is the same hue drained
- * to an outline: it is still that computer, and nothing is behind it. Checking is
- * that outline breathing: painted from cache, not yet heard from this run.
+ * The switcher is name-first: cool unread fill, warm selection, error ink for retry.
+ * A cached machine keeps its pending-check tooltip alongside any unread activity.
  */
 export const Machines: Story = {
   render: () => (
     <Sheet>
-      <Group of="MachineMark, two sizes, one still being checked and one that is not answering">
-        {STORY_MACHINES.map((machine) => (
-          <MachineMark key={machine.name} color={machine.color} isHollow={machine.isDown} />
-        ))}
-        <MachineMark color={STORY_MACHINES[1].color} isChecking />
-        <MachineMark color={STORY_MACHINES[0].color} size="banner" />
-        <MachineMark color={STORY_MACHINES[1].color} size="banner" isChecking />
-        <MachineMark color={STORY_MACHINES[2].color} size="banner" isHollow />
-      </Group>
       <Group of="The switcher: news on one tile, one still being checked, one that is down">
         <MachineSwitcherDemo />
       </Group>
@@ -1242,13 +1231,12 @@ export const Machines: Story = {
     await expect(buttons[1]).toHaveAttribute('aria-busy', 'true');
     await expect(buttons[2]).toBeDisabled();
 
-    const chosen = canvas.getByRole('button', { name: 'Switch to tower' });
-    const unread = canvas.getByRole('button', { name: 'Switch to macbook-pro-16-work' });
-    const down = canvas.getByRole('button', { name: 'Switch to mini' });
+    const chosen = canvas.getByRole('button', { name: 'tower' });
+    const unread = canvas.getByRole('button', { name: 'macbook-pro-16-work unread' });
+    const down = canvas.getByRole('button', { name: 'Reconnect to mini' });
     const track = chosen.parentElement!;
     const style = (element: Element) => getComputedStyle(element);
-    const machineMark = (button: Element) => button.querySelector('span[aria-hidden="true"]')!;
-    const unreadHue = style(machineMark(unread)).backgroundColor;
+    const unreadSurface = style(unread).backgroundColor;
     await expect(chosen).toHaveAttribute('aria-pressed', 'true');
     if (chosen.ownerDocument.documentElement.dataset.theme !== 'high-contrast-dark') {
       await expect(style(chosen).backgroundColor).not.toBe(style(track).backgroundColor);
@@ -1256,25 +1244,25 @@ export const Machines: Story = {
     await expect(style(chosen).color).not.toBe(style(chosen).backgroundColor);
     await expect(style(chosen).boxShadow).toContain('inset');
     await expect(unread).toHaveAttribute('aria-pressed', 'false');
-    await expect(style(unread).backgroundColor).not.toBe(style(chosen).backgroundColor);
+    await expect(unreadSurface).not.toBe(style(track).backgroundColor);
+    await expect(unreadSurface).not.toBe(style(chosen).backgroundColor);
+    await expect(style(unread).color).not.toBe(unreadSurface);
+    await expect(unread.querySelectorAll('span')).toHaveLength(1);
     await expect(unread.querySelector('.sr-only')).toHaveTextContent('unread');
     await expect(down).not.toHaveAttribute('aria-pressed');
-    await expect(parseFloat(style(machineMark(down)).borderTopWidth)).toBeGreaterThan(0);
+    await expect(down.querySelector('span')).toBeNull();
+    await expect(style(down).color).not.toBe(style(chosen).color);
 
     await userEvent.click(unread);
     await expect(unread).toHaveAttribute('aria-pressed', 'true');
     await expect(chosen).toHaveAttribute('aria-pressed', 'false');
-    if (chosen.ownerDocument.documentElement.dataset.theme !== 'high-contrast-dark') {
-      await expect(style(unread).backgroundColor).not.toBe(style(track).backgroundColor);
-    }
+    await expect(style(unread).backgroundColor).toBe(unreadSurface);
     await expect(style(unread).boxShadow).toContain('inset');
-    await expect(style(machineMark(unread)).backgroundColor).toBe(unreadHue);
-    await expect(style(unread.querySelector('span.bg-accent-ink')!).backgroundColor).toBe(
-      style(unread).color,
-    );
+    await expect(style(unread).color).not.toBe(style(unread).backgroundColor);
 
     await userEvent.click(down);
     await expect(down).not.toHaveAttribute('aria-pressed');
+    await expect(unread).toHaveAttribute('aria-pressed', 'true');
     await expect(style(down).backgroundColor).toBe(style(chosen).backgroundColor);
     await expect(style(down).boxShadow).toBe('none');
   },
