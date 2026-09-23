@@ -112,10 +112,10 @@ export function pullReveal(down: number): number {
  * over WITH its transition — which is the same thing as gliding home, whether
  * the pull was abandoned or the search page is on its way in.
  *
- * POSITION IS THE WHOLE REVEAL: the list card that owns the band is
- * `overflow-hidden`, so a band parked one height up is not dimmed, it is simply
- * behind the edge. Fading it in as well only laid a ghost of the header under
- * the paper of the band coming down to cover it.
+ * POSITION IS THE WHOLE REVEAL: the overlay frame around the band is
+ * `overflow-hidden` at the safe-area edge, so a band parked one height up is
+ * clipped instead of covering the iPhone status area. Fading it in as well
+ * only lays a ghost of the header under the band coming down to cover it.
  */
 export function paintPull(element: HTMLElement | null, reveal: number | null): void {
   if (!element) return;

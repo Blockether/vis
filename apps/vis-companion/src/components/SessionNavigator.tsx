@@ -29,10 +29,9 @@ const HEADER_BAND =
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
- *
- * A band pinned to the glass stays pinned only while nothing above it is transformed, so it is
- * one of the app's overlay layers (`overlayLayer`): the screen that owns the gesture hangs it
- * there rather than inside its own pane.
+ * Its overlay frame clips the band at the safe-area edge: a touch at the top writes an inline
+ * -100% translation before we know whether it is a pull or a normal scroll, which would
+ * otherwise override the idle offset and expose a strip above the app bar.
  */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
   const isShown = phase !== 'none';
@@ -40,18 +39,22 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
   const { position } = overlayLayer();
   return (
     <div
-      ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none ${position} inset-x-0 top-[env(safe-area-inset-top)] z-40 flex min-h-12 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
-        isShown ? 'translate-y-0' : '-translate-y-[calc(100%+env(safe-area-inset-top))]'
-      } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
+      className={`pointer-events-none ${position} inset-x-0 top-[env(safe-area-inset-top)] z-40 h-12 overflow-hidden`}
     >
-      <SearchIcon
-        className={`size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${
-          isArmed ? 'scale-125' : 'scale-100'
-        }`}
-      />
-      {isArmed ? 'Release to search' : 'Pull to search'}
+      <div
+        ref={ref}
+        className={`flex h-full items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
+          isShown ? 'translate-y-0' : '-translate-y-full'
+        } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
+      >
+        <SearchIcon
+          className={`size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${
+            isArmed ? 'scale-125' : 'scale-100'
+          }`}
+        />
+        {isArmed ? 'Release to search' : 'Pull to search'}
+      </div>
     </div>
   );
 }
