@@ -232,6 +232,16 @@ if (!boardOk && cleanedBoard === currentBoard) {
 // plist entry therefore belongs here, not in a hand-edited local Xcode project.
 const plistEntries = [
   [
+    'UIStatusBarHidden',
+    `\t<key>UIStatusBarHidden</key>
+\t<true/>`,
+  ],
+  [
+    'UIViewControllerBasedStatusBarAppearance',
+    `\t<key>UIViewControllerBasedStatusBarAppearance</key>
+\t<false/>`,
+  ],
+  [
     'UIBackgroundModes',
     `\t<key>UIBackgroundModes</key>
 \t<array>
@@ -323,6 +333,15 @@ if (missingPlistEntries.length > 0) {
   const additions = `${missingPlistEntries.map(([, xml]) => xml).join('\n')}\n`;
   preparedPlist = preparedPlist.slice(0, at) + additions + preparedPlist.slice(at);
 }
+
+// Capacitor's generated plist enables controller-based appearance, and its SystemBars
+// plugin shows the status bar during bridge startup. The plist must control it globally
+// instead, from the launch screen through every web view reload.
+preparedPlist = preparedPlist.replace(
+  /(<key>UIViewControllerBasedStatusBarAppearance<\/key>\s*)<true\/>/,
+  '$1<false/>',
+);
+
 // Existing generated projects already have CFBundleURLTypes, often with only
 // vis://. The key's presence (or the bundle ID in CFBundleURLName) does not
 // register the OAuth callback scheme; prepare and --check must inspect its array.
