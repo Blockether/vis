@@ -1,8 +1,4 @@
-/**
- * Persist explicit project folds, and the archive a project is revealing, in guarded
- * localStorage. Otherwise only each machine's leading project starts open; both are
- * decisions that outlive a screen or webview.
- */
+/** Persist project folds and each set's archive view in guarded localStorage. */
 
 /** Where the folds live: one entry per project — or group inside one — a reader has ever folded. */
 const STORE_KEY = 'vis.projectFolds';
@@ -28,14 +24,9 @@ export function groupFoldKey(machine: string, root: string, groupId: string): st
   return `${projectFoldKey(machine, root)}\u0000${groupId}`;
 }
 
-/**
- * WHETHER A PROJECT IS SHOWING ITS ARCHIVE: the same store again, under a segment no
- * group id can take. What the gateway owns is the archive itself (`archived_at`); which
- * of the two lists this reader is looking at is theirs, on this device, and it outlives
- * the screen the way a fold does.
- */
-export function projectRevealKey(machine: string, root: string): string {
-  return `${projectFoldKey(machine, root)}\u0000\u0000archived`;
+/** Each list chooses its archive independently. Keep the key outside the group-id namespace. */
+export function projectRevealKey(machine: string, root: string, set: 'groups' | 'sessions'): string {
+  return `${projectFoldKey(machine, root)}\u0000\u0000archived\u0000${set}`;
 }
 
 function readFolds(): Record<string, boolean> {

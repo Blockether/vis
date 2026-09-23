@@ -192,24 +192,19 @@ export const AcceptNewerSession: Story = {
         matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 48 : 52,
       );
       const pagerBounds = pager.getBoundingClientRect();
-      const menu = within(header).getByRole('button', { name: /^Groups in / });
-      // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable,
-      // the three dots belong on the right): the band's own controls hold its trailing edge,
-      // and now that the plus stands on the set it creates in, the menu is the last one left
-      // on the band.
-      await expect(within(header).queryByRole('button', { name: /^New session on / })).toBeNull();
-      await expect(menu.getBoundingClientRect().right).toBeLessThanOrEqual(pendingBounds.right);
-      // THE STEPS STAND OVER THE SET THEY MOVE, on the `Sessions` header under the band —
-      // never in it, which is what kept the plus and the menu at two different distances
-      // from the same screen edge depending on whether a project was paged.
+      // The project header no longer owns the lists' actions or their creation controls.
+      await expect(within(header).queryByRole('button', { name: /^Actions for / })).toBeNull();
+      await expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
+      // The pager and Sessions actions share the set header beneath the project band.
       await expect(within(header).queryByRole('navigation')).toBeNull();
       await expect(pagerBounds.top).toBeGreaterThanOrEqual(pendingBounds.bottom);
       const set = within(rows as HTMLElement).getByText('Sessions').parentElement!;
       await expect(set).toContainElement(pager);
       await expect(pagerBounds.right).toBeLessThanOrEqual(set.getBoundingClientRect().right);
-      // The plus ends this same strip, to the right of the page controls.
-      const create = within(set).getByRole('button', { name: /^New session on / });
-      await expect(create.getBoundingClientRect().left).toBeGreaterThanOrEqual(pagerBounds.right);
+      const actions = within(set).getByRole('button', {
+        name: `Actions for sessions in ${args.group.root}`,
+      });
+      await expect(actions.getBoundingClientRect().left).toBeGreaterThanOrEqual(pagerBounds.right);
       for (const button of within(pager).getAllByRole('button')) {
         const bounds = button.getBoundingClientRect();
         await expect(
@@ -368,7 +363,7 @@ export const Groups: Story = {
     const page = within(canvasElement);
     const wallet = await page.findByRole('button', { name: /(Collapse|Expand) Wallet work/ });
     const band = wallet.closest('div')!.parentElement!;
-    // Regression: an unpaged Groups strip must be as tall as Sessions with its plus.
+    // The unpaged Groups strip is as tall as Sessions with its own actions.
     const groupsHeader = page.getByText('Groups').parentElement!;
     const sessionsHeader = page.getByText('Sessions').parentElement!;
     await expect(groupsHeader.getBoundingClientRect().height).toBe(
@@ -383,9 +378,10 @@ export const Groups: Story = {
     await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(2);
     await userEvent.click(page.getByRole('button', { name: 'Expand Wallet work' }));
     await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(4);
-    // The sheet on the project's own name carries the VERB. The bands under that
-    // header are the inventory, and the menu no longer repeats them back.
-    await userEvent.click(page.getByRole('button', { name: `Groups in ${fixture.name}` }));
+    // The Groups header owns group creation; the project header has no menu.
+    await userEvent.click(
+      page.getByRole('button', { name: `Actions for groups in ${fixture.root}` }),
+    );
     const sheet = within(canvasElement.ownerDocument.body).getByRole('dialog', {
       name: `Groups in ${fixture.name}`,
     });
@@ -496,6 +492,8 @@ export const GroupVerbs: Story = {
       name: `Groups in ${fixture.name}`,
     });
     await expect(within(sheet).getByText('Rename group')).toBeVisible();
+    const newSession = within(sheet).getByRole('button', { name: 'New session' });
+    await expect(newSession.querySelector('svg.lucide-square-pen')).not.toBeNull();
     await expect(within(sheet).getByText('Delete group')).toBeVisible();
     await expect(within(sheet).queryByText('Wallet work')).toBeNull();
     await expect(within(sheet).queryByRole('button', { name: 'Slate' })).toBeNull();
@@ -614,7 +612,7 @@ const NEXT_PROJECT = {
 };
 
 // Regression: on a phone the active set stays beneath its own project while scrolling.
-// The next project must take both sticky levels away; a project without groups has only Sessions.
+// The next project takes both sticky levels away and shows Groups even with no bands.
 export const StickySectionHeaders: Story = {
   ...PagingBelowGroups,
   beforeEach: () => {
@@ -657,6 +655,7 @@ export const StickySectionHeaders: Story = {
     const groups = within(first as HTMLElement).getByText('Groups').parentElement!;
     const sessions = within(first as HTMLElement).getByText('Sessions').parentElement!;
     const nextProject = next.querySelector('header')!;
+    const nextGroups = within(next as HTMLElement).getByText('Groups').parentElement!;
     const nextSessions = within(next as HTMLElement).getByText('Sessions').parentElement!;
     const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const style = (element: Element) => getComputedStyle(element);
@@ -690,14 +689,30 @@ export const StickySectionHeaders: Story = {
       sessions.getBoundingClientRect().top + 12,
     );
     await expect(sessions.contains(sessionHit)).toBe(true);
-    const create = within(sessions).getByRole('button', { name: /^New session on / });
-    await expect(create.getBoundingClientRect().top).toBeGreaterThanOrEqual(sessions.getBoundingClientRect().top);
+    const actions = within(sessions).getByRole('button', {
+      name: `Actions for sessions in ${fixture.root}`,
+    });
+    await expect(actions.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      sessions.getBoundingClientRect().top,
+    );
 
     pane.scrollTop += nextProject.getBoundingClientRect().top - pane.getBoundingClientRect().top + 30;
     await frame();
-    await expect(nextProject.getBoundingClientRect().top).toBeCloseTo(pane.getBoundingClientRect().top, 0);
-    await expect(nextSessions.getBoundingClientRect().top).toBeCloseTo(nextProject.getBoundingClientRect().bottom, 0);
-    await expect(within(next as HTMLElement).queryByText('Groups')).toBeNull();
+    await expect(nextProject.getBoundingClientRect().top).toBeCloseTo(
+      pane.getBoundingClientRect().top,
+      0,
+    );
+    await expect(nextGroups).toBeInTheDocument();
+    await expect(nextSessions.getBoundingClientRect().top).toBeGreaterThan(
+      nextProject.getBoundingClientRect().bottom,
+    );
+    pane.scrollTop +=
+      nextSessions.getBoundingClientRect().top - nextProject.getBoundingClientRect().bottom + 40;
+    await frame();
+    await expect(nextSessions.getBoundingClientRect().top).toBeCloseTo(
+      nextProject.getBoundingClientRect().bottom,
+      0,
+    );
     const nextHit = document.elementFromPoint(
       nextSessions.getBoundingClientRect().left + 22,
       nextSessions.getBoundingClientRect().top + 12,
@@ -800,7 +815,9 @@ export const NarrowSectionHeaders: Story = {
     );
     await expect(groups.contains(hit)).toBe(true);
     controlsFit(groups);
-    const create = within(sessions).getByRole('button', { name: /^New session on / });
+    const actions = within(sessions).getByRole('button', {
+      name: `Actions for sessions in ${fixture.root}`,
+    });
     pane.scrollTop += sessions.getBoundingClientRect().top - project.getBoundingClientRect().bottom + 40;
     await frame();
     await expect(sessions.getBoundingClientRect().top).toBeCloseTo(
@@ -811,9 +828,9 @@ export const NarrowSectionHeaders: Story = {
       sessions.getBoundingClientRect().top + 1,
     );
     controlsFit(sessions);
-    const box = create.getBoundingClientRect();
+    const box = actions.getBoundingClientRect();
     await expect(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)).toBe(
-      create,
+      actions,
     );
     const sessionPager = within(sessions).getByRole('navigation');
     await userEvent.click(within(sessionPager).getByRole('button', { name: 'Next page' }));

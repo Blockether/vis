@@ -382,85 +382,86 @@ describe('ProjectGroup groups', () => {
     expect(await screen.findByText('NEW')).toBeInTheDocument();
   });
 
-  // BLO-167: a session started ON a band is minted inside that group, so it opens at
-  // the top of the band the reader asked on instead of loose in the project.
-  it('starts a session inside the group whose band offered the plus', async () => {
+  // BLO-167: a session started on a group band is minted inside that group.
+  it('starts a session in its group from the group menu', async () => {
     const start = vi.fn(async () => {});
     const { user } = mount(machine(), { state: null, start });
-
-    await user.click(await screen.findByRole('button', { name: 'New session in Wallet work' }));
-
+    await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New session'));
     expect(start).toHaveBeenCalledWith(conn, ROOT, WALLET);
   });
 
-  it('spins only the band that asked, never the project header above it', async () => {
-    mount(machine(), {
+  it('disables only the in-flight group creation', async () => {
+    const { user } = mount(machine(), {
       state: { at: `https://story.example.com\u0000${ROOT}\u0000${WALLET}`, label: 'Creating...' },
       start: vi.fn(async () => {}),
     });
-
-    expect(await screen.findByRole('button', { name: 'New session in Wallet work' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New session on tower' })).toBeEnabled();
+    await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
+    expect(within(sheet(`Groups in ${ROOT}`)).getByText('New session').closest('button')).toBeDisabled();
+    await user.click(document.body);
+    await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
+    expect(within(sheet(`Sessions in ${ROOT}`)).getByText('New session').closest('button')).toBeEnabled();
   });
 
-  // Regression, user report (paraphrased: a plus standing on the left is unacceptable,
-  // the three dots belong on the right): every band ends with its own menu, and the
-  // plus that starts a session stands one slot inside it.
-  it('ends a band with its menu, the plus one slot inside', async () => {
+  // The single band menu owns creation and its other actions; no separate plus stands beside it.
+  it('ends a group band with its menu alone', async () => {
     mount();
     const wallet = await band('Wallet work');
     const cluster = within(wallet).getByRole('button', { name: 'Actions for Wallet work' })
       .parentElement as HTMLElement;
-
     expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
-      'New session in Wallet work',
       'Actions for Wallet work',
     ]);
   });
 
-  // Reported once the pages moved onto the sets (paraphrased: the plus belongs on the
-  // session, not on the project): what this create makes is a LOOSE session, so the band
-  // above both sets keeps its menu alone while a set is on screen to carry the verb.
-  it('ends the project header with its menu alone', async () => {
+  // The project owns neither set's verbs: each list has its own menu, with no plus.
+  it('puts group and session actions on their set headers, not on the project', async () => {
     mount();
-    const cluster = (await screen.findByRole('button', { name: `Groups in ${ROOT}` }))
-      .parentElement as HTMLElement;
-
-    expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
-      `Groups in ${ROOT}`,
-    ]);
+    await band('Wallet work');
+    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
+    expect(within(header).queryByRole('button', { name: /Actions for (groups|sessions)/ })).toBeNull();
+    expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
+    expect(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^New session/ })).toBeNull();
   });
 
-  it('stands the project plus on the session set it creates in', async () => {
+  it('starts an ungrouped session from the Sessions menu', async () => {
     const start = vi.fn(async () => {});
     const { user } = mount(machine(), { state: null, start });
-    const header = (await screen.findByRole('button', { name: `Groups in ${ROOT}` })).closest(
-      'header',
-    ) as HTMLElement;
-    const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
-
-    expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
-    await user.click(within(sessions).getByRole('button', { name: 'New session on tower' }));
-
-    // Loose, like the set it stands on: no band takes it in.
+    await user.click(await screen.findByRole('button', { name: `Actions for sessions in ${ROOT}` }));
+    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('New session'));
     expect(start).toHaveBeenCalledWith(conn, ROOT);
   });
 
-  // Regression, user report (paraphrased: the marks down the right edge of the list do
-  // not line up, fix it): the trailing rail is ONE column on every kind of row. A header
-  // keeps its plus and its menu in one cluster; a row keeps its disclosure in the same
-  // cluster and its menu in the cell just outside — so all of them wear the rail's box,
-  // and the step between two slots is the inset that ends the rail.
-  it('stands every trailing mark in one column, header, band and row alike', async () => {
+  // A new conversation is composed, not played; both entry points share the same mark.
+  it('uses a compose icon for new sessions in both menus', async () => {
+    const { user } = mount();
+    await user.click(await screen.findByRole('button', { name: `Actions for sessions in ${ROOT}` }));
+    const sessionsAction = within(sheet(`Sessions in ${ROOT}`)).getByRole('button', {
+      name: 'New session',
+    });
+    expect(sessionsAction.querySelector('svg.lucide-square-pen')).not.toBeNull();
+    expect(sessionsAction.querySelector('svg.lucide-play')).toBeNull();
+    await user.click(document.body);
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    const groupAction = within(sheet(`Groups in ${ROOT}`)).getByRole('button', {
+      name: 'New session',
+    });
+    expect(groupAction.querySelector('svg.lucide-square-pen')).not.toBeNull();
+    expect(groupAction.querySelector('svg.lucide-play')).toBeNull();
+  });
+
+  // Regression: the trailing rail is one column on set headers, bands and session rows.
+  it('stands every trailing mark in one column, set, band and row alike', async () => {
     mount();
     const wallet = await band('Wallet work');
     const row = strip(document.body, LOOSE.id);
     const disclosure = within(row).getByRole('button', { name: /^Show details for / });
     const rowMenu = within(row).getByRole('button', { name: /^Actions for / });
     const marks = [
-      screen.getByRole('button', { name: 'New session on tower' }),
-      screen.getByRole('button', { name: `Groups in ${ROOT}` }),
-      within(wallet).getByRole('button', { name: 'New session in Wallet work' }),
+      screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }),
+      screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }),
       within(wallet).getByRole('button', { name: 'Actions for Wallet work' }),
       disclosure,
       rowMenu,
@@ -468,12 +469,30 @@ describe('ProjectGroup groups', () => {
     for (const mark of marks) {
       expect(mark).toHaveClass('size-8', 'mouse:size-7');
       expect(mark).not.toHaveClass('mouse:size-6');
+      expect(mark.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
     }
-    // Every cell that ends the rail ends it at the same inset, and a cluster holding two
-    // marks steps between them by that same number.
-    for (const mark of marks) expect(mark.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
-    for (const cluster of [marks[1].parentElement, marks[3].parentElement, disclosure.parentElement])
-      expect(cluster).toHaveClass('gap-2', 'mouse:gap-2.5');
+    expect(disclosure.parentElement).toHaveClass('gap-2', 'mouse:gap-2.5');
+  });
+
+  it('keeps both set menus reachable in an empty project after folding and expanding it', async () => {
+    const empty = { rows: [], total: 0, awaiting: [], grouped: [], nextCursor: '' };
+    const { user } = mount(
+      machine({
+        heldProjectPage: () => empty,
+        listProjectPage: vi.fn(async () => empty),
+        listSessionGroups: vi.fn(async () => wall([])),
+      }),
+      undefined,
+      '',
+      [],
+    );
+    expect(await screen.findByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Collapse ${STORY_NEWER_PROJECT.name}` }));
+    expect(screen.queryByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeNull();
+    await user.click(screen.getByRole('button', { name: `Expand ${STORY_NEWER_PROJECT.name}` }));
+    expect(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
   });
 
   // Regression, user report (paraphrased: the project's own count should not be bold and
@@ -481,9 +500,7 @@ describe('ProjectGroup groups', () => {
   // a second heading standing under the project's name.
   it('prints the project total in the quiet voice a band counts in', async () => {
     mount();
-    const header = (await screen.findByRole('button', { name: `Groups in ${ROOT}` })).closest(
-      'header',
-    ) as HTMLElement;
+    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
     const total = within(header).getByText(`${ROWS.length} sessions`);
     expect(total).not.toHaveClass('font-bold');
     const caption = total.closest(`[title="${ROOT}"]`) as HTMLElement;
@@ -507,24 +524,21 @@ describe('ProjectGroup groups', () => {
     expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
   });
 
-  it('creates a group from the project header menu', async () => {
+  it('creates a group from the Groups header menu', async () => {
     const { client, user } = mount();
     await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Groups in ${ROOT}` }));
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
     await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
     await user.type(screen.getByLabelText('Group name'), 'Receipts');
     await user.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(client.createSessionGroup).toHaveBeenCalledWith(ROOT, 'Receipts'));
   });
 
-  // Reported (paraphrased: the project's own menu should not open by announcing that
-  // a group is what gets made here): the sheet under that ⋮ carries the verb and
-  // nothing else. The groups it used to list are the bands right below the header,
-  // and each band's own ⋮ holds that group's verbs.
+  // The Groups menu offers its verbs without repeating the list of groups below it.
   it('offers the verb without naming the project back or listing its groups', async () => {
     const { user } = mount();
     await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Groups in ${ROOT}` }));
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
     const menu = sheet(`Groups in ${ROOT}`);
 
     expect(within(menu).getByText('New group')).toBeInTheDocument();
@@ -541,7 +555,7 @@ describe('ProjectGroup groups', () => {
       }),
     );
     await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Groups in ${ROOT}` }));
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
     await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
     await user.type(screen.getByLabelText('Group name'), 'Wallet work');
     await user.click(screen.getByRole('button', { name: 'Create' }));
@@ -863,6 +877,45 @@ describe('ProjectGroup groups', () => {
     );
   });
 
+  it('keeps the Sessions page when the Groups archive opens', async () => {
+    const deep = { rows: ROWS, total: 24, awaiting: [], grouped: [], nextCursor: '' };
+    const client = machine({ heldProjectPage: () => deep, listProjectPage: vi.fn(async () => deep) });
+    const { user } = mount(client);
+    const sessions = (await screen.findByText('Sessions')).parentElement as HTMLElement;
+    const steps = within(sessions).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} sessions`,
+    });
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
+    await waitFor(() =>
+      expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+        ROOT, expect.any(AbortSignal), 'only', BANDS,
+      ),
+    );
+    expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument();
+  });
+
+  it('keeps the Groups page when the Sessions archive opens', async () => {
+    const client = shelves();
+    const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
+    const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    const steps = within(groups).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
+    });
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+    await screen.findByText('Band 10');
+
+    await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
+    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('Show archived sessions'));
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+      ROOT, expect.any(AbortSignal), 'exclude', { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+    );
+  });
+
   // Reported over the project header while the pager stood on its trailing edge: a paged
   // project put its plus and its menu in the middle of the band while an unpaged one kept
   // them flush right. The steps stand over the SET they move now, and the band is one shape.
@@ -876,7 +929,7 @@ describe('ProjectGroup groups', () => {
     });
     expect(within(steps).getByText('Page 1 of 3')).toBeInTheDocument();
     expect(steps.nextElementSibling).toBe(
-      within(sessions).getByRole('button', { name: 'New session on tower' }),
+      within(sessions).getByRole('button', { name: `Actions for sessions in ${ROOT}` }),
     );
     const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
     expect(within(header).queryByRole('navigation')).toBeNull();

@@ -12,6 +12,7 @@ import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 const conn = STORY_FLEET_CONNS[0];
 const ROOT = STORY_NEWER_PROJECT.root;
 const MENU = `Groups in ${ROOT}`;
+const SESSIONS_MENU = `Sessions in ${ROOT}`;
 
 /** The project reads the wall of bands a page at a time, standing on its first page. */
 const BANDS: BandWindow = { limit: 10, offset: 0 };
@@ -174,6 +175,7 @@ function mount(
   client: Machine = machine(),
   held: Session[] = [ACTIVE],
   archive?: SessionRowCommands['archive'],
+  needle = '',
 ) {
   const creation: ProjectCreation = { state: null, start: vi.fn(async () => {}) };
   const view = render(
@@ -190,7 +192,7 @@ function mount(
         getClient: () => client as unknown as GatewayClient,
         drafts: {},
         matches: null,
-        needle: '',
+        needle,
         openRow: null,
         actions: {
           commands: {
@@ -237,10 +239,20 @@ function painted(scope: HTMLElement = document.body): (string | null)[] {
   );
 }
 
-/** The project's own menu, and the verb the reader presses in it. */
-async function press(user: ReturnType<typeof userEvent.setup>, verb: string): Promise<void> {
-  await user.click(await screen.findByRole('button', { name: MENU }));
-  await user.click(within(screen.getByRole('dialog', { name: MENU })).getByText(verb));
+/** Open the menu for one set and choose its archive verb. */
+async function press(
+  user: ReturnType<typeof userEvent.setup>,
+  verb: string,
+  set: 'groups' | 'sessions' = 'groups',
+): Promise<void> {
+  const label = set === 'groups' ? MENU : SESSIONS_MENU;
+  await user.click(await screen.findByRole('button', { name: `Actions for ${set} in ${ROOT}` }));
+  await user.click(within(screen.getByRole('dialog', { name: label })).getByText(verb));
+}
+
+async function showBoth(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await press(user, 'Show archived groups');
+  await press(user, 'Show archived sessions', 'sessions');
 }
 
 describe('a project shows the sessions it archived', () => {
@@ -248,11 +260,104 @@ describe('a project shows the sessions it archived', () => {
     localStorage.clear();
   });
 
+  it('keeps archived groups and archived sessions independent', async () => {
+    const { client, user } = mount();
+    await band('Wallet work');
+
+    await press(user, 'Show archived groups');
+    expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
+    expect(painted()).toEqual([AWAY_FILED.id]);
+    expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.any(AbortSignal),
+      'only',
+      BANDS,
+    );
+
+    await press(user, 'Show archived sessions', 'sessions');
+    await waitFor(() => expect(painted()).toEqual([AWAY_FILED.id, AWAY_LOOSE.id]));
+
+    await press(user, 'Hide archived groups');
+    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+    await waitFor(() => expect(painted()).toEqual([ACTIVE.id, AWAY_LOOSE.id]));
+  });
+
+  it('remembers an archived group view without archiving loose sessions', async () => {
+    const first = mount();
+    await band('Wallet work');
+    await press(first.user, 'Show archived groups');
+    expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
+    first.unmount();
+
+    const again = mount();
+    await waitFor(() => expect(painted()).toEqual([AWAY_FILED.id]));
+    expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull();
+    expect(again.client.listProjectPage).toHaveBeenCalledWith(
+      ROOT,
+      10,
+      '',
+      expect.any(Map),
+      expect.any(AbortSignal),
+      true,
+      'exclude',
+      BANDS,
+    );
+    expect(again.client.listProjectPage).toHaveBeenCalledWith(
+      ROOT,
+      1,
+      '',
+      expect.any(Map),
+      expect.any(AbortSignal),
+      false,
+      'only',
+      BANDS,
+    );
+  });
+
+  it('searches across both archives without changing either saved view', async () => {
+    const first = mount();
+    await band('Wallet work');
+    await press(first.user, 'Show archived groups');
+    await band('Receipts');
+    first.unmount();
+
+    const query = mount(machine(), [ACTIVE, AWAY_FILED, AWAY_LOOSE], undefined, 'match');
+    await waitFor(() =>
+      expect(painted()).toEqual([ACTIVE.id, AWAY_FILED.id, AWAY_LOOSE.id]),
+    );
+    expect(query.client.listProjectPage).not.toHaveBeenCalled();
+    query.unmount();
+
+    mount();
+    expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
+    expect(painted()).toEqual([AWAY_FILED.id]);
+  });
+
+  it('shows an empty archived session set beside active groups', async () => {
+    const { client, user } = mount(machine(EMPTY_PAGE));
+    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+    await press(user, 'Show archived sessions', 'sessions');
+
+    await screen.findByText('No archived sessions in this project.');
+    await waitFor(() => expect(painted()).toEqual([ACTIVE.id]));
+    expect(screen.queryByText('No archived groups in this project.')).toBeNull();
+    expect(client.listProjectPage).toHaveBeenCalledWith(
+      ROOT,
+      1,
+      '',
+      expect.any(Map),
+      expect.any(AbortSignal),
+      false,
+      'exclude',
+      BANDS,
+    );
+  });
+
   it('paints the archived bands and the archived loose rows, and nothing live', async () => {
     const { client, user } = mount();
     expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
 
-    await press(user, 'Show archived');
+    await showBoth(user);
 
     expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
     // The archive's own bands first, then the sessions it archived on their own. The live
@@ -287,7 +392,7 @@ describe('a project shows the sessions it archived', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull());
     expect(painted()).toEqual([]);
 
-    await press(user, 'Show archived');
+    await press(user, 'Show archived groups');
     const wallet = await band('Wallet work');
     await waitFor(() => expect(painted(wallet)).toEqual([ACTIVE.id]));
     expect(within(wallet).getByText('ARCHIVED')).toBeInTheDocument();
@@ -298,7 +403,7 @@ describe('a project shows the sessions it archived', () => {
     await waitFor(() => expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET.id, { archived: false }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull());
 
-    await press(user, 'Hide archived');
+    await press(user, 'Hide archived groups');
     expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
   });
 
@@ -316,16 +421,16 @@ describe('a project shows the sessions it archived', () => {
     // Another client restores the group without notifying this view.
     await client.updateSessionGroup(WALLET.id, { archived: false });
 
-    await press(user, 'Show archived');
-    await press(user, 'Hide archived');
-    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
+    await press(user, 'Show archived groups');
+    await press(user, 'Hide archived groups');
+    await waitFor(() => expect(painted()).toEqual([ACTIVE.id]));
   });
 
   it('shows empty archived groups so they can be restored', async () => {
     const empty = { ...RECEIPTS, session_count: 0 };
     const { user } = mount(machine(EMPTY_PAGE, [empty]));
     await band('Wallet work');
-    await press(user, 'Show archived');
+    await press(user, 'Show archived groups');
     const receipts = await band('Receipts');
     expect(painted(receipts)).toEqual([]);
     await user.click(within(receipts).getByRole('button', { name: 'Actions for Receipts' }));
@@ -333,7 +438,7 @@ describe('a project shows the sessions it archived', () => {
   });
   it('opens the archive when no active sessions remain in the project', async () => {
     const { user } = mount(machine(), []);
-    await press(user, 'Show archived');
+    await press(user, 'Show archived groups');
     expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
   });
   it('keeps a busy group visible and explains why archiving was refused', async () => {
@@ -353,7 +458,7 @@ describe('a project shows the sessions it archived', () => {
     const { user } = mount();
     await band('Wallet work');
 
-    await press(user, 'Show archived');
+    await press(user, 'Show archived groups');
     await band('Receipts');
 
     // The gateway answers it beside the window, because it IS archived. The project still
@@ -388,7 +493,7 @@ describe('a project shows the sessions it archived', () => {
     const live = await screen.findByText('1 session');
     expect(live.parentElement?.textContent).toBe('1 session');
 
-    await press(user, 'Show archived');
+    await showBoth(user);
 
     // The loose archived row plus the band's own session, and none of the live states: a
     // session that was put away is not running.
@@ -403,7 +508,7 @@ describe('a project shows the sessions it archived', () => {
   it('keeps the reveal on this device, so the project opens where it was left', async () => {
     const first = mount();
     await band('Wallet work');
-    await press(first.user, 'Show archived');
+    await showBoth(first.user);
     await band('Receipts');
     first.unmount();
 
@@ -430,9 +535,10 @@ describe('a project shows the sessions it archived', () => {
     const { user } = mount(machine(EMPTY_PAGE, []));
     await band('Wallet work');
 
-    await press(user, 'Show archived');
+    await showBoth(user);
 
-    await screen.findByText('Nothing archived in this project.');
+    await screen.findByText('No archived groups in this project.');
+    await screen.findByText('No archived sessions in this project.');
     expect(painted()).toEqual([]);
     expect(screen.queryByRole('button', { name: 'Collapse Receipts' })).toBeNull();
   });
@@ -440,13 +546,14 @@ describe('a project shows the sessions it archived', () => {
   it('offers the way back to the live list under the same menu', async () => {
     const { user } = mount();
     await band('Wallet work');
-    await press(user, 'Show archived');
+    await showBoth(user);
     await band('Receipts');
 
-    await user.click(screen.getByRole('button', { name: MENU }));
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
     const menu = screen.getByRole('dialog', { name: MENU });
-    expect(within(menu).queryByText('Show archived')).toBeNull();
-    await user.click(within(menu).getByText('Hide archived'));
+    expect(within(menu).queryByText('Show archived groups')).toBeNull();
+    await user.click(within(menu).getByText('Hide archived groups'));
+    await press(user, 'Hide archived sessions', 'sessions');
 
     expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
     expect(painted()).toEqual([ACTIVE.id]);

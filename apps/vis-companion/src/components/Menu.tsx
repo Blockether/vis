@@ -276,6 +276,7 @@ export function MenuItem({
   icon,
   tone = 'default',
   action,
+  disabled = false,
   onSelect,
 }: {
   title: string;
@@ -287,6 +288,8 @@ export function MenuItem({
   tone?: 'default' | 'danger';
   /** A second verb beside the row; buttons cannot nest. */
   action?: ReactNode;
+  /** Keep in-flight creation unavailable without hiding its action. */
+  disabled?: boolean;
   /** Receives the row itself, so a sheet can be anchored on what opened it. */
   onSelect: (anchor: HTMLElement) => void;
 }) {
@@ -298,6 +301,7 @@ export function MenuItem({
   const row = (
     <button
       type="button"
+      disabled={disabled}
       className={`group/menu-item flex min-h-11 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
         action ? 'min-w-0 flex-1' : 'w-full border-b border-dialog-edge'
       } ${danger ? 'focus-visible:bg-err-surface' : 'focus-visible:bg-hover'}`}

@@ -25,7 +25,6 @@ import {
   HeaderMeta,
   HeaderTally,
   LIST_MARK,
-  NewSessionButton,
   Pager,
   ProjectCrumb,
   ProjectStatusCounts,
@@ -36,7 +35,7 @@ import {
   ArchiveIcon,
   ChevronIcon,
   DotsIcon,
-  FolderPlusIcon,
+  NewSessionIcon,
   PaletteIcon,
   PencilIcon,
   ProjectsIcon,
@@ -52,7 +51,6 @@ import {
 import { isFavorite } from '../../lib/favorites';
 import {
   machineKey,
-  machineLabel,
   sessionIsArchived,
   sessionIsLive,
   sessionMillis,
@@ -83,6 +81,7 @@ import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
   | { kind: 'root' }
+  | { kind: 'sessions' }
   | { kind: 'new' }
   | { kind: 'group'; id: string }
   | { kind: 'rename'; id: string }
@@ -251,6 +250,7 @@ function SetHeader({
   unit,
   navigation,
   action,
+  isArchived = false,
   isOver = false,
 }: {
   label: 'Groups' | 'Sessions';
@@ -268,13 +268,10 @@ function SetHeader({
    * the two the reader was not looking at.
    */
   navigation?: ReactNode;
-  /**
-   * THIS SET'S OWN VERB, at the end of the same rail: the plus that starts a session in
-   * it. A create whose session lands in the loose list stood on the project band above
-   * both sets, where it read as the project's plus rather than as the one control that
-   * grows the page under this word.
-   */
+  /** The menu owned by this set, after its page controls. */
   action?: ReactNode;
+  /** Whether this set shows its archived entries instead of active ones. */
+  isArchived?: boolean;
   /** Whether the ungrouped set is offering to take a carried row. */
   isOver?: boolean;
 }) {
@@ -287,6 +284,7 @@ function SetHeader({
       >
         {label}
       </span>
+      {isArchived && <span className="font-mono text-meta text-white">Archived</span>}
       {/* The verb of THIS drop, said while the row hovers: a lit bar alone reads as
           "file it here", and what actually happens is the session leaving its group. */}
       {isOver && <span className="font-mono text-meta text-white">Drop to ungroup</span>}
@@ -295,7 +293,7 @@ function SetHeader({
           <HeaderTally count={count} unit={unit} />
         </HeaderMeta>
       )}
-      {/* Keep the create action at the right edge, after this set's page controls. */}
+      {/* The set menu follows its own page controls on the trailing edge. */}
       {(action || navigation) && (
         <span className={`ml-auto ${HEADER_TRAIL}`}>
           {navigation}
@@ -321,10 +319,7 @@ function GroupBand({
   count,
   isOpen,
   onToggle,
-  machine,
   onActions,
-  onNewSession,
-  isCreating = false,
 }: {
   name: string;
   color: string | null;
@@ -332,13 +327,7 @@ function GroupBand({
   count: number;
   isOpen: boolean;
   onToggle: () => void;
-  /** The machine this band lives on, for the accessible name of its own plus. */
-  machine: string;
   onActions: (anchor: HTMLElement) => void;
-  /** Start a session INSIDE this group. Absent: the band offers no plus. */
-  onNewSession?: () => void;
-  /** A create started from THIS band is still in flight. */
-  isCreating?: boolean;
 }) {
   return (
     <div className="flex items-stretch border-t border-edge">
@@ -362,14 +351,6 @@ function GroupBand({
         </HeaderMeta>
       </button>
       <HeaderActions align="center">
-        {onNewSession && (
-          <NewSessionButton
-            machine={machine}
-            group={name}
-            isBusy={isCreating}
-            onPress={() => onNewSession()}
-          />
-        )}
         <IconButton
           label={`Actions for ${name}`}
           variant="quiet"
@@ -535,9 +516,8 @@ export const ProjectGroup = memo(function ProjectGroup({
     awaiting: Session[];
     grouped: Session[];
   } | null>(() => {
-    // A REVEAL OPENS ON ITS OWN READ: what this device holds of a project is its ACTIVE
-    // head, and painting that under a reveal would show the very rows it is not about.
-    if (readProjectFold(projectRevealKey(machineKey(conn), root))) return null;
+    // Only the active session page is available in the held window.
+    if (readProjectFold(projectRevealKey(machineKey(conn), root, 'sessions'))) return null;
     const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map());
     return held
       ? {
@@ -560,18 +540,24 @@ export const ProjectGroup = memo(function ProjectGroup({
     writeProjectFold(foldKey, open);
     setIsOpen(open);
   };
-  // THE ARCHIVE IS A PLACE THE READER GOES TO, not a filter over what is already on
-  // screen: with the reveal on this project paints the groups and the loose sessions it
-  // put away and nothing else, so one list is never two pictures at once. WHICH of the two
-  // a reader is looking at is theirs and this device's, like the fold above it, and it
-  // outlives the screen the same way (`lib/project-fold`).
-  const revealKey = projectRevealKey(machineKey(conn), root);
-  const [isRevealed, setIsRevealed] = useState(() => readProjectFold(revealKey) ?? false);
-  // A QUERY OWNS THE VIEW while it is on. The search is answered over the fleet this
-  // device holds, so a reveal left standing underneath it never cuts those hits.
-  const isRevealing = isRevealed && needle === '';
-  const archived: ArchiveView = isRevealing ? 'only' : 'exclude';
+  // Each set remembers its own archive view. A search shows every matching row without
+  // changing either saved choice; clearing it restores both views.
+  const groupRevealKey = projectRevealKey(machineKey(conn), root, 'groups');
+  const sessionRevealKey = projectRevealKey(machineKey(conn), root, 'sessions');
+  const [isGroupRevealed, setIsGroupRevealed] = useState(
+    () => readProjectFold(groupRevealKey) ?? false,
+  );
+  const [isSessionRevealed, setIsSessionRevealed] = useState(
+    () => readProjectFold(sessionRevealKey) ?? false,
+  );
+  const isGroupRevealing = isGroupRevealed && needle === '';
+  const isSessionRevealing = isSessionRevealed && needle === '';
+  const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
+  const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
   const [groupsRead, setGroupsRead] = useState(0);
+  const [groupsReady, setGroupsReady] = useState<{ view: ArchiveView; offset: number } | null>(
+    null,
+  );
   // The gateway leaves the sessions unstamped when it archives their group. Hold its
   // answer until both the next page and group reads arrive, then defer to fresh reads.
   const [groupArchive, setGroupArchive] = useState<{
@@ -585,22 +571,27 @@ export const ProjectGroup = memo(function ProjectGroup({
     if (refreshed.current.page === read && refreshed.current.groups === read)
       setGroupArchive((held) => (held && held.refresh <= read ? null : held));
   }, []);
-  const revealArchive = (on: boolean) => {
-    writeProjectFold(revealKey, on);
-    setIsRevealed(on);
-    // THE OTHER LIST'S PLACE IS NOT THIS ONE'S. A cursor names a row of the view it was
-    // learned in, and the page on the glass belongs to that view too, so the archive
-    // opens at its own top — its first page of bands and its first page of rows — rather
-    // than under the page the reader was holding.
+  const revealGroups = (on: boolean) => {
+    writeProjectFold(groupRevealKey, on);
+    setIsGroupRevealed(on);
+    // The group wall owns its page; leave the loose session cursor and page alone.
+    setGroupPage(1);
+    // If the main page now supplies the grouped sidecar, revalidate it: a group
+    // may have moved between views since that loose-session page was last read.
+    if ((on ? 'only' : 'exclude') === archived) setGroupsRead((read) => read + 1);
+    fold(true);
+  };
+  const revealSessions = (on: boolean) => {
+    writeProjectFold(sessionRevealKey, on);
+    setIsSessionRevealed(on);
+    // Cursors and the held page name this session view, not the other one.
     cursors.current = new Map([[0, '']]);
     asked.current = '';
     setPaged(null);
     setFirst(0);
-    setGroupPage(1);
     fold(true);
   };
-  // Even with no active sessions, this project may hold archived groups to restore.
-  const hasSessions = tally.count > 0;
+  // Even an empty project can have archived groups or start a new session.
   // WHERE THIS CHECKOUT IS, and only when that is not what its NAME already said.
   //
   // The path exists to tell two `vis` checkouts apart. A project that sits directly in
@@ -618,7 +609,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
-  const isShowing = (hasSessions || isRevealing) && (isOpen || needle !== '');
+  const isShowing = isOpen || needle !== '';
   const searching = needle !== '';
   // THE PAGE IS ASKED FOR, NOT SLICED.
   //
@@ -718,7 +709,40 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow, list, getClient, groupsRead, noteRefresh]);
+  }, [
+    conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow, list,
+    getClient, groupsRead, noteRefresh,
+  ]);
+  // The gateway applies one archive filter to both sides of a project page. When the
+  // two sets differ, read the grouped sidecar in its own view; the limit of one only
+  // applies to loose sessions, while grouped rows arrive complete for the band window.
+  const [groupedPage, setGroupedPage] = useState<{
+    view: ArchiveView;
+    offset: number;
+    rows: Session[];
+  } | null>(null);
+  useEffect(() => {
+    if (!isVisible || !isShowing || searching || groupArchived === archived) return;
+    const control = new AbortController();
+    let live = true;
+    void getClient(conn)
+      .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow)
+      .then((answer) => {
+        if (!live) return;
+        setGroupedPage({ view: groupArchived, offset: bandWindow.offset, rows: answer.grouped });
+        noteRefresh('page', groupsRead);
+      })
+      .catch(() => {
+        // Keep the last matching view if the machine is temporarily unavailable.
+      });
+    return () => {
+      live = false;
+      control.abort();
+    };
+  }, [
+    conn, root, isVisible, isShowing, searching, groupArchived, archived, bandWindow, list,
+    getClient, groupsRead, noteRefresh,
+  ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
   // answer is on this device, and then what is on screen is the honest count.
@@ -747,7 +771,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // AND THE MACHINE'S HEAD WINDOW IS THE ACTIVE LIST. A reveal has only its own read to
   // paint from, so it waits that read out rather than opening on the rows it is not about.
   const headFills =
-    !isRevealing && start === 0 && held.length >= Math.min(pageSize, tally.count);
+    !isSessionRevealing && start === 0 && held.length >= Math.min(pageSize, tally.count);
   const painting = searching
     ? sessions.slice((shownPage - 1) * pageSize, shownPage * pageSize)
     : (pageRows ?? (headFills ? held : NO_ROWS));
@@ -773,13 +797,16 @@ export const ProjectGroup = memo(function ProjectGroup({
   );
   const paints = useCallback(
     (session: Session) => {
+      if (searching) return true;
+      const gid = typeof session.group_id === 'string' ? session.group_id : '';
+      if (!gid) return sessionIsArchived(session) === isSessionRevealing;
       const archivedByGroup =
-        groupArchive && groupArchive.id === session.group_id
+        groupArchive && groupArchive.id === gid
           ? groupArchive.archived
-          : archivedGroupIds.has(session.group_id ?? '');
-      return (sessionIsArchived(session) || archivedByGroup) === isRevealing;
+          : archivedGroupIds.has(gid);
+      return (sessionIsArchived(session) || archivedByGroup) === isGroupRevealing;
     },
-    [groupArchive, archivedGroupIds, isRevealing],
+    [searching, groupArchive, archivedGroupIds, isGroupRevealing, isSessionRevealing],
   );
   // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (`lib/order-epoch`). The list
   // of projects is held by the screen; a page read from the gateway is held HERE,
@@ -823,11 +850,20 @@ export const ProjectGroup = memo(function ProjectGroup({
     const api = getClient(conn);
     // A query is answered over the whole project already; its hits are the list.
     if (searching) return NO_ROWS;
-    return (paged?.grouped ?? NO_ROWS)
+    const grouped =
+      groupArchived === archived
+        ? paged?.grouped
+        : groupedPage?.view === groupArchived && groupedPage.offset === bandWindow.offset
+          ? groupedPage.rows
+          : NO_ROWS;
+    return (grouped ?? NO_ROWS)
       .filter((session) => !api.isSessionDeleted(session.id))
       .map((session) => settled(session, local, refiled))
       .filter(paints);
-  }, [searching, paged, local, refiled, paints, getClient, conn]);
+  }, [
+    searching, paged, groupedPage, groupArchived, archived, bandWindow, local, refiled, paints,
+    getClient, conn,
+  ]);
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
   const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
@@ -921,13 +957,14 @@ export const ProjectGroup = memo(function ProjectGroup({
         const answer = await getClient(conn).listSessionGroups(
           root,
           control.signal,
-          archived,
+          groupArchived,
           bandWindow,
         );
         if (!live) return;
         setGroups(answer?.groups ?? []);
         setGroupTotal(answer?.total ?? 0);
         setGroupSessionTotal(answer?.session_total ?? 0);
+        setGroupsReady({ view: groupArchived, offset: bandWindow.offset });
         noteRefresh('groups', groupsRead);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
@@ -939,7 +976,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, archived, bandWindow, getClient, groupsRead, noteRefresh]);
+  }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, noteRefresh]);
   // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
   // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
   // which keeps the project's own order. It is the shape the TUI's navigator paints
@@ -976,11 +1013,11 @@ export const ProjectGroup = memo(function ProjectGroup({
         count: group.session_count,
         archived: groupArchive?.id === group.id ? groupArchive.archived : group.archived_at != null,
       }))
-      .filter((group) => group.archived === isRevealing);
+      .filter((group) => group.archived === isGroupRevealing);
     // A REVEAL PAINTS THE ARCHIVE'S OWN BANDS AND NOTHING ELSE. A session archived inside
     // a group that is still active belongs to THAT group's reveal; a band invented here
     // from the group such a row names would file it under a project that does not have it.
-    if (isRevealing) return known;
+    if (isGroupRevealing) return known;
     const unread = [...filed.byGroup.entries()]
       .filter(([gid]) => !groups.some((group) => group.id === gid) && groupArchive?.id !== gid)
       .map(([gid, held]) => ({
@@ -993,12 +1030,9 @@ export const ProjectGroup = memo(function ProjectGroup({
         archived: false,
       }));
     return [...known, ...unread];
-  }, [groups, filed, isRevealing, groupArchive]);
-  // WHAT THE ARCHIVE HOLDS IS COUNTED WHERE IT STANDS: the loose rows the reveal's read
-  // answered with, plus what every archived band says it holds — the WALL's own sum, so
-  // turning the page of bands does not move the number over them. The project's own tally
-  // counts the list the reader is not looking at while the archive is open.
-  const archiveCount = total + groupSessionTotal;
+  }, [groups, filed, isGroupRevealing, groupArchive]);
+  // Both sides of the project header count the sets currently on display.
+  const visibleCount = total + groupSessionTotal;
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
   // over it read the SAME group, so a recolour lands on both in the same paint.
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
@@ -1159,7 +1193,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         commands={soleGroup ? soleGroupCommands : rowCommands}
         deletion={deletion}
         isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
-        isDraggable={!isRevealing}
+        isDraggable={session.group_id ? !isGroupRevealing : !isSessionRevealing}
       />
     );
   };
@@ -1198,26 +1232,16 @@ export const ProjectGroup = memo(function ProjectGroup({
         label={`${project} groups`}
       />
     ) : null;
-
-  // THE PROJECT'S OWN PLUS. What it starts is a LOOSE session, so it stands on the header
-  // of the set that session joins — beside that set's pages, one rail with the bands' own
-  // pluses below it, never a second create word over both sets.
-  const createSession = (
-    <NewSessionButton
-      machine={machineLabel(conn)}
-      where={project}
-      isBusy={creating?.at === creationKey(base, root)}
-      onPress={() => void onNewSession(conn, root)}
-    />
-  );
-
   // Use the same open command as a row. The gateway's count covers the whole project,
   // so a run outside the loaded window must remain reachable from a collapsed band.
   const running = Math.max(0, tally.live - (tally.awaiting ?? 0));
   const [isOpeningLive, setIsOpeningLive] = useState(false);
   const [liveFailure, setLiveFailure] = useState<string | null>(null);
   const liveRequest = useRef<AbortController | null>(null);
-  useEffect(() => () => liveRequest.current?.abort(), [conn, root, isVisible, isRevealing]);
+  useEffect(
+    () => () => liveRequest.current?.abort(),
+    [conn, root, isVisible, isGroupRevealing, isSessionRevealing],
+  );
   const openLive = async () => {
     if (liveRequest.current) return;
     setLiveFailure(null);
@@ -1280,29 +1304,23 @@ export const ProjectGroup = memo(function ProjectGroup({
             is what lets the smallest phone shorten `1464 sessions · 2 needs input` and
             still hold the whole of the live count and the arrival. */}
         <span className="min-w-0 truncate">
-          {/* A REVEAL CARRIES ITS OWN TALLY, and none of the states beside it: the archive
-              is another list, and a session that was put away is not running. */}
-          <HeaderTally count={isRevealing ? archiveCount : tally.count} unit="session" />
-          {isRevealing ? (
+          {/* The two archive choices can differ; the count describes the two sets in view. */}
+          <HeaderTally
+            count={isGroupRevealing || isSessionRevealing ? visibleCount : tally.count}
+            unit="session"
+          />
+          {isGroupRevealing || isSessionRevealing ? (
             <>
-              <span aria-hidden className="mx-2 @max-md:mx-1">
-                ·
+              <span aria-hidden className="mx-2 @max-md:mx-1">·</span>
+              <span className="whitespace-nowrap font-bold">
+                {isGroupRevealing && isSessionRevealing ? 'Archived' : 'Mixed views'}
               </span>
-              {/* The band's own ink, like the count it stands beside: muted grey on a
-                  project header measured 4.38:1 against it, under the 4.5:1 a reader with
-                  low vision needs to read an 11px word (`addon-a11y`). */}
-              <span className="whitespace-nowrap font-bold">Archived</span>
             </>
           ) : (
-            <ProjectStatusCounts
-              // The pressable live count stands outside the eliding run below.
-              live={0}
-              awaiting={tally.awaiting}
-              unread={tally.unread}
-            />
+            <ProjectStatusCounts live={0} awaiting={tally.awaiting} unread={tally.unread} />
           )}
         </span>
-        {!isRevealing && running > 0 && (
+        {!isGroupRevealing && !isSessionRevealing && running > 0 && (
           <>
             <span aria-hidden className="mx-2 shrink-0 @max-md:mx-1">
               ·
@@ -1350,23 +1368,19 @@ export const ProjectGroup = memo(function ProjectGroup({
     </span>
   );
 
-  // THE TWO SETS THIS PROJECT PAINTS. A project nobody has filed anything in has one list,
-  // and the word over it is what carries that list's plus and its pages; one with a group
-  // names both, so what the bands hold is visibly not what the page under them holds. A
-  // QUERY collapses them into one answer: every hit is painted in the session set, filed
-  // or not, each filed row still wearing its group's colour (`SessionList`). A group takes
-  // a session out of the list, never out of the search.
+  // The project paints two sets: groups and loose sessions. Each keeps its own
+  // actions on its own header, even when empty. A query shows one session set.
   const hasGroups = bands.length > 0;
   const listed = searching ? painted : filed.loose;
   const listedCount = searching ? listed.length : (paged?.total ?? filed.loose.length);
-  // THE READER ASKED FOR THE ARCHIVE AND THERE IS NOTHING IN IT: the reveal's own read
-  // answered, and it answered with nothing. A blank band under the header would otherwise
-  // be the whole reply to the verb.
-  const archiveIsEmpty = isRevealing && paged !== null && painted.length === 0 && !hasGroups;
-  // WHETHER THERE IS A SET ON SCREEN AT ALL. The sets carry this project's plus and its
-  // pages; when none of them is painted, the band above them is the only thing left to
-  // carry the verb.
-  const paintsSets = isShowing && (painted.length > 0 || hasGroups);
+  // Each archive answers for its own set, including when the other set has rows.
+  const emptyGroups =
+    isGroupRevealing &&
+    groupsReady?.view === groupArchived &&
+    groupsReady.offset === bandWindow.offset &&
+    groupTotal === 0;
+  const emptySessions = isSessionRevealing && paged !== null && listed.length === 0;
+  const paintsSets = isShowing;
 
   return (
     <>
@@ -1384,43 +1398,19 @@ export const ProjectGroup = memo(function ProjectGroup({
             name={project}
             qualifier={qualifier}
             qualifierTitle={root}
-            disclosure={
-              hasSessions || isRevealing
-                ? {
-                    isOpen: isShowing,
-                    onToggle: () => fold(!isShowing),
-                    label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
-                  }
-                : null
-            }
+            disclosure={{
+              isOpen: isShowing,
+              onToggle: () => fold(!isShowing),
+              label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
+            }}
           />
-          <HeaderActions align="center">
-            {/* THE VERB FALLS BACK TO THE BAND when the project paints no set to hold it:
-                a project folded shut, and a project with nothing in it yet — which is
-                listed FOR this verb and has no fold to open. */}
-            {!paintsSets && createSession}
-            <IconButton
-              label={`Groups in ${project}`}
-              variant="quiet"
-              aria-haspopup="dialog"
-              aria-expanded={menu !== null}
-              onClick={(event) => openMenu(event.currentTarget, { kind: 'root' })}
-            >
-              <DotsIcon className="size-3.5" />
-            </IconButton>
-          </HeaderActions>
         </SectionHeader>
-        {liveFailure && !isRevealing && (
+        {liveFailure && !isGroupRevealing && !isSessionRevealing && (
           <p
             role="alert"
             className="border-b border-edge px-4 py-3 font-mono text-meta text-dialog-hint"
           >
             {liveFailure}
-          </p>
-        )}
-        {isShowing && archiveIsEmpty && (
-          <p className="border-b border-edge px-4 py-3 font-mono text-meta text-dialog-hint">
-            Nothing archived in this project.
           </p>
         )}
         {/* Rows own their internal dividers; the wrapper closes the final session. */}
@@ -1429,7 +1419,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             ref={rowsRef}
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
-            {hasGroups && !searching && (
+            {!searching && (
               <div>
                 <SetHeader
                   label="Groups"
@@ -1439,15 +1429,32 @@ export const ProjectGroup = memo(function ProjectGroup({
                   // the two numbers is the honest one.
                   count={Math.max(groupTotal, bands.length)}
                   unit="group"
+                  isArchived={isGroupRevealing}
                   navigation={groupPager}
+                  action={
+                    <IconButton
+                      label={`Actions for groups in ${root}`}
+                      variant="quiet"
+                      aria-haspopup="dialog"
+                      aria-expanded={menu?.step.kind === 'root'}
+                      onClick={(event) => openMenu(event.currentTarget, { kind: 'root' })}
+                    >
+                      <DotsIcon className="size-3.5" />
+                    </IconButton>
+                  }
                 />
+                {emptyGroups && (
+                  <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
+                    No archived groups in this project.
+                  </p>
+                )}
                 {bands.map((band) => {
                   const held = filed.byGroup.get(band.id) ?? NO_ROWS;
                   const isBandOpen = isGroupOpen(band.id);
                   return (
                     <SessionDropArea
                       key={band.id}
-                      onDropSession={isRevealing ? undefined : (sid) => dropSession(sid, band.id)}
+                      onDropSession={isGroupRevealing ? undefined : (sid) => dropSession(sid, band.id)}
                     >
                       {() => (
                         <>
@@ -1457,14 +1464,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                             count={band.count}
                             isOpen={isBandOpen}
                             onToggle={() => foldGroup(band.id, !isBandOpen)}
-                            machine={machineLabel(conn)}
                             onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
-                            // A session started HERE is minted inside this group, so it opens
-                            // at the top of this band instead of loose in the project.
-                            onNewSession={
-                              isRevealing ? undefined : () => void onNewSession(conn, root, band.id)
-                            }
-                            isCreating={creating?.at === creationKey(base, root, band.id)}
                           />
                           {isBandOpen && held.map(row)}
                         </>
@@ -1482,7 +1482,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   : undefined
               }
               onDropSession={
-                hasGroups && !isRevealing ? (sid) => dropSession(sid, null) : undefined
+                hasGroups && !isSessionRevealing ? (sid) => dropSession(sid, null) : undefined
               }
             >
               {(isOver) => (
@@ -1494,11 +1494,27 @@ export const ProjectGroup = memo(function ProjectGroup({
                     // Otherwise the project header already shows this same total.
                     count={hasGroups || searching ? listedCount : undefined}
                     unit="session"
+                    isArchived={isSessionRevealing}
                     navigation={pager}
-                    action={createSession}
+                    action={
+                      <IconButton
+                        label={`Actions for sessions in ${root}`}
+                        variant="quiet"
+                        aria-haspopup="dialog"
+                        aria-expanded={menu?.step.kind === 'sessions'}
+                        onClick={(event) => openMenu(event.currentTarget, { kind: 'sessions' })}
+                      >
+                        <DotsIcon className="size-3.5" />
+                      </IconButton>
+                    }
                     isOver={isOver}
                   />
                   {listed.map(row)}
+                  {emptySessions && (
+                    <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
+                      No archived sessions in this project.
+                    </p>
+                  )}
                 </>
               )}
             </SessionDropArea>
@@ -1506,38 +1522,56 @@ export const ProjectGroup = memo(function ProjectGroup({
         )}
       </section>
       {menu && (
-        <Menu label={`Groups in ${project}`} at={menu.at} onDismiss={() => setMenu(null)}>
+        <Menu
+          label={`${menu.step.kind === 'sessions' ? 'Sessions' : 'Groups'} in ${project}`}
+          at={menu.at}
+          onDismiss={() => setMenu(null)}
+        >
           {(() => {
             const step = menu.step;
-            // THE PROJECT'S SHEET IS A VERB, NOT A TABLE OF CONTENTS. It hangs under
-            // the ⋮ it was opened from, so a band repeating the project's name only
-            // tells a reader where they already are, and the groups it used to list
-            // are painted as bands directly under that header — each wearing its own
-            // colour, count and ⋮. Reported: this menu opened by announcing that a
-            // group is what gets made here, before it offered anything.
+            // Each set opens its own actions; group rows keep their own verbs.
             if (step.kind === 'root')
               return (
                 <>
                   <MenuItem
                     title="New group"
-                    icon={<FolderPlusIcon className="size-3.5" />}
+                    icon={<ProjectsIcon className="size-3.5" />}
                     onSelect={() => {
                       setTyped('');
                       goTo({ kind: 'new' });
                     }}
                   />
-                  {/* THE ARCHIVE IS OPENED WHERE IT WAS FILLED: this project's own verb,
-                      under the header the reader put those sessions away from, and the
-                      sheet closes onto the list it just changed. */}
                   <MenuItem
-                    title={isRevealed ? 'Hide archived' : 'Show archived'}
+                    title={isGroupRevealed ? 'Hide archived groups' : 'Show archived groups'}
                     icon={<ArchiveIcon className="size-3.5" />}
                     onSelect={() => {
-                      revealArchive(!isRevealed);
+                      revealGroups(!isGroupRevealed);
                       setMenu(null);
                     }}
                   />
                   {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            if (step.kind === 'sessions')
+              return (
+                <>
+                  <MenuItem
+                    title="New session"
+                     icon={<NewSessionIcon className="size-3.5" />}
+                    disabled={creating?.at === creationKey(base, root)}
+                    onSelect={() => {
+                      setMenu(null);
+                      void onNewSession(conn, root);
+                    }}
+                  />
+                  <MenuItem
+                    title={isSessionRevealed ? 'Hide archived sessions' : 'Show archived sessions'}
+                    icon={<ArchiveIcon className="size-3.5" />}
+                    onSelect={() => {
+                      revealSessions(!isSessionRevealed);
+                      setMenu(null);
+                    }}
+                  />
                 </>
               );
             if (step.kind === 'new')
@@ -1706,10 +1740,20 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
-            // A band's sheet owns its archive verb; restoring it brings back the sessions
-            // the gateway kept on that shelf without changing their individual stamps.
+            // A group starts its own sessions from the same menu as its other actions.
             return (
               <>
+                {!bandArchived && (
+                  <MenuItem
+                    title="New session"
+                     icon={<NewSessionIcon className="size-3.5" />}
+                    disabled={creating?.at === creationKey(base, root, band.id)}
+                    onSelect={() => {
+                      setMenu(null);
+                      void onNewSession(conn, root, band.id);
+                    }}
+                  />
+                )}
                 <MenuItem
                   title="Rename group"
                   icon={<PencilIcon className="size-3.5" />}

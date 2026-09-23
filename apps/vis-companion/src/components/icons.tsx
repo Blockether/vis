@@ -49,6 +49,7 @@ import {
   Settings,
   Share2,
   Square,
+  SquarePen,
   Star,
   SwatchBook,
   Trash2,
@@ -167,6 +168,11 @@ export function ChevronIcon({
       )}
     />
   );
+}
+
+/** Start a new conversation with a compose mark, not a playback control. */
+export function NewSessionIcon({ className }: { className?: string }) {
+  return <Mark icon={SquarePen} className={className} />;
 }
 
 /** Play. Solid, because a hollow triangle at thumbnail size reads as a flaw. */

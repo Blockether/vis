@@ -15,6 +15,7 @@ import { ProjectGroup } from './SessionProjectGroups';
 const conn = STORY_FLEET_CONNS[0];
 const fixture = STORY_NEWER_PROJECT;
 const MENU = `Groups in ${fixture.root}`;
+const SESSIONS_MENU = `Sessions in ${fixture.root}`;
 
 /** Still on the live list, and one of the sessions filed under it was archived inside it. */
 const WALLET: SessionGroup = {
@@ -56,9 +57,9 @@ const meta = {
     const previous = globalThis.fetch;
     globalThis.fetch = storyFleetFetch([{ ...fixture, rows: ROWS, groups: [WALLET, RECEIPTS] }]);
     writeProjectFold(projectFoldKey(machineKey(conn), fixture.root), true);
-    // The reveal is this device's decision and it outlives a screen, so every story here
-    // starts on the live list and opens the archive itself.
-    writeProjectFold(projectRevealKey(machineKey(conn), fixture.root), false);
+    // Every story starts on both live sets and opens an archive itself.
+    writeProjectFold(projectRevealKey(machineKey(conn), fixture.root, 'groups'), false);
+    writeProjectFold(projectRevealKey(machineKey(conn), fixture.root, 'sessions'), false);
     return () => {
       globalThis.fetch = previous;
     };
@@ -136,8 +137,20 @@ export const ShowsWhatItArchived: Story = {
     const sheets = within(canvasElement.ownerDocument.body);
     await band(page, 'Wallet work');
 
-    await userEvent.click(await page.findByRole('button', { name: MENU }));
-    await userEvent.click(within(sheets.getByRole('dialog', { name: MENU })).getByText('Show archived'));
+    await userEvent.click(
+      await page.findByRole('button', { name: `Actions for groups in ${fixture.root}` }),
+    );
+    await userEvent.click(
+      within(sheets.getByRole('dialog', { name: MENU })).getByText('Show archived groups'),
+    );
+    await userEvent.click(
+      await page.findByRole('button', { name: `Actions for sessions in ${fixture.root}` }),
+    );
+    await userEvent.click(
+      within(sheets.getByRole('dialog', { name: SESSIONS_MENU })).getByText(
+        'Show archived sessions',
+      ),
+    );
 
     // The archive is a place the reader goes to: the archived group's band, then the
     // sessions archived on their own, and none of the live list underneath it.
