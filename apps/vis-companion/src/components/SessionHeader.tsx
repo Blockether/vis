@@ -126,13 +126,10 @@ export function SessionHeader({
     <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:pt-0">
       {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
-      <div
-        className={`min-w-0 flex-1 self-center py-1.5 mouse:py-1 ${isDesk && !sidebar ? 'pl-4 pr-3' : 'px-3'}`}
-      >
+      <div className="min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1">
         {/* The title is the sentence the screen is about. It stays one step above
-            its body by size and weight, while the connection line and id chip
-            step down to the facts scale — all in the app's one mono face. */}
-        <h1 className="truncate text-subhead font-semibold text-white mouse:text-title">
+            the connection line by size and weight — all in the app's one mono face. */}
+        <h1 className="truncate text-title font-semibold text-white mouse:text-body">
           {model.title}
         </h1>
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-ui text-dialog-hint mouse:text-meta">
@@ -147,7 +144,7 @@ export function SessionHeader({
               variant="quiet"
               density="compact"
               pressEffect="none"
-              className="min-w-0 max-w-full mouse:-my-1.5"
+              className="-my-1.5 min-w-0 max-w-full"
               title={goal.objective}
               aria-haspopup="dialog"
               onClick={() => setGoalDetails(true)}
@@ -159,7 +156,7 @@ export function SessionHeader({
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
+      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
         {team}
         <IconButton
           label={menuLabel}

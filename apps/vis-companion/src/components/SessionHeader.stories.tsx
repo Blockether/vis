@@ -33,6 +33,23 @@ export const Connected: Story = {
     await expect(actions.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
     await expect(header.getBoundingClientRect().height).toBe(53);
 
+    // Regression, reported header spacing: the title should be quieter on both phone
+    // and desk, centred in the band, and inset equally from the edges beside it.
+    const heading = canvas.getByRole('heading', { level: 1 });
+    const titleBlock = heading.parentElement!;
+    const rail = actions.parentElement!;
+    await expect(getComputedStyle(heading).fontSize).toBe(pointer ? '12px' : '13px');
+    await expect(getComputedStyle(titleBlock).paddingLeft).toBe('16px');
+    await expect(getComputedStyle(titleBlock).paddingRight).toBe('16px');
+    await expect(getComputedStyle(rail).paddingRight).toBe('16px');
+    await expect(heading.getBoundingClientRect().right).toBeLessThanOrEqual(
+      rail.getBoundingClientRect().left - 15,
+    );
+    const status = canvas.getByText('Connected').getBoundingClientRect();
+    const top = heading.getBoundingClientRect().top - header.getBoundingClientRect().top;
+    const bottom = header.getBoundingClientRect().bottom - status.bottom;
+    await expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
+
     // The trailing rail carries ONE control, and everything the band used to spell
     // out stands one press behind it.
     await userEvent.click(actions);
@@ -83,6 +100,12 @@ export const ActiveGoal: Story = {
     await userEvent.click(page.getByRole('button', { name: 'Close session goal' }));
   },
 };
+
+export const ActiveGoalTouch: Story = {
+  ...ActiveGoal,
+  globals: { viewport: { value: 'phone', isRotated: false } },
+};
+
 export const CompletedGoal: Story = {
   args: {
     model: {
