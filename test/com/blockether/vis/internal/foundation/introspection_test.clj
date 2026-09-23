@@ -1115,3 +1115,59 @@
       (expect (= 1 (count (get-in data ["usage" "turns"]))))
       (expect (contains? source :dialog))
       (expect (= [form] (get-in source [:turns 0 :iterations 0 :forms]))))))
+
+(defdescribe
+  compacted-stdout-read-back-test
+  (it
+    "locates exact saved stdout by the model replay's tN/iN/fN scope, even mid-turn"
+    (let [s
+          (vis/db-create-connection! :memory)
+
+          stdout
+          (str (apply str (repeat 9000 "line 🧪\n")) "critical tail")]
+
+      (try
+        (let [sid
+              (h/store-session!
+                s
+                {:channel :tui :title "Output recovery" :provider :openai :model "gpt-4o"})
+
+              turn
+              (vis/db-store-session-turn!
+                s
+                {:parent-session-id sid :user-request "inspect output" :status :running})
+
+              _
+              (h/store-iteration! s
+                                  {:session-turn-id turn
+                                   :code "print('many lines')"
+                                   :forms [{:scope "t1/i1/f1"
+                                            :src "print('many lines')"
+                                            :stdout stdout
+                                            :error {:message "ValueError: failed"}}]})
+
+              data
+              (:result (introspection/read-session {:session-id sid :db-info s}))
+
+              matches
+              (for [t
+                    (get-in data ["transcript" "turns"])
+
+                    i
+                    (get t "iterations")
+
+                    b
+                    (get i "blocks")
+
+                    :when (= "t1/i1/f1" (get b "scope"))]
+
+                b)
+
+              full
+              (get (first matches) "stdout")]
+
+          (expect (= 1 (count matches)))
+          (expect (= stdout full))
+          (expect (= (subs stdout 1000 1100) (subs full 1000 1100)))
+          (expect (= "ValueError: failed" (get-in (first matches) ["error" "message"]))))
+        (finally (vis/db-dispose-connection! s))))))

@@ -6042,6 +6042,95 @@
           (expect (str/includes? body "rack-01,120"))))))
 
 (defdescribe
+  compact-model-stdout-test
+  "A disabled model-only experiment replays a bounded head/tail and a durable scope
+   pointer only when session introspection makes exact read-back available."
+  (let [render
+        (fn [out scope error]
+          (let [form (cond-> {:scope scope :svar/tool-call-id "A" :stdout out}
+                       error
+                       (assoc :error {:message error}))]
+            (get-in (#'lp/iteration-results-message
+                     {:tool-calls [{:id "A" :name "python_execution"}] :forms-vec [form]})
+                    [:content 0])))
+
+        long-out
+        (str (apply str (repeat 1023 "h"))
+             "🚀"
+             (apply str (repeat 14000 "middle"))
+             "🚀"
+             (apply str (repeat 4095 "T"))
+             "TAIL")]
+
+    (it "keeps a Unicode-safe head and tail, full error, recovery address and token estimate"
+        (with-redefs [toggles/enabled? #(contains? #{"compact_model_stdout" "introspection"} %)]
+          (let [{:keys [content is_error]} (render long-out "t1/i2/f3" "ValueError: last failure")]
+            (expect is_error)
+            (expect (< (count content) 7000))
+            (expect (str/includes? content "model replay compacted"))
+            (expect (str/includes? content "read_session()"))
+            (expect (str/includes? content
+                                   (str "b.get(" (pr-str "scope") ") == " (pr-str "t1/i2/f3"))))
+            (expect (str/includes? content "estimated"))
+            (expect (str/starts-with? (second (str/split-lines content))
+                                      (apply str (repeat 1023 "h"))))
+            (expect (str/includes? content "TAIL"))
+            (expect (not (str/includes? content "middlemiddlemiddle")))
+            (expect (not (some #(Character/isSurrogate %) content)))
+            (expect (str/ends-with? content "✗ error: ValueError: last failure")))))
+    (it "preserves the old 65,536-character wire exactly when flag or read-back is off"
+        (let [old
+              (with-redefs [toggles/enabled? (constantly false)]
+                (render long-out "t1/i2/f3" nil))
+
+              no-reader
+              (with-redefs [toggles/enabled? #(= "compact_model_stdout" %)]
+                (render long-out "t1/i2/f3" nil))
+
+              no-scope
+              (with-redefs [toggles/enabled? (constantly true)]
+                (render long-out nil nil))]
+
+          (expect (= old no-reader))
+          (expect (str/includes? (:content old) "output clipped at"))
+          (expect (not (str/includes? (:content old) "model replay compacted")))
+          (expect (str/includes? (:content no-scope) "output clipped at"))))
+    (it "uses compacted output size for the no-model fold estimate"
+        (let [f
+              {:scope "t1/i2/f3" :stdout long-out :code "print('long')"}
+
+              normal
+              (with-redefs [toggles/enabled? (constantly false)]
+                (#'lp/form-wire-chars f))
+
+              compact
+              (with-redefs [toggles/enabled? (constantly true)]
+                (#'lp/form-wire-chars f))]
+
+          (expect (> (- normal compact) 50000))
+          (expect (= normal
+                     (with-redefs [toggles/enabled? #(= "compact_model_stdout" %)]
+                       (#'lp/form-wire-chars f))))))
+    (it "keeps a complete astral character in the retained tail"
+        (with-redefs [toggles/enabled? (constantly true)]
+          (let [out (str (apply str (repeat 9000 "lines")) "🚀END")
+                content (:content (render out "t1/i2/f3" nil))]
+
+            (expect (str/ends-with? content "🚀END")))))
+    (it "does not change the saved form or human card"
+        (let [form
+              {:scope "t1/i2/f3" :stdout long-out}
+
+              human
+              (form/stdout-display form)]
+
+          (with-redefs [toggles/enabled? (constantly true)]
+            (render long-out "t1/i2/f3" nil)
+            (expect (= long-out (:stdout form)))
+            (expect (= human (form/stdout-display form)))
+            (expect (str/includes? (:body human) "output clipped at")))))))
+
+(defdescribe
   repeated-actions-continue-test
   "Repeated actions are valid work. The loop continues until the model returns an answer."
   (it "does not checkpoint or force-finalize identical actions"

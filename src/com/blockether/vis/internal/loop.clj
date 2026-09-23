@@ -3656,11 +3656,88 @@
                                             " read_attachment(id) opens it)."))))
                         (recur more (conj out line))))))))))
 
+(def ^:private WIRE_CHARS_PER_TOKEN
+  "FALLBACK characters per token for the no-model fold estimate and experimental
+   replay-savings marker. MEASURED, not the prose rule of thumb of 4: a turn of
+   agent work is source, paths, EDN/JSON and tool output, which tokenizes far
+   denser than English. Solving two measured folds of one session (they reclaimed
+   87k and 142k provider-counted tokens) yields 3.17 chars/token and ~277 tokens
+   of frame; 3.25 keeps the text term on the conservative side. This proxy is
+   not billed usage; resolved-model estimates use the canonical token counter."
+  3.25)
+
+(defn- compact-model-stdout
+  "Experimental, model-only projection of an oversized printed result. The form's
+   full stdout remains in the session transcript, and the human card is untouched.
+   Require the read_session binding as well as the experiment flag: without an
+   exact recovery path the ordinary head clip is safer. A missing/invalid scope
+   also falls back, since it cannot identify a stored block."
+  [f text]
+  (let [scope
+        (:scope f)
+
+        s
+        (str/trimr (str text))
+
+        n
+        (count s)]
+
+    (when (and (toggles/enabled? "compact_model_stdout")
+               (toggles/enabled? "introspection")
+               (string? scope)
+               (re-matches #"t[1-9]\d*/i[1-9]\d*/f[1-9]\d*" scope)
+               (> n 8192))
+      (let [head
+            (util/truncate s 1024)
+
+            start
+            (- n 4096)
+
+            start
+            (if (Character/isLowSurrogate (.charAt ^String s start)) (inc start) start)
+
+            tail
+            (subs s start)
+
+            recovery
+            (str "# Recover exact stdout: r = await read_session(); "
+                 "s = next(b[\"stdout\"] for t in r[\"transcript\"][\"turns\"] "
+                 "for i in t[\"iterations\"] for b in i[\"blocks\"] "
+                 "if b.get(\"scope\") == " (pr-str scope)
+                 "); print(s[0:4096]) " "# adjust the slice as needed")
+
+            summary
+            (str "# ⋯ model replay compacted stdout "
+                 scope
+                 ": "
+                 n
+                 " chars; first "
+                 (count head)
+                 " and last "
+                 (count tail)
+                 " kept")
+
+            body
+            (str head "\n" summary ".\n" recovery "\n" tail)
+
+            old
+            (form/clip-to-wire s "narrow next time (slice/filter before reading).")
+
+            saved
+            (max 0 (long (/ (double (- (count old) (count body))) WIRE_CHARS_PER_TOKEN)))]
+
+        (str head
+             "\n" summary
+             "; estimated " saved
+             " replay tokens saved vs the ordinary clip (" WIRE_CHARS_PER_TOKEN
+             " chars/token proxy).\n" recovery
+             "\n" tail)))))
+
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
-   answers its `tool_use`(s): the content is what the program PRINTED (raw
-   stdout), plus errors and any `summarize`/`drop` fold lines. One `tool_result`
-   block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
+   answers its `tool_use`(s): the program's printed stdout (or its optional
+   compact model-only projection), plus errors and any `summarize`/`drop` fold lines.
+   One `tool_result` block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
    by `:svar/tool-call-id`), because one reply may carry several
    `python_execution` calls.
    Falls back to a plain text user message when no tool calls are recorded.
@@ -3715,7 +3792,9 @@
         ;; then the clean error text.
         stdout-wire
         (fn [f]
-          (when-not (str/blank? (str (:stdout f))) (clip-wire (elide-table-fences (:stdout f)))))
+          (when-not (str/blank? (str (:stdout f)))
+            (let [text (elide-table-fences (:stdout f))]
+              (or (compact-model-stdout f text) (clip-wire text)))))
 
         form-output
         (fn [f]
@@ -4253,18 +4332,23 @@
   [f]
   (if (:summary? f)
     0
-    (let [out (long (if (some? (:error f)) (count (str (:error f))) (count (str (:stdout f)))))]
-      (+ (min out (long form/MAX_FORM_WIRE_CHARS)) (long (count (str (:code f))))))))
+    (let [out
+          (long (if (some? (:error f)) (count (str (:error f))) (count (str (:stdout f)))))
 
-(def ^:private WIRE_CHARS_PER_TOKEN
-  "FALLBACK characters per token, used only while no model is resolved and the real
-   tokenizer cannot run (`estimated-iteration-tokens`). MEASURED, not the prose rule
-   of thumb of 4: a turn of agent work is source, paths, EDN/JSON and tool output,
-   which tokenizes far denser than English. Solving two measured folds of one session
-   (they reclaimed 87k and 142k provider-counted tokens) for this ratio and the frame
-   below yields 3.17 chars/token and ~277 tokens of frame; 3.25 keeps the text term on
-   the conservative side of that measurement."
-  3.25)
+          ;; The no-model fold estimator must price the actual flagged projection;
+          ;; otherwise it may fold a small replay as though it still held 64 KB.
+          compact
+          (when (and (toggles/enabled? "compact_model_stdout")
+                     (toggles/enabled? "introspection")
+                     (> (count (str (:stdout f))) 8192))
+            (compact-model-stdout f (elide-table-fences (:stdout f))))
+
+          visible
+          (if compact
+            (+ (count compact) (if (:error f) out 0))
+            (min out (long form/MAX_FORM_WIRE_CHARS)))]
+
+      (+ visible (long (count (str (:code f))))))))
 
 (def ^:private MESSAGE_FRAME_TOKENS
   "What ONE iteration costs BESIDE its text, for the same fallback: the assistant

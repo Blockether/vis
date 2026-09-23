@@ -70,10 +70,11 @@
 
 (defn clip-to-wire
   "Head-clip one form BODY to `MAX_FORM_WIRE_CHARS`, announcing what it dropped —
-   the ONE clip shared by every surface that body reaches: the model's tool
-   result, the card a channel paints, and the gateway's `stdout` copy of the same
-   text. Each used to hand-roll its own cut at its own ceiling, so one printed
-   output rode a single event twice at sizes an order of magnitude apart.
+   the default clip shared by the model's tool result, the card a channel paints,
+   and the gateway's `stdout` copy. An optional model-only compact projection in
+   `loop` uses a smaller head/tail with a read-back pointer; the stored form stays
+   complete and the human card still uses this ceiling. Each surface previously
+   hand-rolled a cut at its own ceiling, so one print rode an event twice.
 
    `hint` is the calling surface's own advice, appended to the marker — the model
    is told to narrow its next read, a human card just says what was dropped. The
