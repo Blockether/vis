@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.24] - 2026-09-23
+
+### Added
+- Archive sessions and groups, browse archived sessions on demand, and keep archived conversations
+  read-only. Star sessions in the terminal and move sessions between project groups in the companion.
+- Select GPT-6 Sol and Luna through the updated Svar provider catalog.
+
+### Fixed
+- Use the serving model's actual input budget throughout context reading, folding and saved usage,
+  including independent input limits and the space reserved for a reply. Calibrate estimates against
+  measured provider input without counting cached tokens twice.
+- Keep tokenizer selection and measured context folding working in native builds, including Unicode
+  text, declared encodings and unknown-model fallbacks.
+- Isolate concurrent Python Activity calls, keep traversal exhaustion recoverable, and resolve Python
+  tool paths relative to the session. Expose literal parameter defaults in SDK contracts.
+- Keep read Activities concise while opening the requested file range. Show complete live logs and
+  preserve terminal history-page boundaries while scrolling.
+- Improve companion session-list transitions, Markdown layout, menus, pairing and live-session links.
+  Prefer loopback gateway addresses on the host and sign and notarize macOS native packages.
+
 ## [v0.2.23] - 2026-09-22
 
 ### Fixed
