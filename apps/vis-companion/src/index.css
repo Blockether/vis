@@ -248,8 +248,11 @@
      already owns a colour rail there. Opaque, because the touch drawer's own slab has
      to be able to wear it. */
   --color-standing: color-mix(in oklab, var(--primary) 14%, var(--surface));
-  /* Project headings need a distinct surface, without darkening neutral notices. */
+  /* Project and set headings separate by neutral depth and a restrained theme tint.
+     Both set surfaces stay opaque when their headers stick over scrolling rows. */
   --color-project-header: color-mix(in oklab, var(--fg) 14%, var(--surface));
+  --color-set-groups: color-mix(in oklab, var(--primary) 8%, var(--surface));
+  --color-set-sessions: color-mix(in oklab, var(--fg) 6%, var(--surface));
   --color-project-live: color-mix(in oklab, var(--ok) 50%, var(--fg));
   /* THE PAGE UNDER THE SHEETS, derived the same way and for the same reason. A desk
      window stands one sheet per project, and a sheet is only an object while the

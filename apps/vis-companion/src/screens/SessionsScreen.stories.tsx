@@ -250,17 +250,17 @@ export const Fleet: Story = {
       ),
     ).toEqual(firstPageRows);
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      // Transparent controls expose the surface they stand on: nothing between the plus and
-      // the project's own band paints over it. The plus now stands on the session set, so
-      // the walk ends at the project instead of the band it used to sit in.
-      const band = project;
+      // Controls stay transparent on the opaque Sessions set, which prevents rows from
+      // showing through when the set header sticks beneath the project band.
+      const set = within(project as HTMLElement).getByText('Sessions').parentElement!;
       for (
         let element: HTMLElement | null = create;
-        element && element !== band;
+        element && element !== set;
         element = element.parentElement
       ) {
         await expect(win.getComputedStyle(element).backgroundColor).toBe('rgba(0, 0, 0, 0)');
       }
+      await expect(win.getComputedStyle(set).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
       return;
     }
     const disclosure = (

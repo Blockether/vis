@@ -521,20 +521,26 @@ export const RowDisclosure = forwardRef<
 });
 
 /**
- * A BAND'S QUIET VOICE: what a set inside a project counts, standing at the STEP and the
- * WEIGHT of the word over it (`SetHeader`'s label), so the strip is one line of type rather
- * than a label with a bigger note beside it. `HeaderTally` wears no step and no weight of
- * its own, so a band's count takes both from here. A project header is not this voice — its
- * caption stands on `ProjectCrumb`'s own qualifier line, where nothing is set bold.
+ * The count beside a set or group label. Group bands use the small, muted voice; set
+ * headings use a larger foreground voice to remain legible on their tinted or neutral
+ * surface. `HeaderTally` has no step or weight of its own.
  *
  * IT OPENS WITH THE DOT THAT JOINS THE COUNT TO ITS LABEL, the same joint a project header
  * already sets between its total and the states beside it. Reported from a screenshot of the
  * list: that header read `1679 Sessions · 1 live` while the bands under it ran `GROUPS 2
  * Groups` together, so the count stood as a second label instead of answering the first.
  */
-export function HeaderMeta({ children }: { children: ReactNode }) {
+export function HeaderMeta({
+  children,
+  variant = 'band',
+}: {
+  children: ReactNode;
+  variant?: 'band' | 'set';
+}) {
   return (
-    <span className="flex items-center gap-2 font-mono text-chip font-bold text-dialog-hint">
+    <span
+      className={`flex items-center gap-2 font-mono font-bold ${variant === 'set' ? 'text-meta text-white' : 'text-chip text-dialog-hint'}`}
+    >
       {/* Hidden from a reader who HEARS the line: the dot is punctuation between two runs of
           text, and "Groups dot 2 groups" is not what the eye is being told. */}
       <span aria-hidden>·</span>
@@ -549,11 +555,10 @@ export function HeaderMeta({ children }: { children: ReactNode }) {
  * set and is set in small caps, while the count is a phrase about that set, so it is set in
  * title case and reads as words rather than as a second label beside the first.
  *
- * IT CARRIES NEITHER STEP NOR WEIGHT OF ITS OWN: the line it stands on gives both. Inside
- * a band that line is `HeaderMeta`, which is the label's — small caps set bold. In a project
- * header it is `ProjectCrumb`'s caption, shared with the states and an arrival, where
- * nothing is bold and the whole line steps down to the band's own size under a pointer; the
- * arrival steps with it, because it has to stay on the total's baseline.
+ * IT CARRIES NEITHER STEP NOR WEIGHT OF ITS OWN: the header line sets both. In a group
+ * band that line is the small `HeaderMeta`; a named set has a larger label and count. In
+ * a project header it is `ProjectCrumb`'s qualifier, shared with the states and an
+ * arrival so the whole line stays on the total's baseline.
  *
  * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
  * rows says nothing about what was counted, and the phone is exactly where the

@@ -247,7 +247,7 @@ function SetHeader({
   action,
   isOver = false,
 }: {
-  label: string;
+  label: 'Groups' | 'Sessions';
   /**
    * How many rows are in THIS set. Left out where that is the number the band above just
    * printed: a project with no group has one set, and saying its total twice, a hairline
@@ -273,15 +273,19 @@ function SetHeader({
   isOver?: boolean;
 }) {
   return (
-    <div className="flex min-h-14 items-center gap-2 border-y border-edge py-1 pl-4 mouse:min-h-10">
-      <span className="font-mono text-chip font-bold tracking-[0.08em] text-dialog-hint uppercase">
+    <div
+      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-y border-edge-strong py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 mouse:min-h-10 ${label === 'Groups' ? 'bg-set-groups' : 'bg-set-sessions'}`}
+    >
+      <span
+        className={`font-mono text-ui font-bold tracking-[0.08em] uppercase ${label === 'Groups' ? 'text-accent-ink' : 'text-white'}`}
+      >
         {label}
       </span>
       {/* The verb of THIS drop, said while the row hovers: a lit bar alone reads as
           "file it here", and what actually happens is the session leaving its group. */}
-      {isOver && <span className="font-mono text-chip text-white">Drop to ungroup</span>}
+      {isOver && <span className="font-mono text-meta text-white">Drop to ungroup</span>}
       {count !== undefined && (
-        <HeaderMeta>
+        <HeaderMeta variant="set">
           <HeaderTally count={count} unit={unit} />
         </HeaderMeta>
       )}
@@ -1389,47 +1393,48 @@ export const ProjectGroup = memo(function ProjectGroup({
             className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
             {hasGroups && !searching && (
-              <SetHeader
-                label="Groups"
-                // THE WALL IS WHAT IS COUNTED, not the page of it under this word: the
-                // steps beside the number are what cut that page. A band this device
-                // learned from a ROW is not in the gateway's count yet, so the larger of
-                // the two numbers is the honest one.
-                count={Math.max(groupTotal, bands.length)}
-                unit="group"
-                navigation={groupPager}
-              />
+              <div>
+                <SetHeader
+                  label="Groups"
+                  // THE WALL IS WHAT IS COUNTED, not the page of it under this word: the
+                  // steps beside the number are what cut that page. A band this device
+                  // learned from a ROW is not in the gateway's count yet, so the larger of
+                  // the two numbers is the honest one.
+                  count={Math.max(groupTotal, bands.length)}
+                  unit="group"
+                  navigation={groupPager}
+                />
+                {bands.map((band) => {
+                  const held = filed.byGroup.get(band.id) ?? NO_ROWS;
+                  const isBandOpen = isGroupOpen(band.id);
+                  return (
+                    <SessionDropArea
+                      key={band.id}
+                      onDropSession={(sid) => dropSession(sid, band.id)}
+                    >
+                      {() => (
+                        <>
+                          <GroupBand
+                            name={band.name}
+                            color={band.color}
+                            count={band.count}
+                            isOpen={isBandOpen}
+                            onToggle={() => foldGroup(band.id, !isBandOpen)}
+                            machine={machineLabel(conn)}
+                            onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                            // A session started HERE is minted inside this group, so it opens
+                            // at the top of this band instead of loose in the project.
+                            onNewSession={() => void onNewSession(conn, root, band.id)}
+                            isCreating={creating?.at === creationKey(base, root, band.id)}
+                          />
+                          {isBandOpen && held.map(row)}
+                        </>
+                      )}
+                    </SessionDropArea>
+                  );
+                })}
+              </div>
             )}
-            {!searching &&
-              bands.map((band) => {
-                const held = filed.byGroup.get(band.id) ?? NO_ROWS;
-                const isBandOpen = isGroupOpen(band.id);
-                return (
-                  <SessionDropArea
-                    key={band.id}
-                    onDropSession={(sid) => dropSession(sid, band.id)}
-                  >
-                    {() => (
-                      <>
-                        <GroupBand
-                          name={band.name}
-                          color={band.color}
-                          count={band.count}
-                          isOpen={isBandOpen}
-                          onToggle={() => foldGroup(band.id, !isBandOpen)}
-                          machine={machineLabel(conn)}
-                          onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
-                          // A session started HERE is minted inside this group, so it opens
-                          // at the top of this band instead of loose in the project.
-                          onNewSession={() => void onNewSession(conn, root, band.id)}
-                          isCreating={creating?.at === creationKey(base, root, band.id)}
-                        />
-                        {isBandOpen && held.map(row)}
-                      </>
-                    )}
-                  </SessionDropArea>
-                );
-              })}
             <SessionDropArea
               areaRef={sessionSetRef}
               minHeight={

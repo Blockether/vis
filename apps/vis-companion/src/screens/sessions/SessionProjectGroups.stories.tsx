@@ -599,6 +599,234 @@ export const PagingBelowGroupsDesktop: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
+const NEXT_ROOT = '/After';
+const NEXT_ROWS = Array.from({ length: 12 }, (_, index) => ({
+  ...fixture.rows[index % fixture.rows.length],
+  id: `after-${index}`,
+  workspace: { root: NEXT_ROOT },
+}));
+const NEXT_PROJECT = {
+  ...fixture,
+  root: NEXT_ROOT,
+  name: NEXT_ROOT,
+  projectId: 'after',
+  rows: NEXT_ROWS,
+};
+
+// Regression: on a phone the active set stays beneath its own project while scrolling.
+// The next project must take both sticky levels away; a project without groups has only Sessions.
+export const StickySectionHeaders: Story = {
+  ...PagingBelowGroups,
+  beforeEach: () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = storyFleetFetch([
+      { ...fixture, rows: SCROLL_ROWS, groups: GROUPED_BANDS },
+      NEXT_PROJECT,
+    ]);
+    writeProjectFold(projectFoldKey(machineKey(conn), NEXT_ROOT), true);
+    return () => {
+      globalThis.fetch = previous;
+    };
+  },
+  render: (args) => (
+    <div className="@container h-80 w-full max-w-[390px] overflow-y-auto bg-page" data-testid="scroll-pane">
+      <ProjectGroup {...args} />
+      <ProjectGroup
+        {...args}
+        group={{
+          ...args.group,
+          root: NEXT_ROOT,
+          label: NEXT_ROOT,
+          projectId: NEXT_PROJECT.projectId,
+          tally: { count: NEXT_ROWS.length, live: 0, awaiting: 0, unread: 0 },
+          sessions: NEXT_ROWS,
+        }}
+        machine={{ conn, sessions: NEXT_ROWS }}
+        reading={{ ...args.reading, epoch: null, pendingByRoot: new Map() }}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const pane = page.getByTestId('scroll-pane');
+    const first = pane.querySelector('[data-project-root="/CryptoSafe"]')!;
+    const next = pane.querySelector('[data-project-root="/After"]')!;
+    await within(first as HTMLElement).findByText('Session page row 0');
+    await within(next as HTMLElement).findAllByText('Check transaction confirmations');
+    const project = first.querySelector('header')!;
+    const groups = within(first as HTMLElement).getByText('Groups').parentElement!;
+    const sessions = within(first as HTMLElement).getByText('Sessions').parentElement!;
+    const nextProject = next.querySelector('header')!;
+    const nextSessions = within(next as HTMLElement).getByText('Sessions').parentElement!;
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const style = (element: Element) => getComputedStyle(element);
+    // Distinct, opaque set surfaces keep the words readable over scrolling rows.
+    for (const set of [groups, sessions]) {
+      await expect(style(set).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+      await expect(style(set).backgroundColor).not.toBe(style(project).backgroundColor);
+    }
+    await expect(style(groups).backgroundColor).not.toBe(style(sessions).backgroundColor);
+    await expect(style(groups.firstElementChild!).fontSize).toBe('11px');
+    await expect(style(sessions.firstElementChild!).fontSize).toBe('11px');
+    await expect(style(nextSessions).backgroundColor).toBe(style(sessions).backgroundColor);
+    await expect(pane.scrollWidth).toBe(pane.clientWidth);
+    pane.scrollTop = 135;
+    await frame();
+    await expect(getComputedStyle(groups).position).toBe('sticky');
+    await expect(project.getBoundingClientRect().top).toBeCloseTo(pane.getBoundingClientRect().top, 0);
+    await expect(groups.getBoundingClientRect().top).toBeCloseTo(project.getBoundingClientRect().bottom, 0);
+    const groupHit = document.elementFromPoint(
+      groups.getBoundingClientRect().left + 22,
+      groups.getBoundingClientRect().top + 12,
+    );
+    await expect(groups.contains(groupHit)).toBe(true);
+
+    pane.scrollTop += sessions.getBoundingClientRect().top - project.getBoundingClientRect().bottom + 75;
+    await frame();
+    await expect(sessions.getBoundingClientRect().top).toBeCloseTo(project.getBoundingClientRect().bottom, 0);
+    await expect(groups.getBoundingClientRect().bottom).toBeLessThanOrEqual(sessions.getBoundingClientRect().top + 1);
+    const sessionHit = document.elementFromPoint(
+      sessions.getBoundingClientRect().left + 22,
+      sessions.getBoundingClientRect().top + 12,
+    );
+    await expect(sessions.contains(sessionHit)).toBe(true);
+    const create = within(sessions).getByRole('button', { name: /^New session on / });
+    await expect(create.getBoundingClientRect().top).toBeGreaterThanOrEqual(sessions.getBoundingClientRect().top);
+
+    pane.scrollTop += nextProject.getBoundingClientRect().top - pane.getBoundingClientRect().top + 30;
+    await frame();
+    await expect(nextProject.getBoundingClientRect().top).toBeCloseTo(pane.getBoundingClientRect().top, 0);
+    await expect(nextSessions.getBoundingClientRect().top).toBeCloseTo(nextProject.getBoundingClientRect().bottom, 0);
+    await expect(within(next as HTMLElement).queryByText('Groups')).toBeNull();
+    const nextHit = document.elementFromPoint(
+      nextSessions.getBoundingClientRect().left + 22,
+      nextSessions.getBoundingClientRect().top + 12,
+    );
+    await expect(nextSessions.contains(nextHit)).toBe(true);
+  },
+};
+
+export const StaticSectionHeadersDesktop: Story = {
+  ...StickySectionHeaders,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const pane = page.getByTestId('scroll-pane');
+    const first = pane.querySelector('[data-project-root="/CryptoSafe"]')!;
+    const groups = within(first as HTMLElement).getByText('Groups').parentElement!;
+    const sessions = within(first as HTMLElement).getByText('Sessions').parentElement!;
+    await within(first as HTMLElement).findByText('Session page row 0');
+    await expect(getComputedStyle(groups).position).toBe('static');
+    await expect(getComputedStyle(sessions).position).toBe('static');
+  },
+};
+
+export const StickySectionHeadersDark: Story = {
+  ...StickySectionHeaders,
+  globals: { theme: 'blockether-dark' },
+};
+
+// A long project name, group name and a three-digit group count exercise the entire 320px rail.
+const LONG_GROUPS: SessionGroup[] = [
+  { ...GROUPED_BANDS[0], name: 'Wallet work: archived transactions and reconciliation' },
+  ...GROUPED_BANDS.slice(1),
+  ...Array.from({ length: 121 }, (_, index) => ({
+    ...GROUPED_BANDS[1],
+    id: `extra-group-${index}`,
+    name: `Record group ${index}`,
+    position: index + 2,
+    session_count: 0,
+  })),
+];
+
+export const NarrowSectionHeaders: Story = {
+  ...PagingBelowGroups,
+  beforeEach: () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = storyFleetFetch([{ ...fixture, rows: SCROLL_ROWS, groups: LONG_GROUPS }]);
+    writeProjectFold(projectFoldKey(machineKey(conn), fixture.root), true);
+    return () => {
+      globalThis.fetch = previous;
+    };
+  },
+  args: {
+    ...PagingBelowGroups.args,
+    group: {
+      ...meta.args.group,
+      label: '/CryptoSafe/archived/records/2026',
+      tally: { count: SCROLL_ROWS.length, live: 0, awaiting: 0, unread: 0 },
+      sessions: SCROLL_ROWS,
+    },
+  },
+  render: (args) => (
+    <div className="@container h-80 w-full max-w-[320px] overflow-y-auto bg-page" data-testid="scroll-pane">
+      <ProjectGroup {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const pane = page.getByTestId('scroll-pane');
+    const longBand = await page.findByRole('button', { name: /Collapse Wallet work: archived/ });
+    const project = pane.querySelector('header')!;
+    const groups = page.getByText('Groups').parentElement!;
+    const sessions = page.getByText('Sessions').parentElement!;
+    await expect(within(groups).getByText('123 groups')).toBeVisible();
+    await expect(longBand).toBeVisible();
+    await expect(pane.clientWidth).toBe(320);
+    await expect(pane.scrollWidth).toBe(pane.clientWidth);
+    const controlsFit = (header: Element) => {
+      const bounds = header.getBoundingClientRect();
+      for (const control of header.querySelectorAll('button, input')) {
+        const box = control.getBoundingClientRect();
+        expect(box.left).toBeGreaterThanOrEqual(bounds.left);
+        expect(box.right).toBeLessThanOrEqual(bounds.right);
+      }
+    };
+    controlsFit(groups);
+    controlsFit(sessions);
+    const groupPager = within(groups).getByRole('navigation');
+    await userEvent.click(within(groupPager).getByRole('button', { name: 'Next page' }));
+    await within(groupPager).findByText('Page 2 of 13');
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    pane.scrollTop = 150;
+    await frame();
+    await expect(groups.getBoundingClientRect().top).toBeCloseTo(
+      project.getBoundingClientRect().bottom,
+      0,
+    );
+    const hit = document.elementFromPoint(
+      groups.getBoundingClientRect().left + 20,
+      groups.getBoundingClientRect().top + 12,
+    );
+    await expect(groups.contains(hit)).toBe(true);
+    controlsFit(groups);
+    const create = within(sessions).getByRole('button', { name: /^New session on / });
+    pane.scrollTop += sessions.getBoundingClientRect().top - project.getBoundingClientRect().bottom + 40;
+    await frame();
+    await expect(sessions.getBoundingClientRect().top).toBeCloseTo(
+      project.getBoundingClientRect().bottom,
+      0,
+    );
+    await expect(groups.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      sessions.getBoundingClientRect().top + 1,
+    );
+    controlsFit(sessions);
+    const box = create.getBoundingClientRect();
+    await expect(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)).toBe(
+      create,
+    );
+    const sessionPager = within(sessions).getByRole('navigation');
+    await userEvent.click(within(sessionPager).getByRole('button', { name: 'Next page' }));
+    await within(sessionPager).findByText('Page 2 of 3');
+    await expect(pane.scrollWidth).toBe(pane.clientWidth);
+  },
+};
+
+export const NarrowSectionHeadersHighContrast: Story = {
+  ...NarrowSectionHeaders,
+  globals: { theme: 'high-contrast-dark' },
+};
+
 /** Tapping the live count uses the same open action as the session row. */
 export const LiveCountOpensTheRun: Story = {
   args: {

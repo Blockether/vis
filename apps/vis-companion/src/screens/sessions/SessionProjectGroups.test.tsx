@@ -219,7 +219,7 @@ describe('ProjectGroup groups', () => {
     )).toEqual([ROWS[0].id, ROWS[1].id]);
     // What nobody filed keeps the project's own order, below every band.
     expect(wallet.querySelector(`[data-session-id="${LOOSE.id}"]`)).toBeNull();
-    const list = wallet.parentElement as HTMLElement;
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
     const painted = [...list.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     );
@@ -268,17 +268,23 @@ describe('ProjectGroup groups', () => {
     };
     mount(machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }));
     const wallet = await band('Wallet work');
-    const list = wallet.parentElement as HTMLElement;
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
     expect(within(groupsHeader).getByText('1 group')).toBeInTheDocument();
     // Each headline is RULED on both edges, so the set it names reads as a strip over its
     // own rows instead of as the first of them.
-    expect(groupsHeader).toHaveClass('border-y', 'border-edge');
+    expect(groupsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-groups');
+    expect(within(groupsHeader).getByText('Groups')).toHaveClass('text-ui', 'text-accent-ink');
+    expect(within(groupsHeader).getByText('1 group').parentElement).toHaveClass(
+      'text-meta',
+      'text-white',
+    );
     // The tally over the sessions is the gateway's LOOSE total, not the band's own two.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
     expect(within(sessionsHeader).getByText('2 sessions')).toBeInTheDocument();
-    expect(sessionsHeader).toHaveClass('border-y', 'border-edge');
+    expect(sessionsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-sessions');
+    expect(within(sessionsHeader).getByText('Sessions')).toHaveClass('text-ui', 'text-white');
 
     // The session set starts under its own word and holds neither filed row.
     const loose: string[] = [];
@@ -329,7 +335,7 @@ describe('ProjectGroup groups', () => {
       ),
     ).toEqual([ROWS[0].id, ROWS[1].id, offPage.id]);
     // The pager below walks the LOOSE sessions only; the shelf is not part of that walk.
-    const list = wallet.parentElement as HTMLElement;
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
     expect(
       [...list.querySelectorAll('[data-session-id]')].map((row) =>
         row.getAttribute('data-session-id'),
@@ -497,7 +503,7 @@ describe('ProjectGroup groups', () => {
     await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
     expect(wallet.querySelector(`[data-session-id="${ROWS[0].id}"]`)).toBeNull();
     // The project stays open: only the band it was folded in lost its rows.
-    const list = wallet.parentElement as HTMLElement;
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
     expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
   });
 
@@ -633,7 +639,7 @@ describe('ProjectGroup groups', () => {
   it('files a session from the row\'s own Move to... verb', async () => {
     const { client, user } = mount();
     const wallet = await band('Wallet work');
-    const list = wallet.parentElement as HTMLElement;
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
     const slab = list.querySelector(`[data-session-id="${LOOSE.id}"]`) as HTMLElement;
     // The row's own action drawer carries the verb; the wrapper around it is what a
     // reader drags.
