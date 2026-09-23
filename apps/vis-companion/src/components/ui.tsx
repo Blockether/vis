@@ -218,9 +218,9 @@ const iconControlClass =
 
 /**
  * A named, borderless icon action. Variants change intent and ink, not framing.
- * The 32px / 28px layout box keeps a 44px touch target through invisible reach,
- * and its centered mark rides the same trailing rail a row's menu mark rides.
- * Over-content controls retain a square backing for contrast, never a circle.
+ * The 32px / 28px layout box keeps a 44px touch target through invisible reach.
+ * In a settings header, trailing alignment centers the mark on the row chevrons
+ * without taking width away from long names and their values.
  */
 export const IconButton = forwardRef<
   HTMLButtonElement,
@@ -235,6 +235,8 @@ export const IconButton = forwardRef<
      * 24px step and reads as chrome rather than as a box. Touch is unchanged.
      */
     density?: 'default' | 'compact' | 'band';
+    /** Center the header glyph over a row chevron while keeping its touch target inside the edge. */
+    align?: 'center' | 'trailing';
   }
 >(function IconButton(
   {
@@ -242,6 +244,7 @@ export const IconButton = forwardRef<
     className = '',
     variant = 'secondary',
     density = 'compact',
+    align = 'center',
     children,
     disabled = false,
     onClick,
@@ -252,14 +255,9 @@ export const IconButton = forwardRef<
   ref,
 ) {
   const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
-  // ONE BOX, ONE RAIL. A mark is read by its center, and the trailing rail the eye
-  // follows down a list is its row menus': a row keeps its gutter (`pr-3 sm:pr-4`)
-  // and then this same 32px/28px box, so a header mark that keeps the box centers
-  // on that rail at every width and pointer. A glyph pinned to the paper's edge
-  // instead stood half a box inside it — the settings headers' add marks, reported
-  // over that dialog as a cross that did not sit on the dots below it. `band` is the
-  // one step off that rail: navigation that stands beside a header's facts, never a
-  // row's own mark, so nothing lines up under it to be missed.
+  // A row action keeps its centered box. In settings bands the add glyph instead
+  // shares the CHEVRON rail (10px closer to the edge on touch, 8px with a mouse).
+  // Extra invisible reach grows inward, not beyond the phone's edge.
   const box = `size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:after:content-none ${
     density === 'band' ? 'mouse:size-6' : 'mouse:size-7'
   }`;
@@ -277,7 +275,7 @@ export const IconButton = forwardRef<
       type="button"
       aria-label={label}
       disabled={disabled}
-      className={`${iconControlClass} grid shrink-0 items-center font-bold transition-colors duration-150 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none ${density === 'default' ? 'text-ui' : 'text-ui mouse:text-meta'} ${box} ${ink} ${className}`}
+      className={`${iconControlClass} grid shrink-0 items-center font-bold transition-colors duration-150 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none ${density === 'default' ? 'text-ui' : 'text-ui mouse:text-meta'} ${box} ${ink} ${align === 'trailing' ? 'translate-x-2.5 mouse:translate-x-2 after:-left-3 after:-right-0.5' : ''} ${className}`}
       {...tapPress}
       {...props}
     >
@@ -1573,12 +1571,10 @@ export function SettingsChoiceGroup({
 /**
  * One centered row for a settings heading and its trailing control.
  *
- * THE TRAILING MARK ENDS WHERE THE HEADING STARTS. The action used to stand centred in a
- * fixed 48px cell INSIDE the band's own gutter, which parked the add mark, the switch and
- * the disclosure chevron 16px further in than the chevron on every row below — one column
- * of controls reading as three, reported from a phone over the settings dialog. The slot
- * ends on the gutter now, and a control keeps its touch target by growing INTO that gutter
- * (`IconButton`'s `edge`) rather than by pushing its ink off the rail.
+ * THE BAND ENDS ON THE GUTTER. Its switch and disclosure chevron stop at
+ * the same edge as the row chevrons below. An add mark keeps a 32px action
+ * box for touch but uses `align="trailing"` to place its glyph over the
+ * chevrons without narrowing long row names or their values.
  *
  * A disclosure makes the whole header the button.
  */
@@ -1599,11 +1595,9 @@ export function SettingsHeader({
   const content = (
     <>
       {children}
-      {/* The band's full height keeps a switch's cell tall, and `justify-end` stops
-          every action on the gutter. An add mark keeps the standard icon box, so its
-          mark centers on the rail the rows' menu marks below center on; a switch and
-          a bare chevron end their own right edge on the gutter. The chevron is the
-          size it is on a row: one mark, one meaning, one size. */}
+      {/* The band's full height keeps a switch's cell tall. Switches and bare
+          chevrons end on the gutter; icon actions move their glyphs onto the
+          chevron rail while retaining the full touch box. */}
       <span className="-my-1 flex shrink-0 items-center justify-end self-stretch empty:hidden">
         {disclosure ? <ChevronIcon open={disclosure.isOpen} className="size-3" /> : action}
       </span>

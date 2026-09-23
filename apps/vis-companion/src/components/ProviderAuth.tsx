@@ -964,11 +964,10 @@ export function AddProviderButton({
   if (presets === null || presets.length === 0) return null;
 
   return (
-    /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The bare mark keeps the
-       standard icon box, so it centers on the rail the provider rows' menu marks
-       below it center on, and it is also the way back out of what it opened. */
+    /* The + and − share the disclosure rail of the provider rows below. */
     <IconButton
       variant="quiet"
+      align="trailing"
       label={isOpen ? 'Hide the providers this machine can add' : 'Add a provider'}
       title={isOpen ? 'Hide the providers this machine can add' : 'Add a provider to this machine'}
       aria-expanded={isOpen}

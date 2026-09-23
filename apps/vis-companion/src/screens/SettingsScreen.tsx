@@ -178,12 +178,11 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* ONE DOOR THAT OPENS AND CLOSES: the ＋ becomes an × while the form is
-                 open, so the band that put the form there also takes it away. The
-                 standard icon box, so the mark centers on the rail the machine rows'
-                 menu marks below it center on. */
+              /* The + becomes an × while the form is open. Its glyph shares the
+                 disclosure rail below; its full touch target remains inside the sheet. */
               <IconButton
                 variant="quiet"
+                align="trailing"
                 label={isAdding ? 'Cancel adding a machine' : 'Add a machine'}
                 title={isAdding ? 'Cancel adding a machine' : 'Add a machine'}
                 onClick={() => setIsAdding((adding) => !adding)}

@@ -355,16 +355,43 @@ export const Populated: Story = {
     }
     const notification = page.getByRole('switch', { name: /^Notifications from/ });
     const notificationBox = notification.getBoundingClientRect();
-    // The add actions ride the standard trailing icon box, so the box ends on the
-    // rail next to the switch and the glyph centers in it, matching the row
-    // action menus' kebabs.
+    // The + keeps its standard touch box but stands over the row chevrons, while
+    // the switch and disclosure glyphs retain their own right edge.
     for (const name of ['Add a machine', 'Add an MCP server']) {
       const action = page.getByRole('button', { name });
       const box = action.getBoundingClientRect();
       const mark = action.querySelector('svg')!.getBoundingClientRect();
-      await expect(box.right).toBeCloseTo(notificationBox.right, 1);
+      await expect(box.right).toBeGreaterThan(notificationBox.right);
+      await expect(box.right).toBeLessThanOrEqual(
+        page.getByRole('dialog').getBoundingClientRect().right,
+      );
       await expect((mark.left + mark.right) / 2).toBeCloseTo((box.left + box.right) / 2, 1);
       await expect(box.height).toBe(pointer ? 28 : 32);
+      if (!pointer) {
+        const reach = getComputedStyle(action, '::after');
+        const left = box.left + parseFloat(reach.left);
+        const right = box.right - parseFloat(reach.right);
+        await expect(right).toBeLessThanOrEqual(
+          page.getByRole('dialog').getBoundingClientRect().right,
+        );
+        await expect(right - left).toBeGreaterThanOrEqual(44);
+      }
+    }
+    // Regression: in the phone settings screenshot, the + sat ten pixels left
+    // of every row chevron. Values and switches keep their own right edge;
+    // disclosure glyphs share the add action's center instead.
+    const addMark = page.getByRole('button', { name: 'Add an MCP server' }).querySelector('svg')!;
+    const center = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return (box.left + box.right) / 2;
+    };
+    for (const row of [
+      page.getByText('Anthropic', { exact: true }).closest('button')!,
+      page.getByText('filesystem', { exact: true }).closest('button')!,
+      page.getByRole('button', { name: /ASR/ }),
+    ]) {
+      const chevron = row.querySelector('.lucide-chevron-right')!;
+      await expect(center(chevron)).toBeCloseTo(center(addMark), 1);
     }
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);

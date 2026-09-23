@@ -172,7 +172,7 @@ export const HeaderRhythm: Story = {
       <SettingsColumn
         {...args}
         action={
-          <IconButton variant="quiet" label="Add a machine">
+          <IconButton variant="quiet" align="trailing" label="Add a machine">
             <PlusIcon className="size-4" />
           </IconButton>
         }
@@ -182,7 +182,7 @@ export const HeaderRhythm: Story = {
           <header>
             <SettingsHeader
               action={
-                <IconButton variant="quiet" label="Add a provider">
+                <IconButton variant="quiet" align="trailing" label="Add a provider">
                   <PlusIcon className="size-4" />
                 </IconButton>
               }
@@ -225,7 +225,7 @@ export const HeaderRhythm: Story = {
         <SettingsPanel
           title="MCP servers"
           action={
-            <IconButton variant="quiet" label="Add an MCP server">
+            <IconButton variant="quiet" align="trailing" label="Add an MCP server">
               <PlusIcon className="size-4" />
             </IconButton>
           }
@@ -267,23 +267,17 @@ export const HeaderRhythm: Story = {
       canvas.getByRole('button', { name }),
     );
     const ink = (control: Element) => control.querySelector('svg') ?? control;
-    // Regression, reported over this dialog: the add marks were pinned to the band's
-    // own gutter, so each plus stood half a box closer to the paper's edge than the
-    // row menus under it — two centerlines down one column. A mark is read by its
-    // center, so the plus keeps the standard icon box and centers where every row's
-    // menu mark centers.
-    const menu = canvas.queryByRole('button', { name: 'Actions for tower' });
-    if (menu) {
-      const center = (element: Element) => {
-        const box = element.getBoundingClientRect();
-        return box.left + box.width / 2;
-      };
-      for (const add of adds) await expect(center(ink(add))).toBeCloseTo(center(ink(menu)), 1);
-    }
-    // A switch and a disclosure still END on the band's gutter: one right edge for
-    // the controls that carry a frame of their own.
-    const rail = ink(toggle).getBoundingClientRect().right;
+    // The add marks now share the row disclosure rail, not the inset action-menu
+    // rail. A switch and a bare disclosure still end on the band's gutter.
     const disclosure = canvas.getByRole('button', { name: 'Show diagnostics' });
+    const center = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return (box.left + box.right) / 2;
+    };
+    for (const add of adds) {
+      await expect(center(ink(add))).toBeCloseTo(center(ink(disclosure)), 1);
+    }
+    const rail = ink(toggle).getBoundingClientRect().right;
     await expect(ink(disclosure).getBoundingClientRect().right).toBeCloseTo(rail, 1);
     for (const action of [...adds, toggle]) {
       const reach = getComputedStyle(action, '::after');
