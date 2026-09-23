@@ -403,33 +403,107 @@
             (expect (= "src · 0 directories · 0 files" (get view "summary")))
             (expect (= ["src" "~/other-project/src"]
                        (mapv #(get % "headline") (get view "sections")))))))))
-  (it "bounds batch content and reports omitted entries without losing nested paths"
-      (let [entry
-            {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}
+  ;; Regression #285: filtered, empty listings must not look like empty directories.
+  (it "shows the applied pattern, filtered counts and every section in an eight-directory batch"
+      (let [ctx
+            (sandbox)
 
-            directory
-            {"path" "root" "entries" (vec (repeat 40 entry))}
+            events
+            (atom [])
 
-            content
-            (#'shim-ls/listing-presentation (repeat 5 directory))
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (out ctx "p = 'resources/vis-shims'\nprint(ls([p] * 8, pattern='AGENTS.md'))"))
 
-            tables
-            (mapcat #(get % "content") (get content "sections"))
+            view
+            (get-in (activity/presentation (activity/replay @events)) [:rows 0 :presentation])]
 
-            hostile
-            (apply str (repeat 2000 (char 1)))
+        (expect (= 8 (count (re-seq #"  empty" result))))
+        (expect (= "Listed 8 directories" (get view "headline")))
+        (expect (= "Pattern: AGENTS.md · 0 shown entries" (get view "summary")))
+        (expect (= 8 (count (get view "sections"))))
+        (expect (every? #(= "Pattern: AGENTS.md · 0 shown directories · 0 matching files"
+                            (get % "summary"))
+                        (get view "sections")))))
+  (it "labels a per-path override as unfiltered rather than inheriting the shared pattern"
+      (let [ctx
+            (sandbox)
 
-            bounded
-            (#'shim-ls/listing-presentation
-             (repeat 5 {"path" hostile "entries" (repeat 40 (assoc entry "path" hostile))}))]
+            events
+            (atom [])
 
-        (expect (= "Listed 5 directories" (get content "headline")))
-        (expect (= 4 (count (get content "sections"))))
-        (expect (= [12 12 12 12] (mapv #(count (get % "rows")) tables)))
-        (expect (= "nested/same.txt" (get-in content ["sections" 0 "content" 0 "rows" 0 0])))
-        (expect (string/includes? (get-in content ["sections" 0 "summary"]) "12 of 40"))
-        (expect (string/includes? (get content "summary") "showing 4 of 5 directories"))
-        (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (out ctx
+                   (str "p = 'resources/vis-shims'\n"
+                        "print(ls([p, {'path': p, 'pattern': None}], pattern='AGENTS.md'))")))
+
+            view
+            (get-in (activity/presentation (activity/replay @events)) [:rows 0 :presentation])]
+
+        (expect (string/includes? result "ls.py"))
+        (expect (string/includes? (get view "summary") "Filters differ by directory"))
+        (expect (= "Pattern: AGENTS.md · 0 shown directories · 0 matching files"
+                   (get-in view ["sections" 0 "summary"])))
+        (expect (= "Unfiltered · 0 directories · 2 files" (get-in view ["sections" 1 "summary"])))))
+  (it "shows the pattern before the path for a single filtered directory"
+      (let [ctx
+            (sandbox)
+
+            events
+            (atom [])
+
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (out ctx "print(ls('resources/vis-shims', pattern='ls.py'))"))
+
+            summary
+            (get-in (activity/presentation (activity/replay @events))
+                    [:rows 0 :presentation "summary"])]
+
+        (expect (string/includes? result "ls.py"))
+        (expect (string/starts-with? summary
+                                     "Pattern: ls.py · 0 shown directories · 1 matching file"))
+        (expect (string/includes? summary "resources/vis-shims"))))
+  (it
+    "bounds batch content and reports omitted entries without losing nested paths"
+    (let [entry
+          {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}
+
+          directory
+          {"path" "root" "entries" (vec (repeat 40 entry))}
+
+          content
+          (#'shim-ls/listing-presentation (repeat 5 directory))
+
+          tables
+          (mapcat #(get % "content") (get content "sections"))
+
+          hostile
+          (apply str (repeat 2000 (char 1)))
+
+          bounded
+          (#'shim-ls/listing-presentation
+           (repeat 16
+                   {"path" hostile
+                    "pattern" "AGENTS.md"
+                    "entries" (repeat 40 (assoc entry "path" hostile))}))
+
+          overflow
+          (#'shim-ls/listing-presentation (repeat 17 {"path" "empty" "entries" []}))]
+
+      (expect (= "Listed 5 directories" (get content "headline")))
+      (expect (= 5 (count (get content "sections"))))
+      (expect (= [12 12 12 12 12] (mapv #(count (get % "rows")) tables)))
+      (expect (= "nested/same.txt" (get-in content ["sections" 0 "content" 0 "rows" 0 0])))
+      (expect (string/includes? (get-in content ["sections" 0 "summary"]) "12 of 40"))
+      (expect (= 16 (count (get bounded "sections"))))
+      (expect (string/includes? (get-in bounded ["sections" 15 "summary"]) "Pattern: AGENTS.md"))
+      (expect (string/includes? (get-in bounded ["sections" 15 "summary"])
+                                "entries omitted from Activity"))
+      (expect (= 16 (count (get overflow "sections"))))
+      (expect (string/includes? (get overflow "summary") "showing 16 of 17 directories"))
+      (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
   (it "makes an empty directory understandable without any preceding start"
       (let [view (#'shim-ls/listing-presentation [{"path" "empty" "entries" []}])]
         (expect (= "Listed directory" (get view "headline")))

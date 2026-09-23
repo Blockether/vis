@@ -23,8 +23,13 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.editing.core :as editing]))
 
+(defn- pattern-label
+  [pattern]
+  (str "Pattern: "
+       (activity-event/bounded-text (str/replace pattern #"[\p{Cntrl}\u2028\u2029]" " ") 160)))
+
 (defn- listing-section
-  [{:strs [path entries]}]
+  [{:strs [path entries pattern]} mixed?]
   (let [all
         (rest (tree-seq #(seq (get % "children")) #(get % "children") {"children" entries}))
 
@@ -32,13 +37,21 @@
         (take 12 all)
 
         dirs
-        (count (filter #(= "dir" (get % "type")) entries))]
+        (count (filter #(= "dir" (get % "type")) entries))
+
+        files
+        (- (count entries) dirs)]
 
     {"headline" (activity-event/bounded-text (str/replace path #"[\p{Cntrl}\u2028\u2029]" " ") 400)
-     "summary" (str dirs
-                    " directories · " (- (count entries) dirs)
-                    " files" (when (> (count all) 12)
-                               (str " · showing 12 of " (count all) " entries")))
+     "summary" (str (cond (some? pattern) (str (pattern-label pattern) " · ")
+                          mixed? "Unfiltered · ")
+                    dirs
+                    (if (some? pattern)
+                      (str " shown " (if (= dirs 1) "directory" "directories") " · ")
+                      " directories · ")
+                    files
+                    (if (some? pattern) (str " matching " (if (= files 1) "file" "files")) " files")
+                    (when (> (count all) 12) (str " · showing 12 of " (count all) " entries")))
      "content" (if (seq rows)
                  [{"type" "table"
                    "columns" ["Name" "Kind" "Bytes"]
@@ -68,26 +81,68 @@
                                  rows)}]
                  [])}))
 
+(def ^:private max-listing-sections 16)
+
+(def ^:private max-listing-section-bytes 30000)
+
+(defn- listing-sections
+  "Share a bounded Activity budget so later directory counts remain visible."
+  [listings mixed?]
+  (let [requested
+        (vec (take max-listing-sections listings))
+
+        allowance
+        (quot (long max-listing-section-bytes) (long (max 1 (count requested))))]
+
+    (mapv (fn [listing]
+            (let [section (listing-section listing mixed?)]
+              (if (<= (activity-event/utf8-bytes (json/write-json-str section)) allowance)
+                section
+                (-> section
+                    (assoc "content" [])
+                    (update "summary"
+                            #(activity-event/bounded-text (str % " · entries omitted from Activity")
+                                                          512))))))
+          requested)))
+
 (defn- listing-presentation
   "One directory supplies the step header; batches keep distinct, spaced sections."
   [listings]
-  (let [sections
-        (mapv listing-section (take 4 listings))
+  (let [patterns
+        (mapv #(get % "pattern") listings)
+
+        mixed?
+        (> (count (distinct patterns)) 1)
+
+        pattern
+        (first patterns)
+
+        sections
+        (listing-sections listings mixed?)
 
         n
-        (count listings)]
+        (count listings)
+
+        total
+        (reduce + 0 (map #(count (get % "entries")) listings))]
 
     (if (= n 1)
       (let [section (first sections)]
         (assoc section
           "headline" "Listed directory"
           "summary" (activity-event/bounded-text
-                      (str (get section "headline") " · " (get section "summary"))
+                      (if (some? pattern)
+                        (str (get section "summary") " · " (get section "headline"))
+                        (str (get section "headline") " · " (get section "summary")))
                       512)))
       {"headline" (str "Listed " n " directories")
-       "summary" (str (reduce + 0 (map #(count (get % "entries")) listings))
-                      " entries"
-                      (when (> n 4) (str " · showing 4 of " n " directories")))
+       "summary"
+       (str (cond mixed? "Filters differ by directory · "
+                  (some? pattern) (str (pattern-label pattern) " · "))
+            total
+            (if (some some? patterns) (str " shown " (if (= total 1) "entry" "entries")) " entries")
+            (when (> n (count sections))
+              (str " · showing " (count sections) " of " n " directories")))
        "content" []
        "sections" sections})))
 
@@ -99,8 +154,18 @@
    :ext.symbol/inject-env? true
    :ext.symbol/on-error-fn (editing/tool-failure-on-error :ls :dir)
    :ext.symbol/fn (fn [env args]
-                    (let [rows (editing/list-directories env args)]
-                      (extension/publish-activity! (listing-presentation rows))
+                    (let [rows
+                          (editing/list-directories env args)
+
+                          shown
+                          (mapv (fn [row spec]
+                                  (assoc row
+                                    "pattern"
+                                    (get (if (map? spec) spec {}) "pattern" (get args "pattern"))))
+                                rows
+                                (or (get args "paths") [(get args "path")]))]
+
+                      (extension/publish-activity! (listing-presentation shown))
                       (extension/success {:result rows})))})
 
 (defn- ls-bridge-bindings
