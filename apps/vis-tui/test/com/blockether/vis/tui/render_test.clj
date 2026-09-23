@@ -2415,7 +2415,7 @@
                        visible
                        (mapv (comp str/trim strip-sentinels strip-ansi) lines)]
 
-                   (expect (some #(str/includes? % "THINKING  +") visible))
+                   (expect (some #(re-find #"THINKING ▸  \+\d+ more" %) visible))
                    (expect (some #(str/includes? % answer) visible)))))
 
 (defdescribe collapsed-thinking-ellipsis-test
@@ -2451,7 +2451,45 @@
                         (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
 
                (it "renders the collapsed THINKING peek with a +N more header"
-                   (expect (some #(str/includes? % "THINKING  +") visible)))))
+                   (expect (some #(re-find #"THINKING ▸  \+\d+ more" %) visible)))))
+
+(defdescribe
+  thinking-chevron-placement-test
+  (let [entries
+        (mapv (fn [n]
+                {:line (str p/MARKER_THINKING "row " n) :meta nil})
+              (range 10))
+
+        opts
+        {:entries entries :session-id "sid" :session-turn-id "turn" :iteration-number 1 :max-w 40}
+
+        collapsed
+        (#'render/maybe-collapse-thinking-entries opts)
+
+        header-of
+        (fn [rows]
+          (first (filter #(= :toggle-details (get-in % [:meta :kind])) rows)))
+
+        collapsed-header
+        (header-of collapsed)
+
+        node-id
+        (get-in collapsed-header [:meta :node-id])
+
+        expanded
+        (#'render/maybe-collapse-thinking-entries
+         (assoc opts :detail-expansions {["sid" node-id] true}))
+
+        expanded-header
+        (header-of expanded)]
+
+    (it "places the collapsed chevron after THINKING and before the tally"
+        (expect (re-find #"^THINKING ▸  \+\d+ more$"
+                         (strip-sentinels (body-of (:line collapsed-header)))))
+        (expect (true? (get-in collapsed-header [:meta :collapsed?]))))
+    (it "keeps the expanded chevron beside THINKING"
+        (expect (= "THINKING ▾" (strip-sentinels (body-of (:line expanded-header)))))
+        (expect (false? (get-in expanded-header [:meta :collapsed?]))))))
 
 (defdescribe
   progress-rendering-test
@@ -6416,7 +6454,7 @@ h = 8"
         ;; `p/paint-styled-line!` inherits the modifiers already active on the
         ;; surface, so its name is the one label that is bold AND italic.
         (let [row (band-row "THINKING")]
-          (expect (re-find #"THINKING  \+8 more\s+▸" (row-text row)))
+          (expect (re-find #"THINKING ▸  \+8 more" (row-text row)))
           (expect (= "THINKING" (ink row :bold)))
           (expect (= "THINKING" (ink row #(and (:bold %) (:italic %)))))
           (expect (str/includes? (ink row :italic) "+8 more"))))

@@ -4306,10 +4306,10 @@
 
    Short reasoning (≤ `reasoning-auto-collapse-line-threshold` rows)
    paints in full with no disclosure. Longer reasoning shows the
-   clickable header `THINKING  +N more` as the band's TOP line and
+   clickable header `THINKING ▸  +N more` as the band's TOP line and
    PEEKS the first N rows below it; clicking expands in place to the
-   full reasoning. The label shares the body's left edge, with the disclosure
-   chevron at the trailing edge and content below.
+   full reasoning. The chevron sits immediately after the name, before
+   the tally, matching the companion; content opens below the header.
 
    The header carries `:toggle-details` meta on a `thinking-marker`
    row — the painter registers the click region for that marker so the
@@ -4377,22 +4377,30 @@
             ;; The whole thinking band paints ITALIC, and `p/paint-styled-line!`
             ;; INHERITS the modifiers already active on the surface - so the bold
             ;; span on the name reads bold AND italic: the band's own voice, at
-            ;; the weight of a control.
+            ;; the weight of a control. The chevron follows the name, and the
+            ;; quiet tally follows the chevron, as in the companion.
             label
-            (if (or expanded? (zero? hidden-n))
-              (band-label "THINKING")
-              (str (band-label "THINKING") "  +" hidden-n " more"))
+            (band-label "THINKING")
+
+            width
+            (max 1 (long (or max-w 1)))
+
+            prefix
+            (inline-disclosure-prefix label (str " " chevron) width)
+
+            tally
+            (when (and (not expanded?) (pos? hidden-n)) (str "  +" hidden-n " more"))
 
             ;; Header is a THINKING-MARKER row → painted in the dim
             ;; band (so it sits INSIDE the bubble), and carries the
             ;; toggle-details meta the thinking-marker painter now
-            ;; registers as a click region.
+            ;; registers as a click region. No right-suffix: that metadata
+            ;; would move the chevron back to the row's trailing edge.
             header
             {:line (str thinking-marker
-                        (first (with-right-suffix [label] chevron (max 1 (long (or max-w 1))))))
+                        prefix
+                        (p/ellipsize tally (max 0 (- width (p/display-width prefix)))))
              :meta {:kind :toggle-details
-                    :headline-prefix label
-                    :right-suffix chevron
                     :session-id (str session-id)
                     :node-id (str node-id)
                     :collapsed? (not expanded?)}}]
