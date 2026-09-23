@@ -1119,7 +1119,7 @@
 (defdescribe
   compacted-stdout-read-back-test
   (it
-    "locates exact saved stdout by the model replay's tN/iN/fN scope, even mid-turn"
+    "locates exact saved stdout by scope and call id when blocks share one iteration"
     (let [s
           (vis/db-create-connection! :memory)
 
@@ -1141,10 +1141,15 @@
               (h/store-iteration! s
                                   {:session-turn-id turn
                                    :code "print('many lines')"
-                                   :forms [{:scope "t1/i1/f1"
+                                   :forms [{:scope "t1/i1"
+                                             :svar/tool-call-id "call_A|fc_123"
                                             :src "print('many lines')"
                                             :stdout stdout
-                                            :error {:message "ValueError: failed"}}]})
+                                            :error {:message "ValueError: failed"}}
+                                           {:scope "t1/i1"
+                                             :svar/tool-call-id "call_B|fc_456"
+                                            :src "print('other')"
+                                            :stdout "other block"}]})
 
               data
               (:result (introspection/read-session {:session-id sid :db-info s}))
@@ -1159,13 +1164,14 @@
                     b
                     (get i "blocks")
 
-                    :when (= "t1/i1/f1" (get b "scope"))]
+                    :when (and (= "t1/i1" (get b "scope")) (= "call_A|fc_123" (get b "svar_tool_call_id")))]
 
                 b)
 
               full
               (get (first matches) "stdout")]
 
+          (expect (= 2 (count (get-in data ["transcript" "turns" 0 "iterations" 0 "blocks"]))))
           (expect (= 1 (count matches)))
           (expect (= stdout full))
           (expect (= (subs stdout 1000 1100) (subs full 1000 1100)))

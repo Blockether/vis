@@ -3670,11 +3670,24 @@
   "Experimental, model-only projection of an oversized printed result. The form's
    full stdout remains in the session transcript, and the human card is untouched.
    Require the read_session binding as well as the experiment flag: without an
-   exact recovery path the ordinary head clip is safer. A missing/invalid scope
-   also falls back, since it cannot identify a stored block."
+   exact recovery path the ordinary head clip is safer. Current iteration scopes
+   need the provider call id to distinguish multiple blocks; a legacy /fN form
+   scope already identifies its block. Missing identifiers fall back."
   [f text]
   (let [scope
         (:scope f)
+
+        call-id
+        (:svar/tool-call-id f)
+
+        call-id
+        (when (and (string? call-id) (re-matches #"[A-Za-z0-9_|-]+" call-id)) call-id)
+
+        form-scope?
+        (and (string? scope) (re-matches #"t[1-9]\d*/i[1-9]\d*/f[1-9]\d*" scope))
+
+        iteration-scope?
+        (and (string? scope) (re-matches #"t[1-9]\d*/i[1-9]\d*" scope))
 
         s
         (str/trimr (str text))
@@ -3684,8 +3697,7 @@
 
     (when (and (toggles/enabled? "compact_model_stdout")
                (toggles/enabled? "introspection")
-               (string? scope)
-               (re-matches #"t[1-9]\d*/i[1-9]\d*/f[1-9]\d*" scope)
+               (or form-scope? (and iteration-scope? call-id))
                (> n 8192))
       (let [head
             (util/truncate s 1024)
@@ -3703,8 +3715,11 @@
             (str "# Recover exact stdout: r = await read_session(); "
                  "s = next(b[\"stdout\"] for t in r[\"transcript\"][\"turns\"] "
                  "for i in t[\"iterations\"] for b in i[\"blocks\"] "
-                 "if b.get(\"scope\") == " (pr-str scope)
-                 "); print(s[0:4096]) " "# adjust the slice as needed")
+                 "if b.get(\"scope\") == "
+                 (pr-str scope)
+                 (when call-id (str " and b.get(\"svar_tool_call_id\") == " (pr-str call-id)))
+                 "); print(s[0:4096]) "
+                 "# adjust the slice as needed")
 
             summary
             (str "# ⋯ model replay compacted stdout "

@@ -6078,6 +6078,28 @@
             (expect (not (str/includes? content "middlemiddlemiddle")))
             (expect (not (some #(Character/isSurrogate %) content)))
             (expect (str/ends-with? content "✗ error: ValueError: last failure")))))
+    (it
+      "addresses current tN/iN scopes by tool-call id when calls share an iteration"
+      (with-redefs [toggles/enabled? (constantly true)]
+        (let [other (str (apply str (repeat 12000 "Z")) "SECOND")
+               forms [{:scope "t1/i2" :svar/tool-call-id "call_A|fc_123" :stdout long-out}
+                      {:scope "t1/i2" :svar/tool-call-id "call_B|fc_456" :stdout other}]
+               calls [{:id "call_A|fc_123" :name "python_execution"}
+                      {:id "call_B|fc_456" :name "python_execution"}]
+              output (:content (#'lp/iteration-results-message
+                                {:tool-calls calls :forms-vec forms}))
+              first-out (:content (first output))
+              second-out (:content (second output))]
+
+          (expect (every? #(str/includes? (:content %) "model replay compacted") output))
+          (expect (str/includes? first-out
+                                 (str "b.get(" (pr-str "scope") ") == " (pr-str "t1/i2"))))
+          (expect (str/includes? first-out
+                                  (str "b.get(" (pr-str "svar_tool_call_id") ") == " (pr-str "call_A|fc_123"))))
+          (expect (str/includes? second-out
+                                  (str "b.get(" (pr-str "svar_tool_call_id") ") == " (pr-str "call_B|fc_456"))))
+          (expect (not (str/includes? first-out "SECOND")))
+          (expect (str/ends-with? second-out "SECOND")))))
     (it "preserves the old 65,536-character wire exactly when flag or read-back is off"
         (let [old
               (with-redefs [toggles/enabled? (constantly false)]
@@ -6091,13 +6113,15 @@
               (with-redefs [toggles/enabled? (constantly true)]
                 (render long-out nil nil))]
 
+          (expect (nil? (with-redefs [toggles/enabled? (constantly true)]
+                          (#'lp/compact-model-stdout {:scope "t1/i2"} long-out))))
           (expect (= old no-reader))
           (expect (str/includes? (:content old) "output clipped at"))
           (expect (not (str/includes? (:content old) "model replay compacted")))
           (expect (str/includes? (:content no-scope) "output clipped at"))))
     (it "uses compacted output size for the no-model fold estimate"
         (let [f
-              {:scope "t1/i2/f3" :stdout long-out :code "print('long')"}
+              {:scope "t1/i2" :svar/tool-call-id "call_A|fc_123" :stdout long-out :code "print('long')"}
 
               normal
               (with-redefs [toggles/enabled? (constantly false)]
