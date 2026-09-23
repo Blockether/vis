@@ -2079,6 +2079,33 @@
       (expect (= ["host" "pw"] (into [] (keep :field-id) (hi/stops (decorated-request))))))
   (it "keeps a decoration out of the answer map entirely"
       (expect (= #{"host" "pw"} (set (keys (:values (hi/init-form (decorated-request))))))))
+  ;; Regression #286: Ask paragraph Markdown must render like the request description.
+  (it "renders paragraph marks and list blocks without exposing Markdown source"
+      (let [form
+            (hi/init-form (canonical-input-view
+                            {"title" "Confirm"
+                             "description" "**Deployment effect:** Updates the proxy."
+                             "fields" [{"type" "paragraph"
+                                        "text" "**Target:** `DEV21`\n\n- **Memory:** 4096 MiB"}]}))
+
+            rows
+            (filterv #(= :paragraph (:kind %)) (hi/form-rows form 60))]
+
+        (expect (= "Target: DEV21" (:text (first rows))))
+        (expect (contains? (-> rows
+                               first
+                               :runs
+                               first
+                               :style)
+                           :bold))
+        (expect (some #(contains? (:style %) :code) (mapcat :runs rows)))
+        (expect (some #(str/includes? (:text %) "Memory: 4096 MiB") rows))
+        (let [{:keys [screen g]} (virtual-screen)]
+          (try (hi/paint! g 80 30 form)
+               (expect (contains? (modifiers-of screen "Target:") SGR/BOLD))
+               (expect (= t/header-active-tab-accent (:fg (cell-under form "DEV21"))))
+               (expect (not (str/includes? (screen-text screen) "**Target:**")))
+               (finally (.close ^TerminalScreen screen))))))
   (it "paints a heading bold on the dialog's own paper, never as a field"
       (let [cell (cell-under (hi/init-form (decorated-request)) "Connection")]
         (expect (:is-bold cell))

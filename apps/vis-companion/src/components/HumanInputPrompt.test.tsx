@@ -77,6 +77,53 @@ describe('human input sheet', () => {
     expect(paragraph.textContent).not.toContain('**');
   });
 
+  // Regression #286: a paragraph in the same Ask dialog must not expose Markdown syntax.
+  it('renders paragraph Markdown alongside the request description', () => {
+    markup('minimal', {
+      request: {
+        ...HUMAN_INPUT_REQUESTS.minimal,
+        description: '**Deployment effect:** Updates the proxy.',
+        fields: [
+          {
+            id: 'target',
+            name: 'target',
+            type: 'paragraph',
+            label: '',
+            is_required: false,
+            text: '**Target:** `DEV21`\n\n- **Memory:** 4096 MiB',
+          },
+        ],
+      },
+    });
+    expect(screen.getByText('Deployment effect:').tagName).toBe('STRONG');
+    expect(screen.getByText('Target:').tagName).toBe('STRONG');
+    expect(screen.getByText('DEV21').tagName).toBe('CODE');
+    expect(screen.getByText('Memory:').closest('li')).toHaveTextContent('4096 MiB');
+    expect(screen.getByRole('dialog')).not.toHaveTextContent('**Target:**');
+  });
+
+  it('keeps raw HTML inert and rejects unsafe links in paragraph Markdown', () => {
+    markup('minimal', {
+      request: {
+        ...HUMAN_INPUT_REQUESTS.minimal,
+        fields: [
+          {
+            id: 'warning',
+            name: 'warning',
+            type: 'paragraph',
+            label: '',
+            is_required: false,
+            text: '**Safe** <img src=x onerror="alert(1)"> [unsafe](javascript:alert(1))',
+          },
+        ],
+      },
+    });
+    const dialog = screen.getByRole('dialog');
+    expect(screen.getByText('Safe').tagName).toBe('STRONG');
+    expect(dialog.querySelector('img, script, [onerror], a[href^="javascript:"]')).toBeNull();
+    expect(dialog.textContent).toContain('<img src=x onerror="alert(1)">');
+  });
+
   it('keeps raw HTML inert and rejects unsafe links in request Markdown', () => {
     markup('minimal', {
       request: {

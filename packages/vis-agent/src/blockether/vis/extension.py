@@ -2961,7 +2961,7 @@ def heading(text, live_text=None, **spec):
 
 
 def paragraph(text, live_text=None, **spec):
-    """Form prose, or live ``paragraph(id, text)`` with inline Markdown."""
+    """Form Markdown prose, or live ``paragraph(id, text)`` with inline Markdown."""
     if live_text is not None:
         return _live_node("paragraph", text, dict(spec, text=str(live_text)))
     if spec:

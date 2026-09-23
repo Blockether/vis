@@ -43,7 +43,7 @@ Request options:
 
 | Option | Meaning |
 | --- | --- |
-| `description` | Text under the title. |
+| `description` | Markdown under the title. |
 | `submit_label`, `cancel_label` | Button labels. |
 | `is_cancellable` | `False` removes the cancel button. |
 | `timeout_ms` | 5 minutes by default; `0` waits until the person answers or cancels. |
@@ -109,10 +109,11 @@ column can shrink below that minimum to fit a very narrow panel. In the TUI,
 rows use equal-width columns when each child has at least 24 terminal text cells
 after spacing; otherwise the entire row stacks vertically. Columns always stack.
 
-Ask groups can have a `label` and `description`. Layout nodes do not produce
-answer values: a `heading` or `paragraph` displays `text` without an input.
-Shared layout does not change Ask validation or add Live collapse and
-interaction behavior to a form.
+Ask groups can have a `label` and a plain-text `description`. Layout nodes
+produce no answer values: a `heading` displays plain text and a `paragraph`
+displays Markdown, including emphasis, inline code and lists, without an input.
+The request's `description` also displays Markdown. Shared layout does not
+change Ask validation or add Live collapse and interaction behavior to a form.
 
 ```python
 vis.ask("Where should the pool connect?", [

@@ -648,11 +648,17 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
           <ViewParagraph>
             <strong>Rich text</strong>
           </ViewParagraph>
+          <ViewParagraph as="div">
+            <p>Block text</p>
+          </ViewParagraph>
         </>,
       );
 
       expect(container).toHaveTextContent('**Keep literal** & safe');
       expect(container.querySelector('strong')).toHaveTextContent('Rich text');
+      const block = container.children[2];
+      expect(block.tagName).toBe('DIV');
+      expect(block.querySelector('p')).toHaveTextContent('Block text');
     });
   });
 });

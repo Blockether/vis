@@ -646,8 +646,8 @@
           parts
           (reductions + 0 (map count parts)))))
 
-(defn- request-description-rows
-  "Request Markdown as styled rows; authored newlines stay hard breaks."
+(defn- markdown-prose-rows
+  "Ask Markdown as styled rows; authored newlines stay hard breaks."
   [text text-w]
   (when-not (str/blank? text)
     (let [width (max 1 (long (or text-w (p/display-width text))))]
@@ -657,17 +657,16 @@
                                         width)))))
 
 (defn- decor-rows
-  "Rows for a DECORATION — a heading or a paragraph. Neither holds a value and
-   neither is a focus stop: these are the section titles and the sentences that
-   make a long form readable, so they are planned as plain ink the keyboard walks
-   straight past. A paragraph wraps like any other prose in this dialog; a
-   heading is one line, ellipsized if the dialog is narrow."
+  "Rows for a DECORATION — a heading or a paragraph. Neither holds a value nor
+   focus: these are the section titles and prose that make a long form readable.
+   Paragraph Markdown wraps like the request description; a heading stays plain
+   text on one line, ellipsized if the dialog is narrow."
   [text-w {:keys [type text]}]
   (if (= :heading type)
     ;; No gap of its own: a heading is read together with the paragraph under it,
     ;; and the field it introduces already opens with the blank its label owns.
     [{:kind :heading :text text}]
-    (mapv #(assoc % :kind :paragraph) (description-rows text text-w))))
+    (mapv #(assoc % :kind :paragraph) (markdown-prose-rows text text-w))))
 
 (declare field-rows)
 
@@ -886,7 +885,7 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
    (let [head
-         (when-let [rows (seq (request-description-rows (:description request) text-w))]
+         (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
            (conj (vec rows) {:kind :blank}))
 
          ;; ONE context per paint — including the stop index the whole tree shares,
@@ -989,8 +988,8 @@
                         row
                         (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 3))))))
 
-(defn- paint-description-runs!
-  "Paint request Markdown over the description's italic base without losing inline styles."
+(defn- paint-markdown-runs!
+  "Paint Ask Markdown over italic prose without losing inline styles."
   [g left row inner-w runs]
   (p/set-colors! g t/dialog-hint t/dialog-bg)
   (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -1093,7 +1092,7 @@
     ;; field's description brightens with the field, and fades back with it.
     :description
     (do (if-let [runs (:runs entry)]
-          (paint-description-runs! g left row inner-w runs)
+          (paint-markdown-runs! g left row inner-w runs)
           (paint-italic! g
                          left
                          row
@@ -1144,7 +1143,10 @@
         nil)
 
     :paragraph
-    (do (paint-italic! g left row inner-w t/dialog-hint (:text entry)) nil)
+    (do (if-let [runs (:runs entry)]
+          (paint-markdown-runs! g left row inner-w runs)
+          (paint-italic! g left row inner-w t/dialog-hint (:text entry)))
+        nil)
 
     ;; A checkbox, an option and a slider are TOGGLED, not typed: they keep a
     ;; typed row's geometry so the form lines up, but they are painted on the

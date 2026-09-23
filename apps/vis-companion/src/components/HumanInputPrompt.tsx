@@ -430,14 +430,19 @@ function HumanInputFieldRow({
       .filter(Boolean)
       .join(' ') || undefined;
 
-  // PURE DECORATION: a heading opens a section of a long form and a paragraph
-  // explains one. Neither is a control: nothing keys it, it holds no value and
-  // it can carry no error, so it renders as the words it was given and stops.
+  // A heading and a paragraph explain the form but collect no answer. The heading
+  // is plain text; the paragraph uses the same safe Markdown as the description.
   if (field.type === 'heading') {
     return <ViewHeading>{field.text}</ViewHeading>;
   }
   if (field.type === 'paragraph') {
-    return <ViewParagraph>{field.text}</ViewParagraph>;
+    return (
+      <ViewParagraph as="div">
+        <Markdown compact hardBreaks>
+          {field.text ?? ''}
+        </Markdown>
+      </ViewParagraph>
+    );
   }
 
   // Keep form semantics outside the shared layout: groups label their fields,

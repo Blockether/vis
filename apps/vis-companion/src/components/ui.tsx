@@ -991,9 +991,15 @@ export function ViewHeading({
   );
 }
 
-/** Readable body text for either kind of view; parsing belongs to the caller. */
-export function ViewParagraph({ children }: { children: ReactNode }) {
-  return <p className={`font-mono text-body text-white ${PROSE}`}>{children}</p>;
+/** Readable view prose; use a div when the caller supplies block Markdown. */
+export function ViewParagraph({
+  as: Tag = 'p',
+  children,
+}: {
+  as?: 'p' | 'div';
+  children: ReactNode;
+}) {
+  return <Tag className={`font-mono text-body text-white ${PROSE}`}>{children}</Tag>;
 }
 
 /**
