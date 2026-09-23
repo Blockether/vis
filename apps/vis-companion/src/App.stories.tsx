@@ -47,6 +47,14 @@ export const Search: Story = {
     const inset = window.innerWidth >= 640 ? 16 : 12;
     await expect(header.firstElementChild!.getBoundingClientRect().width).toBe(frame.width);
     await expect(frame.right - search.getBoundingClientRect().right).toBe(inset);
+    // Regression: the search field sat at the top of the bar while the back chevron
+    // was centred in its full-height button. Their visible centres must share a row.
+    const field = search.getBoundingClientRect();
+    const chevron = canvas
+      .getByRole('button', { name: 'Close search' })
+      .querySelector('svg')!
+      .getBoundingClientRect();
+    await expect(chevron.top + chevron.height / 2).toBe(field.top + field.height / 2);
     await expect(search).toHaveFocus();
     // The header cannot introduce another height or type scale for the same input.
     await expect(search.getBoundingClientRect().height).toBe(

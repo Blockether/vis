@@ -1465,7 +1465,7 @@ export function Header({
       {isSearching ? (
         <div className="flex h-12 w-full items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
           <BackButton label="Close search" onClick={onCloseSearch} />
-          <div className="ml-3 min-w-0 flex-1">
+          <div className="ml-3 flex min-w-0 flex-1 items-center">
             <HeaderSearchField
               inputRef={searchRef}
               value={query}

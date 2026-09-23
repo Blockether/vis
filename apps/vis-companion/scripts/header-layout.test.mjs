@@ -69,9 +69,10 @@ describe('app bar', () => {
     expect(labelledTag(page, 'Close search')).toContain('<BackButton');
     expect(page).toContain('label="Search sessions on every machine"');
     expect(page).toContain('placeholder="Search all machines…"');
-    // The header reserves the island; the field shares one row with its way back.
+    // The header reserves the island; the back button fills the row while the
+    // shorter field stays vertically centred beside its chevron.
     expect(page).toContain('flex h-12 w-full items-stretch');
-    expect(page).toContain('ml-3 min-w-0 flex-1');
+    expect(page).toContain('ml-3 flex min-w-0 flex-1 items-center');
     expect(page).not.toContain('row-start-1');
   });
 
