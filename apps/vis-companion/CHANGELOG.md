@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.26 (6654) — 2026-09-23
+<!-- commit: 01bfb1d76e2db017f735761e3f275f48b0b637a1 -->
+
+- Keep iPhone actions below notch
+- Record companion build 6652
+
 ## 0.2.26 (6652) — 2026-09-23
 <!-- commit: 3608dd5f94557f56a36025ea3b1ff089a1542f11 -->
 
