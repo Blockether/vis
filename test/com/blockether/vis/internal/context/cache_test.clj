@@ -149,7 +149,37 @@
         (expect (str/includes? boundary "\"status\": \"active\""))))
   (it "omits the goal line for a session without a goal"
       (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]
-        (expect (not (str/includes? boundary "session[\"goal\"]"))))))
+        (expect (not (str/includes? boundary "session[\"goal\"]")))))
+  (it "keeps the changing goal after the cached system prefix"
+      (let [active
+            (assoc base-ctx
+              "session_goal"
+              {"id" "g1" "objective" "finish the task" "status" "active" "iterations_used" 1})
+
+            paused
+            (assoc-in active ["session_goal" "status"] "paused")
+
+            frozen
+            (cr/render-ctx-static {:ctx active})
+
+            initial
+            (cr/ctx-static-map {:ctx active})
+
+            first-delta
+            (cr/render-ctx-delta initial (cr/ctx-delta-map {:ctx active}))
+
+            update-delta
+            (cr/render-ctx-delta (cr/ctx-delta-map {:ctx active}) (cr/ctx-delta-map {:ctx paused}))
+
+            removal-delta
+            (cr/render-ctx-delta (cr/ctx-delta-map {:ctx paused})
+                                 (cr/ctx-delta-map {:ctx base-ctx}))]
+
+        (expect (not (str/includes? frozen "finish the task")))
+        (expect (not (contains? initial "goal")))
+        (expect (str/includes? first-delta "session[\"goal\"] = "))
+        (expect (str/includes? update-delta "session[\"goal\"][\"status\"] = \"paused\""))
+        (expect (str/includes? removal-delta "del session[\"goal\"]")))))
 
 (defdescribe
   model-facing-utilization-test

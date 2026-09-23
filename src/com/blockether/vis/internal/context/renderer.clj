@@ -80,8 +80,9 @@
 
 (def ^:private static-context-keys
   "Ambient session keys embedded once in the cached prefix. Runtime changes are
-   emitted as structural deltas; access changes only on reload or workspace overlay updates."
-  ["workspace" "access" "env" "routing" "symbols" "council" "goal" "agent"])
+   emitted as structural deltas; access changes only on reload or workspace overlay updates.
+   Goals are excluded: their status and iteration count change during a run."
+  ["workspace" "access" "env" "routing" "symbols" "council" "agent"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.
@@ -137,9 +138,8 @@
 
 (defn ctx-delta-map
   "Per-iteration CURRENT map for the structural ctx delta: `ctx-static-map`
-   PLUS `:utilization`. The frozen system block stays utilization-free (cache
-   stability); live token usage instead rides as a cheap appended
-   `session[\"utilization\"] = …` delta against the frozen baseline."
+   PLUS the live goal and utilization. Both change during a run, so they ride
+   after the cached prefix rather than being frozen in the system message."
   [{:keys [ctx warnings]}]
   (let [view
         (eng/session-view ctx warnings)
@@ -148,6 +148,9 @@
         (project-ctx-static view)]
 
     (cond-> m
+      (get view "session_goal")
+      (assoc "goal" (get view "session_goal"))
+
       (get view "session_utilization")
       (assoc "utilization" (get view "session_utilization")))))
 
