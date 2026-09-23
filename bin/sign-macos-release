@@ -11,8 +11,8 @@
 # Every Mach-O below the given paths is signed with the hardened runtime and a
 # secure timestamp: the native runtime, the interpreter cdylib, libpython, each
 # stdlib extension module and uv. All of them then travel to Apple's notary
-# service in ONE submission, and the paths named as FILES are assessed the way
-# Gatekeeper assesses them on a user's Mac.
+# service in ONE submission. Each named executable must pass signature and
+# online notarization-ticket verification before it can ship.
 #
 # Vis #277: an ad-hoc signed runtime has no stable identity, so the macOS
 # Application Firewall resolves `vis-agent-native` to "Block incoming
@@ -22,10 +22,9 @@
 # notarized bytes are the same bytes.
 #
 # A `.tar.gz` cannot carry a stapled ticket: `xcrun stapler` writes only into
-# disk images, installer packages and app bundles. For a bare executable
-# Gatekeeper resolves the ticket online by cdhash, which is why the submission
-# has to happen here, at build time, and why `spctl` is checked before
-# publication rather than trusted.
+# disk images, installer packages and app bundles. For a bare executable,
+# `codesign` checks the online ticket by cdhash. `spctl` assesses app bundles
+# and rejects even a valid notarized CLI as "not an app".
 #
 # Credentials, none of which is ever printed:
 #   VIS_MACOS_SIGNING_IDENTITY  Developer ID Application identity (default below)
@@ -187,7 +186,7 @@ for target in "${targets[@]}"; do
   fi
 done
 (( ${#entries[@]} )) || die "name the executable that ships, not only its sidecar" \
-  "Gatekeeper is assessed per binary, so at least one path must be a Mach-O file."
+  "Notarization is checked per executable, so at least one path must be a Mach-O file."
 
 key_path="$signing_dir/AuthKey_$VIS_ASC_KEY_ID.p8"
 printf '%s\n' "$VIS_ASC_KEY" > "$key_path"
@@ -210,19 +209,19 @@ if ! xcrun notarytool submit "$archive" \
 fi
 grep -q 'status: Accepted' "$signing_dir/notary.log" || \
   die "the notary service did not accept the submission" \
-    "An unaccepted ticket leaves every user on the ad-hoc firewall behavior of Vis #277."
+    "An unaccepted notarization submission cannot be published."
 
-# Nothing is stapled to a bare executable, so assess what a user's Mac assesses:
-# Gatekeeper resolves the fresh ticket over the network, which can trail
-# acceptance by a few seconds.
+# Nothing is stapled to a bare executable. Require its notarization ticket
+# online as well as the Developer ID signature; fresh tickets can trail
+# acceptance by a few seconds. An app-bundle assessment cannot verify a CLI.
 for entry in "${entries[@]}"; do
   attempt=1
-  until spctl --assess --type execute --verbose=2 "$entry"; do
+  until codesign --verify --strict --check-notarization -R="$requirement and notarized" "$entry"; do
     if (( attempt >= 5 )); then
-      die "notarized, yet Gatekeeper still refuses $entry"
+      die "the notarization ticket could not be verified for $entry"
     fi
     attempt=$(( attempt + 1 ))
     sleep 10
   done
 done
-say "notarized and accepted by Gatekeeper: ${entries[*]}"
+say "signed and notarization-verified: ${entries[*]}"

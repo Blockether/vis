@@ -3539,10 +3539,18 @@
                        (str "#!/usr/bin/env bash\n" "case \"${1:-}\" in\n"
                             "  -s) printf 'Darwin\\n' ;;\n" "  -m) printf 'arm64\\n' ;;\n"
                             "  *)  printf 'Darwin\\n' ;;\n" "esac\n"))
-    (write-executable! (io/file dir "codesign") (str "#!/usr/bin/env bash\n" record "exit 0\n"))
-    (write-executable! (io/file dir "spctl")
-                       (str "#!/usr/bin/env bash\n" record
-                            "printf 'accepted\\nsource=Notarized Developer ID\\n'\n" "exit 0\n"))
+    (write-executable!
+      (io/file dir "codesign")
+      (str
+        "#!/usr/bin/env bash\n" record
+        "case \" $* \" in *' --check-notarization '*) exit \"${VIS_TEST_NOTARY_EXIT:-0}\" ;; esac\n"
+        "exit 0\n"))
+    (write-executable!
+      (io/file dir "spctl")
+      (str "#!/usr/bin/env bash\n" record
+           "printf 'rejected (the code is valid but does not seem to be an app)\\n' >&2\n"
+           "exit 3\n"))
+    (write-executable! (io/file dir "sleep") "#!/usr/bin/env bash\nexit 0\n")
     ;; The script reports the size of the archive it is about to submit.
     (write-executable! (io/file dir "ditto")
                        (str "#!/usr/bin/env bash\n"
@@ -3553,8 +3561,8 @@
     (write-executable! (io/file dir "xcrun")
                        (str "#!/usr/bin/env bash\n"
                             record
-                            "printf '  id: 11111111-2222-3333-4444-555555555555\\n"
-                            "  status: Accepted\\n'\n"
+                            "printf '  id: 11111111-2222-3333-4444-555555555555\\n'\n"
+                            "printf '  status: %s\\n' \"${VIS_TEST_NOTARY_STATUS:-Accepted}\"\n"
                             "exit 0\n"))
     dir))
 
@@ -3565,7 +3573,7 @@
   ;; Desktop could not reach its own gateway over the machine's LAN address,
   ;; while a Developer ID signed JVM on the same Mac was allowed.
   (it
-    "signs every Mach-O it ships, notarizes them once and assesses what Gatekeeper assesses"
+    "signs every Mach-O, notarizes once and verifies the bare executable ticket"
     (let [root
           (.toFile (Files/createTempDirectory "vis-macos-signing-test-"
                                               (make-array FileAttribute 0)))
@@ -3667,10 +3675,19 @@
                (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
                calls)
              (expect (str/includes? calls "--wait") calls)
-             (expect (str/includes? calls
-                                    (str "spctl --assess --type execute --verbose=2 "
-                                         (.getAbsolutePath runtime)))
+             ;; Vis #277: spctl assesses app bundles, not the bare CLI we ship.
+             (expect (not (str/includes? calls "spctl ")) calls)
+             (expect (some #(and (str/includes? % "--verify --strict --check-notarization")
+                                 (str/includes? % "and notarized")
+                                 (str/includes? % (.getAbsolutePath runtime)))
+                           (str/split-lines calls))
                      calls))
+           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_EXIT" "1"})]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "notarization ticket") output))
+           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_STATUS" "Invalid"})]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "did not accept") output))
            (finally (delete-tree! root)))))
   (it "refuses a payload with nothing signable instead of shipping it unsigned"
       (let [root
