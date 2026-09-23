@@ -130,7 +130,7 @@
                                                        "saturation" 12})})]
         (expect (str/includes? boundary "session[\"turn\"] = 7"))
         (expect (str/includes? boundary "session[\"utilization\"]"))
-        (expect (str/includes? boundary "\"last_request_input_tokens\": 1200"))
+        (expect (str/includes? boundary "\"latest_measured_input_tokens\": 1200"))
         (expect (str/includes? boundary "\"auto_compress_above\": 8000"))
         (expect (not (str/includes? boundary "\"saturation\"")))))
   ;; Regression: `/goal` persists ~13 ms AFTER the frozen standing block was
@@ -168,7 +168,9 @@
           "engine_iter_universe" ["t1/i1" "t2/i1"])
 
         expected
-        {"last_request_input_tokens" 32000 "auto_compress_above" 200000 "model_input_limit" 272000}]
+        {"latest_measured_input_tokens" 32000
+         "auto_compress_above" 200000
+         "model_input_limit" 272000}]
 
     (it "sends only three measured budget fields in every model-facing context surface"
         (expect (= expected (get (ctx-engine/session-view ctx) "session_utilization")))
@@ -181,10 +183,11 @@
               (cr/render-ctx-delta (cr/ctx-static-map {:ctx base-ctx})
                                    (cr/ctx-delta-map {:ctx ctx}))]
 
-          (expect (str/includes? boundary "last_request_input_tokens"))
-          (expect (str/includes? delta "last_request_input_tokens"))
-          (doseq [removed ["last_request_tokens" "turn_total_tokens" "saturation" "headroom_tokens"
-                           "fold_count" "prompt_cache" "now" "fold_measurement"]]
+          (expect (str/includes? boundary "latest_measured_input_tokens"))
+          (expect (str/includes? delta "latest_measured_input_tokens"))
+          (doseq [removed ["last_request_input_tokens" "last_request_tokens" "turn_total_tokens"
+                           "saturation" "headroom_tokens" "fold_count" "prompt_cache" "now"
+                           "fold_measurement"]]
             (expect (not (str/includes? boundary (str "\"" removed "\""))))
             (expect (not (str/includes? delta (str "\"" removed "\"")))))))
     (it "retains full measurements in engine state for metrics and request health"

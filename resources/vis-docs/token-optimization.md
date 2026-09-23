@@ -121,7 +121,7 @@ selects the history: `"t2"` for a whole turn, `"t2/i4-i5"` for a range, or
 multiple ranges. The current iteration cannot be folded.
 
 The model uses `session["utilization"]` to watch its context budget. The
-`last_request_input_tokens` is the provider-reported **input** of the most
+`latest_measured_input_tokens` is the provider-reported **input** of the most
 recently measured request, including its context. On an overflow it can report
 the size of a rejected request. It does not include output tokens, sum the
 whole turn or measure a request still being assembled. Compare it with

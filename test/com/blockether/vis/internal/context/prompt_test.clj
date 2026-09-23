@@ -864,10 +864,10 @@
                "Inspect unknown shapes" "keep the reproduction as a suite test"
                "rerun it after the fix" "Cover changed behavior with tests"
                "Write only files the task asked" "Commit and push" "Treat context as a budget"
-               ;; The model must know that this is the LAST provider-measured input,
+               ;; The model must know this is the latest available provider measurement,
                ;; not a live token count or cumulative turn usage. Fold pressure
                ;; compares it to the soft budget, not to the hard input ceiling.
-               "`last_request_input_tokens`" "not a live count" "`auto_compress_above`"
+               "`latest_measured_input_tokens`" "not a live count" "`auto_compress_above`"
                "`model_input_limit`" "`hint` arms at 75%"
                "provider-cache metrics are available in diagnostics"
                ;; `session_drop` is gone: omitting the gist IS the discard, and a model

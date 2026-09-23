@@ -131,9 +131,9 @@
    billing input; `saturation` and `headroom_tokens` compare against the hard
    provider limit. `auto_compress_above` is the soft operating budget.
 
-   `session-view` projects only the three decision-making fields, naming the
-   measured input `last_request_input_tokens` for the model. Other fields remain
-   internal for request health and diagnostics.
+   `session-view` projects only the three decision-making fields, exposing the
+   latest measured input as `latest_measured_input_tokens` for the model. Other
+   fields remain internal for request health and diagnostics.
    Returns nil until a request is measured (req <= 0)."
   [request-tokens window-tokens turn-tokens fold-cap]
   (let [req
@@ -846,7 +846,7 @@
          util
          (cond-> (select-keys measured ["auto_compress_above" "model_input_limit"])
            (contains? measured "last_request_tokens")
-           (assoc "last_request_input_tokens" (get measured "last_request_tokens"))
+           (assoc "latest_measured_input_tokens" (get measured "last_request_tokens"))
 
            hint
            (assoc "hint" hint))]

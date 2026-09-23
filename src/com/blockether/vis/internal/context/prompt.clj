@@ -416,7 +416,7 @@
     "- Ask one question only if ambiguity changes the result. Read errors; change approach;\n"
     "  decide from results you already have.\n\n"
     "## 6. Manage context\n"
-    "- Treat context as a budget: `last_request_input_tokens` is the provider-measured input of the LAST request, not a live count or the turn's total;\n"
+    "- Treat context as a budget: `latest_measured_input_tokens` is the latest provider-measured request input, not a live count or the turn's total;\n"
     "  compare it with `auto_compress_above` (soft budget) and `model_input_limit` (hard per-request ceiling).\n"
     "  `hint` arms at 75% of the soft budget. Detailed usage, folds and provider-cache metrics are available in diagnostics, not the model-facing utilization.\n"
     "- Fold obsolete settled work: always `print(fold_session(key, gist))`. STRING key: `\"-t2/i9\"` everything through it.\n"

@@ -685,7 +685,7 @@
              (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
 
              readings
-             (re-seq #"last_request_input_tokens[^\n]*?(\d+)" wire)
+             (re-seq #"latest_measured_input_tokens[^\n]*?(\d+)" wire)
 
              folds
              (:fold-count (persistance/db-session-usage-stats db sid))]
@@ -8003,7 +8003,7 @@
                       "token_read_percent" 82
                       "request_hit_percent" 50}
                      (get @ctx-atom eng/prompt-cache-status-key)))
-          (expect (= {"last_request_input_tokens" 1000}
+          (expect (= {"latest_measured_input_tokens" 1000}
                      (get (eng/session-view @ctx-atom) "session_utilization")))
           (expect (not (contains? (eng/session-view @ctx-atom) eng/prompt-cache-status-key)))))
     (it "omits prompt-cache telemetry before Svar measures this process and turn"

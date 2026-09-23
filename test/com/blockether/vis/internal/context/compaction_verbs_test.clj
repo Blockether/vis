@@ -1184,7 +1184,7 @@
               hint
               (eng/over-budget-hint advisory 7 6)]
 
-          (expect (= {"last_request_input_tokens" 150000
+          (expect (= {"latest_measured_input_tokens" 150000
                       "auto_compress_above" 200000
                       "model_input_limit" 1000000
                       "hint" hint}
