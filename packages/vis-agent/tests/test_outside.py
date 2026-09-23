@@ -98,6 +98,13 @@ def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
     ]
 
 
+def test_workspace_root_tracks_outside_process_directory(tmp_path, monkeypatch):
+    # Regression, #280: the public SDK must supply the same working root to extensions.
+    monkeypatch.chdir(tmp_path)
+    assert vis.workspace_root() == tmp_path
+    assert isinstance(vis.workspace_root(), Path)
+
+
 @pytest.mark.parametrize("name", ["jailed_shell", "council_wake"])
 def test_session_bound_operations_refuse_without_the_host(name):
     with pytest.raises(_outside.Refused, match=f"vis\\.{name}"):

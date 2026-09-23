@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from os import PathLike
+from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
 from typing import (
     Annotated,
@@ -42,6 +43,9 @@ from typing import (
 @runtime_checkable
 class Host(Protocol):
     """Operations every injected or outside `vis` host must implement."""
+
+    def workspace_root(self) -> str:
+        """Read the active session working copy, or the outside process directory."""
 
     def state_get(self, key: str) -> Any:
         """Read one value out of the extension's durable state."""
@@ -2459,6 +2463,16 @@ class _State(_MutableMapping):
 
 
 state = _State()
+
+
+def workspace_root() -> Path:
+    """Return the active session workspace as a path, including its current draft.
+
+    This is the primary working copy, not a language-specific project marker.
+    Outside Vis, it is the process directory. A hosted call without a bound
+    session fails instead of silently using the gateway process directory.
+    """
+    return Path(_host.workspace_root())
 
 
 def log(level, msg):

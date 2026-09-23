@@ -72,6 +72,11 @@ def council_wake(opts):
 # -- Where the outside host keeps things --------------------------------------
 
 
+def workspace_root():
+    """Use the current process directory when no Vis session owns this call."""
+    return str(Path.cwd())
+
+
 def state_home():
     """The directory this host writes to. `VIS_OUTSIDE_HOME` moves it."""
     home = os.environ.get("VIS_OUTSIDE_HOME")
@@ -1273,6 +1278,7 @@ def _live_handle(held, envelope, op, view_id):
 # -- The host itself ----------------------------------------------------------
 
 _IMPLEMENTATIONS = {
+    "workspace_root": workspace_root,
     "state_get": state_get,
     "state_put": state_put,
     "state_del": state_del,

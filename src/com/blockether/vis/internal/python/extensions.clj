@@ -57,6 +57,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [taoensso.telemere :as tel])
@@ -500,6 +501,19 @@
         bound-session
         (select-keys bound-env [:session-id :db-info])]
 
+    (put! g
+          "__vis_host_workspace_root__"
+          (fn []
+            (let [env extension/*current-environment*]
+              (when-not (:session-id env)
+                (throw (ex-info "vis.workspace_root needs a bound Vis session"
+                                {:error :session-not-bound})))
+              (or (workspace/normalize-root (if-let [live (:workspace-atom env)]
+                                              (:root @live)
+                                              (or (get-in env [:workspace :root])
+                                                  (:workspace/root env))))
+                  (throw (ex-info "vis.workspace_root needs a session workspace"
+                                  {:error :workspace-root-unavailable}))))))
     (put! g
           "__vis_host_council_wake__"
           (fn [opts]

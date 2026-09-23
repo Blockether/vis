@@ -16,6 +16,7 @@ operations. Start with the [tutorial](extending.md) for a complete entry file or
 | Persist data or report status | [Durable state](#durable-state) · [Logging and notifications](#logging-and-notifications) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
+| Resolve the active working copy | [Workspace root](#workspace-root) |
 | Show forms, live work or register a provider | [Forms](human-input.md) · [Live views](live-views.md) · [Providers](provider-extensions.md) |
 
 ## Build metadata
@@ -678,6 +679,26 @@ vis.register_extension(vis.Extension(name="todo", description="Todo list.", ctx=
 Return a string-keyed dict under a key unique to your extension. Results from
 all extensions are deep-merged. A non-dict return or exception adds no context
 and does not block the turn.
+
+## Workspace root
+
+Call `vis.workspace_root()` from a session-bound extension to get a `pathlib.Path`
+for the session’s current primary working copy. Relative file and process paths
+should start there; the value switches to the draft when the session enters one,
+and follows the live workspace if it changes. Do not cache it across tool calls.
+
+```python
+import blockether.vis.extension as vis
+
+source = vis.workspace_root() / "src" / "main.py"
+```
+
+This is not a language-specific project root: locate package markers beneath it
+when you need a narrower root. Absolute paths remain absolute. Outside a Vis
+process, it returns the process working directory; a hosted call without a
+bound session fails rather than using the gateway directory. It does not grant
+filesystem permissions. The model sandbox uses `project_root_path` for the
+corresponding root; extension code uses this SDK function.
 
 ## Filesystem and processes
 

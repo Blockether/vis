@@ -217,6 +217,39 @@
                    (expect (= caller (.getCanonicalPath (workspace/cwd)))))))
 
 (defdescribe
+  workspace-root-host-test
+  ;; Regression, #280: extension tools must follow the live session draft, not the process cwd.
+  (it
+    "resolves a session workspace, then its new draft, through the public SDK"
+    (with-loaded
+      {"root.py"
+       "import blockether.vis.extension as vis\ndef root():\n    \"Read the active workspace root.\"\n    return str(vis.workspace_root())\nvis.register_extension(vis.Extension(name='root', description='root', alias='r', symbols=[vis.Symbol(root)]))"}
+      (fn [_ _]
+        (let [trunk
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              draft
+              (doto (io/file trunk "draft") .mkdirs)
+
+              workspace
+              (atom {:root trunk})
+
+              env
+              {:session-id "session-1" :workspace/root trunk :workspace-atom workspace}
+
+              root
+              (symbol-fn (registered "root") 'root)]
+
+          (binding [extension/*current-environment* env]
+            (expect (= trunk (:result (root))))
+            (swap! workspace assoc :root (.getCanonicalPath ^java.io.File draft))
+            (expect (= (.getCanonicalPath ^java.io.File draft) (:result (root)))))))))
+  (it "refuses a hosted call without an owning session"
+      (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
+        (expect (= :session-not-bound
+                   (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))))))
+
+(defdescribe
   dependency-errors-keep-safe-diagnostics-test
   (it
     "keeps pip failure output and thrown causes without credentials (#183)"
