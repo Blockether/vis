@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.26] - 2026-09-23
+
+### Added
+- Let Python extensions ask the SDK for the session’s active workspace root with
+  `vis.workspace_root()`. It follows drafts and never mistakes the gateway’s process
+  directory for the project. Outside Vis, it uses the caller’s working directory.
+
 ## [v0.2.25] - 2026-09-23
 
 ### Added
