@@ -1,11 +1,11 @@
-"""Tests for uplink — no network, no ssh binary.
+"""Tests for uplink — local child processes exercise file streaming.
 
-The transport seam (_spawn) is faked; everything asserted here is about
-the typed result objects and the argv we WOULD have executed.
+The fake transport checks commands and typed results without SSH or network access.
 """
 
 import importlib.util
 import os
+import sys
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -46,6 +46,21 @@ def fake_spawn(codes):
         return queue.pop(0)
 
     return _spawn, calls
+
+
+def fake_transfer(outcomes):
+    """A streaming transfer fake for small binary payloads and remote errors."""
+    calls = []
+    queue = list(outcomes)
+
+    def _stream_transfer(argv, timeout_s, extra_env, *, source=None, sink=None):
+        calls.append({"argv": argv, "input": source.read() if source else None})
+        code, output, error = queue.pop(0)
+        if sink is not None:
+            sink.write(output)
+        return code, error
+
+    return _stream_transfer, calls
 
 
 # -- configuration -----------------------------------------------------------
@@ -256,12 +271,22 @@ def test_info_answers_none_where_proc_is_missing(monkeypatch):
 # -- put() / get() -----------------------------------------------------------
 
 
+@pytest.fixture
+def large_file(tmp_path):
+    source = tmp_path / "model.onnx.data"
+    with source.open("wb") as handle:
+        handle.truncate(64 * 1024 * 1024 + 1)
+        handle.seek(-1, os.SEEK_END)
+        handle.write(b"\xff")
+    return source
+
+
 def test_put_streams_local_bytes_into_remote_cat(monkeypatch, tmp_path):
     configure(monkeypatch)
     local = tmp_path / "payload.bin"
     local.write_bytes(b"\x00\x01hello")
-    spawn, calls = fake_spawn([(0, b"", b"", False)])
-    monkeypatch.setattr(uplink, "_spawn", spawn)
+    transfer, calls = fake_transfer([(0, b"", "")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
     result = uplink.uplink.put(str(local), "/srv/app/payload.bin")
     assert isinstance(result, uplink.TransferResult)
     assert result.size_bytes == 7
@@ -274,29 +299,143 @@ def test_put_failure_raises_with_remote_stderr(monkeypatch, tmp_path):
     configure(monkeypatch)
     local = tmp_path / "x"
     local.write_bytes(b"x")
-    spawn, _ = fake_spawn([(1, b"", b"disk full", False)])
-    monkeypatch.setattr(uplink, "_spawn", spawn)
+    transfer, _ = fake_transfer([(1, b"", "disk full")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
     with pytest.raises(RuntimeError, match="disk full"):
         uplink.uplink.put(str(local), "/srv/x")
 
 
+def test_put_accepts_files_larger_than_64_mib(monkeypatch, large_file):
+    configure(monkeypatch)
+    command = "import os, shutil, sys; shutil.copyfileobj(sys.stdin.buffer, open(os.devnull, 'wb'))"
+    monkeypatch.setattr(
+        uplink, "_ssh_argv", lambda *_: ([sys.executable, "-c", command], {})
+    )
+    result = uplink.uplink.put(str(large_file), "/srv/model.onnx.data")
+    assert result.size_bytes == large_file.stat().st_size
+
+
+def test_put_accepts_cap_inclusively(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    monkeypatch.setattr(uplink, "_MAX_TRANSFER_BYTES", 4)
+    local = tmp_path / "payload"
+    local.write_bytes(b"data")
+    transfer, _ = fake_transfer([(0, b"", "")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
+    assert uplink.uplink.put(str(local), "/srv/payload").size_bytes == 4
+    local.write_bytes(b"extra")
+    with pytest.raises(ValueError, match="copy cap"):
+        uplink.uplink.put(str(local), "/srv/payload")
+
+
+def test_put_rejects_more_than_16_gib_before_spawning(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    assert uplink._MAX_TRANSFER_BYTES == 16 * 1024**3
+    local = tmp_path / "too-large"
+    with local.open("wb") as handle:
+        handle.truncate(uplink._MAX_TRANSFER_BYTES + 1)
+    monkeypatch.setattr(
+        uplink,
+        "_stream_transfer",
+        lambda *_args, **_kwargs: pytest.fail("started transfer"),
+    )
+    with pytest.raises(ValueError, match="copy cap"):
+        uplink.uplink.put(str(local), "/srv/too-large")
+
+
+def test_put_rejects_nonregular_file(monkeypatch):
+    configure(monkeypatch)
+    with pytest.raises(ValueError, match="regular file"):
+        uplink.uplink.put(os.devnull, "/srv/not-a-file")
+
+
 def test_get_writes_remote_bytes_to_local_parents(monkeypatch, tmp_path):
     configure(monkeypatch)
-    spawn, calls = fake_spawn([(0, b"\x00\x01binary", b"", False)])
-    monkeypatch.setattr(uplink, "_spawn", spawn)
+    transfer, calls = fake_transfer([(0, b"\x00\x01binary", "")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
     target = tmp_path / "deep/dir/out.bin"
     result = uplink.uplink.get("/etc/app.conf", str(target))
     assert result.size_bytes == 8
     assert target.read_bytes() == b"\x00\x01binary"
-    assert calls[0]["argv"][-1] == "cat /etc/app.conf"
+    assert (
+        calls[0]["argv"][-1]
+        == f"head -c {uplink._MAX_TRANSFER_BYTES + 1} /etc/app.conf"
+    )
 
 
 def test_get_missing_file_raises(monkeypatch, tmp_path):
     configure(monkeypatch)
-    spawn, _ = fake_spawn([(1, b"", b"cat: /nope: No such file", False)])
-    monkeypatch.setattr(uplink, "_spawn", spawn)
+    transfer, _ = fake_transfer([(1, b"", "cat: /nope: No such file")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
     with pytest.raises(RuntimeError, match="No such file"):
         uplink.uplink.get("/nope", str(tmp_path / "out"))
+
+
+def test_get_accepts_files_larger_than_64_mib(monkeypatch, large_file, tmp_path):
+    configure(monkeypatch)
+    command = "import shutil, sys; shutil.copyfileobj(open(sys.argv[1], 'rb'), sys.stdout.buffer)"
+    monkeypatch.setattr(
+        uplink,
+        "_ssh_argv",
+        lambda *_: ([sys.executable, "-c", command, str(large_file)], {}),
+    )
+    target = tmp_path / "download.bin"
+    result = uplink.uplink.get("/srv/model.onnx.data", str(target))
+    assert result.size_bytes == large_file.stat().st_size
+    assert target.stat().st_size == result.size_bytes
+    with target.open("rb") as handle:
+        handle.seek(-1, os.SEEK_END)
+        assert handle.read() == b"\xff"
+
+
+def test_get_accepts_cap_inclusively(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    monkeypatch.setattr(uplink, "_MAX_TRANSFER_BYTES", 4)
+    transfer, _ = fake_transfer([(0, b"data", "")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
+    target = tmp_path / "out.bin"
+    assert uplink.uplink.get("/srv/payload", str(target)).size_bytes == 4
+    assert target.read_bytes() == b"data"
+
+
+def test_get_rejects_over_cap_without_replacing_existing_file(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    monkeypatch.setattr(uplink, "_MAX_TRANSFER_BYTES", 4)
+    transfer, calls = fake_transfer([(0, b"12345", "")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
+    target = tmp_path / "out.bin"
+    target.write_bytes(b"original")
+    with pytest.raises(ValueError, match="copy cap"):
+        uplink.uplink.get("/srv/too-large", str(target))
+    assert calls[0]["argv"][-1] == "head -c 5 /srv/too-large"
+    assert target.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".uplink-*"))
+
+
+def test_get_failure_preserves_existing_file(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    transfer, _ = fake_transfer([(1, b"partial", "disk full")])
+    monkeypatch.setattr(uplink, "_stream_transfer", transfer)
+    target = tmp_path / "out.bin"
+    target.write_bytes(b"original")
+    with pytest.raises(RuntimeError, match="disk full"):
+        uplink.uplink.get("/srv/partial", str(target))
+    assert target.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".uplink-*"))
+
+
+def test_get_timeout_removes_partial_download(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    command = "import sys, time; sys.stdout.buffer.write(b'partial'); sys.stdout.flush(); time.sleep(5)"
+    monkeypatch.setattr(
+        uplink, "_ssh_argv", lambda *_: ([sys.executable, "-c", command], {})
+    )
+    target = tmp_path / "out.bin"
+    target.write_bytes(b"original")
+    with pytest.raises(RuntimeError, match="timed out"):
+        uplink.uplink.get("/srv/partial", str(target), timeout_s=1)
+    assert target.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".uplink-*"))
 
 
 # -- the password never travels in a result ----------------------------------

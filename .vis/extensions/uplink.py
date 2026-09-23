@@ -35,16 +35,18 @@ import hashlib
 import os
 import shlex
 import signal
+import stat
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from typing import BinaryIO
 
 import blockether.vis.extension as vis
 
 _CONNECT_TIMEOUT_S = 15
 _MAX_CAPTURE_BYTES = 256 * 1024
-_MAX_TRANSFER_BYTES = 64 * 1024 * 1024
+_MAX_TRANSFER_BYTES = 16 * 1024 * 1024 * 1024
 _SECRET_ENV = "UPLINK_SECRET"
 _ASKPASS_BODY = '#!/bin/sh\nexec printf %s "$' + _SECRET_ENV + '"\n'
 
@@ -254,6 +256,46 @@ def _spawn(
             os.killpg(proc.pid, signal.SIGKILL)
         out, err = proc.communicate()
         return None, out or b"", err or b"", True
+
+
+def _stream_transfer(
+    argv: list[str],
+    timeout_s: int,
+    extra_env: dict[str, str],
+    *,
+    source: BinaryIO | None = None,
+    sink: BinaryIO | None = None,
+) -> tuple[int | None, str]:
+    """Stream SSH between file descriptors without buffering the payload."""
+    env = dict(os.environ)
+    env.update(extra_env)
+    with tempfile.TemporaryFile() as errors:
+        proc = subprocess.Popen(
+            argv,
+            stdin=source if source is not None else subprocess.DEVNULL,
+            stdout=sink if sink is not None else subprocess.DEVNULL,
+            stderr=errors,
+            env=env,
+            start_new_session=True,
+        )
+        try:
+            code = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            code = None
+        errors.seek(0)
+        detail = errors.read(_MAX_CAPTURE_BYTES).decode("utf-8", errors="replace")
+    return code, detail
+
+
+def _require_transfer_ok(code: int | None, stderr: str, what: str) -> None:
+    if code != 0:
+        detail = stderr.strip() or (
+            "timed out" if code is None else f"exit code {code}"
+        )
+        raise RuntimeError(f"{what} failed on the remote server: {detail[:400]}")
 
 
 def _decode(chunk: bytes) -> tuple[str, bool]:
@@ -579,31 +621,35 @@ class Uplink:
     ) -> TransferResult:
         """Copy one local file to a remote path; remote parents created.
 
-        The payload crosses as stdin to a remote `cat`, so it is
-        binary-safe and never appears in a command line. A failed copy
-        (missing local file, remote disk full) raises with the remote
-        stderr; a completed TransferResult names a copy that exited 0.
+        Streams regular files up to 16 GiB as stdin to a remote `cat`, so
+        binary data stays out of memory, command lines and results. Failed
+        copies raise with remote stderr. Increase `timeout_s` for slow links.
         """
         source = os.path.expanduser(local_path)
         with open(source, "rb") as handle:
-            payload = handle.read()
-        if len(payload) > _MAX_TRANSFER_BYTES:
-            raise ValueError(
-                f"{local_path} is {len(payload)} bytes; the copy cap is "
-                f"{_MAX_TRANSFER_BYTES} — move it with run() and a stream"
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError(f"{local_path} must be a regular file")
+            size = info.st_size
+            if size > _MAX_TRANSFER_BYTES:
+                raise ValueError(
+                    f"{local_path} is {size} bytes; the copy cap is "
+                    f"{_MAX_TRANSFER_BYTES}"
+                )
+            parent = os.path.dirname(remote_path)
+            redirect = f"cat > {shlex.quote(remote_path)}"
+            command = (
+                f"mkdir -p {shlex.quote(parent)} && {redirect}" if parent else redirect
             )
-        parent = os.path.dirname(remote_path)
-        redirect = f"cat > {shlex.quote(remote_path)}"
-        command = (
-            f"mkdir -p {shlex.quote(parent)} && {redirect}" if parent else redirect
-        )
-        result = _execute(command, timeout_s=timeout_s, input_bytes=payload)
-        _require_ok(result, f"put {remote_path}")
+            argv, extra = _ssh_argv(_endpoint(), command)
+            started = time.monotonic()
+            code, err = _stream_transfer(argv, timeout_s, extra, source=handle)
+            _require_transfer_ok(code, err, f"put {remote_path}")
         return TransferResult(
             local_path=source,
             remote_path=remote_path,
-            size_bytes=len(payload),
-            duration_ms=result.duration_ms,
+            size_bytes=size,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
 
     @vis.method(
@@ -617,35 +663,40 @@ class Uplink:
     ) -> TransferResult:
         """Copy one remote file to a local path; local parents created.
 
-        Binary-safe through the same pipe. A missing or unreadable remote
-        file raises with the remote stderr. The bytes land only in the
-        local file, never inside a result object.
+        Streams at most 16 GiB into a temporary file before replacing the
+        target. Failures leave an existing target untouched. The bytes never
+        enter a result object; increase `timeout_s` for slow links.
         """
         endpoint = _endpoint()
-        command = f"cat {shlex.quote(remote_path)}"
+        command = f"head -c {_MAX_TRANSFER_BYTES + 1} {shlex.quote(remote_path)}"
         argv, extra = _ssh_argv(endpoint, command)
-        started = time.monotonic()
-        code, out, err, _ = _spawn(argv, None, timeout_s, extra)
-        if len(out) > _MAX_TRANSFER_BYTES:
-            raise ValueError(
-                f"{remote_path} is larger than the {_MAX_TRANSFER_BYTES} byte "
-                "copy cap — pull it with run() and a targeted command"
-            )
-        if code != 0:
-            detail = (
-                err.decode("utf-8", errors="replace").strip() or f"exit code {code}"
-            )
-            raise RuntimeError(
-                f"get {remote_path} failed on the remote server: {detail[:400]}"
-            )
         target = os.path.expanduser(local_path)
         os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(out)
+        started = time.monotonic()
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(os.path.abspath(target)),
+                prefix=".uplink-",
+                delete=False,
+            ) as handle:
+                temporary = handle.name
+                code, err = _stream_transfer(argv, timeout_s, extra, sink=handle)
+                handle.flush()
+                size = os.fstat(handle.fileno()).st_size
+                if size > _MAX_TRANSFER_BYTES:
+                    raise ValueError(
+                        f"{remote_path} is larger than the {_MAX_TRANSFER_BYTES} byte copy cap"
+                    )
+                _require_transfer_ok(code, err, f"get {remote_path}")
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
         return TransferResult(
             local_path=local_path,
             remote_path=remote_path,
-            size_bytes=len(out),
+            size_bytes=size,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 
