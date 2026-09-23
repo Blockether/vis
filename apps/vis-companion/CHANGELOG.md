@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.26 (6652) — 2026-09-23
+<!-- commit: 3608dd5f94557f56a36025ea3b1ff089a1542f11 -->
+
+- Remove iOS notch strip over app header
+- Record companion build 6650
+
 ## 0.2.26 (6650) — 2026-09-23
 <!-- commit: b22b85e69423b5bdf33fc9487a2d5fbddb9576b2 -->
 
