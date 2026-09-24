@@ -3507,14 +3507,36 @@
 
 (doseq
   [spec
-   [{:cmd/name "sdk-stdio"
-     :cmd/doc "Run an owned local SDK engine over stdin/stdout without HTTP."
-     :cmd/usage "vis-agent sdk-stdio"
+   [{:cmd/name "stdio"
+     :cmd/doc "Serve a Python SDK-owned local engine over stdin/stdout without HTTP."
+     :cmd/usage "vis-agent stdio"
+     :cmd/extra-sections
+     [{:title "USE FROM PYTHON"
+       :body (str/join "\n"
+                       ["  Agent() and LocalEngine start this command for you, select a private"
+                        "  session database, and stop the process when their context closes." ""
+                        "  from blockether.vis.engine import Agent"
+                        "  with Agent(project=\".\") as agent:"
+                        "      print(agent.run(\"Summarize this project\")[\"status\"])" ""
+                        "  Install the Python SDK and a compatible Vis executable separately."
+                        "  A task can incur provider charges and access project files." ""])}
+      {:title "DIRECT USE"
+       :body (str/join
+               "\n"
+               ["  Set VIS_DB_PATH to an isolated, writable SQLite file path first."
+                "  This command reads NDJSON requests from stdin and writes a protocol"
+                "  handshake and NDJSON replies to stdout. Keep stdout free of other output."
+                "  It exits on stdin EOF and neither starts nor stops an HTTP gateway."
+                "  It is not an interactive shell or an MCP stdio server." ""])}
+      {:title "DOCUMENTATION"
+       :body "  https://vis.blockether.com/python-sdk.html#use-stdio-from-the-python-sdk"}]
      :cmd/run-fn
      (fn [_ _]
        (config/init-cli!)
        (when (str/blank? (System/getenv "VIS_DB_PATH"))
-         (throw (ex-info "sdk-stdio requires an explicit VIS_DB_PATH" {:vis/user-error true})))
+         (throw (ex-info
+                  "stdio requires VIS_DB_PATH; use Agent() or LocalEngine() from the Python SDK"
+                  {:vis/user-error true})))
        (try (gateway-stdio/serve!
               (java.io.BufferedReader.
                 (java.io.InputStreamReader. System/in java.nio.charset.StandardCharsets/UTF_8))
@@ -4275,7 +4297,7 @@
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during
     ;; namespace load); this restores the stdout stream for debugging.
-    (when (and debug? (not= "sdk-stdio" (first args)))
+    (when (and debug? (not= "stdio" (first args)))
       (try (tel/add-handler! :default/console (tel/handler:console)) (catch Throwable _ nil)))
     ;; Persistence handler: scopes signals to the right DB rows via
     ;; `:db-info` / `:session-soul-id` / `:session-turn-id` /
@@ -4297,7 +4319,7 @@
 (defn- deferred-python-dispatch?
   "Defer gateway Python loading and keep declarative sync free of entrypoint imports."
   [args]
-  (or (= "sdk-stdio" (first args))
+  (or (= "stdio" (first args))
       (contains? #{["gateway" "start"] ["gateway" "tui"] ["extension" "sync"]}
                  (vec (take 2 args)))))
 

@@ -211,6 +211,21 @@
       (expect (= ["channels" "tui"]
                  (#'main/strip-global-args ["channels" "--stream-trace" "tui"])))))
 
+(defdescribe stdio-command-help-test
+             (it "explains the SDK stdio mode without starting it"
+                 (let [out (java.io.StringWriter.)]
+                   (binding [*out* out]
+                     (expect (true? (#'main/fast-help-dispatched? false ["stdio" "--help"]))))
+                   (doseq [text ["vis-agent stdio" "Python SDK" "LocalEngine" "VIS_DB_PATH" "NDJSON"
+                                 "stdin" "stdout"]]
+                     (expect (str/includes? (str out) text) text))))
+             (it "lists the new name at the root instead of the SDK-prefixed name"
+                 (let [help (commandline/render-tree (#'main/root-command))]
+                   (expect (str/includes? help "stdio"))
+                   (expect (not (str/includes? help "sdk-stdio")))))
+             (it "defers Python extension loading for stdio"
+                 (expect (true? (#'main/deferred-python-dispatch? ["stdio"])))))
+
 (defdescribe
   gateway-flags-test
   (it "splits --gateway and --gateway-token out of the args, in either order"

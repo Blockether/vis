@@ -54,7 +54,7 @@ class LocalEngine(ExecutionLayer):
 
     Args:
         executable: Executable path/name or nonempty argument sequence. The SDK
-            appends `sdk-stdio`; no shell command parsing is performed.
+            appends `stdio`; no shell command parsing is performed.
         root: Existing local working directory, resolved at construction.
         timeout: Positive finite timeout in seconds for each transport operation.
         startup_timeout: Positive finite deadline in seconds for initial boot.
@@ -151,7 +151,7 @@ class LocalEngine(ExecutionLayer):
         }
         try:
             self._process = subprocess.Popen(
-                [*self._command, "sdk-stdio"],
+                [*self._command, "stdio"],
                 cwd=self._root,
                 env=env,
                 stdin=subprocess.PIPE,

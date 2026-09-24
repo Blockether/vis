@@ -69,8 +69,8 @@
           (#'binary/run-binary
            dir
            ["/usr/bin/env" (str "VIS_DB_PATH=" (.getAbsolutePath database)) "/bin/sh" "-c"
-            "exec \"$1\" \"-Duser.home=$2\" sdk-stdio < \"$3\"" "native-export"
-            (.getAbsolutePath bin) (.getAbsolutePath dir) (.getAbsolutePath request-file)]
+            "exec \"$1\" \"-Duser.home=$2\" stdio < \"$3\"" "native-export" (.getAbsolutePath bin)
+            (.getAbsolutePath dir) (.getAbsolutePath request-file)]
            60)
           frames (try (mapv json/read-json (remove str/blank? (str/split-lines output)))
                       (catch Exception error
@@ -185,7 +185,7 @@
                               (expect (str/includes? (pr-str (:presentation row))
                                                      (format "activity-detail-%03d-7-" n))))
                             (expect (= [(:id (peek rows))] (mapv :id (:rows tail))))
-                            ;; SDK-stdio owns this temporary DB, never the user's gateway.
+                            ;; Stdio owns this temporary DB, never the user's gateway.
                             ;; This calls Ring StreamableResponseBody inside the linked image.
                             (let [exported (export-history dir bin database sid aid)]
                               (expect (> (count exported) 65536))

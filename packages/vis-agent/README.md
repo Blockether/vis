@@ -7,7 +7,24 @@ pip install vis-agent
 ```
 
 Requires Python 3.11+. Install the Vis executable and configure a provider
-separately for local use.
+separately for local use. The execution-layer API below is unreleased: build
+the SDK and engine from the same source revision.
+
+## Run a local agent
+
+```python
+from blockether.vis.engine import Agent
+
+with Agent(project=".") as agent:
+    result = agent.run("Summarize this project without changing files.")
+    print(result["status"])
+```
+
+The SDK starts an owned `vis-agent stdio` process, sets up a temporary session
+database and cleans it up on close. This is a Python transport, not an
+interactive CLI command or an MCP server. Tasks can incur provider charges and
+access project files. For a chosen executable or multiple sessions on one
+process, use `LocalEngine`; see the [stdio guide](https://vis.blockether.com/python-sdk.html#use-stdio-from-the-python-sdk).
 
 - [Python SDK guide](https://vis.blockether.com/python-sdk.html) — run a local
   agent, continue a conversation or connect to a shared gateway. `Agent` is

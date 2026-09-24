@@ -67,6 +67,40 @@ You should see a session ID, `Status: completed` and the answer's content blocks
 `run()` returns a turn record, not a text string. A failed, cancelled or suspended
 turn also returns a record: always check `status`.
 
+## Use stdio from the Python SDK
+
+The local `Agent` example above starts `vis-agent stdio` for you. This is a
+working transport for a Python-owned Vis process, not a command for asking the
+agent a question at your terminal and not an MCP server. It does not start an
+HTTP gateway. The SDK and engine must come from compatible revisions (the
+execution-layer API in this guide is not yet released).
+
+To choose the executable yourself or share one local process between agents,
+use `LocalEngine`:
+
+```python
+from blockether.vis.engine import Agent, LocalEngine
+
+with LocalEngine(executable="vis-agent", root=".") as layer:
+    with Agent(project=".", execution_layer=layer) as agent:
+        result = agent.run("Summarize this project without changing files.")
+        print(result["status"])
+```
+
+`LocalEngine` appends `stdio` to the executable command, sets `VIS_DB_PATH` to
+an isolated temporary SQLite database, and stops its process and removes that
+database when its context closes. Running a task can incur provider charges
+and grant the engine access to project files. If the executable is not on
+`PATH`, pass its absolute launcher path to `executable`.
+
+You can run `vis-agent stdio --help` without starting the transport. Direct
+invocation requires `VIS_DB_PATH` set to an isolated, writable SQLite file
+path. The process writes a protocol handshake and newline-delimited JSON
+(NDJSON) replies to stdout, reads NDJSON requests from stdin, and exits when
+stdin closes. Keep stdout free of other output; use the SDK instead of typing
+requests by hand. Neither starting nor stopping this mode affects an existing
+gateway.
+
 ## Connect to a gateway and run a task
 
 Use a gateway when conversations must survive your script or be shared with the
@@ -384,7 +418,7 @@ explicit `idempotency_key`; a new key means a new request.
 
 For a launcher outside `PATH`, configure `LocalEngine(executable=..., root=...)`
 and pass that layer to `Agent`. `LocalEngine` accepts a launcher path or argv list
-and adds `sdk-stdio` itself. Use an outer `with LocalEngine(...) as layer:` context
+and adds `stdio` itself. Use an outer `with LocalEngine(...) as layer:` context
 to own its lifetime, as the gateway example does with `GatewayClient`.
 
 Both implementations share the `ExecutionLayer` contract; `Agent` does not choose

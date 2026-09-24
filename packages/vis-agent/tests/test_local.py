@@ -17,6 +17,19 @@ def test_missing_executable_is_reported_without_a_live_process(tmp_path):
     engine.close()
 
 
+def test_local_engine_starts_stdio_command(tmp_path):
+    import json
+    import sys
+
+    hello = json.dumps({"protocol": _PROTOCOL})
+    code = (
+        "import sys; assert sys.argv[1:] == ['stdio']; "
+        f"print({hello!r}, flush=True); sys.stdin.read()"
+    )
+    with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
+        assert engine._process.poll() is None
+
+
 def test_real_local_engine(tmp_path, monkeypatch):
     command = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not command:
