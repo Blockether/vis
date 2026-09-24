@@ -301,6 +301,31 @@ test('desktop badge headings match the mobile font height and top inset', async 
   expect(titles[2]).toEqual(titles[0]);
 });
 
+test('desktop badges download the current release installers in README and documentation', () => {
+  const version = readFileSync('../../VIS_VERSION', 'utf8').trim();
+  const release = `https://github.com/Blockether/vis/releases/download/v${version}/vis-companion-${version}`;
+  const installers = {
+    windows: `${release}-windows-x64.msi`,
+    macos: `${release}-macos-universal.dmg`,
+    linux: `${release}-linux-x64.AppImage`,
+  };
+  for (const file of ['../../README.md', '../../resources/vis-docs/index.md']) {
+    const source = readFileSync(file, 'utf8');
+    const dom = new JSDOM(source);
+    try {
+      for (const [platform, url] of Object.entries(installers)) {
+        const badge = dom.window.document.querySelector(`a.store-${platform}`);
+        expect(badge?.getAttribute('href'), `${file}: ${platform}`).toBe(url);
+        expect(badge?.querySelector('img'), `${file}: ${platform}`).not.toBeNull();
+      }
+      expect(source, file).toContain(`](${release}-linux-arm64.AppImage)`);
+      expect(source, file).toContain('](https://github.com/Blockether/vis/releases/latest)');
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+
 test('the static site exports sharp store badges without allowing inline scripts', () => {
   for (const name of ['testflight', 'google-play', 'windows', 'macos', 'linux']) {
     const badge = readFileSync(`dist/assets/install-${name}.png`);
