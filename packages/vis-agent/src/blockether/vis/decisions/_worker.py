@@ -11,6 +11,7 @@ import os
 import sys
 from pathlib import Path
 
+from ._models import ARCHITECTURES
 from ._publication import package
 from .training import ModernBertTrainer, TrainingBundle
 
@@ -27,6 +28,7 @@ def run(spec_path: Path) -> None:
     """Train both heads, export FP32, and record a digest only after success."""
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     if set(spec) != {
+        "model_id",
         "checkpoint",
         "train_data",
         "eval_data",
@@ -37,10 +39,24 @@ def run(spec_path: Path) -> None:
         "result",
     }:
         raise ValueError("Invalid decision training job description")
+    model_id = spec["model_id"]
+    if model_id != "laya-typed-decisions" and model_id not in ARCHITECTURES:
+        raise ValueError("Unknown decision training model identity")
     _progress({"stage": "loading"})
-    bundle = TrainingBundle.open(spec["checkpoint"])
+    if model_id == "laya-typed-decisions":
+        bundle = TrainingBundle.open(spec["checkpoint"])
+        trainer_type = ModernBertTrainer
+    else:
+        from .gliner_training import GlinerTrainer, GlinerTrainingBundle
+
+        bundle = GlinerTrainingBundle.open(spec["checkpoint"])
+        if bundle.model_id != model_id:
+            raise ValueError(
+                "GLiNER checkpoint identity does not match the requested model"
+            )
+        trainer_type = GlinerTrainer
     _progress({"stage": "training"})
-    with ModernBertTrainer(bundle) as trainer:
+    with trainer_type(bundle) as trainer:
         result = trainer.finetune(
             train_data=spec["train_data"],
             eval_data=spec["eval_data"],
@@ -48,6 +64,13 @@ def run(spec_path: Path) -> None:
             validation_policy=spec["validation_policy"],
             output_dir=spec["output_dir"],
             progress=_progress,
+        )
+    metadata = json.loads(
+        (result.inference_bundle / "PROVENANCE.json").read_text(encoding="utf-8")
+    )
+    if metadata.get("model") != model_id:
+        raise ValueError(
+            "Decision inference identity does not match the requested model"
         )
     _progress({"stage": "publishing"})
     digest, size = package(result.inference_bundle, Path(spec["archive"]))

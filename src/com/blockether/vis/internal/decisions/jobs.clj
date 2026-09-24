@@ -21,6 +21,8 @@
 
 (def ^:private max-saved-jobs 4)
 
+(def ^:private training-models #{"laya-typed-decisions" "gliner2.5-base" "gliner2.5-decide"})
+
 (def ^:private inputs
   {"train_data" ["train.jsonl" 16777216]
    "eval_data" ["eval.jsonl" 16777216]
@@ -93,9 +95,11 @@
        (catch Exception _ default)))
 
 (defn- settings
-  []
+  [model-id]
   (let [python
-        (config/extension-env-value "VIS_DECISION_TRAINING_PYTHON")
+        (config/extension-env-value (if (= model-id "laya-typed-decisions")
+                                      "VIS_DECISION_TRAINING_PYTHON"
+                                      "VIS_DECISION_GLINER_TRAINING_PYTHON"))
 
         root
         (config/extension-env-value "VIS_DECISION_TRAINING_DATA_ROOT")]
@@ -140,21 +144,22 @@
       file)))
 
 (defn- checkpoint
-  ^File [request]
+  ^File [request model-id]
   (if-let [source (get request "source_job_id")]
-    (let [prior (get! source)
-          path (io/file (directory source) "output" "checkpoint")]
+    (do (when-not (valid-id? source) (invalid!))
+        (let [prior (get! source)
+              path (io/file (directory source) "output" "checkpoint")]
 
-      (when-not (and (valid-id? source)
-                     (contains? #{"completed" "failed"} (get prior "status"))
-                     (.isFile (io/file path "PROVENANCE.json")))
-        (invalid!))
-      path)
-    (let [model (assets/entry "laya-typed-decisions")
+          (when-not (and (= model-id (get prior "model_id"))
+                         (contains? #{"completed" "failed"} (get prior "status"))
+                         (.isFile (io/file path "PROVENANCE.json")))
+            (invalid!))
+          path))
+    (let [model (assets/entry model-id)
           dir (assets/install-dir model :training)]
 
       (when-not (assets/installed? (assets/artifact model :training) dir)
-        (throw (ex-info "Install the pinned Laya training checkpoint first"
+        (throw (ex-info (str "Install the pinned " model-id " training checkpoint first")
                         {:type :decisions/model-not-installed})))
       (io/file dir))))
 
@@ -290,8 +295,16 @@
            ;; Python exited and released its tensors. Registration now uses the
            ;; ordinary bounded JVM runtime and never activates an existing alias.
            (cache/end-training!)
-           (let [registered
-                 (registry/register! archive (get result "sha256") decisions/validate-runtime!)]
+           (let [model-id (get (read-status id) "model_id")
+                 registered (registry/register!
+                              archive
+                              (get result "sha256")
+                              (fn [model inference]
+                                (when-not (= model-id (:id model))
+                                  (throw (ex-info "Decision trainer returned a different model"
+                                                  {:type :decisions/invalid-bundle})))
+                                (decisions/validate-runtime! model inference)))]
+
              (cleanup-inference! id)
              (locking lock
                (write-status! id
@@ -323,10 +336,17 @@
                  (= (set (keys request))
                     (cond-> (set (keys inputs))
                       (contains? request "source_job_id")
-                      (conj "source_job_id"))))
+                      (conj "source_job_id")
+
+                      (contains? request "model_id")
+                      (conj "model_id")))
+                 (contains? training-models (get request "model_id" "laya-typed-decisions")))
     (invalid!))
-  (let [settings
-        (settings)
+  (let [model-id
+        (get request "model_id" "laya-typed-decisions")
+
+        settings
+        (settings model-id)
 
         files
         (into {}
@@ -335,7 +355,7 @@
                    (keys inputs)))
 
         source
-        (checkpoint request)]
+        (checkpoint request model-id)]
 
     (locking lock
       (when @active (busy!))
@@ -350,43 +370,44 @@
             dir
             (directory id)]
 
-        (try (.mkdirs dir)
-             (let [input-dir (io/file dir "input")]
-               (.mkdirs input-dir)
-               (let [paths (into {}
-                                 (for [[name [filename max-size]] inputs]
-                                   (let [copied (io/file input-dir filename)]
-                                     (with-open [in (io/input-stream (get files name))
-                                                 out (io/output-stream copied)]
+        (try
+          (.mkdirs dir)
+          (let [input-dir (io/file dir "input")]
+            (.mkdirs input-dir)
+            (let [paths (into {}
+                              (for [[name [filename max-size]] inputs]
+                                (let [copied (io/file input-dir filename)]
+                                  (with-open [in (io/input-stream (get files name))
+                                              out (io/output-stream copied)]
 
-                                       (loop [total 0]
-                                         (let [buffer (byte-array 65536)
-                                               n (.read in buffer)]
+                                    (loop [total 0]
+                                      (let [buffer (byte-array 65536)
+                                            n (.read in buffer)]
 
-                                           (when (pos? n)
-                                             (let [next (+ total n)]
-                                               (when (> next max-size) (invalid!))
-                                               (.write out buffer 0 n)
-                                               (recur next))))))
-                                     [name (.getPath copied)])))]
-                 (spit (io/file dir "spec.json")
-                       (str (wire/json-str (merge paths
-                                                  {"checkpoint" (.getPath source)
-                                                   "output_dir" (str (io/file dir "output"))
-                                                   "archive" (str (io/file dir "inference.zip"))
-                                                   "result" (str (io/file dir "result.json"))}))
-                            "\n"))))
-             (write-status! id {"job_id" id "status" "running" "stage" "staging"})
-             (reset! active
-               {:id id :settings settings :cancelled? (atom false) :process (atom nil)})
-             (let [worker (future (run-job! id))]
-               (when (= id (:id @active)) (swap! active assoc :future worker)))
-             (get! id)
-             (catch Throwable error
-               (when (= id (:id @active)) (reset! active nil))
-               (cache/end-training!)
-               (when (.exists dir) (files/delete-dir! dir))
-               (throw error)))))))
+                                        (when (pos? n)
+                                          (let [next (+ total n)]
+                                            (when (> next max-size) (invalid!))
+                                            (.write out buffer 0 n)
+                                            (recur next))))))
+                                  [name (.getPath copied)])))]
+              (spit (io/file dir "spec.json")
+                    (str (wire/json-str (merge paths
+                                               {"model_id" model-id
+                                                "checkpoint" (.getPath source)
+                                                "output_dir" (str (io/file dir "output"))
+                                                "archive" (str (io/file dir "inference.zip"))
+                                                "result" (str (io/file dir "result.json"))}))
+                         "\n"))))
+          (write-status! id {"job_id" id "model_id" model-id "status" "running" "stage" "staging"})
+          (reset! active {:id id :settings settings :cancelled? (atom false) :process (atom nil)})
+          (let [worker (future (run-job! id))]
+            (when (= id (:id @active)) (swap! active assoc :future worker)))
+          (get! id)
+          (catch Throwable error
+            (when (= id (:id @active)) (reset! active nil))
+            (cache/end-training!)
+            (when (.exists dir) (files/delete-dir! dir))
+            (throw error)))))))
 
 (defn delete!
   "Cancel an active job, or explicitly discard a terminal private checkpoint."

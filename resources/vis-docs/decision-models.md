@@ -225,14 +225,19 @@ files as model assets.
 
 ## Train on the gateway instead
 
-An operator can set `VIS_DECISION_TRAINING_PYTHON` to a Python 3.12 executable with the
-SDK and offline training dependencies, and `VIS_DECISION_TRAINING_DATA_ROOT` to a
-directory of approved JSONL/JSON files on the gateway. Install the pinned checkpoint
-first with `--training`. The API accepts **filenames in that directory**, not local
-laptop paths and not raw data uploads. Each dataset is limited to 16 MiB; configuration
-and policy files to 16 KiB. One training job runs at a time, for up to two hours by
-default. Other decision inferences are temporarily refused while the trainer owns the
-model budget.
+Set `VIS_DECISION_TRAINING_PYTHON` to a Python 3.12 executable with the SDK and
+`vis-agent[decisions-training]` for Laya. For GLiNER2.5 base or Decide, use a
+**separate** environment with `vis-agent[decisions-gliner-training]` and set
+`VIS_DECISION_GLINER_TRAINING_PYTHON` to its executable. The two training extras
+pin incompatible Transformers versions; the gateway never substitutes one
+interpreter or model family for the other. Set `VIS_DECISION_TRAINING_DATA_ROOT`
+to a directory of approved JSONL/JSON files on the gateway. Download the pinned
+checkpoint for the selected model explicitly with `--training` before starting.
+The API accepts **filenames in that directory**, not laptop paths or raw uploads.
+Each dataset is limited to 16 MiB; configuration and policy files to 16 KiB.
+One training job runs at a time, for up to two hours by default. Other decision
+inferences are temporarily refused while the trainer owns the model budget;
+existing aliases and their selected versions remain unchanged.
 
 ```python
 job = decisions.start_training(
@@ -245,13 +250,18 @@ print(decisions.get_training_job(job["job_id"]))
 # after completion, it deletes the private resumable checkpoint.
 ```
 
-The gateway stages bounded inputs, launches an isolated offline CPU worker, saves a
-private checkpoint and validates a new FP32 inference version. To continue from it, pass
-the completed `job_id` as `source_job_id` to `start_training`; do not delete that job
-first. Training does not activate an alias. Review the held-out metrics and use
-`activate_model` separately. A quality failure, interruption or cancellation leaves
-existing versions and aliases unchanged. Metrics on a small sample do **not** establish
-domain safety or authorize autonomous actions.
+For GLiNER, pass `model_id="gliner2.5-base"` or `"gliner2.5-decide"` to
+`decisions.start_training(...)` with approved data and a GLiNER training config.
+The default without `model_id` stays Laya. Job status includes `model_id`, stage,
+progress, metrics and the eventual `model_ref`. The gateway stages bounded inputs,
+launches an isolated offline CPU worker, saves a private checkpoint and validates
+a new FP32 inference version. To continue from it, pass the completed or failed
+`job_id` as `source_job_id` **with the same model_id**; do not delete that job
+first. Cross-family resumes fail rather than falling back to another checkpoint.
+Training does not activate an alias. Review the held-out metrics and use
+`activate_model` separately. A quality failure, interruption or cancellation
+leaves existing versions and aliases unchanged. Metrics on a small sample do
+**not** establish domain safety or authorize autonomous actions.
 
 ## See also
 

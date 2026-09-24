@@ -82,3 +82,44 @@ def test_remote_training_validates_local_filenames_and_preserves_gateway_failure
                 validation_policy="policy.json",
             )
         assert error.value.status == 503
+
+
+@pytest.mark.parametrize("model_id", ["gliner2.5-base", "gliner2.5-decide"])
+def test_remote_training_explicit_gliner_family_and_resume(model_id):
+    previous = "28b15a56-014d-4c3d-9824-dc41edb6569a"
+    current = "93b91cb4-ed9a-421b-a4cd-0d659ea2c510"
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert method == "POST" and path == "/v1/decisions/training/jobs"
+        assert json.loads(body) == {
+            "model_id": model_id,
+            "source_job_id": previous,
+            "train_data": "training.jsonl",
+            "eval_data": "held-out.jsonl",
+            "training_config": "config.json",
+            "validation_policy": "policy.json",
+        }
+        return 202, {"job_id": current, "model_id": model_id, "status": "running"}
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as gateway:
+        decisions = Decisions(gateway)
+        result = decisions.start_training(
+            model_id=model_id,
+            source_job_id=previous,
+            train_data="training.jsonl",
+            eval_data="held-out.jsonl",
+            training_config="config.json",
+            validation_policy="policy.json",
+        )
+        assert result["model_id"] == model_id
+        assert len([call for call in calls if call[1].endswith("/training/jobs")]) == 1
+        with pytest.raises(ValueError, match="model_id"):
+            decisions.start_training(
+                model_id="unknown",
+                train_data="training.jsonl",
+                eval_data="held-out.jsonl",
+                training_config="config.json",
+                validation_policy="policy.json",
+            )

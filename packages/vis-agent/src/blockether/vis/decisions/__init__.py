@@ -19,6 +19,7 @@ from blockether.vis.engine import (
     TransportError,
 )
 
+from ._models import ARCHITECTURES
 from ._publication import ProgressReader, package
 from ._trainer import TrainingResult
 
@@ -117,13 +118,15 @@ class Decisions:
         eval_data: str,
         training_config: str,
         validation_policy: str,
+        model_id: str = "laya-typed-decisions",
         source_job_id: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Train offline on approved gateway-local filenames, without uploading rows.
 
-        The gateway must have a Python 3.12 ``decisions-training`` environment,
-        a pinned checkpoint, and an explicitly configured training data root.
+        Select ``gliner2.5-base`` or ``gliner2.5-decide`` explicitly for GLiNER;
+        they require a separate ``decisions-gliner-training`` environment. The
+        gateway needs a pinned local checkpoint and an approved data directory.
         No model alias changes when the job finishes. Use ``get_training_job``
         for progress, and activate its model_ref separately after review.
         """
@@ -140,14 +143,24 @@ class Decisions:
             for value, extension in names.values()
         ):
             raise ValueError("Training inputs must be approved gateway-local filenames")
+        if model_id != "laya-typed-decisions" and model_id not in ARCHITECTURES:
+            raise ValueError("Unsupported decision training model_id")
         if source_job_id is not None and not _valid_job_id(source_job_id):
             raise ValueError("source_job_id must be a previously completed job id")
         body = {name: value for name, (value, _) in names.items()}
+        if model_id != "laya-typed-decisions":
+            body["model_id"] = model_id
         if source_job_id is not None:
             body["source_job_id"] = source_job_id
         result = self._gateway.post_decision_training_job(body=body, timeout=timeout)
-        if not isinstance(result, dict) or not _valid_job_id(result.get("job_id")):
-            raise ProtocolError("decision training did not return a job id")
+        if (
+            not isinstance(result, dict)
+            or not _valid_job_id(result.get("job_id"))
+            or ("model_id" in result and result["model_id"] != model_id)
+        ):
+            raise ProtocolError(
+                "decision training did not return the selected job identity"
+            )
         return result
 
     def get_training_job(
