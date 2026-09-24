@@ -4831,7 +4831,7 @@
       (error-response 404 :decisions/unknown-job "Decision training job does not exist"))))
 
 (defn- decisions-handler
-  "POST /v1/systemone — explicit installed model, both Laya decision heads."
+  "POST /v1/systemone — explicit installed model, typed questions and action head."
   [request]
   (let [bytes (when-let [^InputStream body (:body request)]
                 (.readNBytes body 131073))]

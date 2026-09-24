@@ -18,13 +18,23 @@
 
 (def ^:const models-dir-env "VIS_DECISION_MODELS_DIR")
 
-(def ^:const max-inference-upload-bytes 1600000000)
+(def ^:const max-inference-upload-bytes 2400000000)
 
 (def ^:private max-expanded-bytes 3000000000)
 
-(def ^:private inference-required
-  ["model.onnx" "rl_agent_config.json" "tokenizer/tokenizer.json" "tokenizer/tokenizer_config.json"
-   "PROVENANCE.json" "LICENSE.txt"])
+(def gliner-architectures {"gliner2.5-base" "boundary" "gliner2.5-decide" "span"})
+
+(defn inference-required
+  "Files required by one explicitly named FP32 inference family."
+  [model-id]
+  (cond (= model-id "laya-typed-decisions")
+        ["model.onnx" "rl_agent_config.json" "tokenizer/tokenizer.json"
+         "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
+        (contains? gliner-architectures model-id)
+        ["model.onnx" "config.json" "encoder_config/config.json" "tokenizer/tokenizer.json"
+         "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
+        :else (throw (ex-info "Unsupported decision model family"
+                              {:type :decisions/invalid-bundle :model model-id}))))
 
 (defonce ^:private manifest*
   (delay (if-let [resource (io/resource manifest-resource)]
@@ -274,8 +284,25 @@
     (when (or (not (.isFile provenance-file)) (> (.length provenance-file) 1048576))
       (throw (ex-info "Decision provenance is missing or oversized"
                       {:type :decisions/invalid-archive})))
-    (let [provenance
-          (try (verified-files! dir {:requires inference-required})
+    (let [identity
+          (try (wire/parse-json (slurp provenance-file))
+               (catch Exception e
+                 (throw (ex-info "Decision provenance is invalid"
+                                 {:type :decisions/invalid-archive}
+                                 e))))
+
+          model-id
+          (get identity "model")
+
+          required
+          (try (inference-required model-id)
+               (catch Exception e
+                 (throw (ex-info "Unsupported decision upload family"
+                                 {:type :decisions/invalid-archive}
+                                 e))))
+
+          provenance
+          (try (verified-files! dir {:requires required})
                (catch Exception e
                  (throw (ex-info "Decision upload has an invalid file inventory"
                                  {:type :decisions/invalid-archive}
@@ -285,21 +312,28 @@
           (set (keys (get provenance "files")))
 
           files
-          (disj names "PROVENANCE.json" "LICENSE.txt")]
+          (disj names "PROVENANCE.json" "LICENSE.txt")
+
+          gliner?
+          (contains? gliner-architectures model-id)]
 
       (when-not (and (= "inference" (get provenance "kind"))
                      (= "onnx" (get provenance "format"))
                      (= "fp32" (get provenance "precision"))
-                     (= "laya-typed-decisions" (get provenance "model"))
                      (= "Apache-2.0" (get provenance "license"))
+                     (if gliner?
+                       (and (= "gliner2.5" (get provenance "family"))
+                            (= (get gliner-architectures model-id) (get provenance "architecture")))
+                       (nil? (get provenance "family")))
                      (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get provenance "revision")))
                      (= listed files)
                      (every? #(or (= % "model.onnx")
                                   (= % "model.onnx.data")
-                                  (= % "rl_agent_config.json")
+                                  (= % (if gliner? "config.json" "rl_agent_config.json"))
+                                  (and gliner? (= % "encoder_config/config.json"))
                                   (re-matches #"tokenizer/[A-Za-z0-9_.-]+\.(?:json|txt)" %))
                              listed))
-        (throw (ex-info "Only a complete Laya FP32 inference bundle may be uploaded"
+        (throw (ex-info "Only a complete supported FP32 decision bundle may be uploaded"
                         {:type :decisions/invalid-archive})))
       (spit (io/file dir ".vis-verified") (str expected-sha "\n"))
       provenance)))

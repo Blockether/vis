@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.decisions.registry
-  "Immutable local imports and compare-and-swap aliases for Laya FP32 bundles."
+  "Immutable local imports and compare-and-swap aliases for verified decision bundles."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.decisions.assets :as assets]
@@ -11,10 +11,6 @@
 
 (def ^:private lock (Object.))
 
-(def ^:private required
-  ["model.onnx" "rl_agent_config.json" "tokenizer/tokenizer.json" "tokenizer/tokenizer_config.json"
-   "PROVENANCE.json" "LICENSE.txt"])
-
 (defn- imported-root ^File [] (io/file (assets/models-root) "registered"))
 
 (defn- version-ref? [ref] (and (string? ref) (boolean (re-matches #"sha256-[0-9a-f]{64}" ref))))
@@ -23,7 +19,8 @@
   [name]
   (and (string? name)
        (boolean (re-matches #"[a-z][a-z0-9-]{0,63}" name))
-       (not= "laya-typed-decisions" name)))
+       (not (contains? (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions")
+                       name))))
 
 (defn- record
   [ref]
@@ -35,21 +32,29 @@
           (io/file dir "manifest.json")]
 
       (when (.isFile metadata)
-        (let [value (wire/parse-json (slurp metadata))]
+        (let [value
+              (wire/parse-json (slurp metadata))
+
+              model-id
+              (get value "model" "laya-typed-decisions")]
+
           (when (and (= ref (get value "model_ref"))
                      (= (subs ref 7) (get value "sha256"))
-                     (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get value "revision"))))
-            value))))))
+                     (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get value "revision")))
+                     (try (assets/inference-required model-id)
+                          (catch clojure.lang.ExceptionInfo _ nil)))
+            (assoc value "model" model-id)))))))
 
 (defn- installed-record
   [ref]
   (when-let [value (record ref)]
-    (let [dir (io/file (imported-root) ref "inference")
-          artifact {:sha256 (get value "sha256") :requires required}]
+    (let [model-id (get value "model")
+          dir (io/file (imported-root) ref "inference")
+          artifact {:sha256 (get value "sha256") :requires (assets/inference-required model-id)}]
 
       (when (assets/installed? artifact (.getPath dir))
         {:model-ref ref
-         :model {:id "laya-typed-decisions" :revision (get value "revision")}
+         :model {:id model-id :revision (get value "revision")}
          :artifact artifact
          :dir dir}))))
 
@@ -128,10 +133,13 @@
                      (get provenance "revision")
 
                      metadata
-                     {"model_ref" ref "revision" revision "sha256" sha}
+                     {"model_ref" ref
+                      "revision" revision
+                      "sha256" sha
+                      "model" (get provenance "model")}
 
                      model
-                     {:id "laya-typed-decisions" :revision revision}]
+                     {:id (get provenance "model") :revision revision}]
 
                  (validate! model inference)
                  (spit (io/file stage "manifest.json") (str (wire/json-str metadata) "\n"))

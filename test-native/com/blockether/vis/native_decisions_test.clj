@@ -5,12 +5,14 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.native-binary-test :as binary]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [java.net ServerSocket]
            [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [java.security MessageDigest]))
 
 (defn- wait-for-gateway!
   [^Process process]
@@ -83,6 +85,87 @@
                        (expect (number? (get result "noul")))
                        (expect (number? (get-in result ["action" "act_probability"])))))))))
            (finally (when (.isAlive process) (#'binary/kill-tree! process)))))))
+
+(defn- sha256-file
+  [^File archive]
+  (with-open [stream (io/input-stream archive)]
+    (let [^MessageDigest digest (util/sha256-digest)
+          buffer (byte-array 1048576)]
+
+      (loop []
+
+        (let [n (.read stream buffer)]
+          (when (pos? n) (.update digest buffer 0 n) (recur))))
+      (util/bytes->hex (.digest digest)))))
+
+(defn- gliner-native-check!
+  [name ^File archive]
+  (expect (.isFile archive) (str "Missing GLiNER FP32 archive: " archive))
+  (let [sha
+        (sha256-file archive)
+
+        ref
+        (str "sha256-" sha)
+
+        model-id
+        (str "gliner2.5-" name)
+
+        alias
+        (str "native-" name)
+
+        missing
+        (gateway-client/request! :post
+                                 "/v1/systemone"
+                                 {:body {:model alias
+                                         :state "missing"
+                                         :questions {:ready {:type "noul"
+                                                             :instructions "Ready?"}}}})]
+
+    (expect (= 404 (:status missing)) "Import must not select or download a model")
+    (with-open [stream (io/input-stream archive)]
+      (let [uploaded
+            (gateway-client/request!
+              :post
+              "/v1/decisions/models"
+              {:body stream :raw-body? true :headers {"x-content-sha256" sha} :timeout-ms 900000})]
+        (expect (= 201 (:status uploaded)) (str (:status uploaded)))
+        (expect (= ref (get (json/read-json (:body uploaded)) "model_ref")))))
+    (let [not-activated
+          (gateway-client/request! :get (str "/v1/decisions/aliases/" alias))
+
+          activated
+          (gateway-client/request! :put
+                                   (str "/v1/decisions/aliases/" alias)
+                                   {:body {:model_ref ref}})
+
+          inference
+          (gateway-client/request!
+            :post
+            "/v1/systemone"
+            {:body {:model alias
+                    :state "A damaged item needs a refund."
+                    :questions {:intent {:type "choice"
+                                         :instructions "Select intent"
+                                         :criteria {:refund "A refund" :repair "A repair"}}
+                                :priority {:type "score"
+                                           :instructions "Rate urgency"
+                                           :criteria ["not urgent" "soon" "immediate"]}
+                                :policy {:type "noul" :instructions "Is refund available?"}}}
+             :timeout-ms 180000})
+
+          result
+          (json/read-json (:body inference))]
+
+      (expect (= 404 (:status not-activated)) "Import must not activate an alias")
+      (expect (= 200 (:status activated)) (str (:status activated)))
+      (expect (= ref (get (json/read-json (:body activated)) "model_ref")))
+      (expect (= 200 (:status inference)) (str result))
+      (expect (= model-id (get result "model")))
+      (expect (= ref (get-in result ["routing" "model_ref"])))
+      (expect (#{"refund" "repair"} (get-in result ["answers" "intent" "choice"])))
+      (expect (number? (get-in result ["answers" "priority" "score"])))
+      (expect (number? (get-in result ["answers" "policy" "noul"])))
+      (expect (number? (get-in result ["answers" "intent" "action" "act_probability"]))))))
 
 (defdescribe
   native-decision-inference-test
@@ -188,7 +271,15 @@
                   (expect (number? (get-in body ["answers" "intent" "action" "act_probability"])))
                   (expect (= "laya-typed-decisions" (get-in body ["routing" "model"]))))
                 (expect (= 409 (:status response))
-                        "Missing models must not download or fall back")))))
+                        "Missing models must not download or fall back")))
+            (doseq [name
+                    ["base" "decide"]
+
+                    :let [archive
+                          (System/getProperty (str "vis.test.gliner." name ".fp32.archive"))]
+                    :when archive]
+
+              (gliner-native-check! name (io/file archive)))))
         (finally (when-let [owned @process]
                    (#'binary/kill-tree! owned))
                  (#'binary/delete-tree! home))))))

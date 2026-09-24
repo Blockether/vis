@@ -4501,6 +4501,85 @@
                               (first (get listed "models")))))))
                  (finally (.stop ^org.eclipse.jetty.server.Server server)))))))))
 
+(deftest gliner-http-end-to-end-runs-typed-and-action-heads
+  ;; Supply -Dvis.test.gliner.{base,decide}.fp32.dir=<complete local inference dir>.
+  (doseq [name
+          ["base" "decide"]
+
+          :let [dir
+                (System/getProperty (str "vis.test.gliner." name ".fp32.dir"))]
+          :when dir]
+
+    (let [model-id
+          (str "gliner2.5-" name)
+
+          provenance
+          (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+
+          model
+          {:id model-id
+           :revision (get provenance "revision")
+           :artifacts {:inference {:sha256 (apply str (repeat 64 "a"))
+                                   :requires (decision-assets/inference-required model-id)}}}
+
+          request
+          {"model" model-id
+           "state" "A damaged item needs a refund."
+           "questions" (array-map "intent" {"type" "choice"
+                                            "instructions" "Select intent"
+                                            "criteria" (array-map "refund" "A refund"
+                                                                  "repair" "A repair")}
+                                  "priority" {"type" "score"
+                                              "instructions" "Rate urgency"
+                                              "criteria" ["not urgent" "soon" "immediate"]}
+                                  "policy" {"type" "noul" "instructions" "Is refund available?"})}]
+
+      (with-server-state!
+        {:require-token? true}
+        (fn []
+          (with-redefs [decision-assets/manifest
+                        (constantly [model])
+
+                        decision-assets/install-dir
+                        (fn [& _]
+                          dir)
+
+                        decision-assets/installed?
+                        (fn [& _]
+                          true)]
+
+            (let [server
+                  (jetty/run-jetty ((rv 'app) "decision-test-token" [])
+                                   {:port 0 :host "127.0.0.1" :join? false})
+
+                  url
+                  (str "http://127.0.0.1:" (bound-port server) "/v1/systemone")]
+
+              (try (let [response
+                         (http/post url
+                                    {:headers {"Authorization" "Bearer decision-test-token"
+                                               "X-Vis-Protocol" (str
+                                                                  gateway-contract/protocol-version)
+                                               "Content-Type" "application/json"}
+                                     :body (wire/json-str request)
+                                     :throw false
+                                     :timeout 120000})
+
+                         result
+                         (wire/parse-json (:body response))]
+
+                     (is (= 200 (:status response)))
+                     (is (= model-id (get result "model")))
+                     (is (= model-id (get-in result ["routing" "model_ref"])))
+                     (is (contains? #{"refund" "repair"}
+                                    (get-in result ["answers" "intent" "choice"])))
+                     (is (number? (get-in result ["answers" "priority" "score"])))
+                     (is (number? (get-in result ["answers" "policy" "noul"])))
+                     (is (number? (get-in result ["answers" "intent" "action" "act_probability"])))
+                     (is (pos? (get-in result ["usage" "input_tokens"]))))
+                   (finally (.stop ^org.eclipse.jetty.server.Server server)
+                            (decision-cache/release-idle!))))))))))
+
 (deftest decision-sdk-uploads-and-infers-against-a-token-gated-jetty
   ;; Full gate: the published SDK wheel and FP32 release install run in a real client process.
   (when-let [python (System/getProperty "vis.test.laya.sdk.python")]
@@ -4648,7 +4727,9 @@
       (is (= 413
              (:status (app {:request-method :post
                             :uri "/v1/decisions/models"
-                            :headers {"x-content-sha256" sha "content-length" "1600000001"}
+                            :headers {"x-content-sha256" sha
+                                      "content-length"
+                                      (str (inc decision-assets/max-inference-upload-bytes))}
                             :body (java.io.ByteArrayInputStream. bytes)}))))
       (is (= 1 (count @calls))))))
 

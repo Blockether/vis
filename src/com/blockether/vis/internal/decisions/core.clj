@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.decisions.core
-  "Typed Laya inference over verified local FP32 bundles; no training or downloads."
+  "Typed Laya and GLiNER inference over verified local FP32 bundles; no downloads."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -19,6 +19,10 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private qtypes {"choice" 0 "score" 1 "noul" 2})
+
+;; Match the upstream GLiNER2.0 whitespace splitter before per-word subword encoding.
+(def ^:private gliner-word-pattern
+  #"(?iU)(?:https?://[^\s]+|www\.[^\s]+)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|@[a-z0-9_]+|\w+(?:[-_]\w+)*|\S")
 
 (defn- invalid! [message] (throw (ex-info message {:type :decisions/invalid-request})))
 
@@ -127,32 +131,36 @@
      :criteria criteria
      :options (options type criteria)}))
 
-(defn- token-ids
+(defn- raw-token-ids
   [^HuggingFaceTokenizer tokenizer value]
-  ;; DJL Encoding eagerly asks Rust JNI to construct CharSpan objects. Native-image
-  ;; aborts in that unused JNI varargs callback; Laya needs only the same token IDs.
+  ;; DJL Encoding requests unused Rust JNI character spans and fails in native-image.
   (let [^TokenizersLibrary library
         TokenizersLibrary/LIB
 
         encoding
-        (.encode library (long (.getHandle tokenizer)) (str/replace value "[MASK]" " ") false)]
+        (.encode library (long (.getHandle tokenizer)) value false)]
 
     (try (vec (.getTokenIds library encoding)) (finally (.deleteEncoding library encoding)))))
 
+(defn- token-ids
+  [^HuggingFaceTokenizer tokenizer value]
+  (raw-token-ids tokenizer (str/replace value "[MASK]" " ")))
+
 (defn- special-tokens
-  [^File dir]
-  (let [tokens
-        (get (wire/parse-json (slurp (io/file dir "tokenizer/tokenizer.json"))) "added_tokens")
+  ([^File dir] (special-tokens dir ["[PAD]" "[CLS]" "[SEP]" "[MASK]"]))
+  ([^File dir labels]
+   (let [tokens
+         (get (wire/parse-json (slurp (io/file dir "tokenizer/tokenizer.json"))) "added_tokens")
 
-        lookup
-        (into {} (map (juxt #(get % "content") #(get % "id")) tokens))]
+         lookup
+         (into {} (map (juxt #(get % "content") #(get % "id")) tokens))]
 
-    (into {}
-          (for [label ["[PAD]" "[CLS]" "[SEP]" "[MASK]"]]
-            [label
-             (long (or (get lookup label)
-                       (throw (ex-info "Decision tokenizer lacks special tokens"
-                                       {:type :decisions/invalid-bundle}))))]))))
+     (into {}
+           (for [label labels]
+             [label
+              (long (or (get lookup label)
+                        (throw (ex-info "Decision tokenizer lacks special tokens"
+                                        {:type :decisions/invalid-bundle}))))])))))
 
 (defn- sequence-item
   [^HuggingFaceTokenizer tokenizer special config state question]
@@ -212,6 +220,60 @@
                  (count (:options question)))
       (invalid! (str "Question options exceed model head length for " (:id question))))
     (assoc question
+      :ids ids
+      :markers markers)))
+
+(defn- gliner-sequence-item
+  "Preserve upstream structural label positions, including labels containing marker text."
+  [^HuggingFaceTokenizer tokenizer config state item]
+  (let [choices
+        (map second (:options item))
+
+        _
+        (when (some str/blank? choices)
+          (invalid! (str "GLiNER decision labels must not be blank for " (:id item))))
+
+        decision
+        (concat [["(" false] ["[P]" false] [(str (:type item) ": " (:instruction item)) false]
+                 ["(" false]]
+                (mapcat (fn [label]
+                          [["[L]" true] [label false]])
+                        choices)
+                [[")" false] [")" false]])
+
+        action
+        [["(" false] ["[P]" false] ["action" false] ["(" false] ["[L]" true] ["act" false]
+         ["[L]" true] ["escalate" false] [")" false] [")" false]]
+
+        value
+        (if (string? state) state (python-json state))
+
+        value
+        (if (some #(str/ends-with? value %) ["." "!" "?"]) value (str value "."))
+
+        words
+        (map #(.toLowerCase ^String % java.util.Locale/ROOT) (re-seq gliner-word-pattern value))
+
+        tokens
+        (concat decision
+                [["[SEP_STRUCT]" false]]
+                action
+                [["[SEP_TEXT]" false]]
+                (map #(vector % false) words))
+
+        [ids markers]
+        (reduce (fn [[ids markers] [token label?]]
+                  (let [subwords (raw-token-ids tokenizer token)]
+                    (when (and label? (empty? subwords))
+                      (invalid! "GLiNER classifier marker produced no token"))
+                    [(into ids subwords) (if label? (conj markers (count ids)) markers)]))
+                [[] []]
+                tokens)]
+
+    (when (or (> (count ids) (long (get config "max_position_embeddings")))
+              (not= (count markers) (+ (count choices) 2)))
+      (invalid! (str "GLiNER decision exceeds the encoder limit for " (:id item))))
+    (assoc item
       :ids ids
       :markers markers)))
 
@@ -355,9 +417,44 @@
                               (answer item (vec (aget logits i)) (vec (aget actions i)) config)])
                            items))))))
 
+(defn- run-gliner-batch
+  [^OrtEnvironment environment ^OrtSession session items special]
+  (let [batch (tensor-batch items (get special "[PAD]"))]
+    (with-open [^OnnxTensor ids (tensor environment (:input_ids batch))
+                ^OnnxTensor attention (tensor environment (:attention_mask batch))
+                ^OnnxTensor markers (tensor environment (:marker_pos batch))
+                ^OrtSession$Result outputs
+                (.run session {"input_ids" ids "attention_mask" attention "label_indices" markers})]
+
+      (let [^"[[F" logits (.getValue ^OnnxValue (.get ^java.util.Optional (.get outputs "logits")))
+            rows (mapv (fn [i item]
+                         (let [k (count (:options item))
+                               values (vec (aget logits i))]
+
+                           (when-not (and (<= (+ k 2) (count values))
+                                          (every? #(Double/isFinite (double %)) values))
+                             (throw (ex-info "GLiNER graph returned invalid classification logits"
+                                             {:type :decisions/invalid-bundle})))
+                           (let [head (subvec values 0 (+ k 2))]
+                             [(:id item)
+                              {:logits head
+                               :answer
+                               (answer item (subvec head 0 k) (subvec head k (+ k 2)) {})}])))
+                       (range (count items))
+                       items)]
+
+        {:answers (into {}
+                        (map (fn [[id value]]
+                               [id (:answer value)])
+                             rows))
+         :logits (into {}
+                       (map (fn [[id value]]
+                              [id (:logits value)])
+                            rows))}))))
+
 (def ^:private session-threads 4)
 
-(defn- open-model!
+(defn- open-laya-model!
   [model ^File dir]
   (let [config
         (wire/parse-json (slurp (io/file dir "rl_agent_config.json")))
@@ -396,35 +493,101 @@
                          (try (.close session) (finally (.close tokenizer))))}))
            (catch Throwable e (.close tokenizer) (throw e))))))
 
+(defn- open-gliner-model!
+  [model ^File dir]
+  (let [config
+        (wire/parse-json (slurp (io/file dir "config.json")))
+
+        encoder-config
+        (wire/parse-json (slurp (io/file dir "encoder_config/config.json")))
+
+        provenance
+        (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+
+        limit
+        (get encoder-config "max_position_embeddings")]
+
+    (when-not (and (= "onnx" (get provenance "format"))
+                   (= "fp32" (get provenance "precision"))
+                   (= "gliner2.5" (get provenance "family"))
+                   (= (:id model) (get provenance "model"))
+                   (= (:revision model) (get provenance "revision"))
+                   (= (get assets/gliner-architectures (:id model))
+                      (get provenance "architecture")
+                      (get config "architecture"))
+                   (integer? limit)
+                   (<= 128 (long limit) 2048))
+      (throw (ex-info "GLiNER decision bundle is not a compatible FP32 export"
+                      {:type :decisions/invalid-bundle :model (:id model)})))
+    (let [special
+          (special-tokens dir ["[PAD]" "[P]" "[L]" "[SEP_STRUCT]" "[SEP_TEXT]"])
+
+          ^OrtEnvironment environment
+          (OrtEnvironment/getEnvironment)
+
+          ^HuggingFaceTokenizer tokenizer
+          (HuggingFaceTokenizer/newInstance (.toPath (io/file dir "tokenizer/tokenizer.json")))]
+
+      (try (with-open [^OrtSession$SessionOptions options
+                       (doto (OrtSession$SessionOptions.) (.setIntraOpNumThreads session-threads))]
+             (let [^OrtSession session (.createSession environment
+                                                       (.getAbsolutePath (io/file dir "model.onnx"))
+                                                       options)]
+               {:family :gliner
+                :environment environment
+                :session session
+                :tokenizer tokenizer
+                :special special
+                :config {"max_position_embeddings" limit}
+                :close (fn []
+                         (try (.close session) (finally (.close tokenizer))))}))
+           (catch Throwable e (.close tokenizer) (throw e))))))
+
+(defn- open-model!
+  [model ^File dir]
+  (cond (= "laya-typed-decisions" (:id model)) (open-laya-model! model dir)
+        (contains? assets/gliner-architectures (:id model)) (open-gliner-model! model dir)
+        :else (throw (ex-info "Unsupported decision inference family"
+                              {:type :decisions/invalid-bundle :model (:id model)}))))
+
 (defn validate-runtime!
-  "Before registration, exercise both graph outputs and the tokenizer with an FP32 request.
-   The temporary model participates in the same bounded cache as inference."
+  "Exercise both classifier heads and the tokenizer before publishing an immutable bundle."
   [model ^File dir]
   (let [key [:validation (:revision model) (.getCanonicalPath dir)]]
     (try
       (cache/with-resident!
         key
         #(open-model! model dir)
-        (fn [{:keys [environment session tokenizer special config]}]
-          (when-not (and (= #{"input_ids" "attention_mask" "marker_pos" "marker_mask" "qtype"}
-                            (set (.getInputNames ^OrtSession session)))
-                         (= #{"logits" "act_logits"} (set (.getOutputNames ^OrtSession session))))
-            (throw (ex-info "Decision graph inputs or heads do not match Laya"
-                            {:type :decisions/invalid-bundle})))
-          (let [item (sequence-item tokenizer
-                                    special
-                                    config
-                                    "Decision import validation"
-                                    (question "probe"
-                                              {"type" "choice"
-                                               "instructions" "Choose one option"
-                                               "criteria" {"a" "First" "b" "Second"}}))
-                answer (get (run-batch environment session [item] special config) "probe")]
+        (fn [{:keys [family environment session tokenizer special config]}]
+          (let [gliner? (= family :gliner)
+                input-names (if gliner?
+                              #{"input_ids" "attention_mask" "label_indices"}
+                              #{"input_ids" "attention_mask" "marker_pos" "marker_mask" "qtype"})
+                output-names (if gliner? #{"logits"} #{"logits" "act_logits"})]
 
-            (when-not (and (get-in answer ["probabilities" "a"])
-                           (Double/isFinite (double (get-in answer ["action" "act_probability"]))))
-              (throw (ex-info "Decision graph failed the Laya FP32 probe"
-                              {:type :decisions/invalid-bundle}))))))
+            (when-not (and (= input-names (set (.getInputNames ^OrtSession session)))
+                           (= output-names (set (.getOutputNames ^OrtSession session))))
+              (throw (ex-info "Decision graph inputs or classification heads do not match"
+                              {:type :decisions/invalid-bundle})))
+            (let [probe (question "probe"
+                                  {"type" "choice"
+                                   "instructions" "Choose one option"
+                                   "criteria" {"a" "First" "b" "Second"}})
+                  item
+                  (if gliner?
+                    (gliner-sequence-item tokenizer config "Decision import validation" probe)
+                    (sequence-item tokenizer special config "Decision import validation" probe))
+                  answers (if gliner?
+                            (:answers (run-gliner-batch environment session [item] special))
+                            (run-batch environment session [item] special config))
+                  result (get answers "probe")
+                  probability (get-in result ["action" "act_probability"])]
+
+              (when-not (and (number? (get-in result ["probabilities" "a"]))
+                             (number? probability)
+                             (Double/isFinite (double probability)))
+                (throw (ex-info "Decision FP32 graph failed the two-head probe"
+                                {:type :decisions/invalid-bundle})))))))
       (finally (cache/release-idle!)))))
 
 (defn- selected-model
@@ -464,7 +627,7 @@
              (registry/versions))))
 
 (defn infer!
-  "Evaluate typed questions against one explicitly installed, immutable baseline."
+  "Evaluate typed questions against one explicitly installed, immutable model."
   [request]
   (let [name
         (get request "model")
@@ -489,28 +652,39 @@
       (let [items (mapv (fn [[id definition]]
                           (question id definition))
                         questions)
-            routing {"model" name "model_ref" model-ref "revision" (:revision model)}]
+            routing {"model" name "model_ref" model-ref "revision" (:revision model)}
+            engine (if (= "laya-typed-decisions" (:id model)) "laya-rl-agent" (:id model))]
 
         (if (empty? items)
-          {"model" "laya-rl-agent"
+          {"model" engine
            "routing" routing
            "answers" {}
            "usage" {"input_tokens" 0 "output_tokens" 0}}
           (cache/with-resident!
             (model-key model artifact dir)
             #(open-model! model dir)
-            (fn [{:keys [environment session tokenizer special config]}]
-              (let [items (mapv #(sequence-item tokenizer special config state %) items)]
-                {"model" "laya-rl-agent"
+            (fn [{:keys [family environment session tokenizer special config]}]
+              (let [gliner? (= family :gliner)
+                    items (mapv (if gliner?
+                                  #(gliner-sequence-item tokenizer config state %)
+                                  #(sequence-item tokenizer special config state %))
+                                items)
+                    answers (if gliner?
+                              (:answers (run-gliner-batch environment session items special))
+                              (run-batch environment session items special config))]
+
+                {"model" engine
                  "routing" routing
-                 "answers" (run-batch environment session items special config)
+                 "answers" answers
                  "usage" {"input_tokens" (reduce + (map (comp count :ids) items))
                           "output_tokens" 0}}))))))))
 
 (defn warm!
-  "Run one synthetic question against a pinned installed model, without downloading."
+  "Run one synthetic question against an installed model or alias, without downloading."
   [name]
-  (infer! {"model" name
-           "state" "Decision model warmup"
-           "questions" {"ready" {"type" "noul" "instructions" "Is this a warmup question?"}}})
-  (some #(when (= name (get % "model_ref")) %) (models-status)))
+  (let [ref (get-in (infer! {"model" name
+                             "state" "Decision model warmup"
+                             "questions" {"ready" {"type" "noul"
+                                                   "instructions" "Is this a warmup question?"}}})
+                    ["routing" "model_ref"])]
+    (some #(when (= ref (get % "model_ref")) %) (models-status))))

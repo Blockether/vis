@@ -11,13 +11,15 @@
            [java.util.zip ZipEntry ZipOutputStream]))
 
 (defn- fixture!
-  [revision & [extra]]
+  [revision & [extra identity]]
   (let [archive
         (File/createTempFile "vis-decision-upload-" ".zip")
 
+        model-id
+        (get identity "model" "laya-typed-decisions")
+
         required
-        ["model.onnx" "rl_agent_config.json" "tokenizer/tokenizer.json"
-         "tokenizer/tokenizer_config.json"]
+        (remove #{"PROVENANCE.json" "LICENSE.txt"} (assets/inference-required model-id))
 
         contents
         (merge (into {}
@@ -27,17 +29,19 @@
                extra)
 
         provenance
-        {"model" "laya-typed-decisions"
-         "revision" revision
-         "kind" "inference"
-         "format" "onnx"
-         "precision" "fp32"
-         "license" "Apache-2.0"
-         "files" (into {}
-                       (map (fn [[name bytes]]
-                              [name
-                               {"bytes" (alength ^bytes bytes) "sha256" (util/sha256-hex bytes)}]))
-                       contents)}]
+        (merge {"model" model-id
+                "revision" revision
+                "kind" "inference"
+                "format" "onnx"
+                "precision" "fp32"
+                "license" "Apache-2.0"}
+               identity
+               {"files" (into {}
+                              (map (fn [[name bytes]]
+                                     [name
+                                      {"bytes" (alength ^bytes bytes)
+                                       "sha256" (util/sha256-hex bytes)}]))
+                              contents)})]
 
     (with-open [zip (ZipOutputStream. (FileOutputStream. archive))]
       (doseq [[name bytes] (conj (vec contents)
@@ -117,3 +121,58 @@
            (is (empty? (registry/versions)))
            (is (not (.exists (io/file root "aliases.json")))))
          (finally (files/delete-dir! root) (.delete escape) (.delete missing)))))
+
+(deftest gliner-imports-preserve-identity-and-reject-ambiguous-architecture
+  (let [root
+        (io/file (System/getProperty "java.io.tmpdir") (str "vis-gliner-import-" (random-uuid)))
+
+        identities
+        [{"model" "gliner2.5-base" "family" "gliner2.5" "architecture" "boundary"}
+         {"model" "gliner2.5-decide" "family" "gliner2.5" "architecture" "span"}]
+
+        archives
+        (mapv (fn [n identity]
+                (fixture! (apply str (repeat 64 (str n))) nil identity))
+              [1 2]
+              identities)
+
+        forged
+        (fixture! (apply str (repeat 64 "3"))
+                  nil
+                  {"model" "gliner2.5-base" "family" "gliner2.5" "architecture" "span"})
+
+        validated
+        (atom [])]
+
+    (try (with-redefs [assets/models-root (constantly (str root))]
+           (doseq [[identity archive] (map vector identities archives)]
+             (let [model-id (get identity "model")
+                   alias (str "local-" (if (= model-id "gliner2.5-base") "base" "decide"))
+                   saved (registry/register! archive
+                                             (digest archive)
+                                             (fn [model _]
+                                               (swap! validated conj (:id model))))
+                   ref (get saved "model_ref")]
+
+               (is (= model-id (get-in (registry/resolve-model ref) [:model :id])))
+               (is (= (get identity "architecture") (get assets/gliner-architectures model-id)))
+               (is (nil? (registry/get-alias alias)))
+               (is (= :decisions/invalid-alias
+                      (:type (error-data #(registry/activate! model-id ref nil)))))
+               (is (= ref (get (registry/activate! alias ref nil) "model_ref")))
+               (is (= model-id (get-in (registry/resolve-model alias) [:model :id])))
+               (is (= saved
+                      (registry/register! archive
+                                          (digest archive)
+                                          (fn [& _]
+                                            (throw (ex-info "Duplicate validation" {}))))))))
+           (is (= (mapv #(get % "model") identities) @validated))
+           (is (= 2 (count (registry/versions))))
+           (is (= :decisions/invalid-archive
+                  (:type (error-data #(registry/register! forged
+                                                          (digest forged)
+                                                          (fn [& _]))))))
+           (is (= 2 (count (registry/versions)))))
+         (finally (files/delete-dir! root)
+                  (doseq [archive (conj archives forged)]
+                    (.delete ^File archive))))))
