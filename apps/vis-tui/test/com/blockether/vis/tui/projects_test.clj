@@ -1717,7 +1717,7 @@
       (is (= :tab-1 (:active-tab-id @state/app-db))
           "Deleting an unopened row does not change focus"))))
 
-(deftest set-creation-shortcuts-and-session-button-test
+(deftest set-creation-shortcuts-and-buttons-test
   (let [db
         (-> (fixture-db)
             (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -1739,21 +1739,32 @@
     (let [hits
           (.current projects/hit-map)
 
+          group-hit
+          (first (filter #(= :project-group-add (:kind %)) hits))
+
+          group-menu
+          (first (filter #(and (= :project-set-menu (:kind %)) (= :groups (:set %))) hits))
+
           session-hit
           (first (filter #(= :project-session-add (:kind %)) hits))]
 
-      (is (not-any? #(= :project-group-add (:kind %)) hits))
-      (is (not-any? #(and (= :project-set-menu (:kind %)) (= :groups (:set %))) hits))
+      (is (some? group-hit))
+      (is (some? group-menu))
       (is (some? session-hit))
-      (when session-hit
+      (doseq [[hit expected]
+              [[group-hit [:menu (assoc group-entry :initial-action :new)]]
+               [group-menu [:menu group-entry]]
+               [session-hit [:menu (assoc session-entry :initial-action :new-session)]]]
+
+              :when hit]
+
         (let [{:keys [col row]}
-              (:bounds session-hit)
+              (:bounds hit)
 
               click
               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))]
 
-          (is (= [:menu (assoc session-entry :initial-action :new-session)]
-                 (projects/key-action db click)))))
+          (is (= expected (projects/key-action db click)))))
       (is (some #(and (= :project-set-menu (:kind %)) (= :sessions (:set %))) hits)))
     (doseq [[entry choice] [[group-entry :new] [session-entry :new-session]]]
       (is (= [:menu (assoc entry :initial-action choice)]
@@ -1830,6 +1841,63 @@
        (fn [gid root]
          (swap! calls conj [:session gid root]))))
     (is (= [[:group "a"] [:session nil "/work/vis"]] @calls))))
+
+(deftest project-sections-indent-rows-and-metadata-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :focused?] false)
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "loose-id" "title" "Loose session"}]
+                       :grouped [{"id" "group-id" "title" "Grouped session" "group_id" "g1"}]}))
+
+        capture
+        (cap/capture! {:cols 168
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 168 24))})
+
+        hits
+        (.current projects/hit-map)
+
+        lines
+        (str/split-lines (cap/frame-text capture))
+
+        row-of
+        (fn [match]
+          (get-in (first (filter match hits)) [:bounds :row]))
+
+        project-row
+        (row-of #(= :project-select (:kind %)))
+
+        groups-row
+        (row-of #(and (= :project-set (:kind %)) (= :groups (:set %))))
+
+        group-row
+        (row-of #(= :project-group (:kind %)))
+
+        grouped-row
+        (row-of #(= "group-id" (get-in % [:session "id"])))
+
+        sessions-row
+        (row-of #(and (= :project-set (:kind %)) (= :sessions (:set %))))
+
+        loose-row
+        (row-of #(= "loose-id" (get-in % [:session "id"])))
+
+        column
+        (fn [row text]
+          (str/index-of (nth lines row) text))]
+
+    (is (nil? (:error capture)))
+    (is (= (+ 2 (column project-row "Vis")) (column groups-row "Groups")))
+    (is (= (+ 2 (column groups-row "Groups")) (column group-row "Release apps")))
+    (is (= (+ 2 (column group-row "Release apps")) (column grouped-row "Grouped session")))
+    (is (= (+ 2 (column project-row "Vis")) (column sessions-row "Sessions")))
+    (is (= (+ 2 (column sessions-row "Sessions")) (column loose-row "Loose session")))
+    (is (= (column grouped-row "Grouped session") (column (inc grouped-row) "group-id")))
+    (is (= (column loose-row "Loose session") (column (inc loose-row) "loose-id")))))
 
 (deftest project-rail-focus-highlights-instead-of-leading-dot-test
   (let [db
@@ -1960,12 +2028,14 @@
           live (first (filter #(= :project-session (:kind %)) (.current projects/hit-map)))
           row (get-in live [:bounds :row])
           lines (str/split-lines (cap/frame-text capture))
-          status-cell (get-in capture [:frames 0 (inc row) 5])]
+          status-cell (get-in capture [:frames 0 (inc row) 8])]
 
       (is (nil? (:error capture)))
-      (is (str/includes? (nth lines row) (if (= cols 32) "Writing the tes" "Writing the tests")))
+      (is (str/includes? (nth lines row) (if (= cols 32) "Writing the te" "Writing the tests")))
       (is (not (str/includes? (nth lines row) "LIVE")))
       (is (str/includes? (nth lines (inc row)) "LIVE"))
+      (is (= (str/index-of (nth lines row) "Writing")
+             (str/index-of (nth lines (inc row)) "● LIVE")))
       (is (= (>= cols 38) (str/includes? (nth lines (inc row)) "12t")))
       (is (= (#'theme-test/rgb-tuple theme/status-ok) (:fg status-cell))))))
 
@@ -2105,7 +2175,7 @@
       (is (= [:tab-2 :tab-3] (mapv :id (:tabs @state/app-db))))
       (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))))
 
-(deftest saved-session-selection-has-keyboard-and-pointer-test
+(deftest saved-session-selection-has-keyboard-and-menu-test
   (let [db
         (-> (fixture-db)
             (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -2129,43 +2199,34 @@
        identity
        nil)
       (is (= #{"s1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
-      (let [capture (cap/capture!
-                      {:cols 120
-                       :rows 24
-                       :paint! (fn [{:keys [screen]}]
-                                 (projects/paint! (.newTextGraphics screen) @state/app-db 120 24))})
+      (let [unfocused (assoc-in @state/app-db [:project-sidebar :index] 1)
+            capture (cap/capture! {:cols 120
+                                   :rows 24
+                                   :paint!
+                                   (fn [{:keys [screen]}]
+                                     (projects/paint! (.newTextGraphics screen) unfocused 120 24))})
             hit (first (filter #(and (= :project-session (:kind %))
                                      (= "s1" (get-in % [:session "id"])))
                                (.current projects/hit-map)))
-            {:keys [col row]} (:bounds hit)]
+            {:keys [col row]} (:bounds hit)
+            highlight (#'theme-test/rgb-tuple
+                       (theme/mix-color theme/terminal-bg theme/header-active-tab-bg 0.16))]
 
         (is (nil? (:error capture)))
-        (is (str/includes? (cap/frame-text capture) "☑ First"))
+        (is (str/includes? (cap/frame-text capture) "First"))
+        (is (not (re-find #"[☑◻□]" (nth (str/split-lines (cap/frame-text capture)) row))))
+        (is (= highlight (get-in capture [:frames 0 row 1 :bg])))
+        (is (not-any? #(= :project-selection (:kind %)) (.current projects/hit-map)))
         (is (= [:menu hit]
-               (projects/key-action @state/app-db
+               (projects/key-action unfocused
                                     (MouseAction. MouseActionType/CLICK_DOWN
                                                   3
                                                   (TerminalPosition. (int col) (int row))))))
-        (is (= [:toggle-session "a" "s1"]
-               (projects/key-action @state/app-db
+        (is (= [:session "s1"]
+               (projects/key-action unfocused
                                     (MouseAction. MouseActionType/CLICK_DOWN
                                                   1
-                                                  (TerminalPosition. (int (inc col)) (int row))))))
-        (#'screen/project-sidebar-key!
-         (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int (inc col)) (int row)))
-         identity
-         identity
-         identity
-         identity
-         nil)
-        (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))
-      (#'screen/project-sidebar-key!
-       (cap/key-stroke \space)
-       identity
-       identity
-       identity
-       identity
-       nil)
+                                                  (TerminalPosition. (int (inc col)) (int row)))))))
       (is (= #{"s1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
       (#'screen/project-sidebar-key!
        (cap/key-stroke \space)
