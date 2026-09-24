@@ -1619,6 +1619,120 @@
                     (str id " row " row " expanded? " expanded?)))))
       (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
+(defdescribe
+  code-result-paper-test
+  (it
+    "keeps normal Code and Result on transcript paper in dark themes without changing light themes"
+    (try
+      (doseq [id
+              (shared-theme/available-theme-ids)
+
+              expanded?
+              [false true]]
+
+        (t/apply-theme! (keyword id))
+        (let [entries
+              (format-iteration-entry-entries
+                (iteration/canonicalize {:forms [{:code "print('VISIBLE_CODE')"
+                                                  :stdout "VISIBLE_STDOUT"
+                                                  :success? true}]})
+                72
+                1
+                {:session-id "s"
+                 :session-turn-id "t"
+                 :detail-expansions (if expanded? {:vis.channel-tui/expand-all-details? true} {})})
+
+              captured
+              (cap/capture! {:cols 80
+                             :rows 20
+                             :paint!
+                             (fn [{:keys [g]}]
+                               (render/draw-chat-bubble! g
+                                                         {:role :assistant
+                                                          :prewrapped-lines (mapv :line entries)
+                                                          :line-meta (mapv :meta entries)}
+                                                         0 0
+                                                         76 {:viewport-top 0 :viewport-h 20}))})
+
+              frame
+              (last (:frames captured))
+
+              lines
+              (str/split-lines (cap/frame-text captured))
+
+              row-for
+              (fn [needle]
+                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
+
+              code-row
+              (row-for "CODE")
+
+              body-row
+              (row-for "VISIBLE_CODE")
+
+              result-row
+              (row-for "RESULT")
+
+              output-row
+              (row-for "VISIBLE_STDOUT")
+
+              expected-bg
+              (get-in (shared-theme/theme id)
+                      [:palette
+                       (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])]
+
+          (expect (nil? (:error captured)))
+          (expect (some? code-row))
+          (expect (= expanded? (some? body-row)))
+          (expect (= expanded? (some? result-row)))
+          (expect (= expanded? (some? output-row)))
+          (doseq [row (remove nil? [(dec code-row) code-row body-row result-row output-row])]
+            (expect (= expected-bg (get-in frame [row 20 :bg]))
+                    (str id " row " row " expanded? " expanded?)))))
+      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
+
+(defdescribe
+  activity-code-paper-test
+  (it
+    "keeps Activity alongside Code without changing light theme surfaces"
+    (try
+      (doseq [id (shared-theme/available-theme-ids)]
+        (t/apply-theme! (keyword id))
+        (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
+                                   (#'render/activity-content-entries
+                                    [{:type "text" :text "ACTIVITY_CONTENT"}]
+                                    72
+                                    2
+                                    nil
+                                    {}
+                                    false)))
+              captured (cap/capture! {:cols 80
+                                      :rows 10
+                                      :paint! (fn [{:keys [g]}]
+                                                (render/draw-chat-bubble!
+                                                  g
+                                                  {:role :assistant
+                                                   :prewrapped-lines (mapv :line entries)
+                                                   :line-meta (mapv :meta entries)}
+                                                  0 0
+                                                  76 {:viewport-top 0 :viewport-h 10}))})
+              frame (last (:frames captured))
+              lines (str/split-lines (cap/frame-text captured))
+              row-for (fn [needle]
+                        (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
+              expected-bg
+              (get-in (shared-theme/theme id)
+                      [:palette
+                       (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])]
+
+          (expect (nil? (:error captured)))
+          (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
+            (let [row (row-for needle)]
+              (expect (some? row) (str id " " needle))
+              (when row
+                (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
+      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
+
 (defmacro ^:private with-raw-code-on
   [& body]
   ;; The TUI now renders the model's raw `:code` unconditionally — the same
