@@ -1774,6 +1774,37 @@
            (projects/key-action (assoc-in db [:project-sidebar :index] (:index group-entry))
                                 (cap/key-stroke \g))))))
 
+(deftest sidebar-overflow-buttons-use-vertical-ellipsis-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
+
+        capture
+        (cap/capture! {:cols 120
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 120 24))})
+
+        lines
+        (str/split-lines (cap/frame-text capture))
+
+        buttons
+        (filter #(contains? #{:project-set-menu :project-details} (:kind %))
+                (.current projects/hit-map))]
+
+    (is (nil? (:error capture)))
+    (is (= 3 (count buttons)))
+    (doseq [{:keys [bounds]}
+            buttons
+
+            :let [{:keys [col row width]}
+                  bounds]]
+
+      (is (= 3 width))
+      (is (= " ⋮ " (subs (nth lines row) col (+ col width)))))))
+
 (deftest set-buttons-use-web-bands-and-direct-actions-test
   (let [db
         (-> (fixture-db)

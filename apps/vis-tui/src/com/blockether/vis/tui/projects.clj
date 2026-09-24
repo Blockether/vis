@@ -1177,14 +1177,14 @@
               (components/button! g
                                   (- (+ left width) 5)
                                   row
-                                  " ⋯ "
+                                  " ⋮ "
                                   :project-set-menu
                                   {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (components/button! g
                                 (- (+ left width) 6)
                                 row
-                                " ⋯ "
+                                " ⋮ "
                                 :project-details
                                 {:extra {:session (:session entry)
                                          :action [:details
