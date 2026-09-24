@@ -18,7 +18,7 @@ afterEach(cleanup);
 
 // Regression from session 8c5ed98b-851a-4e65-91c1-14fbdc04f1eb: a fast shell
 // finishes before wait, so both calls report the same finished command.
-it('shows one finished command when a shell wait adds only output', () => {
+it('shows one finished command when wait supersedes spawn status and output', () => {
   const activity = activityProjection();
   const command = 'git status --short --branch';
   const handle = [{ type: 'shell-handle', id: 'git' }];
@@ -26,7 +26,7 @@ it('shows one finished command when a shell wait adds only output', () => {
     { type: 'heading' as const, text: 'Command' },
     { type: 'code' as const, language: 'bash', text: command },
   ];
-  const exit = { type: 'text' as const, text: 'Exit code: 0' };
+  const exit = { type: 'markdown' as const, text: '**Exit code:** 0' };
   const spawn = {
     ...activity.rows[0],
     id: 'spawn',
@@ -64,6 +64,9 @@ it('shows one finished command when a shell wait adds only output', () => {
   expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: /Command finished/ }));
   expect(screen.getByText('## main...origin/main')).toBeVisible();
+  const exitLabel = screen.getByText('Exit code:', { selector: 'strong' });
+  expect(exitLabel).toBeVisible();
+  expect(exitLabel.parentElement?.textContent).toBe('Exit code: 0');
 
   // Do not discard an earlier result if it contains output absent from wait.
   cleanup();
@@ -71,6 +74,22 @@ it('shows one finished command when a shell wait adds only output', () => {
   paintActivity({ activity });
   fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
   expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
+
+  // A running spawn is also transient once wait has the complete finished result.
+  cleanup();
+  const running = {
+    ...spawn,
+    presentation: {
+      headline: 'Running command',
+      summary: command,
+      content: [...commandBody, { type: 'text' as const, text: 'Running' }],
+    },
+  };
+  activity.rows[0].children = [running, wait];
+  paintActivity({ activity });
+  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
+  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(1);
+  expect(screen.queryByText('Running command')).toBeNull();
 });
 
 it('does not render technical resource IDs as expandable files', () => {

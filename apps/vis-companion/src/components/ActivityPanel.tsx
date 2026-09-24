@@ -728,7 +728,7 @@ function ActivitySectionView({
   );
 }
 
-/** The wait result supersedes a finished spawn only when it includes all its visible detail. */
+/** A finished wait supersedes spawn status when it includes all persistent detail. */
 function shellChildren(row: ActivityRow): ActivityRow[] {
   const children = [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
   if (row.operation !== 'shell') return children;
@@ -738,7 +738,8 @@ function shellChildren(row: ActivityRow): ActivityRow[] {
     if (
       child.operation !== 'shell' ||
       child.state !== 'succeeded' ||
-      presentation?.headline !== 'Command finished' ||
+      !presentation ||
+      !['Command finished', 'Running command'].includes(presentation.headline) ||
       presentation.sections?.length ||
       child.error_summary ||
       child.evidence.some((item) => item.kind === 'error' || item.kind === 'diff') ||
@@ -750,7 +751,7 @@ function shellChildren(row: ActivityRow): ActivityRow[] {
       (later) =>
         later.operation === '_shell-wait' &&
         later.state === 'succeeded' &&
-        later.presentation?.headline === presentation.headline &&
+        later.presentation?.headline === 'Command finished' &&
         later.presentation.summary === presentation.summary &&
         later.resources.some((resource) => resource.type === 'shell-handle' && resource.id === handle),
     );
@@ -766,6 +767,7 @@ function shellChildren(row: ActivityRow): ActivityRow[] {
     }
     return (presentation.content ?? []).some(
       (block) =>
+        !(presentation.headline === 'Running command' && block.type === 'text' && block.text === 'Running') &&
         !wait.presentation?.content?.some((later) => JSON.stringify(later) === JSON.stringify(block)),
     );
   });

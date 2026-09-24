@@ -102,10 +102,10 @@
                                          {"type" "code" "text" text}]))
                                     [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"]
                                      ["stderr" "Stderr"]])
-                            [{"type" "text"
-                              "text" (cond (some? exit) (str "Exit code: " exit)
+                            [{"type" (if running? "text" "markdown")
+                              "text" (cond (some? exit) (str "**Exit code:** " exit)
                                            running? "Running"
-                                           :else "Exit code unavailable")}]))}))
+                                           :else "**Exit code:** unavailable")}]))}))
 
 (defn result-blocks
   "Keep metadata in readable text; tables are reserved for comparable records."

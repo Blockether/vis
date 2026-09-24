@@ -294,13 +294,18 @@
         (expect (some #(= {"type" "code" "language" "bash" "text" "printf 'a\nb' && false"} %)
                       blocks))
         (expect (some #(= "a\nb" (get % "text")) blocks))
-        (expect (re-find #"Exit code: 1" (pr-str blocks)))
+        (expect (some #(= {"type" "markdown" "text" "**Exit code:** 1"} %) blocks))
         (expect (not (re-find #"handle-123|/private/log|internal" (pr-str view))))))
   (it "never invents a successful exit for a running command"
       (let [view (presenter/result-presentation {:operation :shell}
                                                 {:command "sleep 10" :exit nil :status "running"})]
-        (expect (re-find #"Running" (pr-str view)))
+        (expect (= {"type" "text" "text" "Running"} (last (get view "content"))))
         (expect (not (re-find #"Exit code: 0" (pr-str view))))))
+  (it "labels an unavailable exit beside its bold label"
+      (let [view (presenter/result-presentation {:operation :_shell-wait}
+                                                {:command "sleep 10" :exit nil :status "exited"})]
+        (expect (= {"type" "markdown" "text" "**Exit code:** unavailable"}
+                   (last (get view "content"))))))
   (it "does not turn a publish receipt identifier into expandable content"
       (expect
         (= [] (get (presenter/result-presentation {:operation :council.publish} 279) "content"))))
