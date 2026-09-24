@@ -67,40 +67,73 @@
              (it "/cd is available in every channel"
                  (expect (nil? (:slash/availability-fn (first ws-slashes/specs))))))
 
-(defdescribe dispatch-root-test
-             (it "/cd <path> repoints the session's primary filesystem root"
-                 (let [a
-                       (temp-dir "vis-slash-root-a")
+(defdescribe
+  dispatch-root-test
+  (it "/cd <path> repoints the session's primary filesystem root"
+      (let [a
+            (temp-dir "vis-slash-root-a")
 
-                       b
-                       (temp-dir "vis-slash-root-b")]
+            b
+            (temp-dir "vis-slash-root-b")]
 
-                   (try (with-store
-                          (fn [store]
-                            (let [trunk
-                                  (workspace/create-trunk-at! store a)
+        (try (with-store (fn [store]
+                           (let [trunk
+                                 (workspace/create-trunk-at! store a)
 
-                                  state-id
-                                  (pin-session! store (:id trunk))
+                                 state-id
+                                 (pin-session! store (:id trunk))
 
-                                  out
-                                  (dispatch! (env-with store) store state-id (str "/cd " b))]
+                                 out
+                                 (dispatch! (env-with store) store state-id (str "/cd " b))]
 
-                              (expect (= :ok (get-in out [:result :slash/status])))
-                              (expect (= (workspace/normalize-root b)
-                                         (:root (workspace/for-session store state-id)))))))
-                        (finally (delete-tree! a) (delete-tree! b)))))
-             (it "bare /cd reports the current root without changing it"
-                 (let [a (temp-dir "vis-slash-root-show")]
-                   (try (with-store (fn [store]
-                                      (let [trunk (workspace/create-trunk-at! store a)
-                                            state-id (pin-session! store (:id trunk))
-                                            out (dispatch! (env-with store) store state-id "/cd")]
+                             (expect (= :ok (get-in out [:result :slash/status])))
+                             (expect (= (workspace/normalize-root b)
+                                        (:root (workspace/for-session store state-id)))))))
+             (finally (delete-tree! a) (delete-tree! b)))))
+  (it "/cd .. followed by a relative child stays within the session root"
+      (let [parent
+            (temp-dir "vis-slash-relative")
 
-                                        (expect (= :ok (get-in out [:result :slash/status])))
-                                        (expect (= (:id trunk)
-                                                   (:id (workspace/for-session store state-id)))))))
-                        (finally (delete-tree! a))))))
+            first
+            (io/file parent "first")
+
+            child
+            (io/file parent "child")]
+
+        (try (.mkdir first)
+             (.mkdir child)
+             (with-store
+               (fn [store]
+                 (let [trunk
+                       (workspace/create-trunk-at! store first)
+
+                       state-id
+                       (pin-session! store (:id trunk))
+
+                       env
+                       (env-with store)
+
+                       up
+                       (dispatch! env store state-id "/cd ..")]
+
+                   (expect (= :ok (get-in up [:result :slash/status])))
+                   (expect (= parent (:root (workspace/for-session store state-id))))
+                   (let [down (dispatch! env store state-id "/cd child")]
+                     (expect (= :ok (get-in down [:result :slash/status])))
+                     (expect (= (.getCanonicalPath child)
+                                (:root (workspace/for-session store state-id))))))))
+             (finally (delete-tree! parent)))))
+  (it "bare /cd reports the current root without changing it"
+      (let [a (temp-dir "vis-slash-root-show")]
+        (try (with-store (fn [store]
+                           (let [trunk (workspace/create-trunk-at! store a)
+                                 state-id (pin-session! store (:id trunk))
+                                 out (dispatch! (env-with store) store state-id "/cd")]
+
+                             (expect (= :ok (get-in out [:result :slash/status])))
+                             (expect (= (:id trunk)
+                                        (:id (workspace/for-session store state-id)))))))
+             (finally (delete-tree! a))))))
 
 (defdescribe expand-home-test
              (it "expands a bare ~ to the user's home directory"

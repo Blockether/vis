@@ -602,6 +602,41 @@
                              (expect (= (:id ws2) (:id (ws/for-session store state-id))))
                              (expect (not (ws/draft? ws2))))))
              (finally (delete-tree! a) (delete-tree! b)))))
+  ;; Regression: /cd relative paths must follow the session root, not the JVM cwd.
+  (it "resolves relative paths from the session's current root"
+      (let [parent
+            (temp-dir "vis-root-relative")
+
+            first
+            (io/file parent "first")
+
+            next-dir
+            (io/file parent "next")]
+
+        (try (.mkdir first)
+             (.mkdir next-dir)
+             (with-store (fn [store]
+                           (let [trunk
+                                 (ws/create-trunk-at! store first)
+
+                                 state-id
+                                 (pin-session! store (str (random-uuid)) (:id trunk))
+
+                                 up
+                                 (ws/change-root! store state-id "..")]
+
+                             (expect (= parent (:root up)))
+                             (let [child (ws/change-root! store state-id "next")]
+                               (expect (= (.getCanonicalPath next-dir) (:root child)))
+                               (expect (= (:id child)
+                                          (:id (ws/change-root! store state-id "."))))))))
+             (finally (delete-tree! parent)))))
+  (it "does not use the process directory when a session has no root"
+      (with-store (fn [store]
+                    (let [thrown (try (ws/change-root! store (str (random-uuid)) ".")
+                                      nil
+                                      (catch Exception t t))]
+                      (expect (= :workspace/no-root (:type (ex-data thrown))))))))
   (it "is a no-op returning the SAME workspace when the path already is the root"
       (let [a (temp-dir "vis-root-same")]
         (try (with-store (fn [store]

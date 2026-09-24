@@ -2066,27 +2066,41 @@
   (insert-trunk! db-info nil root))
 
 (defn change-root!
-  "Repoint `session-state-id`'s primary workspace root to `path`. Refuses while
-   the session is in an isolated workspace."
+  "Repoint `session-state-id`'s primary workspace root to `path`. Relative paths
+   resolve from the session's current root. Refuses while the session is in an
+   isolated workspace."
   [db-info session-state-id path]
-  (let [canon
-        (normalize-root path)
+  (let [current
+        (for-session db-info session-state-id)
 
-        dir
-        (some-> canon
+        input
+        (some-> path
+                str
+                str/trim
+                not-empty
+                paths/expand-home)
+
+        file
+        (some-> input
                 io/file)]
 
-    (when-not canon (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path})))
-    (when-not (.isDirectory ^File dir)
-      (throw (ex-info (str "Not a directory: " path)
-                      {:type :workspace/not-a-directory :path path})))
-    (let [current (for-session db-info session-state-id)]
+    (when-not file (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path})))
+    (when (and (not (.isAbsolute ^File file)) (nil? (:root current)))
+      (throw (ex-info "Session workspace is unavailable"
+                      {:type :workspace/no-root :session-state-id session-state-id})))
+    (let [canon
+          (normalize-root (if (.isAbsolute ^File file) file (io/file (:root current) file)))
+
+          dir
+          (io/file canon)]
+
+      (when-not (.isDirectory ^File dir)
+        (throw (ex-info (str "Not a directory: " path)
+                        {:type :workspace/not-a-directory :path path})))
       (when (draft? current)
         (throw (ex-info "Session is in an isolated workspace; its root cannot be changed"
                         {:type :workspace/root-change-in-draft :workspace-id (:id current)})))
-      (if (= canon
-             (some-> (:root current)
-                     normalize-root))
+      (if (= canon (normalize-root (:root current)))
         current
         (insert-trunk! db-info session-state-id canon)))))
 
