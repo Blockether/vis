@@ -635,35 +635,40 @@
   portable-store-buttons-test
   ;; GitHub does not load the docs stylesheet: linked images must carry the labels.
   (it
-    "keeps mobile and latest-release desktop buttons readable without the documentation stylesheet"
-    (doseq [[source prefix]
-            [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
+    "keeps mobile and current-release desktop buttons readable without the documentation stylesheet"
+    (let [version
+          (str/trim (slurp "VIS_VERSION"))
 
-            [name url label]
-            [["testflight" "https://testflight.apple.com/join/4anYT4Wk"
-              "TestFlight for iOS and iPadOS"]
-             ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
-              "Google Play beta for Android"]
-             ["windows" "https://github.com/Blockether/vis/releases/latest"
-              "Latest desktop release for Windows"]
-             ["macos" "https://github.com/Blockether/vis/releases/latest"
-              "Latest desktop release for macOS"]
-             ["linux" "https://github.com/Blockether/vis/releases/latest"
-              "Latest desktop release for Linux"]]]
+          release
+          (str "https://github.com/Blockether/vis/releases/download/v" version
+               "/vis-companion-" version)]
 
-      (let [md
-            (slurp source)
+      (doseq [[source prefix]
+              [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
 
-            body
-            (some (fn [[_ attrs contents]]
-                    (when (and (str/includes? attrs (str "href=\"" url "\""))
-                               (str/includes? contents (str "assets/install-" name ".png")))
-                      contents))
-                  (re-seq #"(?s)<a\b([^>]*)>(.*?)</a>" md))]
+              [name url label]
+              [["testflight" "https://testflight.apple.com/join/4anYT4Wk"
+                "TestFlight for iOS and iPadOS"]
+               ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
+                "Google Play beta for Android"]
+               ["windows" (str release "-windows-x64.msi") "Download Vis for Windows x64"]
+               ["macos" (str release "-macos-universal.dmg") "Download Vis for macOS"]
+               ["linux" (str release "-linux-x64.AppImage") "Download Vis for Linux x64"]]]
 
-        (expect (str/includes? (or body "") (str "src=\"" prefix "assets/install-" name ".png\"")))
-        (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
-        (expect (str/includes? (or body "") "width=\"224\" height=\"56\"")))))
+        (let [md
+              (slurp source)
+
+              body
+              (some (fn [[_ attrs contents]]
+                      (when (and (str/includes? attrs (str "href=\"" url "\""))
+                                 (str/includes? contents (str "assets/install-" name ".png")))
+                        contents))
+                    (re-seq #"(?s)<a\b([^>]*)>(.*?)</a>" md))]
+
+          (expect (str/includes? (or body "")
+                                 (str "src=\"" prefix "assets/install-" name ".png\"")))
+          (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
+          (expect (str/includes? (or body "") "width=\"224\" height=\"56\""))))))
   (it "serves and exports all mobile and desktop image buttons"
       (doseq [name ["testflight" "google-play" "windows" "macos" "linux"]]
         (let [rel (str "install-" name ".png")
@@ -879,7 +884,7 @@
 (defn- text-units
   "PURE: `[[line text] …]` — every prose paragraph of `md`, plus every list item
    with the lines that continue it, joined into one string. Fenced blocks,
-   headings, tables and quotes carry their own shape and are skipped."
+   headings, tables, quotes and markup-only HTML lines are skipped."
   [^String md]
   (let [close (fn [acc {:keys [line buf]}]
                 (if (seq buf) (conj acc [line (str/join " " buf)]) acc))]
@@ -896,7 +901,8 @@
               skip? (or (str/blank? l)
                         (str/starts-with? l "#")
                         (str/starts-with? l "|")
-                        (str/starts-with? l ">"))]
+                        (str/starts-with? l ">")
+                        (boolean (re-matches #"(?:<[^>]+>\s*)+" l)))]
 
           (cond (str/starts-with? l "```")
                 (recur (rest ls) (inc n) (not in-fence?) {:line 0 :buf []} (close acc cur))
@@ -908,6 +914,13 @@
                              in-fence?
                              (if (seq (:buf cur)) (update cur :buf conj l) {:line n :buf [l]})
                              acc)))))))
+
+(defdescribe text-units-test
+             (it "ignores markup-only HTML without hiding prose inside HTML"
+                 (let [md (str "<div class=\"store-links\">\n"
+                               "<a href=\"/download\"><img src=\"badge.png\"></a>\n" "</div>\n\n"
+                               "<p>Readable copy.</p>\n" "Continues here.\n")]
+                   (expect (= [[5 "<p>Readable copy.</p> Continues here."]] (text-units md))))))
 
 (defn- page-canon
   "PURE: every way `page` breaks the page contract, as reader-facing lines.
