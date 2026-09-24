@@ -17,19 +17,23 @@
 
 (def ^:private run-python-source! #'com.blockether.vis.internal.main/run-python-source!)
 
+(defn- capture-cli-run
+  "Run a CLI helper, capturing the real terminal output and exit code."
+  [run!]
+  (with-open [baos
+              (java.io.ByteArrayOutputStream.)
+
+              ps
+              (java.io.PrintStream. baos true "UTF-8")]
+
+    (with-redefs [config/original-stdout ps]
+      {:exit (run!) :out (.toString baos "UTF-8")})))
+
 (defn- run-src
   "Run one Python block through the CLI helper, capturing the terminal
    output. Returns {:exit code :out captured-stdout}."
   [ctx code]
-  (let [baos
-        (java.io.ByteArrayOutputStream.)
-
-        ps
-        (java.io.PrintStream. baos true "UTF-8")]
-
-    (with-redefs [config/original-stdout ps]
-      (let [exit (run-python-source! ctx code)]
-        {:exit exit :out (.toString baos "UTF-8")}))))
+  (capture-cli-run #(run-python-source! ctx code)))
 
 (def ^:private ensure-pytest!
   "Install the real `pytest` for the sandbox once, so a `-m pytest` case runs on a
@@ -303,6 +307,70 @@
             (expect (= 2 exit))
             (expect (re-find #"ERROR collecting" (.toString baos "UTF-8"))))
           (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
+
+(defdescribe
+  python-module-cwd-test
+  (it "loads a module from the invocation directory without PYTHONPATH"
+      ;; Regression #287: the embedded interpreter did not put cwd on sys.path.
+      (let [file
+            (.toFile (java.nio.file.Files/createTempFile
+                       (.toPath (java.io.File. "."))
+                       "vis_cli_issue_287_"
+                       ".py"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            module
+            (subs (.getName file) 0 (- (count (.getName file)) 3))]
+
+        (try (spit file
+                   (str "print('module', __name__)\n"
+                        "if __name__ == '__main__':\n    print('ran main')\n"))
+             (let [ctx (python-cli-context
+                         {:network? false :mode :module :argv [module] :env {"PYTHONPATH" ""}})]
+               (try (run-src ctx "import sys\nsys.dont_write_bytecode = True")
+                    (let [{:keys [exit out]}
+                          (capture-cli-run
+                            #((var-get #'com.blockether.vis.internal.main/run-python-module!)
+                                ctx
+                                module))]
+                      (expect (= 0 exit))
+                      (expect (= "module __main__\nran main\n" out)))
+                    (finally (env/dispose-python-context! ctx))))
+             (finally (.delete file))))))
+
+(defdescribe
+  python-file-main-test
+  (it "executes a file as main with its own directory importable"
+      ;; Regression #287: evaluating file source in sandbox globals skipped __main__.
+      (let [dir
+            (scratch-dir! "vis-python-file-main-")
+
+            file
+            (.resolve dir "probe_cli.py")
+
+            sibling
+            (.resolve dir "sibling_probe.py")]
+
+        (try (spit (.toFile sibling) "VALUE = 42\n")
+             (spit (.toFile file)
+                   (str "import asyncio, sys\n" "from sibling_probe import VALUE\n"
+                        "print('file', __name__, __file__ == sys.argv[0], sys.argv[1], VALUE)\n"
+                        "if __name__ == '__main__':\n"
+                        "    print('ran main', asyncio.run(asyncio.sleep(0, result=VALUE)))\n"
+                        "raise SystemExit(7)\n"))
+             (let [ctx (python-cli-context {:network? false
+                                            :mode :file
+                                            :argv [(.toString file) "argument"]
+                                            :env {"PYTHONPATH" ""}})]
+               (try (let [{:keys [exit out]}
+                          (capture-cli-run #((var-get
+                                               #'com.blockether.vis.internal.main/run-python-file!)
+                                               ctx
+                                               (.toString file)))]
+                      (expect (= 7 exit))
+                      (expect (= "file __main__ True argument 42\nran main 42\n" out)))
+                    (finally (env/dispose-python-context! ctx))))
+             (finally (delete-tree! dir))))))
 
 (defdescribe
   python-module-pythonpath-test

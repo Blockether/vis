@@ -140,6 +140,34 @@
                (expect (str/includes? (:output result) expected) (:output result))))
            (finally (delete-tree! dir))))))
 
+(defdescribe
+  python-cli-main-entrypoint-test
+  ;; Regression #287: file mode skipped __main__ and -m missed the invocation cwd.
+  (it "runs a file and a module as main without PYTHONPATH"
+      (let [dir
+            (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
+                                                "vis-cli-main-"
+                                                (make-array FileAttribute 0)))
+
+            install
+            (doto (io/file dir "install") .mkdirs)
+
+            project
+            (doto (io/file dir "project") .mkdirs)]
+
+        (try (spit (io/file project "probe_cli.py")
+                   (str "print('name:', __name__)\n"
+                        "print('file:', __file__)\n"
+                        "if __name__ == '__main__':\n    print('ran main')\n"))
+             (doseq [args [["-m" "probe_cli"] ["probe_cli.py"]]]
+               (let [result
+                     (run-cli install {} (into ["--no-network"] args) {:invocation-dir project})]
+                 (expect (= 0 (:exit result)) (:output result))
+                 (expect (str/includes? (:output result) "name: __main__") (:output result))
+                 (expect (re-find #"file: .*probe_cli\.py" (:output result)) (:output result))
+                 (expect (str/includes? (:output result) "ran main") (:output result))))
+             (finally (delete-tree! dir))))))
+
 ;; Regression #226: a project must not borrow shared wheels, editable roots,
 ;; startup hooks or modules imported by those hooks before its environment loads.
 (defdescribe

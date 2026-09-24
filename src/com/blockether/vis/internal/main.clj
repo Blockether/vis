@@ -3234,14 +3234,15 @@
 
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
-   into `os.environ`; and `sys.path` is prepended with `PYTHONPATH`, the
-   configured `python.source_paths`, and any `src`-layout import root the
-   project's packaging metadata declares. An existing cwd/.venv (or
+   into `os.environ`; and `sys.path` starts with the invocation directory
+   (except for FILE, whose directory the runner inserts), followed by
+   `PYTHONPATH`, configured `python.source_paths`, and any `src`-layout roots
+   declared by the project's packaging metadata. An existing cwd/.venv (or
    UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks, without
    shared packages. A pyproject.toml without an environment reports a sync error.
    `shared?` skips project activation and inferred/configured source roots. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
-  [{:keys [network? argv env shared?]}]
+  [{:keys [network? argv env shared? mode]}]
   (let [cwd
         (.getCanonicalPath (io/file (System/getProperty "user.dir")))
 
@@ -3276,8 +3277,8 @@
          (catch Throwable t (env/dispose-python-context! python-context) (throw t)))
     ;; The interpreter receives the environment after startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
-    ;; Explicit entries come first; configured and inferred project roots are
-    ;; merged in after them, never replacing what the caller asked for.
+    ;; -m/-c start with cwd, while FILE starts with its own directory in runpy;
+    ;; explicit entries follow, then configured and inferred project roots.
     (let [separator
           java.io.File/pathSeparator
 
@@ -3287,7 +3288,9 @@
                        (re-pattern (java.util.regex.Pattern/quote separator))))
 
           roots
-          (distinct (concat explicit (when-not shared? (pyproj/import-roots python-context cwd))))]
+          (distinct (concat (when-not (= :file mode) [cwd])
+                            explicit
+                            (when-not shared? (pyproj/import-roots python-context cwd))))]
 
       (when (seq roots)
         (pyrt/exec! python-context
@@ -3405,44 +3408,48 @@
                              {:mode :interactive :argv []}
                              (python-program-plan prog))))))))
 
-(def ^:private python-module-runner-src
-  "Python helper installed for `vis-agent python -m MODULE`.
-
-   `-m` is `runpy` and nothing else now: every module the sandbox can import is a
-   real module with a real loader, so the helper only has to turn the module's
-   `SystemExit` into the exit code this process should answer with."
+(def ^:private python-cli-runner-src
+  "Python helper for `vis-agent python -m MODULE` and `vis-agent python FILE`.
+   Both run through runpy as `__main__`, recording SystemExit for the host."
   (slurp (io/resource "vis-python/module_runner.py")))
 
-(defn- module-exit-code
-  "The exit code `__vis_run_module__` recorded, or 0 when it recorded none.
+(defn- python-cli-exit-code
+  "The exit code the guest runner recorded, or 0 when it recorded none.
 
    A block answers with what it PRINTED and nothing else, so the code the
    process owes is left in the session and read back here."
   [ctx]
-  (try
-    (let [v (json/read-json (pyrt/run ctx "globals().get('__vis_module_exit__')") :key-fn identity)]
-      (if (integer? v) (int v) 0))
-    (catch Throwable _ 0)))
+  (try (let [v (json/read-json (pyrt/run ctx "globals().get('__vis_cli_exit__')") :key-fn identity)]
+         (if (integer? v) (int v) 0))
+       (catch Throwable _ 0)))
+
+(defn- run-python-program!
+  "Run a file or module as `__main__`, streaming its output to the terminal."
+  [ctx runner target]
+  (let [code
+        (str python-cli-runner-src "\n" runner "(" (pr-str target) ")\n")
+
+        ;; Programs own their event loop; do not wrap runpy in the tool coroutine.
+        {:keys [error]}
+        (json/read-json
+          (pyrt/run ctx
+                    (str "__import__('vis_runtime').run_sync_block(" (pr-str code) ", globals())"))
+          :key-fn
+          keyword)]
+
+    (if error (do (stdout! error) 1) (python-cli-exit-code ctx))))
 
 (defn- run-python-module!
-  "Run `MODULE` as `__main__` in `ctx` (`vis-agent python -m MODULE`), rendering its
-   output to the real terminal. Returns the module's exit code."
+  "Run MODULE as `__main__` in `ctx`, returning its exit code."
   [ctx module]
   (if (str/blank? module)
     (do (stderr! "vis-agent python -m requires a MODULE argument.") 2)
-    (let [code
-          (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n")
+    (run-python-program! ctx "__vis_run_module__" module)))
 
-          ;; Modules own their event loop; do not wrap runpy in the tool coroutine.
-          {:keys [error]}
-          (json/read-json (pyrt/run ctx
-                                    (str "__import__('vis_runtime').run_sync_block("
-                                         (pr-str code)
-                                         ", globals())"))
-                          :key-fn
-                          keyword)]
-
-      (if error (do (stdout! error) 1) (module-exit-code ctx)))))
+(defn- run-python-file!
+  "Run FILE as `__main__` in `ctx`, returning its exit code."
+  [ctx file]
+  (run-python-program! ctx "__vis_run_file__" file))
 
 (defn- cli-python!
   "`vis-agent python` -- run code in the embedded Python sandbox (no tool
@@ -3463,7 +3470,7 @@
 
         ctx
         (when-not (= :uv mode)
-          (python-cli-context {:network? network? :argv argv :env env :shared? shared?}))
+          (python-cli-context {:network? network? :argv argv :env env :shared? shared? :mode mode}))
 
         exit
         (case mode
@@ -3486,7 +3493,7 @@
           :file
           (let [f (io/file file)]
             (if (.isFile f)
-              (run-python-source! ctx (slurp f))
+              (run-python-file! ctx file)
               (do (stderr! (str "vis-agent python: no such file: " file)) 2)))
 
           :module
