@@ -5413,9 +5413,9 @@
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn
    from the start THROUGH `through-turn-id` — nil means the session's last turn,
    which is the plain \"fork this session\" the TUI's `y` runs. The source is left
-   untouched; the fork gets its own soul (so it opens as its own row/tab) and its
-   own trunk workspace at the source's root, because a session_state owns its
-   workspace 1:1.
+   untouched; the fork gets its own soul (so it opens as its own row/tab), inherits
+   its session group (and therefore its project), and gets its own trunk workspace
+   at the source's root, because a session_state owns its workspace 1:1.
 
    Returns the fork's wire `soul`. Throws `ex-info` with `:type`
    `:session/no-turns`, `:session/unknown-turn` or `:session/fork-failed`."
@@ -5459,6 +5459,8 @@
                                                  :through-turn-id through})]
 
       (when-not forked (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
+      (when-let [group-id (:group-id (persistance/db-get-session db sid))]
+        (persistance/db-set-session-group! db forked group-id))
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
       (soul forked))))
 

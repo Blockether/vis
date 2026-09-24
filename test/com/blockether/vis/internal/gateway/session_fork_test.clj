@@ -84,4 +84,23 @@
                             (try (state/fork-session! sid (str (random-uuid)))
                                  nil
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+             (finally (ps/db-close! store)))))
+  (it "keeps ordinary forks in the source session group"
+      (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
+        (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])
+                   project (ps/db-create-project! store {:name "Fork project"})
+                   group (ps/db-create-session-group! store (:id project) {:name "Fork group"})]
+
+               (ps/db-set-session-group! store sid (:id group))
+               (with-redefs [lp/db-info (constantly store)]
+                 (doseq [through [(first turn-ids) nil]]
+                   (let [forked (state/fork-session! sid through)
+                         fork-id (get forked "id")
+                         saved (ps/db-get-session store fork-id)]
+
+                     (expect (= (str (:id group)) (str (:group-id saved))))
+                     (expect (= (str (:id project)) (str (:project-id saved))))
+                     (expect (= (str (:id group)) (get forked "group_id")))
+                     (expect (= (str (:id project)) (get forked "project_id"))))))
+               (expect (= 3 (count (ps/db-session-group-session-ids store (:id group))))))
              (finally (ps/db-close! store))))))
