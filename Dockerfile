@@ -155,6 +155,10 @@ COPY . .
 # agree before paying for a native build.
 RUN bin/require-graalvm --check-pins
 
+# Git dependencies can compile Java in :deps/prep-lib. Prepping the copied checkout
+# before AOT is required on a clean builder (vis-python-runtime.HostFunction).
+RUN clojure -X:deps prep
+
 # `native` honours VIS_ORACLE_NATIVE_IMAGE / VIS_NATIVE_EXTRA_ARGS from the env.
 #
 # `-Duser.home=/home/vis` is for the build's own initialization: native-image

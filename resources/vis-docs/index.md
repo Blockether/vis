@@ -539,6 +539,7 @@ A value `<= 0` disables an eviction threshold.
 ### SDKs
 
 - [Python SDK](python-sdk.md) — run a local agent, continue a conversation or connect remotely.
+- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
 - [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Running a gateway](gateway-service.md) — install and operate a shared agent service.
 

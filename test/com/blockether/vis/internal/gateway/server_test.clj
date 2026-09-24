@@ -7,6 +7,11 @@
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.decisions.assets :as decision-assets]
+            [com.blockether.vis.internal.decisions.cache :as decision-cache]
+            [com.blockether.vis.internal.decisions.core :as decision-core]
+            [com.blockether.vis.internal.decisions.registry :as decision-registry]
+            [com.blockether.vis.internal.decisions.jobs :as decision-jobs]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
@@ -26,8 +31,10 @@
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.speech.files :as speech-files]
             [com.blockether.vis.internal.speech.core :as speech]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.util :as util]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols]
@@ -4421,6 +4428,399 @@
     (is (= 400 (:status response)))
     (is (= "clip-not-wav" (get body "reason")))))
 
+(deftest decisions-route-requires-an-explicit-model
+  (let [app
+        (rr/ring-handler ((rv 'router) "token" []))
+
+        response
+        (app (merge {:request-method :post :uri "/v1/systemone"}
+                    (json-body {:state "hello" :questions {}})))]
+
+    (is (= 400 (:status response)))
+    (is (= "model-required" (get-in (wire/parse-json (:body response)) ["error" "reason"])))))
+
+(deftest decision-route-reports-shutdown-as-temporarily-unavailable
+  (with-redefs [decision-core/infer! (fn [_]
+                                       (throw (ex-info "Decision model cache is stopping"
+                                                       {:type :decisions/unavailable})))]
+    (let [response ((rr/ring-handler ((rv 'router) "token" []))
+                     (merge {:request-method :post :uri "/v1/systemone"}
+                            (json-body
+                              {:model "laya-typed-decisions" :state "hello" :questions {}})))]
+      (is (= 503 (:status response)))
+      (is (= "unavailable" (get-in (wire/parse-json (:body response)) ["error" "reason"]))))))
+
+(deftest decision-http-end-to-end-uses-the-installed-fp32-model
+  ;; Set -Dvis.test.laya.fp32.dir to a verified assets-pack inference install.
+  (when-let [dir (System/getProperty "vis.test.laya.fp32.dir")]
+    (with-server-state!
+      {:require-token? true}
+      (fn []
+        (with-redefs [decision-assets/install-dir (fn [& _]
+                                                    dir)]
+          (let
+            [server (jetty/run-jetty ((rv 'app) "decision-test-token" [])
+                                     {:port 0 :host "127.0.0.1" :join? false})
+             url (str "http://127.0.0.1:" (bound-port server) "/v1/systemone")
+             body
+             (str
+               "{\"model\":\"laya-typed-decisions\","
+               "\"state\":\"The customer requests a refund after receiving a broken item.\","
+               "\"questions\":{"
+               "\"intent\":{\"type\":\"choice\",\"instructions\":\"What is the customer asking for?\","
+               "\"criteria\":{\"refund\":\"A refund\",\"repair\":\"A repair\"}},"
+               "\"priority\":{\"type\":\"score\",\"instructions\":\"Rate urgency\","
+               "\"criteria\":[\"not urgent\",\"soon\",\"immediate\"]},"
+               "\"policy\":{\"type\":\"noul\",\"instructions\":\"Can the purchase be refunded?\","
+               "\"criteria\":{\"false\":\"not refundable\",\"true\":\"refundable\"}}}}")]
+
+            (try (let [response (http/post url
+                                           {:headers {"Authorization" "Bearer decision-test-token"
+                                                      "X-Vis-Protocol"
+                                                      (str gateway-contract/protocol-version)
+                                                      "Content-Type" "application/json"}
+                                            :body body
+                                            :throw false
+                                            :timeout 120000})
+                       result (wire/parse-json (:body response))]
+
+                   (is (= 200 (:status response)))
+                   (is (= "refund" (get-in result ["answers" "intent" "choice"])))
+                   (is (= 1.5357 (get-in result ["answers" "priority" "score"])))
+                   (is (= 0.5466 (get-in result ["answers" "policy" "noul"])))
+                   (is (= 108 (get-in result ["usage" "input_tokens"])))
+                   (let [catalog (http/get (str/replace url #"/systemone$" "/decisions/models")
+                                           {:headers {"Authorization" "Bearer decision-test-token"
+                                                      "X-Vis-Protocol"
+                                                      (str gateway-contract/protocol-version)}})
+                         listed (wire/parse-json (:body catalog))]
+
+                     (is (= 200 (:status catalog)))
+                     (is (= [true "ready"]
+                            ((juxt #(get % "installed") #(get % "residency"))
+                              (first (get listed "models")))))))
+                 (finally (.stop ^org.eclipse.jetty.server.Server server)))))))))
+
+(deftest decision-sdk-uploads-and-infers-against-a-token-gated-jetty
+  ;; Full gate: the published SDK wheel and FP32 release install run in a real client process.
+  (when-let [python (System/getProperty "vis.test.laya.sdk.python")]
+    (let
+      [dir (System/getProperty "vis.test.laya.fp32.dir")
+       train-dir (System/getProperty "vis.test.laya.training.dir")
+       root (io/file (System/getProperty "java.io.tmpdir") (str "decision-sdk-http-" (random-uuid)))
+       script
+       (str/join
+         "\n"
+         ["import json, sys, tempfile" "from pathlib import Path"
+          "from blockether.vis.decisions import Decisions"
+          "from blockether.vis.engine import GatewayClient"
+          "url, token, directory, checkpoint = sys.argv[1:]"
+          "with tempfile.TemporaryDirectory(prefix=\"vis-sdk-decision-\") as temporary:"
+          "    source = directory" "    if checkpoint != \"-\":"
+          "        from blockether.vis.decisions.training import ModernBertTrainer, TrainingBundle"
+          "        root = Path(temporary)"
+          "        row = {\"state\": \"Please refund my damaged purchase.\","
+          "               \"question\": {\"type\": \"choice\", \"instructions\": \"Choose intent\","
+          "                            \"criteria\": [\"refund\", \"repair\"]}, \"target\": 0, \"action\": 0}"
+          "        (root / \"train.jsonl\").write_text(json.dumps(row) + \"\\n\")"
+          "        evaluation = [{**row, \"state\": \"A different damaged item needs a refund.\"},"
+          "            {\"state\": \"Repeated billing errors block the account.\","
+          "             \"question\": {\"type\": \"score\", \"instructions\": \"Rate urgency\","
+          "                          \"criteria\": [\"low\", \"medium\", \"high\"]}, \"target\": 2, \"action\": 1},"
+          "            {\"state\": \"My delivery is still missing.\","
+          "             \"question\": {\"type\": \"noul\", \"instructions\": \"Is it missing?\"},"
+          "             \"target\": 1, \"action\": 0}]"
+          "        (root / \"eval.jsonl\").write_text(\"\".join(json.dumps(r) + \"\\n\" for r in evaluation))"
+          "        (root / \"config.json\").write_text(json.dumps({\"epochs\": 1, \"learning_rate\": 1e-5,"
+          "                                                       \"train_encoder\": False, \"max_steps\": 1}))"
+          "        (root / \"policy.json\").write_text(json.dumps({\"min_decision_accuracy\": 0.0,"
+          "                                                       \"min_action_accuracy\": 0.0}))"
+          "        with ModernBertTrainer(TrainingBundle.open(checkpoint)) as trainer:"
+          "            source = trainer.finetune(train_data=root / \"train.jsonl\","
+          "                eval_data=root / \"eval.jsonl\", training_config=root / \"config.json\","
+          "                validation_policy=root / \"policy.json\", output_dir=root / \"result\")"
+          "        assert source.checkpoint_dir.is_dir()"
+          "    with GatewayClient(url, token=token, timeout=900) as gateway:"
+          "        decisions = Decisions(gateway)"
+          "        assert decisions.list_models()[0][\"installed\"]"
+          "        published = decisions.upload_model(source, timeout=900)"
+          "        ref = published[\"model_ref\"]"
+          "        assert decisions.get_model(ref)[\"installed\"]"
+          "        decisions.activate_model(\"sdk-e2e\", ref)"
+          "        assert decisions.get_alias(\"sdk-e2e\")[\"model_ref\"] == ref"
+          "        questions = {\"intent\": {\"type\": \"choice\", \"instructions\": \"Choose intent\","
+          "                                \"criteria\": [\"refund\", \"repair\"]},"
+          "                     \"priority\": {\"type\": \"score\", \"instructions\": \"Rate urgency\","
+          "                                  \"criteria\": [\"low\", \"medium\", \"high\"]},"
+          "                     \"policy\": {\"type\": \"noul\", \"instructions\": \"Is this refundable?\"}}"
+          "        answer = decisions.infer(model=\"sdk-e2e\", state=\"broken item refund\","
+          "                                 questions=questions)"
+          "        baseline = decisions.infer(model=\"laya-typed-decisions\","
+          "                                   state=\"broken item refund\", questions=questions)"
+          "        print(\"VIS_DECISION_RESULT=\" + json.dumps({\"ref\": ref,"
+          "            \"routing\": answer[\"routing\"][\"model_ref\"],"
+          "            \"baseline\": baseline[\"routing\"][\"model\"],"
+          "            \"trained\": checkpoint != \"-\","
+          "            \"choice\": answer[\"answers\"][\"intent\"][\"choice\"],"
+          "            \"score\": answer[\"answers\"][\"priority\"][\"score\"],"
+          "            \"noul\": answer[\"answers\"][\"policy\"][\"noul\"],"
+          "            \"action\": answer[\"answers\"][\"intent\"][\"action\"]}))"])]
+
+      (is (some? dir))
+      (.mkdirs root)
+      (try
+        (with-server-state!
+          {:require-token? true :managed? false :clients {}}
+          (fn []
+            (with-redefs [decision-assets/models-root (constantly (.getPath root))
+                          decision-assets/install-dir (fn [& _]
+                                                        dir)]
+
+              (let [server (jetty/run-jetty ((rv 'app) "decision-sdk-test-token" [])
+                                            {:port 0 :host "127.0.0.1" :join? false})]
+                (try
+                  (let [url (str "http://127.0.0.1:" (bound-port server))
+                        builder (ProcessBuilder. ^"[Ljava.lang.String;"
+                                                 (into-array String
+                                                             [python "-I" "-c" script url
+                                                              "decision-sdk-test-token" dir
+                                                              (or train-dir "-")]))
+                        _ (.redirectErrorStream builder true)
+                        _ (.put (.environment builder) "HF_HUB_OFFLINE" "1")
+                        _ (.put (.environment builder) "TRANSFORMERS_OFFLINE" "1")
+                        process (.start builder)
+                        output (future (slurp (.getInputStream process)))
+                        finished? (.waitFor process 1200 java.util.concurrent.TimeUnit/SECONDS)]
+
+                    (when-not finished? (.destroyForcibly process))
+                    (let [text (deref output 10000 "")]
+                      (is finished?)
+                      (is (and finished? (zero? (.exitValue process))) text)
+                      (when (and finished? (zero? (.exitValue process)))
+                        (let [line (some #(when (str/starts-with? % "VIS_DECISION_RESULT=")
+                                            (subs % (count "VIS_DECISION_RESULT=")))
+                                         (str/split-lines text))]
+                          (is (some? line) text)
+                          (when line
+                            (let [result (wire/parse-json line)]
+                              (is (= (get result "ref") (get result "routing")))
+                              (is (= "laya-typed-decisions" (get result "baseline")))
+                              (is (= (boolean train-dir) (get result "trained")))
+                              (is (#{"refund" "repair"} (get result "choice")))
+                              (is (number? (get result "score")))
+                              (is (number? (get result "noul")))
+                              (is (number? (get-in result ["action" "act_probability"])))
+                              (is (= (get result "ref")
+                                     (get (decision-registry/get-alias "sdk-e2e")
+                                          "model_ref")))))))))
+                  (finally (.stop ^org.eclipse.jetty.server.Server server)))))))
+        (finally (decision-cache/release-idle!) (speech-files/delete-dir! root))))))
+
+(deftest decision-import-route-streams-with-checksum-and-never-activates-an-alias
+  (let [app
+        (rr/ring-handler ((rv 'router) "token" []))
+
+        bytes
+        (.getBytes "bounded archive" "UTF-8")
+
+        sha
+        (util/sha256-hex bytes)
+
+        calls
+        (atom [])]
+
+    (with-redefs [decision-registry/register!
+                  (fn [archive expected validate!]
+                    (swap! calls conj [(slurp archive) expected (ifn? validate!)])
+                    {"model_ref" (str "sha256-" expected) "installed" true})]
+      (let [response (app {:request-method :post
+                           :uri "/v1/decisions/models"
+                           :headers {"x-content-sha256" sha "content-length" (str (alength bytes))}
+                           :body (java.io.ByteArrayInputStream. bytes)})]
+        (is (= 201 (:status response)))
+        (is (= [["bounded archive" sha true]] @calls))
+        (is (= (str "sha256-" sha) (get (wire/parse-json (:body response)) "model_ref"))))
+      (is (= 400
+             (:status (app {:request-method :post
+                            :uri "/v1/decisions/models"
+                            :headers {"x-content-sha256" (apply str (repeat 64 "0"))}
+                            :body (java.io.ByteArrayInputStream. bytes)}))))
+      (is (= 413
+             (:status (app {:request-method :post
+                            :uri "/v1/decisions/models"
+                            :headers {"x-content-sha256" sha "content-length" "1600000001"}
+                            :body (java.io.ByteArrayInputStream. bytes)}))))
+      (is (= 1 (count @calls))))))
+
+(deftest decision-alias-route-refuses-an-implicit-replacement
+  (let [app
+        (rr/ring-handler ((rv 'router) "token" []))
+
+        calls
+        (atom [])]
+
+    (with-redefs [com.blockether.vis.internal.decisions.registry/activate!
+                  (fn [name ref expected]
+                    (swap! calls conj [name ref expected])
+                    (when expected
+                      (throw (ex-info "Alias changed" {:type :decisions/alias-conflict})))
+                    {"alias" name "model_ref" ref})]
+      (let [result (app (merge {:request-method :put :uri "/v1/decisions/aliases/sales"}
+                               (json-body {:model_ref "sha256-test"})))
+            conflict (app (merge {:request-method :put :uri "/v1/decisions/aliases/sales"}
+                                 (json-body {:model_ref "sha256-test"
+                                             :expected_current "sha256-old"})))]
+
+        (is (= 200 (:status result)))
+        (is (= 409 (:status conflict)))
+        (is (= [["sales" "sha256-test" nil] ["sales" "sha256-test" "sha256-old"]] @calls))))))
+
+(deftest decision-training-routes-are-authenticated-bounded-and-cancellable
+  (with-server-state!
+    {:require-token? true}
+    (fn []
+      (let [id
+            (str (random-uuid))
+
+            calls
+            (atom [])
+
+            app
+            ((rv 'app) "decision-training-token" [])
+
+            request
+            (fn [method path body authorized?]
+              (let [req (merge {:request-method method :uri path} (when body (json-body body)))]
+                (app (update req
+                             :headers
+                             merge
+                             {"x-vis-protocol" (str gateway-contract/protocol-version)}
+                             (when authorized?
+                               {"authorization" "Bearer decision-training-token"})))))]
+
+        (with-redefs [decision-jobs/create!
+                      (fn [body]
+                        (swap! calls conj [:create body])
+                        {"job_id" id "status" "running"})
+
+                      decision-jobs/get!
+                      (fn [job]
+                        (swap! calls conj [:get job])
+                        (when (= job id) {"job_id" id "status" "running"}))
+
+                      decision-jobs/delete!
+                      (fn [job]
+                        (swap! calls conj [:delete job])
+                        {"job_id" id "status" "cancelling"})]
+
+          (is (= 401 (:status (request :post "/v1/decisions/training/jobs" {} false))))
+          (is (= 202
+                 (:status
+                   (request :post "/v1/decisions/training/jobs" {:train_data "train.jsonl"} true))))
+          (is (= 200 (:status (request :get (str "/v1/decisions/training/jobs/" id) nil true))))
+          (is (= 202 (:status (request :delete (str "/v1/decisions/training/jobs/" id) nil true))))
+          (is (= 404 (:status (request :get "/v1/decisions/training/jobs/not-found" nil true))))
+          (is (= 413
+                 (:status (app {:request-method :post
+                                :uri "/v1/decisions/training/jobs"
+                                :headers {"authorization" "Bearer decision-training-token"
+                                          "x-vis-protocol" (str gateway-contract/protocol-version)}
+                                :body (java.io.ByteArrayInputStream. (byte-array 8193))}))))
+          (is (= [:create {"train_data" "train.jsonl"}] (first @calls)))
+          (is (= [:delete id] (last (filter #(= :delete (first %)) @calls)))))))))
+
+(deftest decision-warmup-respects-installation-switch-and-independent-errors
+  (let [calls
+        (atom [])
+
+        models
+        [{"model_ref" "laya-typed-decisions" "installed" true}
+         {"model_ref" "other" "installed" true} {"model_ref" "missing" "installed" false}]
+
+        env
+        (fn [key]
+          (case key
+            "VIS_DECISION_WARMUP"
+            "true"
+
+            "VIS_DECISION_WARM_MODELS"
+            "other,missing"))]
+
+    (with-redefs [config/extension-env-value
+                  env
+
+                  decision-core/models-status
+                  (constantly models)
+
+                  decision-core/warm!
+                  (fn [id]
+                    (swap! calls conj id)
+                    (when (= id "laya-typed-decisions") (throw (ex-info "warmup failed" {}))))]
+
+      (is (nil? (deref ((rv 'preload-decision-models!)) 3000 ::timeout)))
+      (is (= ["laya-typed-decisions" "other"] @calls)))
+    (with-redefs [config/extension-env-value
+                  (constantly "false")
+
+                  decision-core/models-status
+                  (fn []
+                    (throw (ex-info "disabled" {})))]
+
+      (is (nil? ((rv 'preload-decision-models!)))))))
+
+(deftest stopping-gateway-retires-decision-sessions-and-warmup
+  (decision-cache/enable!)
+  (decision-cache/release-idle!)
+  (let [closed
+        (atom [])
+
+        entered
+        (promise)
+
+        finish
+        (promise)
+
+        warm-entered
+        (promise)
+
+        warmup
+        (future (deliver warm-entered true) @(promise))
+
+        _
+        (decision-cache/with-resident! :stop-idle
+                                       (fn []
+                                         {:close #(swap! closed conj :idle)})
+                                       identity)
+
+        active
+        (future (decision-cache/with-resident! :stop-active
+                                               (fn []
+                                                 {:close #(swap! closed conj :active)})
+                                               (fn [_]
+                                                 (deliver entered true)
+                                                 @finish)))]
+
+    (try (is (= true (deref entered 3000 nil)))
+         (is (= true (deref warm-entered 3000 nil)))
+         (with-redefs-fn {(rv 'running-turn-count) (constantly 0)
+                          (rv 'stop-route-contributions!) (fn [_])
+                          #'gw-view/uninstall! (fn [])
+                          #'resources/shutdown! (fn [])
+                          #'discovery/deregister-self! (fn [_])}
+           #(with-server-state!
+              {:server (org.eclipse.jetty.server.Server.) :db nil :decision-warmup warmup}
+              server/stop!))
+         (is (future-cancelled? warmup))
+         (is (= [:idle] @closed))
+         (deliver finish true)
+         (is (= true (deref active 3000 nil)))
+         (is (= [:idle :active] @closed))
+         (is (= :cold (decision-cache/status :stop-active)))
+         (finally (deliver finish true)
+                  (future-cancel warmup)
+                  (decision-cache/enable!)
+                  (decision-cache/release-idle!)))))
+
 (deftest voices-hang-off-the-machine-not-off-a-session
   ;; An imported clip is stored on the machine and every session on it speaks with the
   ;; same catalogue, so the one screen that manages voices - settings, which is looking
@@ -4524,8 +4924,8 @@
                         (str handler))))))))))))
 
 ;; Regression, user report: the star was kept in each DEVICE's own storage, so one
-;; screen showed a session starred while another showed it plain, and no answer from
-;; the gateway could settle which was true.
+  ;; screen showed a session starred while another showed it plain, and no answer from
+  ;; the gateway could settle which was true.
 (deftest the-star-is-set-on-the-gateway-never-on-the-device
   (let [sid
         (str (random-uuid))
@@ -4573,8 +4973,8 @@
           (is (= 404 (:status (patch-session {:is_favorite true})))))))))
 
 ;; The archive is set on the GATEWAY for the same reason the star above is: a session put
-;; away on the phone has to be put away in the TUI and in the web list too, and no device
-;; can hold a private copy of that decision.
+  ;; away on the phone has to be put away in the TUI and in the web list too, and no device
+  ;; can hold a private copy of that decision.
 (deftest the-archive-is-set-on-the-gateway-never-on-the-device
   (let [sid
         (str (random-uuid))
@@ -4622,8 +5022,8 @@
           (is (= 404 (:status (patch-session {:archived true})))))))))
 
 ;; The ONE archive vocabulary every list route of this gateway reads: the view arrives by
-;; NAME, because a boolean could not say whether the reader wants the active rows, both,
-;; or the archive alone - which is what a reveal asks for.
+  ;; NAME, because a boolean could not say whether the reader wants the active rows, both,
+  ;; or the archive alone - which is what a reveal asks for.
 (deftest sessions-window-reads-the-archive-view-by-name
   (let [seen
         (atom nil)
@@ -4655,7 +5055,7 @@
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
 ;; A GROUP is a shelf: putting it away has to take its sessions out of sight WITH it and
-;; stamp none of them, so unarchiving brings back exactly the rows it hid.
+  ;; stamp none of them, so unarchiving brings back exactly the rows it hid.
 (deftest the-archive-on-a-group-hides-its-sessions-without-stamping-them
   (let [gid
         (random-uuid)
@@ -4715,9 +5115,9 @@
           (is (= :only (:archived (second @seen)))))))))
 
 ;; READ-ONLY is the other half of the archive: the row leaves the lists AND stops taking
-;; work. The app and the TUI disable their composer, so what reaches these routes is a
-;; stale screen or a caller coming straight through the SDK - and the refusal names the
-;; archive, because unarchiving is the whole fix.
+  ;; work. The app and the TUI disable their composer, so what reaches these routes is a
+  ;; stale screen or a caller coming straight through the SDK - and the refusal names the
+  ;; archive, because unarchiving is the whole fix.
 (deftest an-archived-session-takes-no-new-work
   (let [sid
         (str (random-uuid))
@@ -4790,9 +5190,9 @@
                             {:path-params {:sid sid} :query-params {}})))))))))
 
 ;; A session still WORKING cannot be put away: the turn would keep running with nothing
-;; in any list naming it, and cancelling it behind a swipe verb would be worse. The group
-;; is a shelf, so ONE working member holds the whole shelf up - and the answer names that
-;; session, because the human has to know where the work is.
+  ;; in any list naming it, and cancelling it behind a swipe verb would be worse. The group
+  ;; is a shelf, so ONE working member holds the whole shelf up - and the answer names that
+  ;; session, because the human has to know where the work is.
 (deftest work-in-flight-refuses-the-archive-and-names-the-session
   (let [sid
         (str (random-uuid))
@@ -4865,9 +5265,9 @@
           (is (= 200 (:status (patch-group {:archived false})))))))))
 
 ;; Regression: the settings mutation route answered 200 to every value it could
-;; not store — a JSON `false` was read as "no value given" and ignored, the string
-;; "false" was cast by truthiness into ON, an unknown enum choice changed nothing
-;; silently, and `cycle` on a boolean surfaced as a 500 engine-error.
+  ;; not store — a JSON `false` was read as "no value given" and ignored, the string
+  ;; "false" was cast by truthiness into ON, an unknown enum choice changed nothing
+  ;; silently, and `cycle` on a boolean surfaced as a 500 engine-error.
 (deftest set-setting-value-action-refuses-what-it-cannot-store-test
   (toggles/register-toggle! {:id "server_test_value_bool" :label "Test bool" :default true})
   (toggles/register-toggle! {:id "server_test_value_enum"
@@ -4927,11 +5327,11 @@
       (is (false? (toggles/enabled? "server_test_value_bool"))))))
 
 ;; Compression is a transport win everywhere EXCEPT the live stream, where the
-;; deflater's buffering is indistinguishable from a stalled turn. Jetty happens to
-;; ship `text/event-stream` in its default exclusions today, so this test is not
-;; guarding our own `addExcludedMimeTypes` call so much as the invariant itself —
-;; it fails whether the regression comes from our configurator or from a Jetty
-;; default changing under us.
+  ;; deflater's buffering is indistinguishable from a stalled turn. Jetty happens to
+  ;; ship `text/event-stream` in its default exclusions today, so this test is not
+  ;; guarding our own `addExcludedMimeTypes` call so much as the invariant itself —
+  ;; it fails whether the regression comes from our configurator or from a Jetty
+  ;; default changing under us.
 (deftest gzip-handler-never-compresses-the-live-stream-test
   (let [^org.eclipse.jetty.server.handler.gzip.GzipHandler g ((rv 'gzip-handler))]
     (testing "SSE never deflates"
@@ -5579,8 +5979,8 @@
           (is (not= (Thread/currentThread) thread)))))))
 
 ;; Regression, this Vis session (paraphrased: "NEW should be one truth, not a
-;; count every surface keeps for itself"): opening a conversation reports how far
-;; this reader has read, and the receipt carries the position the gateway holds.
+  ;; count every surface keeps for itself"): opening a conversation reports how far
+  ;; this reader has read, and the receipt carries the position the gateway holds.
 (deftest mark-session-read-route-reports-the-position-the-gateway-holds
   (let [sid
         (java.util.UUID/randomUUID)

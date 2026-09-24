@@ -1,0 +1,66 @@
+[
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1057411269,
+        "file": "laya-typed-decisions-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "rl_agent_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "0ce5be63e83b7f1373f85277a514765718391c2645c7b5ebff823527abff396d",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-typed-decisions-fp32.zip"
+      },
+      "training": {
+        "bytes": 781127141,
+        "file": "laya-typed-decisions-training.zip",
+        "requires": [
+          "model.safetensors",
+          "encoder/config.json",
+          "rl_agent_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "2788bf3c2e99eb66a1a3e9338a3cbcdb20ae4316a493dbb8815ca9dec4c9e387",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-typed-decisions-training.zip"
+      },
+      "wheels": {
+        "linux-x86_64": {
+          "bytes": 277936860,
+          "file": "laya-training-wheels-cp312-linux-x86_64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "wheels/torch-2.10.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+          ],
+          "sha256": "8a9170a7016ed4c4dc54ff6fc739a413895fc6bd8c3e11903da9e62431a4b4f4",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-training-wheels-cp312-linux-x86_64.zip"
+        },
+        "macos-arm64": {
+          "bytes": 154075318,
+          "file": "laya-training-wheels-cp312-macos-arm64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "wheels/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl"
+          ],
+          "sha256": "f15b01566434557b0d2ffbbaa84b4ae3bf97052550663c4af4ff5fd8b9c489da",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-training-wheels-cp312-macos-arm64.zip"
+        }
+      }
+    },
+    "attribution": "Laya typed decisions by ConvAI Innovations, Apache-2.0. Full ModernBERT encoder and both decision heads; FP32 ONNX export by Vis. Baseline act/escalate decisions are not approved for autonomous actions.",
+    "id": "laya-typed-decisions",
+    "license": "Apache-2.0",
+    "revision": "dd079950600224fb459af2a0cb1d74e1e57ee9cf",
+    "source-url": "https://huggingface.co/convaiinnovations/laya-typed-decisions/tree/dd079950600224fb459af2a0cb1d74e1e57ee9cf"
+  }
+]

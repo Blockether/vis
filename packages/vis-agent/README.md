@@ -29,6 +29,8 @@ process, use `LocalEngine`; see the [stdio guide](https://vis.blockether.com/pyt
 - [Python SDK guide](https://vis.blockether.com/python-sdk.html) — run a local
   agent, continue a conversation or connect to a shared gateway. `Agent` is
   available in SDK `0.2.3` and newer.
+- [Decision models](https://vis.blockether.com/decision-models.html) — download Laya,
+  train both heads offline, publish FP32 and select a version explicitly.
 - [Python API reference](https://vis.blockether.com/python-sdk-api/) — browse
   classes, methods, signatures and types generated from the SDK source.
 - [Extension guide](https://vis.blockether.com/extending.html) — add tools to Vis.

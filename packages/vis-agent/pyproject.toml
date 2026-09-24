@@ -26,6 +26,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+decisions-training = [
+  "laya==0.3.7",
+  "torch==2.10.0",
+  "transformers==5.0.0",
+  "onnx==1.23.0",
+  "onnxruntime==1.30.0",
+]
 docs = ["pdoc==16.0.0"]
 
 [project.urls]

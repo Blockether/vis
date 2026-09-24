@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.speech.assets-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.decisions.assets :as decisions]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.attribution :as attribution]
             [com.blockether.vis.internal.speech.files :as files]
@@ -55,6 +56,19 @@
   manifest-test
   (it "names the speech models override explicitly"
       (expect (= "VIS_SPEECH_MODELS_DIR" assets/models-dir-env)))
+  (it "uses the shared assets-pack release for every mirrored speech artifact"
+      (let [pack-sources (for [entry (assets/manifest)
+                               source (:sources entry)
+                               :when (= :pack (:host source))]
+
+                           source)]
+        (expect (seq pack-sources))
+        (doseq [source pack-sources]
+          (expect (str/starts-with?
+                    (:url source)
+                    "https://github.com/Blockether/vis/releases/download/assets-pack/")))
+        (expect (= "https://github.com/Blockether/vis/releases/tag/assets-pack"
+                   (:source-url (assets/entry "voice-samples"))))))
   (it "says of every asset what it is, who to credit and where it may come from"
       ;; The manifest is the only place a URL exists, so an entry missing its
       ;; licence or its checksum is an artifact Vis would install blind.
@@ -295,3 +309,16 @@
                   :when url]
 
             (expect (str/includes? rendered url) (:id entry)))))))
+
+(defdescribe decision-attribution-test
+             (it "credits the complete pinned decision release alongside speech"
+                 (let [rendered (attribution/markdown)]
+                   (doseq [model (decisions/manifest)]
+                     (expect (str/includes? rendered (:id model)))
+                     (expect (str/includes? rendered (:revision model)))
+                     (expect (str/includes? rendered (:attribution model)))
+                     (doseq [artifact (concat [(get-in model [:artifacts :inference])
+                                               (get-in model [:artifacts :training])]
+                                              (vals (get-in model [:artifacts :wheels])))]
+                       (expect (str/includes? rendered (:url artifact)))
+                       (expect (str/includes? rendered (:sha256 artifact))))))))

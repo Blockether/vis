@@ -439,6 +439,7 @@ client and its session handles use one calling thread.
 ## See also
 
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
+- [Decision models](decision-models.md) — download Laya, train both heads and publish a verified FP32 version.
 - [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.
 - [Extending Vis](extending.md) — add tools inside the agent.

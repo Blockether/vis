@@ -6,7 +6,7 @@
 # WHY this exists (licence, not preference):
 #   * Kyutai publishes pocket-tts under CC BY 4.0. Commercial use and
 #     redistribution of an adaptation are both permitted, with attribution — so
-#     an export WE make is ours to ship in the voice assets release.
+#     an export WE make is ours to ship in the assets-pack release.
 #   * The ready-made ONNX bundle everyone else uses is a THIRD PARTY's export,
 #     and the README inside that archive says "It is for non-commercial" while
 #     the LICENSE beside it is plain CC BY 4.0. Nobody here can resolve someone
@@ -32,7 +32,7 @@
 #
 # The Hugging Face token is a BUILD-TIME credential and never reaches a user:
 # kyutai/pocket-tts is gated (auto-approve), so fetching the weights needs an
-# account. Everything this script produces is published in the voice assets
+# account. Everything this script produces is published in the assets-pack
 # release, which needs no account, no token and no Hugging Face at all.
 #
 # Usage:
@@ -49,7 +49,7 @@
 # voices may be recorded at all.
 #
 # Then, deliberately and only when asked:
-#   gh release upload voice-assets-pack <out>/pocket-tts-onnx.tar.bz2 --repo Blockether/vis
+#   gh release upload assets-pack <out>/pocket-tts-onnx.tar.bz2 --repo Blockether/vis
 #
 # Requires: uv, tar, bzip2. ~10 GB of disk and a few minutes.
 

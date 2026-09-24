@@ -88,6 +88,30 @@
         (expect (str/includes? text "FROM scratch AS native-export") text)
         (expect (str/includes? text "COPY --from=builder /build/target/vis /vis-agent-native")
                 text)))
+  (it "prepares Java-bearing Git dependencies before AOT in a fresh container"
+      ;; Regression: AOT failed to resolve vis-python-runtime.HostFunction in the
+      ;; container because its Git dependency had never run :deps/prep-lib.
+      (let [text
+            (dockerfile)
+
+            copied
+            (str/index-of text "COPY . .")
+
+            prepared
+            (str/index-of text "RUN clojure -X:deps prep")
+
+            compiled
+            (str/index-of text "RUN VIS_NATIVE_EXTRA_ARGS=")]
+
+        (expect (and copied prepared compiled (< copied prepared compiled))
+                "The copied checkout must prep Git libraries before native AOT")))
+  (it "omits generated mobile builds and local Python environments from the native context"
+      ;; Regression: COPY . . exhausted the Linux builder disk on generated iOS
+      ;; DerivedData and local training virtual environments.
+      (let [ignore (slurp ".dockerignore")]
+        (doseq [pattern ["apps/vis-companion/ios" "apps/vis-companion/android"
+                         "apps/vis-companion/build" "**/.venv"]]
+          (expect (str/includes? ignore (str "\n" pattern "\n")) pattern))))
   (it "proves the runtime while building, not in production"
       (let [stage (runtime-stage)]
         (expect (str/includes? stage "od -An -tx1 -N4 /opt/vis/agent/vis-agent-native") stage)

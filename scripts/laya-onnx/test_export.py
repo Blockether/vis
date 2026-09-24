@@ -802,3 +802,110 @@ def test_minimal_wheelhouse_trains_and_exports_without_network(tmp_path):
     assert result.returncode == 0, (result.stdout[-2000:], result.stderr[-3000:])
     assert '"offline-training-ready": true' in result.stdout
     print(result.stdout[-400:])
+
+
+@pytest.mark.skipif(
+    not all(
+        os.environ.get(name)
+        for name in (
+            "VIS_LAYA_OFFLINE_TRAIN_PYTHON",
+            "VIS_LAYA_OFFLINE_CHECKPOINT",
+            "VIS_LAYA_OFFLINE_FP32",
+        )
+    ),
+    reason="Set VIS_LAYA_OFFLINE_TRAIN_PYTHON, VIS_LAYA_OFFLINE_CHECKPOINT and VIS_LAYA_OFFLINE_FP32",
+)
+def test_release_bundles_train_and_reload_fp32_without_network(tmp_path):
+    """An offline wheelhouse and the two independent release bundles complete the FP32 cycle."""
+    python = Path(os.environ["VIS_LAYA_OFFLINE_TRAIN_PYTHON"])
+    checkpoint = Path(os.environ["VIS_LAYA_OFFLINE_CHECKPOINT"])
+    fp32 = Path(os.environ["VIS_LAYA_OFFLINE_FP32"])
+    for directory, files in (
+        (
+            checkpoint,
+            ("model.safetensors", "encoder/config.json", "tokenizer/tokenizer.json"),
+        ),
+        (fp32, ("model.onnx", "rl_agent_config.json", "tokenizer/tokenizer.json")),
+    ):
+        for name in files:
+            assert (directory / name).is_file(), f"{directory}: {name}"
+
+    script = textwrap.dedent("""
+        import gc
+        import json
+        import socket
+        import sys
+        from pathlib import Path
+
+        def offline(*args, **kwargs):
+            raise AssertionError("An offline FP32 cycle attempted network access")
+
+        socket.socket.connect = offline
+
+        import numpy as np
+        import torch
+        from laya import Agent
+        from export import load_onnx, make_batch, train_and_export
+
+        torch.set_num_threads(2)
+        checkpoint, fp32, destination = map(Path, sys.argv[1:4])
+        state, questions = map(json.loads, sys.argv[4:6])
+        original = Agent(str(checkpoint), device="cpu")
+        baseline = load_onnx(fp32)
+        batch = make_batch(original, state, questions)
+        with torch.no_grad():
+            expected_choice, expected_act = original.model(*batch)
+        baseline_choice, baseline_act = baseline.model(*batch)
+        np.testing.assert_allclose(baseline_choice.numpy(), expected_choice.numpy(), rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(baseline_act.numpy(), expected_act.numpy(), rtol=1e-4, atol=1e-4)
+        assert set(baseline.predict(state, questions)["answers"]) == set(questions)
+        del baseline
+        gc.collect()
+
+        trained = train_and_export(
+            original, batch, torch.tensor([1, 2, 1]), destination,
+            act_targets=torch.tensor([1, 0, 1]),
+        )
+        assert trained["graph"].is_file()
+        assert (trained["checkpoint"] / "model.safetensors").is_file()
+        del original
+        gc.collect()
+
+        restored = Agent(str(trained["checkpoint"]), device="cpu")
+        exported = load_onnx(trained["graph"].parent)
+        with torch.no_grad():
+            expected_choice, expected_act = restored.model(*batch)
+        actual_choice, actual_act = exported.model(*batch)
+        np.testing.assert_allclose(actual_choice.numpy(), expected_choice.numpy(), rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(actual_act.numpy(), expected_act.numpy(), rtol=1e-4, atol=1e-4)
+        assert set(exported.predict(state, questions)["answers"]) == set(questions)
+        print("offline-fp32-release-cycle: ready")
+    """)
+    env = os.environ.copy()
+    env.update(
+        HF_HOME=str(tmp_path / "empty-hf-cache"),
+        HF_HUB_OFFLINE="1",
+        TRANSFORMERS_OFFLINE="1",
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONPATH=str(Path(__file__).resolve().parent),
+    )
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            script,
+            str(checkpoint),
+            str(fp32),
+            str(tmp_path / "trained"),
+            json.dumps(STATE),
+            json.dumps(QUESTIONS),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=3600,
+        check=False,
+        env=env,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, (result.stdout[-1500:], result.stderr[-3000:])
+    assert "offline-fp32-release-cycle: ready" in result.stdout

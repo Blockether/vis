@@ -6,9 +6,21 @@ target
 .cpcache
 **/.cpcache
 .verification
+.gitworktrees
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.cache
 **/node_modules
 apps/vis-companion/dist
 apps/vis-companion/.vite
+# Mobile projects and build products are generated locally, not gateway sources.
+apps/vis-companion/android
+apps/vis-companion/ios
+apps/vis-companion/build
+apps/vis-companion/dist-ssr
+apps/vis-companion/storybook-static
 **/*.jfr
 **/.omc
 .vis

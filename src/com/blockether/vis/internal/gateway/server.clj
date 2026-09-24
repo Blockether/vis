@@ -57,6 +57,11 @@
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.speech.core :as speech]
     [reitit.ring :as rr]
+    [com.blockether.vis.internal.decisions.assets :as decision-assets]
+    [com.blockether.vis.internal.decisions.cache :as decision-cache]
+    [com.blockether.vis.internal.decisions.core :as decisions]
+    [com.blockether.vis.internal.decisions.registry :as decision-registry]
+    [com.blockether.vis.internal.decisions.jobs :as decision-jobs]
     [ring.adapter.jetty9 :as jetty]
     [ring.core.protocols :as ring-protocols]
     [ring.middleware.cookies :as ring-cookies]
@@ -71,7 +76,7 @@
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.security MessageDigest]
            [java.util Base64 UUID]
-           [java.util.concurrent ArrayBlockingQueue TimeUnit]
+           [java.util.concurrent ArrayBlockingQueue Semaphore TimeUnit]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
            [org.eclipse.jetty.server.handler.gzip GzipHandler]))
@@ -4623,6 +4628,249 @@
 
 (defn- speech-model-handler [request] (model-handler :synthesize request))
 
+(defn- decisions-models-handler
+  "GET /v1/decisions/models — installation and resident state, never a download."
+  [_]
+  (json-response {"models" (decisions/models-status)}))
+
+(def ^:private decision-upload-slots (Semaphore. 1))
+
+(defn- decision-mutation-error
+  [^clojure.lang.ExceptionInfo e]
+  (let [type
+        (:type (ex-data e))
+
+        status
+        (case type
+          :decisions/unsafe-path
+          400
+
+          :decisions/invalid-archive
+          400
+
+          :decisions/archive-checksum
+          400
+
+          :decisions/invalid-alias
+          400
+
+          :decisions/invalid-request
+          400
+
+          :decisions/model-not-installed
+          409
+
+          :decisions/training-unavailable
+          503
+
+          :decisions/unknown-model
+          404
+
+          :decisions/alias-conflict
+          409
+
+          :decisions/invalid-registry
+          409
+
+          :decisions/invalid-bundle
+          422
+
+          :decisions/capacity-exceeded
+          503
+
+          :decisions/unavailable
+          503
+
+          nil)]
+
+    (if status
+      (error-response status :decisions/error (.getMessage e) :reason (name type))
+      (throw e))))
+
+(defn- decision-import-handler
+  "Stream one authenticated archive to disk; verify its declared digest before import."
+  [request]
+  (let [sha
+        (get-in request [:headers "x-content-sha256"])
+
+        length-header
+        (get-in request [:headers "content-length"])
+
+        declared
+        (when length-header (parse-long length-header))
+
+        limit
+        (long decision-assets/max-inference-upload-bytes)]
+
+    (cond (not (and (string? sha) (re-matches #"[0-9a-f]{64}" sha)))
+          (error-response 400 :invalid-request "A SHA-256 upload digest is required")
+          (and length-header (or (nil? declared) (neg? (long declared))))
+          (error-response 400 :invalid-request "Invalid upload length")
+          (and declared (> (long declared) limit)) (error-response
+                                                     413
+                                                     :decisions/upload-too-large
+                                                     "Decision archive exceeds the upload limit")
+          (not (.tryAcquire ^Semaphore decision-upload-slots))
+          (error-response 503 :decisions/capacity-exceeded "Another decision upload is in progress")
+          :else (try
+                  (let [root
+                        (io/file (decision-assets/models-root) "registered")
+
+                        _
+                        (.mkdirs root)
+
+                        archive
+                        (java.io.File/createTempFile ".decision-upload-" ".zip" root)]
+
+                    (try
+                      (let [digest
+                            (util/sha256-digest)
+
+                            buffer
+                            (byte-array 1048576)
+
+                            count
+                            (with-open [^InputStream in
+                                        (:body request)
+
+                                        out
+                                        (io/output-stream archive)]
+
+                              (loop [total 0]
+                                (let [n (.read in buffer)]
+                                  (if (neg? n)
+                                    total
+                                    (let [next (+ (long total) (long n))]
+                                      (when (> next limit)
+                                        (throw (ex-info "Decision archive exceeds the upload limit"
+                                                        {:type :decisions/upload-too-large})))
+                                      (.update ^MessageDigest digest buffer 0 n)
+                                      (.write ^OutputStream out buffer 0 n)
+                                      (recur next))))))]
+
+                        (when (or (zero? count) (and declared (not= count (long declared))))
+                          (throw (ex-info "Decision archive length does not match"
+                                          {:type :decisions/invalid-archive})))
+                        (when-not (= sha (util/bytes->hex (.digest ^MessageDigest digest)))
+                          (throw (ex-info "Decision archive checksum failed"
+                                          {:type :decisions/archive-checksum})))
+                        (json-response
+                          201
+                          (decision-registry/register! archive sha decisions/validate-runtime!)))
+                      (finally (.delete archive))))
+                  (catch clojure.lang.ExceptionInfo e
+                    (if (= :decisions/upload-too-large (:type (ex-data e)))
+                      (error-response 413 :decisions/upload-too-large (.getMessage e))
+                      (decision-mutation-error e)))
+                  (finally (.release ^Semaphore decision-upload-slots))))))
+
+(defn- decision-model-handler
+  "Read an immutable ref after an ambiguous upload, without retrying the mutation."
+  [request]
+  (let [ref (get-in request [:path-params :model-ref])]
+    (if-let [entry (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))]
+      (json-response entry)
+      (error-response 404 :decisions/unknown-model "Decision model is not registered"))))
+
+(defn- decision-alias-handler
+  "Read or explicitly compare-and-swap an alias to a validated imported version."
+  [request]
+  (let [name (get-in request [:path-params :alias])]
+    (if (= :get (:request-method request))
+      (if-let [entry (decision-registry/get-alias name)]
+        (json-response entry)
+        (error-response 404 :decisions/unknown-model "Decision alias does not exist"))
+      (let [^InputStream stream (:body request)
+            bytes (when stream (.readNBytes stream 8193))]
+
+        (if (or (nil? bytes) (> (alength ^bytes bytes) 8192))
+          (error-response 413 :invalid-request "Decision alias request exceeds 8 KiB")
+          (try (let [body (decisions/parse-body (String. ^bytes bytes StandardCharsets/UTF_8))]
+                 (when-not (and (every? #{"model_ref" "expected_current"} (keys body))
+                                (string? (get body "model_ref")))
+                   (throw (ex-info "Decision alias requires an immutable model_ref"
+                                   {:type :decisions/invalid-request})))
+                 (json-response (decision-registry/activate! name
+                                                             (get body "model_ref")
+                                                             (get body "expected_current"))))
+               (catch clojure.lang.ExceptionInfo e (decision-mutation-error e))))))))
+
+(defn- decision-training-start-handler
+  "Start one offline, gateway-owned training job from approved local data filenames."
+  [request]
+  (let [^InputStream stream
+        (:body request)
+
+        bytes
+        (when stream (.readNBytes stream 8193))]
+
+    (cond (nil? bytes)
+          (error-response 400 :invalid-request "A decision training request is required")
+          (> (alength ^bytes bytes) 8192)
+          (error-response 413 :invalid-request "Decision training request exceeds 8 KiB")
+          :else (try (json-response 202
+                                    (decision-jobs/create!
+                                      (into {}
+                                            (decisions/parse-body
+                                              (String. ^bytes bytes StandardCharsets/UTF_8)))))
+                     (catch clojure.lang.ExceptionInfo e (decision-mutation-error e))))))
+
+(defn- decision-training-job-handler
+  "Read status or cancel a running job; DELETE also discards a completed checkpoint."
+  [request]
+  (let [id
+        (get-in request [:path-params :job-id])
+
+        result
+        (if (= :delete (:request-method request))
+          (decision-jobs/delete! id)
+          (decision-jobs/get! id))]
+
+    (if result
+      (json-response (if (= "cancelling" (get result "status")) 202 200) result)
+      (error-response 404 :decisions/unknown-job "Decision training job does not exist"))))
+
+(defn- decisions-handler
+  "POST /v1/systemone — explicit installed model, both Laya decision heads."
+  [request]
+  (let [bytes (when-let [^InputStream body (:body request)]
+                (.readNBytes body 131073))]
+    (if (or (nil? bytes) (> (alength ^bytes bytes) 131072))
+      (error-response 413
+                      :invalid-request "Decision request exceeds 128 KiB"
+                      :reason "request-too-large")
+      (try (json-response (decisions/infer! (decisions/parse-body
+                                              (String. ^bytes bytes StandardCharsets/UTF_8))))
+           (catch clojure.lang.ExceptionInfo e
+             (let [type (:type (ex-data e))
+                   status (case type
+                            :decisions/model-required
+                            400
+
+                            :decisions/invalid-request
+                            400
+
+                            :decisions/unknown-model
+                            404
+
+                            :decisions/model-not-installed
+                            409
+
+                            :decisions/invalid-bundle
+                            422
+
+                            :decisions/capacity-exceeded
+                            503
+
+                            :decisions/unavailable
+                            503
+
+                            nil)]
+
+               (if status
+                 (error-response status :decisions/error (.getMessage e) :reason (name type))
+                 (throw e))))))))
+
 (defn- voice-handler
   "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. ACCEPTS the audio
    and answers **202 with a job**; transcription runs on its own thread and the
@@ -5299,7 +5547,13 @@
         ["/providers/:provider-id/auth/poll" {:post provider-auth-poll-handler}]
         ["/providers/:provider-id/auth/cancel" {:post provider-auth-cancel-handler}]
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
-        ["/voice" {:post voice-handler}]
+        ["/decisions/models" {:get decisions-models-handler :post decision-import-handler}]
+        ["/decisions/models/:model-ref" {:get decision-model-handler}]
+        ["/decisions/aliases/:alias" {:get decision-alias-handler :put decision-alias-handler}]
+        ["/decisions/training/jobs" {:post decision-training-start-handler}]
+        ["/decisions/training/jobs/:job-id"
+         {:get decision-training-job-handler :delete decision-training-job-handler}]
+        ["/systemone" {:post decisions-handler}] ["/voice" {:post voice-handler}]
         ["/voice/jobs/:job-id" {:get voice-job-handler :delete voice-job-handler}]
         ["/voice/jobs/:job-id/events" {:get voice-job-events-handler}]
         ["/speech" {:post speech-handler}]
@@ -5700,6 +5954,30 @@
                        (tel/log! :warn ["gateway: voice model preload failed" (ex-message t)]))))
         :started)))
 
+(defn- preload-decision-models!
+  "Warm installed versions after Jetty listens. Other versions remain cold; no downloads."
+  []
+  (let [enabled (config/extension-env-value "VIS_DECISION_WARMUP")]
+    (when-not (contains? #{"false" "off" "0"}
+                         (some-> enabled
+                                 str/lower-case))
+      (let [installed (into #{}
+                            (keep #(when (get % "installed") (get % "model_ref")))
+                            (decisions/models-status))
+            extra (config/extension-env-value "VIS_DECISION_WARM_MODELS")
+            requested (distinct (cons "laya-typed-decisions"
+                                      (remove str/blank?
+                                        (map str/trim (str/split (or extra "") #",")))))
+            ready (filterv installed requested)]
+
+        (when (seq ready)
+          (future (doseq [id ready]
+                    (try (decisions/warm! id)
+                         (catch Throwable t
+                           (tel/log! :warn
+                                     ["gateway: decision model preload failed" id
+                                      (ex-message t)]))))))))))
+
 (defn start!
   "Start the gateway on the Jetty 12 core adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -5848,6 +6126,7 @@
         :managed? (boolean managed?)
         :started-at-ms (util/now-ms)
         :saw-client? false})
+     (decision-cache/enable!)
      ;; The gateway's own control-plane port is reserved so a jailed child can NEVER reach
      ;; it through the proxy, even though loopback egress is allowed by default (SSRF floor).
      (try (gateway-sandbox/set-reserved-ports! [port]) (catch Throwable _ nil))
@@ -5861,6 +6140,7 @@
                 (if require-token? "auth: bearer token" "auth: disabled (loopback)")
                 (if managed? "lifecycle: managed" "lifecycle: foreground")])
      (preload-voice-model!)
+     (swap! server-state assoc :decision-warmup (preload-decision-models!))
      {:port port
       :host host
       :token-file (str path)
@@ -5916,6 +6196,14 @@
             (tel/log! :warn
                       ["gateway: drain timed out; forcing stop" residual
                        "turn(s) still running"])))))
+    (when-let [warmup (:decision-warmup @server-state)]
+      (future-cancel warmup))
+    (try (decision-jobs/stop!)
+         (catch Throwable t
+           (tel/log! :warn ["gateway: decision training shutdown failed" (ex-message t)])))
+    (try (decision-cache/shutdown!)
+         (catch Throwable t
+           (tel/log! :warn ["gateway: decision session shutdown failed" (ex-message t)])))
     (try (.stop server) (catch Throwable _ nil))
     (stop-route-contributions! (:contribs @live-app))
     ;; The live-view bridge holds patches for up to one flush window. A gateway

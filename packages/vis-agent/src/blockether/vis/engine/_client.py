@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, TypeAlias
+from typing import Any, BinaryIO, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -276,8 +276,10 @@ class ExecutionLayer(ABC):
         path=None,
         query=None,
         body=None,
-        content: bytes | None = None,
+        content: bytes | BinaryIO | None = None,
         timeout: float | None = None,
+        upload_sha256: str | None = None,
+        upload_length: int | None = None,
     ) -> Response:
         """Call a canonical SDK route template; binary responses remain bytes.
 
@@ -297,10 +299,27 @@ class ExecutionLayer(ABC):
         request_kind = operation["request"]
         if body is not None and request_kind != "json":
             raise ValueError("this operation does not accept a JSON body")
-        if content is not None and (
-            request_kind != "binary" or not isinstance(content, bytes)
-        ):
-            raise ValueError("binary operations require bytes content")
+        if content is not None and request_kind != "binary":
+            raise ValueError("this operation does not accept a binary body")
+        streaming = content is not None and not isinstance(content, bytes)
+        if streaming and not callable(getattr(content, "read", None)):
+            raise ValueError("binary operations require bytes or a readable stream")
+        if streaming or upload_sha256 is not None or upload_length is not None:
+            if (
+                route != "/v1/decisions/models"
+                or method != "POST"
+                or not streaming
+                or not isinstance(upload_sha256, str)
+                or len(upload_sha256) != 64
+                or any(
+                    character not in "0123456789abcdef" for character in upload_sha256
+                )
+                or type(upload_length) is not int
+                or not 0 < upload_length <= 1_600_000_000
+            ):
+                raise ValueError(
+                    "decision upload requires a bounded stream and SHA-256"
+                )
         names = {s[1:] for s in route.split("/") if s.startswith(":")}
         if set(path or {}) != names:
             raise ValueError("path parameters do not match route")
@@ -315,6 +334,11 @@ class ExecutionLayer(ABC):
                 body=body,
                 content=content,
                 timeout=timeout,
+                **(
+                    {"upload_sha256": upload_sha256, "upload_length": upload_length}
+                    if streaming
+                    else {}
+                ),
             ) as raw:
                 return Response(raw.status, raw.read(), dict(raw.headers))
         except TimeoutError:
@@ -2279,6 +2303,91 @@ class ExecutionLayer(ABC):
         )
         return response
 
+    def get_decision_models(self, *, timeout: float | None = None) -> JSONValue:
+        """GET /v1/decisions/models — installed and resident decision versions."""
+        response = self._request(
+            "GET", "/v1/decisions/models", path={}, timeout=timeout
+        )
+        return response.json()
+
+    def get_decision_model(
+        self, model_ref: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/decisions/models/:model-ref — immutable status after upload."""
+        return self._request(
+            "GET",
+            "/v1/decisions/models/:model-ref",
+            path={"model-ref": model_ref},
+            timeout=timeout,
+        ).json()
+
+    def get_decision_alias(
+        self, alias: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/decisions/aliases/:alias — current ref before a CAS update."""
+        return self._request(
+            "GET",
+            "/v1/decisions/aliases/:alias",
+            path={"alias": alias},
+            timeout=timeout,
+        ).json()
+
+    def put_decision_alias(
+        self,
+        alias: str,
+        *,
+        model_ref: str,
+        expected_current: str | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """PUT /v1/decisions/aliases/:alias — explicit compare-and-swap update."""
+        return self._request(
+            "PUT",
+            "/v1/decisions/aliases/:alias",
+            path={"alias": alias},
+            body={"model_ref": model_ref, "expected_current": expected_current},
+            timeout=timeout,
+        ).json()
+
+    def post_decision_training_job(
+        self, *, body: JSONValue, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/decisions/training/jobs — train on approved local data."""
+        return self._request(
+            "POST", "/v1/decisions/training/jobs", path={}, body=body, timeout=timeout
+        ).json()
+
+    def get_decision_training_job(
+        self, job_id: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/decisions/training/jobs/:job-id — durable progress."""
+        return self._request(
+            "GET",
+            "/v1/decisions/training/jobs/:job-id",
+            path={"job-id": job_id},
+            timeout=timeout,
+        ).json()
+
+    def delete_decision_training_job(
+        self, job_id: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """DELETE /v1/decisions/training/jobs/:job-id — cancel or discard."""
+        return self._request(
+            "DELETE",
+            "/v1/decisions/training/jobs/:job-id",
+            path={"job-id": job_id},
+            timeout=timeout,
+        ).json()
+
+    def post_systemone(
+        self, *, body: JSONValue, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/systemone — typed decisions from an explicitly named model."""
+        response = self._request(
+            "POST", "/v1/systemone", path={}, timeout=timeout, body=body
+        )
+        return response.json()
+
     def post_voice(
         self,
         *,
@@ -2448,7 +2557,16 @@ class GatewayClient(ExecutionLayer):
         self._opener = build_opener(_NoRedirect())
 
     def _open(
-        self, method, route, *, query=None, body=None, content=None, timeout=None
+        self,
+        method,
+        route,
+        *,
+        query=None,
+        body=None,
+        content=None,
+        timeout=None,
+        upload_sha256=None,
+        upload_length=None,
     ):
         if self._closed:
             raise TransportError("client is closed")
@@ -2469,6 +2587,10 @@ class GatewayClient(ExecutionLayer):
                 raise ValueError("body and content are mutually exclusive")
             content = json.dumps(body, allow_nan=False).encode()
             headers["Content-Type"] = "application/json"
+        if upload_sha256 is not None:
+            headers["Content-Type"] = "application/zip"
+            headers["Content-Length"] = str(upload_length)
+            headers["X-Content-SHA256"] = upload_sha256
         url = self._url + route + ("?" + urlencode(query) if query else "")
         try:
             return self._opener.open(
@@ -2484,6 +2606,24 @@ class GatewayClient(ExecutionLayer):
             if isinstance(getattr(exc, "reason", None), TimeoutError):
                 raise VisTimeout("gateway request timed out") from None
             raise TransportError("gateway connection failed") from None
+
+    def post_decision_model(
+        self,
+        *,
+        content: BinaryIO,
+        sha256: str,
+        length: int,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """POST /v1/decisions/models — stream a verified FP32 bundle once."""
+        return self._request(
+            "POST",
+            "/v1/decisions/models",
+            content=content,
+            upload_sha256=sha256,
+            upload_length=length,
+            timeout=timeout,
+        ).json()
 
     def connect(self) -> GatewayClient:
         """Check protocol compatibility and acquire this client's lease once.

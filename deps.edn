@@ -7,7 +7,8 @@
  ;; JitPack hosts sherpa-onnx. tools.deps reads :mvn/repos only from the project it is invoked on.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis-contract {:local/root "packages/vis-contract"}
-        babashka/fs {:mvn/version "0.5.34"}
+         ai.djl.huggingface/tokenizers {:mvn/version "0.38.0"}
+         babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
         com.blockether/anomaly {:mvn/version "1.0.1"}
         com.blockether/fff {:mvn/version "0.12.9"}
@@ -30,7 +31,8 @@
         {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-smile
         {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
+         com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
+         com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.30.0"}
         com.github.seancorfield/honeysql {:mvn/version "2.7.1437"}
         com.github.seancorfield/next.jdbc {:mvn/version "1.3.1118"}
         com.google.zxing/core {:mvn/version "3.5.4"}

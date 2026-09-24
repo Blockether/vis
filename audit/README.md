@@ -30,8 +30,8 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 52 unique, across 3 `deps.edn` modules (root + siblings).
-- **Total direct jar size:** ~37 MB; most space is used by Python and optional speech components (§8).
+- **Direct dependency coordinates:** 54 unique, across 3 `deps.edn` modules (root + siblings).
+- **Total direct jar size:** ~108 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
 
@@ -132,6 +132,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
+| `ai.djl.huggingface/tokenizers` | `0.38.0` | Apache-2.0 | 17.3 MB | 3rd-party |
 | `babashka/fs` | `0.5.34` | EPL-1.0 | 35 KB | 3rd-party |
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
@@ -152,6 +153,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.github.seancorfield/honeysql` | `2.7.1437` | EPL-2.0 | 43 KB | 3rd-party |
 | `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.30.0` | MIT | 53.0 MB | 3rd-party |
 | `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
@@ -204,8 +206,8 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | License | Count |
 |---|---|
 | EPL-1.0 | 16 |
-| Apache-2.0 | 13 |
-| MIT | 12 |
+| Apache-2.0 | 14 |
+| MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |
@@ -289,6 +291,8 @@ Direct artifacts of at least 1 MB:
 
 | Dependency | Version | Jar size |
 |---|---|---|
+| `com.microsoft.onnxruntime/onnxruntime` | `1.30.0` | 53.0 MB |
+| `ai.djl.huggingface/tokenizers` | `0.38.0` | 17.3 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.4.0` | 11.4 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
 | `org.clojure/clojure` | `1.12.6` | 4.0 MB |

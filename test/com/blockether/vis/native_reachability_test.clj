@@ -126,6 +126,17 @@
       (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
                  (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
 
+(defdescribe
+  onnx-runtime-jni-reachability-test
+  ;; ORT constructs tensor values and their shape metadata through JNI callbacks.
+  (it "makes the native constructors reachable from ORT JNI"
+      (let [entries (reflection-entries)]
+        (doseq [[type parameters]
+                [["ai.onnxruntime.OnnxTensor" ["long" "long" "ai.onnxruntime.TensorInfo"]]
+                 ["ai.onnxruntime.TensorInfo" ["long[]" "java.lang.String[]" "int"]]]]
+          (expect (some #(and (= type (get % "type")) (true? (get % "jniAccessible"))) entries))
+          (expect (registered-constructor? entries type parameters))))))
+
 ;; MEASURED regression (this working tree, before the registration below): the gateway
 ;; served every request on `ring.adapter.jetty9`, whose Jetty handler is a `:gen-class`
 ;; with gen-class's default `:load-impl-ns true`. Constructing it therefore runs

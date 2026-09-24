@@ -55,12 +55,40 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 131
-    assert len(operations) == 162
+    assert len(routes) == 137
+    assert len(operations) == 171
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 108,
-        "json": 50,
-        "binary": 4,
+        "none": 113,
+        "json": 53,
+        "binary": 5,
+    }
+    assert by_path["/v1/decisions/models"]["operations"]["get"] == {
+        "request": "none",
+        "response": "json",
+    }
+    assert by_path["/v1/decisions/models"]["operations"]["post"] == {
+        "request": "binary",
+        "response": "json",
+    }
+    assert by_path["/v1/decisions/models/:model-ref"]["operations"]["get"] == {
+        "request": "none",
+        "response": "json",
+    }
+    assert by_path["/v1/decisions/aliases/:alias"]["operations"]["put"] == {
+        "request": "json",
+        "response": "json",
+    }
+    assert by_path["/v1/decisions/training/jobs"]["operations"]["post"] == {
+        "request": "json",
+        "response": "json",
+    }
+    assert by_path["/v1/decisions/training/jobs/:job-id"]["operations"]["delete"] == {
+        "request": "none",
+        "response": "json",
+    }
+    assert by_path["/v1/systemone"]["operations"]["post"] == {
+        "request": "json",
+        "response": "json",
     }
     assert by_path["/v1/speech/voices"]["operations"]["post"] == {
         "request": "binary",

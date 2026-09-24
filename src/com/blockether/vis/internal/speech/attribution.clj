@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.speech.attribution
-  "`THIRD_PARTY_MODELS.md` is nobody's prose: it is
-   `resources/vis-models/manifest.edn` rendered, so the credits a reader checks
-   and the sources the installer obeys can never say different things.
+  "`THIRD_PARTY_MODELS.md` renders the speech and decision asset manifests, so the
+   credits a reader checks and the pinned downloads stay in step.
 
    `markdown` is the whole file. `assets-test` fails when the copy in the tree
    drifts from it, and `vis-agent speech models licenses --markdown`
    reprints it."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.decisions.assets :as decisions]
             [com.blockether.vis.internal.speech.assets :as assets]))
 
 ;; Reflective interop is FATAL in the native image - keep this ns reflection-free.
@@ -15,7 +15,7 @@
 (def ^:const document-name "The generated file, at the repository root." "THIRD_PARTY_MODELS.md")
 
 (def ^:const manifest-path
-  "The one file this document is a render of."
+  "The speech manifest; decisions live in the adjacent decisions.json."
   "resources/vis-models/manifest.edn")
 
 (def ^:const regenerate-command
@@ -23,7 +23,7 @@
   "vis-agent speech models licenses --markdown > THIRD_PARTY_MODELS.md")
 
 (def ^:private host-labels
-  {:pack "the Vis voice assets release" :hf "Hugging Face" :upstream "the publisher"})
+  {:pack "the Vis assets release" :hf "Hugging Face" :upstream "the publisher"})
 
 (defn- megabytes
   "Rounded megabytes, because an exact byte count is the manifest's job."
@@ -123,22 +123,71 @@
      "the data required by its voice. Vis downloads it to the model store without administrator"
      "access and does not redistribute that data in Vis releases."]))
 
+(defn- decision-section
+  [entry]
+  (let [artifacts (concat [[:inference (get-in entry [:artifacts :inference])]
+                           [:training (get-in entry [:artifacts :training])]]
+                          (for [platform ["macos-arm64" "linux-x86_64"]]
+                            [(str "wheels " platform)
+                             (get-in entry [:artifacts :wheels (keyword platform)])]))]
+    (str/join
+      "\n"
+      (concat
+        [(str "## `" (:id entry) "`") ""
+         (str "Decision baseline model - "
+              (:license entry)
+              " - commercial use permitted - hosted by Vis.") "" (:attribution entry) ""
+         (str "- Upstream: <" (:source-url entry) ">")
+         (str "- Pinned revision: `" (:revision entry) "`")
+         (str "- Installs into: `~/.vis/models/decisions/" (:id entry) "/" (:revision entry) "/`")
+         "- Downloaded from the shared Vis assets-pack release (verified by SHA-256):"]
+        (for [[kind artifact] artifacts]
+          (str "  - "
+               (if (keyword? kind) (name kind) kind)
+               ": <"
+               (:url artifact)
+               "> ("
+               (megabytes (:bytes artifact))
+               ", SHA-256 `"
+               (:sha256 artifact)
+               "`)"))
+        ["- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,"
+         "  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts"
+         "  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch."
+         "- Training assets and wheels are installed only when explicitly requested."
+         "- A base model is not approved to execute autonomous actions without a"
+         "  separate evaluation of both decision heads for the intended use case."]))))
+
 (defn markdown
-  "The entire `THIRD_PARTY_MODELS.md`, rendered from the manifest."
+  "The entire `THIRD_PARTY_MODELS.md`, rendered from both manifests."
   []
-  (let [entries (assets/manifest)]
+  (let [entries
+        (assets/manifest)
+
+        decision-entries
+        (decisions/manifest)]
+
     (str (str/join
            "\n"
            (concat
              ["# Third-party models" ""
-              "Vis uses third-party models for speech recognition and synthesis. This table lists"
+              "Vis uses third-party models for speech and decisions. This table lists"
               "their licenses, authors and download sources." ""
-              (str "This file is generated from `" manifest-path "`. Edit the manifest, then run")
+              (str "This file is generated from `" manifest-path "` and")
+              "`resources/vis-models/decisions.json`. Edit the manifests, then run"
               (str "`" regenerate-command "`. Tests check that the document matches the manifest.")
               "" "| Model | License | Commercial use | Source | Installation |"
               "| --- | --- | --- | --- | --- |"]
-             (map summary-row entries)
+             (concat (map summary-row entries)
+                     (for [entry decision-entries]
+                       (str "| `"
+                            (:id entry)
+                            "` | "
+                            (:license entry)
+                            " | yes | the Vis assets release | only when asked for by name |")))
              [""]
              (interpose "" (map entry-section entries))
-             (when (some :needs-espeak-ng entries) ["" espeak-section])))
+             (when (some :needs-espeak-ng entries) ["" espeak-section])
+             ["" "## Decision models" ""]
+             (interpose "" (map decision-section decision-entries))))
          "\n")))

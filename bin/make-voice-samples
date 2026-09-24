@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Speak ONE sentence in every voice Vis may publish audio for, so a reader can
 # hear a Piper voice BEFORE downloading the model that speaks it. The result is
-# `voice-samples.tar.bz2`, one small asset in the voice assets release, carried
+# `voice-samples.tar.bz2`, one small asset in the assets-pack release, carried
 # by the `voice-samples` manifest entry and installed like any other model.
 #
 # WHY THIS EXISTS
@@ -34,7 +34,7 @@
 #
 # Then put it beside the models it previews, and paste the printed sha256 and
 # byte count into the `voice-samples` entry of the model manifest:
-#   gh release upload voice-assets-pack dist/voice-samples/voice-samples.tar.bz2
+#   gh release upload assets-pack dist/voice-samples/voice-samples.tar.bz2
 #
 # Requires: uv, ffmpeg, tar, curl. No Hugging Face token, no gated weights.
 
@@ -193,5 +193,5 @@ cat <<EOF
 Upload it beside the models it previews, then move those two numbers into the
 \`voice-samples\` entry of resources/vis-models/manifest.edn:
 
-    gh release upload voice-assets-pack ${pack}
+    gh release upload assets-pack ${pack}
 EOF

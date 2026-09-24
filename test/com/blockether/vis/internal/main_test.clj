@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.decisions.assets :as decisions-assets]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
@@ -732,6 +733,25 @@
            (catch clojure.lang.ExceptionInfo e
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
              (expect (true? (:vis/user-error (ex-data e))))))))
+
+(defdescribe
+  decision-models-command-test
+  (it "routes the model name and optional training flag through the built-in CLI"
+      (let [seen (atom [])]
+        (with-redefs [config/init-cli! (constantly nil)
+                      decisions-assets/download-model! (fn [model training?]
+                                                         (swap! seen conj [model training?])
+                                                         {:inference "/tmp/test-model"
+                                                          :training "/tmp/test-training"
+                                                          :wheels "/tmp/test-wheels"})]
+
+          (commandline/dispatch! (#'main/root-command)
+                                 ["vis-agent" "decisions" "models" "download" "--model"
+                                  "laya-typed-decisions"])
+          (commandline/dispatch! (#'main/root-command)
+                                 ["vis-agent" "decisions" "models" "download" "--model"
+                                  "laya-typed-decisions" "--training"])
+          (expect (= [["laya-typed-decisions" false] ["laya-typed-decisions" true]] @seen))))))
 
 (defdescribe launcher-owned-commands-test
              (it "keeps launcher-owned commands out of the binary command tree"

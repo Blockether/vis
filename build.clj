@@ -334,18 +334,18 @@
 
 (def ^:private uber-exclusions
   "Entry patterns dropped from the build-only uberjar. The jar DELIBERATELY keeps
-   every platform's JNI libs — sherpa-onnx with the ONNX Runtime its native jars
-   carry beside it, sqlite-jdbc — and upstream publishes those stripped, so the
-   only entries dropped here are dep-jar warts.
-   Historic note: the separately pinned Microsoft ONNX Runtime jar used to drag
-   ~16.5 MB of macOS *.dSYM DWARF bundles and a 286 MB win-x64 *.pdb along; that
-   dependency is gone, and with it the excludes that carried it."
+   every platform's JNI libs — sherpa-onnx, Microsoft ONNX Runtime, DJL
+   tokenizers and sqlite-jdbc — because the native image extracts the relevant
+   libraries at runtime. Exclude only dep-jar warts and ORT debug symbols:
+   the macOS dSYM is not needed to load the native library and adds 16 MB."
   [;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
    ;; scratch.cljs at the classpath ROOT of their published jars
    "scratch\\.cljs?"
    ;; oh-my-claudecode agent session state — recreated whenever an agent
    ;; runs with its cwd inside a source tree; must never ship
-   ".*\\.omc/.*"])
+   ".*\\.omc/.*"
+   ;; Microsoft's macOS debug symbols do not participate in JNI loading.
+   "ai/onnxruntime/native/.*\\.dSYM/.*"])
 
 (def ^:private native-bin "target/vis")
 
@@ -965,12 +965,21 @@
 (defn- native-image-args
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
-   manifest/docs/db resource includes, and the build-host speech native libs
-   (sherpa-onnx's JNI plus the ONNX Runtime it links) so speech ASR works in the binary.
-   The ~465 MB parakeet model is NEVER embedded — it ships separately."
+    manifest/docs/db resource includes, and the host-platform JNI libraries for
+    speech and typed decisions. The models themselves ship separately."
   [basis]
   (let [tok
         (native-platform-token)
+
+        tokenizer-tok
+        (case tok
+          "linux-x64"
+          "linux-x86_64"
+
+          "win-x64"
+          "win-x86_64"
+
+          tok)
 
         ;; ── Builder JVM heap ────────────────────────────────────────────────
         ;; WHO sizes the builder JVM is one env var, VIS_NATIVE_BUILDER_HEAP:
@@ -1043,7 +1052,7 @@
              ;; CPython bridge both use downcalls. A future JDK blocks them unless the
              ;; application opts in explicitly.
              "--enable-native-access=ALL-UNNAMED" "-H:IncludeResources=META-INF/vis/.*"
-             "-H:IncludeResources=.*\\.edn$"
+             "-H:IncludeResources=vis-models/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"
              ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
@@ -1099,12 +1108,13 @@
              "-H:DefaultLocale=en-US"
              (str "-H:IncludeLocales="
                   (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))]
-      ;; voice JNI native libs for THIS platform: sherpa's JNI and the ONNX
-      ;; Runtime beside it, both under sherpa-onnx/native/<tok>/ in the host's
-      ;; native-lib jar, which is exactly where sherpa's LibraryUtils looks them
-      ;; up. Per-host `tok` keeps foreign-OS libs OUT of each binary.
+      ;; Embed only the build-host JNI libraries: sherpa speech, ORT decisions,
+      ;; and DJL tokenizer bindings plus its version properties.
       :always
-      (conj (str "-H:IncludeResources=sherpa-onnx/native/" tok "/.*"))
+      (conj (str "-H:IncludeResources=sherpa-onnx/native/" tok "/.*")
+            (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")
+            "-H:IncludeResources=native/lib/tokenizers\\.properties"
+            (str "-H:IncludeResources=native/lib/" tokenizer-tok "/cpu/.*"))
 
       ;; Builder heap ceiling (see the block above); VIS_NATIVE_EXTRA_ARGS,
       ;; spliced right after, can still override both -J flags. `natural` passes

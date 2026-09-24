@@ -13,7 +13,7 @@
      :hf        Hugging Face. SKIPPED unless a token is configured, tried FIRST
                 when one is. A token is never required — it only changes WHERE
                 the same bytes come from.
-     :pack      the Vis VOICE_ASSETS_PACK release, the default, so a first run
+      :pack      the shared Vis assets-pack release, the default, so a first run
                 needs no account anywhere.
      :upstream  the project that published the artifact, last, as a fallback.
 

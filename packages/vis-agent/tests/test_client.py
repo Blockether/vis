@@ -1,5 +1,7 @@
 """Public remote SDK, exercised through real loopback HTTP (never a user gateway)."""
 
+import hashlib
+import io
 import json
 import threading
 from contextlib import contextmanager
@@ -8,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from blockether.vis._contracts import definition, schema
+from blockether.vis.decisions import Decisions
 from blockether.vis.engine import (
     GatewayClient,
     GatewayError,
@@ -111,6 +114,89 @@ def test_session_lifecycle_and_headers():
         assert calls[-1][0:2] == ("DELETE", "/v1/clients/sdk-lease")
         with pytest.raises(TransportError, match="closed"):
             session.read()
+
+
+def test_decisions_infer_uses_existing_authenticated_gateway_client():
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert (method, path) == ("POST", "/v1/systemone")
+        request = json.loads(body)
+        assert set(request) == {"model", "state", "questions"}
+        return 200, {
+            "model": "laya-rl-agent",
+            "routing": {"model": request["model"], "revision": "pinned"},
+            "answers": {
+                "truth": {
+                    "type": "noul",
+                    "noul": 0.625,
+                    "confidence": 0.625,
+                    "action": {"act_probability": 0.9},
+                }
+            },
+            "usage": {"input_tokens": 12, "output_tokens": 0},
+        }
+
+    with endpoint(respond) as (url, calls):
+        with GatewayClient(url, token="test-credential") as client:
+            decisions = Decisions(client)
+            questions = {"truth": {"type": "noul", "instructions": "Is this true?"}}
+            for model in ("model-a", "model-b", "model-a"):
+                result = decisions.infer(
+                    model=model, state={"message": "yes"}, questions=questions
+                )
+                assert result["routing"]["model"] == model
+                assert result["answers"]["truth"]["action"]["act_probability"] == 0.9
+            with pytest.raises(ValueError, match="model is required"):
+                decisions.infer(model="", state="yes", questions=questions)
+        requests = [call for call in calls if call[1] == "/v1/systemone"]
+        assert len(requests) == 3
+        assert all(
+            {k.lower(): v for k, v in call[2].items()}["authorization"]
+            == "Bearer test-credential"
+            for call in requests
+        )
+
+
+def test_decision_model_catalog_uses_gateway_auth_and_preserves_separate_states():
+    malformed = False
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert (method, path) == ("GET", "/v1/decisions/models")
+        if malformed:
+            return 200, {"models": {}}
+        return 200, {
+            "models": [
+                {
+                    "model_ref": "laya-typed-decisions",
+                    "installed": True,
+                    "residency": "cold",
+                }
+            ]
+        }
+
+    with endpoint(respond) as (url, calls):
+        with GatewayClient(url, token="test-credential") as client:
+            decisions = Decisions(client)
+            assert decisions.list_models() == [
+                {
+                    "model_ref": "laya-typed-decisions",
+                    "installed": True,
+                    "residency": "cold",
+                }
+            ]
+            malformed = True
+            with pytest.raises(ProtocolError, match="models list"):
+                decisions.list_models()
+        requests = [call for call in calls if call[1] == "/v1/decisions/models"]
+        assert len(requests) == 2
+        assert all(
+            {k.lower(): v for k, v in call[2].items()}["authorization"]
+            == "Bearer test-credential"
+            for call in requests
+        )
 
 
 @pytest.mark.parametrize("protocol,minimum", [(1, 1), (99, 99), (None, 12)])
@@ -481,7 +567,19 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             kwargs = {}
             if "body" in signature.parameters:
                 kwargs["body"] = {}
-            if "content" in signature.parameters:
+            if (
+                "model_ref" in signature.parameters
+                and signature.parameters["model_ref"].kind
+                == inspect.Parameter.KEYWORD_ONLY
+            ):
+                kwargs["model_ref"] = "example"
+            if "sha256" in signature.parameters:
+                kwargs.update(
+                    content=io.BytesIO(b"example"),
+                    sha256=hashlib.sha256(b"example").hexdigest(),
+                    length=len(b"example"),
+                )
+            elif "content" in signature.parameters:
                 kwargs["content"] = b"example"
             method(*positional, **kwargs)
             assert calls[-1][0] == words[0]

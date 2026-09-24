@@ -38,6 +38,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
+            [com.blockether.vis.internal.decisions.cli :as decisions-cli]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
@@ -3589,7 +3590,7 @@
                 {:name "days" :kind :flag :type :int :doc "Staleness cutoff in days (default 14)."}]
      :cmd/examples ["vis-agent doctor" "vis-agent doctor --purge --dry-run"
                     "vis-agent doctor --purge --days 30"]
-     :cmd/run-fn cli-doctor!} speech-cli/command
+     :cmd/run-fn cli-doctor!} speech-cli/command decisions-cli/command
     {:cmd/name "extension"
      :cmd/doc "Inspect or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|install|sync|versions|update|rollback|...> [args...]"

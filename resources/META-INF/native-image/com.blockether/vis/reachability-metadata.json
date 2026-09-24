@@ -56,6 +56,26 @@
           ]
         }
       ]
+    },
+    {
+      "type": "ai.onnxruntime.OnnxTensor",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": ["long", "long", "ai.onnxruntime.TensorInfo"]
+        }
+      ]
+    },
+    {
+      "type": "ai.onnxruntime.TensorInfo",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": ["long[]", "java.lang.String[]", "int"]
+        }
+      ]
     }
   ],
   "resources": [

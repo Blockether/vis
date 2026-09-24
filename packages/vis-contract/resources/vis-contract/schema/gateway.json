@@ -1397,6 +1397,79 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/decisions/models"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/decisions/models/:model-ref"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "put": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/decisions/aliases/:alias"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/decisions/training/jobs"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/decisions/training/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/systemone"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "binary",
           "response": "json"

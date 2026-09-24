@@ -17,3 +17,15 @@ class ContractResources(BuildHookInterface):
             "blockether/vis/_data" if self.target_name == "wheel" else "contracts"
         )
         build_data["force_include"][str(source)] = destination
+
+        models = root / "models/decisions.json"
+        if not models.is_file():
+            models = root.parent.parent / "resources/vis-models/decisions.json"
+        if not models.is_file():
+            raise FileNotFoundError("canonical decision model manifest is missing")
+        model_destination = (
+            "blockether/vis/decisions/data/models.json"
+            if self.target_name == "wheel"
+            else "models/decisions.json"
+        )
+        build_data["force_include"][str(models)] = model_destination
