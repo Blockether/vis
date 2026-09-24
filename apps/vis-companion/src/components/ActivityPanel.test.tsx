@@ -17,8 +17,8 @@ import { activityProjectionFromWire, type ActivityProjection } from '../lib/acti
 afterEach(cleanup);
 
 // Regression from session 8c5ed98b-851a-4e65-91c1-14fbdc04f1eb: a fast shell
-// finishes before wait, so both calls report the same finished command.
-it('shows one finished command when wait supersedes spawn status and output', () => {
+// finishes before wait; the shared projection reconciles its output and keeps both calls.
+it('shows one current shell outcome while retaining every invocation in history', () => {
   const activity = activityProjection();
   const command = 'git status --short --branch';
   const handle = [{ type: 'shell-handle', id: 'git' }];
@@ -42,54 +42,55 @@ it('shows one finished command when wait supersedes spawn status and output', ()
       content: [...commandBody, exit],
     },
   };
+  const output = [
+    { type: 'heading' as const, text: 'Output' },
+    { type: 'code' as const, text: '## main...origin/main' },
+  ];
   const wait = {
     ...spawn,
     id: 'wait',
     sequence: 2,
     operation: '_shell-wait',
-    presentation: {
-      ...spawn.presentation,
-      content: [
-        ...commandBody,
-        { type: 'heading' as const, text: 'Output' },
-        { type: 'code' as const, text: '## main...origin/main' },
-        exit,
-      ],
-    },
+    presentation: { ...spawn.presentation, content: [...commandBody, ...output, exit] },
   };
-  activity.rows = [{ ...spawn, id: 'group-spawn', children: [spawn, wait], presentation: undefined }];
+  activity.rows = [
+    {
+      ...spawn,
+      id: 'group-spawn',
+      children: [spawn, wait],
+      presentation: { ...wait.presentation, content: [...commandBody, ...output, exit] },
+    },
+  ];
   activity.counts = { running: 0, succeeded: 2, failed: 0, cancelled: 0 };
   paintActivity({ activity });
-  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
-  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: /Command finished/ }));
+  expect(screen.queryByText('## main...origin/main')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
+  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
   expect(screen.getByText('## main...origin/main')).toBeVisible();
   const exitLabel = screen.getByText('Exit code:', { selector: 'strong' });
-  expect(exitLabel).toBeVisible();
   expect(exitLabel.parentElement?.textContent).toBe('Exit code: 0');
 
-  // Do not discard an earlier result if it contains output absent from wait.
+  // Earlier output belongs to the reconciled outcome and remains on the original call.
   cleanup();
-  spawn.presentation.content.splice(2, 0, { type: 'code', language: 'text', text: 'earlier-only output' });
+  spawn.presentation.content.splice(2, 0, { type: 'heading', text: 'Output' });
+  spawn.presentation.content.splice(3, 0, { type: 'code', language: 'text', text: 'earlier-only output' });
+  activity.rows[0].presentation!.content.splice(2, 0, { type: 'heading', text: 'Output' });
+  activity.rows[0].presentation!.content.splice(3, 0, { type: 'code', text: 'earlier-only output' });
   paintActivity({ activity });
-  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
+  expect(screen.getByText('earlier-only output')).toBeVisible();
   expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
 
-  // A running spawn is also transient once wait has the complete finished result.
+  // A running spawn is also retained as history, without replacing the finished head.
   cleanup();
-  const running = {
-    ...spawn,
-    presentation: {
-      headline: 'Running command',
-      summary: command,
-      content: [...commandBody, { type: 'text' as const, text: 'Running' }],
-    },
-  };
-  activity.rows[0].children = [running, wait];
+  activity.rows[0].children = [
+    { ...spawn, presentation: { ...spawn.presentation, headline: 'Running command' } },
+    wait,
+  ];
   paintActivity({ activity });
-  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
-  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(1);
-  expect(screen.queryByText('Running command')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
+  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
+  expect(screen.getByText('Running command')).toBeVisible();
 });
 
 // A collapsed operation group reports live work in its tally, not in an extra line.

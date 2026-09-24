@@ -107,6 +107,158 @@
                                            running? "Running"
                                            :else "**Exit code:** unavailable")}]))}))
 
+(defn- shell-overlap
+  "Length of the suffix of `left` that is a prefix of `right`, in linear time."
+  ^long [^String left ^String right]
+  (let [length
+        (.length right)
+
+        prefix
+        (int-array length)]
+
+    (loop [i
+           1
+
+           j
+           0]
+
+      (when (< i length)
+        (let [j
+              (loop [n j]
+                (if (and (pos? n) (not= (.charAt right i) (.charAt right n)))
+                  (recur (aget prefix (dec n)))
+                  n))
+
+              next-j
+              (if (= (.charAt right i) (.charAt right j)) (inc j) j)]
+
+          (aset-int prefix i next-j)
+          (recur (inc i) next-j))))
+    (loop [i
+           (max 0 (- (.length left) length))
+
+           j
+           0]
+
+      (if (= i (.length left))
+        j
+        (let [j (loop [n j]
+                  (if (and (pos? n) (or (= n length) (not= (.charAt left i) (.charAt right n))))
+                    (recur (aget prefix (dec n)))
+                    n))]
+          (recur (inc i) (if (= (.charAt left i) (.charAt right j)) (inc j) j)))))))
+
+(defn- merge-shell-output
+  [^String old ^String new]
+  (cond (or (nil? old) (empty? old)) new
+        (or (nil? new) (empty? new)) old
+        (str/includes? new old) new
+        (str/includes? old new) old
+        :else (let [overlap (shell-overlap old new)]
+                (str old
+                     (when (and (zero? overlap)
+                                (not (str/ends-with? old "\n"))
+                                (not (str/starts-with? new "\n")))
+                       "\n")
+                     (subs new overlap)))))
+
+(defn- shell-content-fields
+  "Read the shell presenter's own labeled blocks, never arbitrary tool text."
+  [presentation]
+  (let [blocks
+        (get presentation "content")
+
+        fields
+        (reduce (fn [fields [heading body]]
+                  (if (and (= "heading" (get heading "type")) (= "code" (get body "type")))
+                    (case (get heading "text")
+                      "Command"
+                      (assoc fields :command (get body "text"))
+
+                      "Output"
+                      (update fields :out merge-shell-output (get body "text"))
+
+                      "Stderr"
+                      (update fields :err merge-shell-output (get body "text"))
+
+                      fields)
+                    fields))
+                {}
+                (partition 2 1 blocks))
+
+        exit-text
+        (some (fn [block]
+                (when-let [[_ exit] (and (= "markdown" (get block "type"))
+                                         (re-matches #"\*\*Exit code:\*\* (-?\d+)"
+                                                     (get block "text" "")))]
+                  (Long/parseLong exit)))
+              blocks)]
+
+    (cond-> fields
+      (= "Running command" (get presentation "headline"))
+      (assoc :status "running")
+
+      (= "Command finished" (get presentation "headline"))
+      (assoc :status "exited")
+
+      (some? exit-text)
+      (assoc :exit exit-text))))
+
+(defn shell-receipt-presentation
+  "One current shell outcome from ordered handle receipts, retaining distinct output and errors."
+  [children]
+  (let [current
+        (last children)
+
+        presentations
+        (keep :presentation children)
+
+        fields
+        (reduce (fn [fields presentation]
+                  (let [next-fields (shell-content-fields presentation)]
+                    (-> fields
+                        (merge (dissoc next-fields :out :err))
+                        (update :out merge-shell-output (:out next-fields))
+                        (update :err merge-shell-output (:err next-fields)))))
+                {}
+                presentations)
+
+        command
+        (or (:command fields) (:summary (first children)))
+
+        current-error
+        (:error-summary current)
+
+        errors
+        (distinct (keep :error-summary children))]
+
+    (when (or (seq presentations) (seq errors))
+      (let [value
+            (cond-> (assoc fields :command command)
+              (= :failed (:state current))
+              (dissoc :status :exit)
+
+              (= :running (:state current))
+              (assoc :status "running"))
+
+            view
+            (shell-presentation value)]
+
+        (cond-> (assoc view "summary" command)
+          (= :failed (:state current))
+          (assoc "headline"
+            "Command status unavailable" "content"
+            (vec (remove #(= "**Exit code:** unavailable" (get % "text")) (get view "content"))))
+
+          (seq errors)
+          (update "content"
+                  into
+                  (mapcat (fn [error]
+                            [{"type" "heading"
+                              "text" (if (= error current-error) "Error" "Earlier error")}
+                             {"type" "text" "text" error}])
+                          errors)))))))
+
 (defn result-blocks
   "Keep metadata in readable text; tables are reserved for comparable records."
   [value]

@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -136,6 +137,56 @@
                         (expect (= 160 (count rows)))
                         (expect (= 160 (get-in page [:counts :succeeded])))
                         (expect (zero? (get-in page [:omitted :rows]))))))))
+
+(defdescribe
+  shell-receipt-integration-test
+  (it
+    "reconciles real shell, logs and wait invocations in persisted Activity"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {})
+
+          env
+          {:db-info store :session-id sid}]
+
+      (try
+        (tpc/with-own
+          [pc (extension/builtin-sandbox-bindings (constantly env))]
+          (let [result
+                (#'lp/run-python-code
+                 pc
+                 (str "sh = await shell('printf first; sleep 0.2; printf second')\n"
+                      "sh.logs()\n"
+                      "print((await sh.wait(10))['out'])")
+                 :env
+                 env)
+
+                page
+                (:activity result)
+
+                group
+                (first (:rows page))
+
+                children
+                (:children group)
+
+                content
+                (get-in group [:presentation "content"])]
+
+            (expect (nil? (:error result)))
+            (expect (= "firstsecond\n" (:stdout result)))
+            (expect (= 1 (count (:rows page))))
+            (expect (= ["shell" "_shell-logs" "_shell-wait"] (mapv :operation children)))
+            (expect (= "Command finished" (get-in group [:presentation "headline"])))
+            (expect (= 1 (count (filter #(= "firstsecond" (get % "text")) content))))
+            (expect (= 3 (get-in page [:counts :succeeded])))
+            (expect
+              (= (mapv :id children)
+                 (mapv :id (:children (first (all-rows store sid (get-in page [:history :id])))))))
+            (expect (contract/valid-projection? page))))
+        (finally (resources/stop-all! sid))))))
 
 (defn activity-progress-probe
   "Observed operation that publishes progress before returning its final result."

@@ -728,51 +728,6 @@ function ActivitySectionView({
   );
 }
 
-/** A finished wait supersedes spawn status when it includes all persistent detail. */
-function shellChildren(row: ActivityRow): ActivityRow[] {
-  const children = [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
-  if (row.operation !== 'shell') return children;
-  return children.filter((child, index) => {
-    const presentation = child.presentation;
-    const handle = child.resources.find((resource) => resource.type === 'shell-handle')?.id;
-    if (
-      child.operation !== 'shell' ||
-      child.state !== 'succeeded' ||
-      !presentation ||
-      !['Command finished', 'Running command'].includes(presentation.headline) ||
-      presentation.sections?.length ||
-      child.error_summary ||
-      child.evidence.some((item) => item.kind === 'error' || item.kind === 'diff') ||
-      !handle
-    ) {
-      return true;
-    }
-    const wait = children.slice(index + 1).find(
-      (later) =>
-        later.operation === '_shell-wait' &&
-        later.state === 'succeeded' &&
-        later.presentation?.headline === 'Command finished' &&
-        later.presentation.summary === presentation.summary &&
-        later.resources.some((resource) => resource.type === 'shell-handle' && resource.id === handle),
-    );
-    if (
-      !wait ||
-      child.resources.some(
-        (resource) =>
-          resource.type !== 'shell-handle' &&
-          !wait.resources.some((other) => other.type === resource.type && other.id === resource.id),
-      )
-    ) {
-      return true;
-    }
-    return (presentation.content ?? []).some(
-      (block) =>
-        !(presentation.headline === 'Running command' && block.type === 'text' && block.text === 'Running') &&
-        !wait.presentation?.content?.some((later) => JSON.stringify(later) === JSON.stringify(block)),
-    );
-  });
-}
-
 function ActivityStep({
   row,
   depth = 0,
@@ -802,7 +757,7 @@ function ActivityStep({
   const linkedSummary = Boolean(caption) && presentation?.summary_format === 'markdown';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
-  const children = nested ? [] : shellChildren(row);
+  const children = nested ? [] : (row.children ?? []);
   const hasChildren = children.length > 0;
   const Headline = nested ? 'p' : 'h4';
   const diffs = row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff');

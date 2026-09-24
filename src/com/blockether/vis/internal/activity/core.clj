@@ -219,7 +219,10 @@
         (:group-head first-row)
 
         state
-        (grouped-state children)]
+        (if (= kind :shell) (:state (last children)) (grouped-state children))
+
+        shell-view
+        (when (= kind :shell) (presenter/shell-receipt-presentation children))]
 
     (cond-> {;; A head is a ROW, so it needs an id of its own: borrowing its first child's
              ;; id put the same id twice in one tree, and a tree with a duplicate id
@@ -237,13 +240,16 @@
              :children (vec children)
              :resources (vec (take event/max-resources (distinct (mapcat :resources children))))
              :evidence []
-             :summary (cond (= kind :shell) (:summary first-row)
+             :summary (cond (= kind :shell) (or (get shell-view "summary") (:summary first-row))
                             (:summary head) (:summary head)
                             :else (str "observations · " (count children) " operations"))
              :duration-ms (reduce (fn [total duration]
                                     (Math/addExact (long total) (long duration)))
                                   0
                                   (keep :duration-ms children))}
+      shell-view
+      (assoc :presentation shell-view)
+
       (and (= kind :shell) (= :shell (:operation first-row)) (:argument-key first-row))
       (assoc :argument-key (:argument-key first-row))
 
@@ -261,8 +267,13 @@
   (let [key-for
         #(when (= :shell (:presenter %)) (resource-key-of-type % :shell-handle))
 
-        frequencies
-        (frequencies (keep key-for rows))]
+        by-handle
+        (reduce (fn [groups row]
+                  (if-let [key (key-for row)]
+                    (update groups key (fnil conj []) row)
+                    groups))
+                {}
+                rows)]
 
     (loop [remaining
            rows
@@ -276,11 +287,10 @@
       (if-let [row (first remaining)]
         (let [key (key-for row)]
           (cond (and key (contains? emitted key)) (recur (rest remaining) emitted result)
-                (and key (> (long (get frequencies key 0)) 1))
-                (let [children (vec (filter #(= key (key-for %)) rows))]
-                  (recur (rest remaining)
-                         (conj emitted key)
-                         (conj result (grouped-row :shell children))))
+                (and key (next (get by-handle key)))
+                (recur (rest remaining)
+                       (conj emitted key)
+                       (conj result (grouped-row :shell (get by-handle key))))
                 :else (recur (rest remaining) emitted (conj result row))))
         result))))
 

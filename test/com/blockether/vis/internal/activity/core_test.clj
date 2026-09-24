@@ -13,7 +13,12 @@
          (event/invocation ctx nil)
 
          common
-         (merge {:operation operation :presenter :generic} (dissoc details :args))
+         (merge {:operation operation :presenter :generic}
+                (when (and (= :shell (:presenter details))
+                           (contains? #{:shell :_shell-logs :_shell-wait :_shell-type :_shell-stop}
+                                      operation))
+                  {:activity (presenter/for-tool operation)})
+                (dissoc details :args))
 
          args
          (or args [{:path "file.clj"}])
@@ -419,6 +424,134 @@
       (expect (= ["shell" "npm test"]
                  ((juxt :operation :summary) (first (:rows (activity/presentation snapshot))))))
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
+  ;; A shell handle is one current command, not a set of competing completed receipts.
+  ;; Each individual call stays available in its chronological history.
+  (it
+    "reconciles overlapping output and the latest exit while retaining every receipt"
+    (let [ctx
+          (event/context)
+
+          pairs
+          [(event-pair ctx
+                       :shell
+                       :succeeded
+                       {"id" "job-1" "command" "printf result" "status" "running"}
+                       {:args ["printf result"] :presenter :shell})
+           (event-pair ctx
+                       :_shell-logs
+                       :succeeded
+                       {"id" "job-1"
+                        "command" "printf result"
+                        "out" "early\nshared\n"
+                        "err" "warning\n"
+                        "status" "running"}
+                       {:args ["job-1"] :presenter :shell})
+           (event-pair ctx
+                       :_shell-wait
+                       :succeeded
+                       {"id" "job-1"
+                        "command" "printf result"
+                        "out" "shared\nlate\n"
+                        "exit" 0
+                        "status" "exited"}
+                       {:args ["job-1" 30] :presenter :shell})]
+
+          state
+          (activity/replay (mapcat identity pairs))
+
+          projection
+          (activity/presentation state)
+
+          group
+          (first (:rows projection))
+
+          blocks
+          (get-in group [:presentation "content"])]
+
+      (expect (= 1 (count (:rows projection))))
+      (expect (= "Command finished" (get-in group [:presentation "headline"])))
+      (expect (= "printf result" (get-in group [:presentation "summary"])))
+      (expect (= 1 (count (filter #(= "**Exit code:** 0" (get % "text")) blocks))))
+      (expect (= 1 (count (filter #(= "early\nshared\nlate\n" (get % "text")) blocks))))
+      (expect (= 1 (count (filter #(= "warning\n" (get % "text")) blocks))))
+      (expect (= 3 (count (:children group))))
+      (expect (= (mapv :id (:rows state)) (mapv :id (:children group))))
+      (expect (= 3 (get-in projection [:counts :succeeded])))
+      (expect (contract/valid-projection? projection))))
+  (it
+    "keeps failed receipts visible after a later update and never mixes handles"
+    (let [ctx
+          (event/context)
+
+          pairs
+          [(event-pair ctx
+                       :shell
+                       :succeeded
+                       {"id" "one" "command" "build" "status" "running"}
+                       {:args ["build"] :presenter :shell})
+           (event-pair ctx
+                       :shell
+                       :succeeded
+                       {"id" "two" "command" "other" "status" "running"}
+                       {:args ["other"] :presenter :shell})
+           (event-pair ctx
+                       :_shell-wait :failed
+                       "connection lost" {:args ["one" 1] :presenter :shell})
+           (event-pair ctx
+                       :_shell-logs
+                       :succeeded
+                       {"id" "one" "command" "build" "out" "recovered" "exit" 0 "status" "exited"}
+                       {:args ["one"] :presenter :shell})]
+
+          state
+          (activity/replay (mapcat identity pairs))
+
+          rows
+          (:rows (activity/presentation state))
+
+          one
+          (first rows)]
+
+      (expect (= ["build" "other"] (mapv :summary rows)))
+      (expect (= "succeeded" (:state one)))
+      (expect (= "Command finished" (get-in one [:presentation "headline"])))
+      (expect (some #(= "recovered" (get % "text")) (get-in one [:presentation "content"])))
+      (expect (some #(= "connection lost" (get % "text")) (get-in one [:presentation "content"])))
+      (expect (= ["shell" "_shell-wait" "_shell-logs"] (mapv :operation (:children one))))
+      (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:children one))))
+      (expect (= 1 (get-in (:counts (activity/presentation state)) [:failed])))
+      (expect (contract/valid-projection? (activity/presentation state)))))
+  (it "preserves whitespace output and shows a failed follow-up only once"
+      (let [ctx
+            (event/context)
+
+            pairs
+            [(event-pair ctx
+                         :shell
+                         :succeeded
+                         {"id" "job" "command" "run" "out" "  " "status" "running"}
+                         {:args ["run"] :presenter :shell})
+             (event-pair ctx
+                         :_shell-logs
+                         :succeeded
+                         {"id" "job" "command" "run" "out" "tail" "status" "running"}
+                         {:args ["job"] :presenter :shell})
+             (event-pair ctx
+                         :_shell-wait :failed
+                         "not responding" {:args ["job" 1] :presenter :shell})]
+
+            group
+            (first (:rows (activity/presentation (activity/replay (mapcat identity pairs)))))
+
+            blocks
+            (get-in group [:presentation "content"])]
+
+        (expect (= "failed" (:state group)))
+        (expect (= "Command status unavailable" (get-in group [:presentation "headline"])))
+        (expect (some #(= "  \ntail" (get % "text")) blocks))
+        (expect (= 1 (count (filter #(= "not responding" (get % "text")) blocks))))
+        (expect (nil? (:error-summary group)))
+        (expect (= 3 (count (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
       (let [ctx
             (event/context)
