@@ -1560,14 +1560,13 @@
                    (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
 
 (defdescribe
-  failed-form-error-paper-test
+  failed-form-error-surface-test
   (it
-    "paints failed details on the regular transcript background in every dark theme"
+    "paints the failed disclosure on error paper while keeping details on transcript paper in every theme"
     (try
       (doseq [id
               (shared-theme/available-theme-ids)
 
-              :when (= :dark (:mode (shared-theme/theme id)))
               expanded?
               [false true]]
 
@@ -1604,6 +1603,9 @@
               (fn [needle]
                 (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
 
+              code-row
+              (row-for "CODE")
+
               failed-row
               (row-for "Failed")
 
@@ -1611,12 +1613,21 @@
               (row-for "MISSING_VALUE")]
 
           (expect (nil? (:error captured)))
+          (expect (some? code-row))
           (expect (some? failed-row))
           (expect (= expanded? (some? detail-row)))
-          (doseq [row (remove nil? [failed-row detail-row])]
+          (expect (= (get-in
+                       (shared-theme/theme id)
+                       [:palette
+                        (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])
+                     (get-in frame [code-row 20 :bg])))
+          (expect (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
+                     (get-in frame [failed-row 20 :bg]))
+                  (str id " failed row expanded? " expanded?))
+          (when detail-row
             (expect (= (get-in (shared-theme/theme id) [:palette :terminal-bg])
-                       (get-in frame [row 20 :bg]))
-                    (str id " row " row " expanded? " expanded?)))))
+                       (get-in frame [detail-row 20 :bg]))
+                    (str id " detail row expanded? " expanded?)))))
       (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defdescribe
