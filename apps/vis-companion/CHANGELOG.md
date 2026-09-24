@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.28 (6741) — 2026-09-24
+<!-- commit: 8602f5a8257271d3fcd57c0357afe9f94a42d8bd -->
+
+- Simplify machine strip and restore projects icon
+- Record companion build 6737
+
 ## 0.2.28 (6737) — 2026-09-24
 <!-- commit: 21e303caa03d9075a6ed51e8a5ed442e4a374fb8 -->
 
