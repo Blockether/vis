@@ -16,6 +16,63 @@ import { activityProjectionFromWire, type ActivityProjection } from '../lib/acti
 
 afterEach(cleanup);
 
+// Regression from session 8c5ed98b-851a-4e65-91c1-14fbdc04f1eb: a fast shell
+// finishes before wait, so both calls report the same finished command.
+it('shows one finished command when a shell wait adds only output', () => {
+  const activity = activityProjection();
+  const command = 'git status --short --branch';
+  const handle = [{ type: 'shell-handle', id: 'git' }];
+  const commandBody = [
+    { type: 'heading' as const, text: 'Command' },
+    { type: 'code' as const, language: 'bash', text: command },
+  ];
+  const exit = { type: 'text' as const, text: 'Exit code: 0' };
+  const spawn = {
+    ...activity.rows[0],
+    id: 'spawn',
+    sequence: 1,
+    operation: 'shell',
+    presenter: 'shell' as const,
+    state: 'succeeded' as const,
+    summary: command,
+    resources: handle,
+    presentation: {
+      headline: 'Command finished',
+      summary: command,
+      content: [...commandBody, exit],
+    },
+  };
+  const wait = {
+    ...spawn,
+    id: 'wait',
+    sequence: 2,
+    operation: '_shell-wait',
+    presentation: {
+      ...spawn.presentation,
+      content: [
+        ...commandBody,
+        { type: 'heading' as const, text: 'Output' },
+        { type: 'code' as const, text: '## main...origin/main' },
+        exit,
+      ],
+    },
+  };
+  activity.rows = [{ ...spawn, id: 'group-spawn', children: [spawn, wait], presentation: undefined }];
+  activity.counts = { running: 0, succeeded: 2, failed: 0, cancelled: 0 };
+  paintActivity({ activity });
+  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
+  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: /Command finished/ }));
+  expect(screen.getByText('## main...origin/main')).toBeVisible();
+
+  // Do not discard an earlier result if it contains output absent from wait.
+  cleanup();
+  spawn.presentation.content.splice(2, 0, { type: 'code', language: 'text', text: 'earlier-only output' });
+  paintActivity({ activity });
+  fireEvent.click(screen.getByRole('button', { name: /Ran.*git status/ }));
+  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
+});
+
 it('does not render technical resource IDs as expandable files', () => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
   activity.rows = [activity.rows[4]];
