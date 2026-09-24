@@ -94,11 +94,11 @@
           pane (assoc (lv/opened view) :is-following false)
           captured (capture/capture!
                      {:cols cols
-                      :rows 48
+                      :rows 80
                       :paint!
                       (fn [{:keys [screen]}]
                         (.beginFrame interactions/hit-map)
-                        (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 48 [pane] 1 3)
+                        (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
                         (.commitFrame interactions/hit-map)
                         (.refresh ^TerminalScreen screen)
                         (vec (.current interactions/hit-map)))})
@@ -356,7 +356,7 @@
           (str/split-lines (capture/frame-text captured))
 
           heading-col
-          (some #(str/index-of % "Search Build") lines)
+          (some #(str/index-of % "Search") lines)
 
           ^TerminalPosition cursor
           (get-in captured [:ret :cursor])]

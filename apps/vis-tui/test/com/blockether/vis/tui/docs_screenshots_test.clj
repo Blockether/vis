@@ -193,7 +193,7 @@
                 ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "in_progress" "This run"]]
                [:live-stop
                 ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "This run"
-                 "Check the failing job first"]]]
+                 "Check the failing job"]]]
 
               :let [capture
                     (capture-pane kind)
