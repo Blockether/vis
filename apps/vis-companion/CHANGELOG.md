@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.28 (6729) — 2026-09-24
+<!-- commit: d5e4ffb9d298bd99f19fd14629ee2665a57fef4a -->
+
+- Isolate uv preparation and refresh companion checks
+- V0.2.28
+- Show remaining messages on jump controls
+- V0.2.27
+- Replace brittle source checks
+- Refine sessions navigator hierarchy
+- Reconcile SDK receipts by handle
+- Keep selected sessions ready to drag
+- Retain visible selection across group moves
+- Show every selected session in drag preview
+- Align embedded result with code surface
+- Reconcile shell receipts by handle
+- Toggle session selection with native modifiers
+- Move selected sessions by drag and drop
+- Keep live commands inside collapsed groups
+- Settle running shell after wait
+- Avoid duplicate shell completion
+- Open linked report diffs in-app
+- Remove ungroup hover hint
+- Reduce stream, retention and layout costs
+
 ## 0.2.26 (6654) — 2026-09-23
 <!-- commit: 01bfb1d76e2db017f735761e3f275f48b0b637a1 -->
 
