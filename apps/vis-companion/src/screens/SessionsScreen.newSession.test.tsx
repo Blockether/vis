@@ -151,18 +151,15 @@ describe('where "New session" lives', () => {
     expect(sheet.getByRole('button', { name: 'New project' })).toBeVisible();
   });
 
-  // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
-  // project and the machine settings; and later, make them real buttons like New session;
-  // and last, that a plus on the machine band and a plus on every project header meant two
-  // different creations): the band's control is the app's button wearing the FOLDER it
-  // opens, which is this machine's project inventory and never was a create.
-  it("marks the machine's projects with the folder it opens, in a real button", async () => {
+  // Regression, user report (paraphrased): the machine's Projects action opens its
+  // project inventory, not a new session; the named button keeps the folder mark.
+  it("names the machine's projects and opens them from a real button", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
 
     const add = screen.getByRole('button', { name: 'Projects on alpha' });
-    expect(add.textContent).toBe('');
+    expect(add).toHaveTextContent('Projects');
     expect(add.querySelector('svg')).toBeInTheDocument();
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);

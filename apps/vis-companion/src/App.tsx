@@ -325,6 +325,22 @@ export function App() {
     setActive(primaryConnection);
   }, []);
 
+  const selectMachineAddress = useCallback(
+    async (conn: GatewayConn, url: string, pinned: boolean) => {
+      // Both Settings and Sessions bind the machine whose address was pressed.
+      const wasActive = conn.url === active?.url;
+      if (url !== conn.url) {
+        const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
+        await switchConnectionUrl(conn.url, url, named ? {} : { label: hostOf(url) });
+      }
+      const saved = await upsertConnection({ url, pinned });
+      const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
+      if (wasActive) setActive(next);
+      await refresh();
+    },
+    [active?.url, refresh],
+  );
+
   const [recoveryNonce, setRecoveryNonce] = useState(0);
   const lastRecoverySweepAt = useRef(0);
   const handleUnreachable = useCallback((message: string | null) => {
@@ -1252,6 +1268,7 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openSharedTarget}
+              onSelectAddress={selectMachineAddress}
               // WHICH ROW THE TRANSCRIPT BELONGS TO. On a desk the list stands beside
               // the session it opened, so that row wears the open session's mark.
               openSession={openTarget}
@@ -1327,19 +1344,7 @@ export function App() {
             await removeConnection(conn.url);
             await refresh();
           }}
-          onSelectAddress={async (conn, url, pinned) => {
-            // The verb acts on the ROW it came out of, never on another machine: the
-            // address line belongs to its own machine, and the active pointer moves with it.
-            const wasActive = conn.url === active?.url;
-            if (url !== conn.url) {
-              const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
-              await switchConnectionUrl(conn.url, url, named ? {} : { label: hostOf(url) });
-            }
-            const saved = await upsertConnection({ url, pinned });
-            const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
-            if (wasActive) setActive(next);
-            await refresh();
-          }}
+          onSelectAddress={selectMachineAddress}
           onClose={() => setSettingsDestination(null)}
         />
       )}

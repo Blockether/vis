@@ -40,6 +40,71 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+/** A phone-width bar keeps machine and Projects above the address choices. */
+export const FlatMachineBarCompact: Story = {
+  args: {
+    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }],
+    onSelectAddress: fn(),
+  },
+  decorators: [
+    (Story) => (
+      <div className="w-[393px]">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const machines = page.getByRole('group', { name: 'Machines' });
+    const addresses = page.getByRole('group', { name: 'Addresses on tower' });
+    const projects = page.getByRole('button', { name: 'Projects on tower' });
+    await expect(projects).toHaveTextContent('Projects');
+    await expect(page.getByRole('button', { name: 'Using 10.0.0.5:7890 on tower' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Use gateway.example.com on tower' })).toBeVisible();
+    const machineBox = machines.getBoundingClientRect();
+    const addressBox = addresses.getBoundingClientRect();
+    const projectBox = projects.getBoundingClientRect();
+    await expect(
+      Math.abs(machineBox.y + machineBox.height / 2 - (projectBox.y + projectBox.height / 2)),
+    ).toBeLessThan(2);
+    await expect(addressBox.top).toBeGreaterThan(machineBox.bottom);
+    await expect(getComputedStyle(addresses).overflowX).toBe('auto');
+    await expect(addressBox.right).toBeLessThanOrEqual(
+      machines.parentElement!.getBoundingClientRect().right,
+    );
+  },
+};
+
+/** The wide bar puts machine, addresses and Projects on one line. */
+export const FlatMachineBarWide: Story = {
+  args: {
+    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }],
+    onSelectAddress: fn(),
+  },
+  decorators: [
+    (Story) => (
+      <div className="w-[900px]">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const machines = page.getByRole('group', { name: 'Machines' }).getBoundingClientRect();
+    const addresses = page
+      .getByRole('group', { name: 'Addresses on tower' })
+      .getBoundingClientRect();
+    const projects = page
+      .getByRole('button', { name: 'Projects on tower' })
+      .getBoundingClientRect();
+    await expect(machines.right).toBeLessThan(addresses.left);
+    await expect(addresses.right).toBeLessThan(projects.left);
+    await expect(
+      Math.abs(addresses.y + addresses.height / 2 - (projects.y + projects.height / 2)),
+    ).toBeLessThan(2);
+  },
+};
+
 /** Four checkouts on one machine, including a paged project on a phone-width rail. */
 export const Fleet: Story = {
   decorators: [

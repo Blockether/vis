@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { Banner, Button, overlayLayer } from '../components/ui';
 import {
+  MachineAddresses,
   MachineGap,
   MachineProjectsButton,
   MachineSwitcher,
@@ -287,6 +288,8 @@ interface Props {
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
+  /** Pin an address through the same saved-machine action used by Settings. */
+  onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
   /**
    * The session standing open in the pane beside this list, so the row it belongs to
    * can say so. `null` while nothing is open — and on a phone, where the transcript
@@ -326,6 +329,7 @@ export function SessionsScreen({
   subscriptions,
   onUnreachable,
   onOpen,
+  onSelectAddress,
   openSession = null,
   isVisible,
   onSearch,
@@ -1685,52 +1689,20 @@ export function SessionsScreen({
           </Banner>
         </div>
       )}
-      {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES, AND IT IS ONE OBJECT.
-          The chips used to sit inside the machine card's own header, so the control
-          that picks a machine looked like part of that machine's own answer. They are
-          a segmented switch on the page's paper now: one track, the chosen machine a
-          raised tile inside it. Exactly one machine is always chosen; selecting another
-          moves the scope, while pressing the chosen machine leaves it active.
-
-          THE SWITCH IS ALWAYS THERE, EVEN FOR A FLEET OF ONE. The tile is not only a
-          choice, it is the label of everything under it: which computer these projects
-          and sessions are on, in the machine's own hue, in the same place whatever the
-          fleet size. One machine is one tab, already pressed, and the second lands beside it.
-
-          THIS ROW HOLDS THE SWITCH AND THE MACHINE'S ONE VERB, AND NOTHING ELSE.
-          A second band used to stand inside the card under it: the machine's name
-          again, "2 projects - 1080 sessions", and these same controls. It named a
-          machine the chips had just named, counted what every project header below it
-          already counts, and spent a whole row of a phone's glass doing it. The band
-          is gone, so the card starts at the first project header.
-
-          NO OVERFLOW CONTROL STANDS HERE. A `⋯` beside the switch held two rows —
-          `Manage projects`, which is the sheet the machine's own folder mark already
-          opens, and
-          `Machine settings`, which the Machines tab and the app bar's own cog both
-          open — so it was a menu whose every answer was one tap away without it.
-          The row is a switch and one mark, and both say what they do.
-
-          ONE INSET PER EDGE, AND BOTH ENDS STAND ON THE PAPER. Standing on the page's
-          paper means wearing the PAGE's side edges, and the section above already
-          spells them (`sm:px-6`). `px-3` is here for the phone alone, where that
-          section is full bleed and the ink edge is the app bar's own 12px; `sm:pr-4`
-          keeps the same kind of inset once the card detaches. Nothing reclaims the
-          gutter any more — the `-mr-3 sm:-mr-4` edge treatment left with the `⋯` that
-          needed it, so the switch's left edge and the verb's right edge are the same
-          distance from the paper: 12 and 12 of a 390 phone (strip at 12, the projects
-          mark ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
+      {/* The switch stays visible even for a fleet of one: it names the machine that
+          owns the projects below. The active route and its alternatives follow that
+          identity, while a named Projects action stays at the trailing edge. On a
+          phone or desk rail the addresses take their own scrollable line; a wide
+          list gives them the space between the machine and Projects. Search reports
+          take a line of their own instead of squeezing any of those controls. */}
       {/* The phone and desk sidebar use equal 12px vertical insets. On wider
           standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
         <div
-          className={`relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:flex-nowrap sm:pl-0 sm:pr-4 sm:pt-0'}`}
+          className={`@container relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:pl-0 sm:pr-4 sm:pt-0'}`}
         >
-          {/* The switch owns the leading space of this row: it GROWS, so the machine's
-              verb stands at the trailing inset without an auto margin that would fight
-              the search report for the same free space. The track inside it keeps its
-              own compact width and scrolls a fleet that outgrows the row. */}
-          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
+          {/* Keep machine identity and Projects on the first line at narrow widths. */}
+          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1 @min-[44rem]:flex-none">
             <MachineSwitcher>
               {/* The machine tabs are the groups, and exactly one is always active. */}
               {switcherMachines.map((machine) => {
@@ -1775,16 +1747,24 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
-          {/* THE SEARCH REPORT IS A LINE OF ITS OWN ON A PHONE. It used to ride the
-              trailing cluster beside the switch on a row that could not shrink, so on a
-              390px glass "271 matches / 1 machine did not answer" pushed the strip until
-              the machine's own address was cut mid-token (`100.109.18.77:78`) and the
-              report itself ran past the 12px inset to the edge of the screen. The row
-              WRAPS instead: the switch keeps the whole first line, the report takes the
-              second one whole, and from `sm` up — where there is room for both — it goes
-              back inline at the trailing end. */}
+          {scopeMachine && (
+            <div className="order-last w-full min-w-0 @min-[44rem]:order-none @min-[44rem]:w-auto @min-[44rem]:flex-1">
+              <MachineAddresses
+                conn={scopeMachine.conn}
+                onSelect={
+                  onSelectAddress
+                    ? async (url) => {
+                        await onSelectAddress(scopeMachine.conn, url, true);
+                        selectScope(url);
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          )}
+          {/* A search report gets its own line instead of compressing address choices. */}
           {searching && sessions !== null && (
-            <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:order-none sm:w-auto sm:flex-nowrap">
+            <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {/* A filter is a FLEET question, and the count it came back with is the
                   only proof it left this gateway. It is the one fact this row reports:
                   totals were the same numbers the project headers below already carry.
@@ -1849,19 +1829,7 @@ export function SessionsScreen({
                 {creating.label}
               </span>
             )}
-            {/* The machine's own control, on the row that names that machine: its
-                PROJECTS — choose the current one, add one, remove one.
-
-                It is the amber primary, the same fill the list's create verb wears,
-                and it is a MARK: the folder this app uses for a place on disk. It used
-                to say `New project` beside `New session` one row below, two amber
-                paragraphs promising two different creations, and only one of them was
-                a create at all.
-
-                In the fleet view it rides each machine's own band instead: there is no
-                one machine for this row to speak for, and a control that had to ask
-                which computer it meant would be the chooser the switch exists to
-                abolish. */}
+            {/* Open the selected machine's projects from the named action beside it. */}
             {projectsVerb}
           </div>
         </div>

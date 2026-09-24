@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HeaderActions, MachineTab, Pager, SectionHeader } from './SessionNavigator';
+import {
+  HeaderActions,
+  MachineAddresses,
+  MachineProjectsButton,
+  MachineTab,
+  Pager,
+  SectionHeader,
+} from './SessionNavigator';
 
 describe('machine selection', () => {
   // Regression, user report (the leading square was crossed out and the right dot
@@ -37,7 +45,8 @@ describe('machine selection', () => {
       </MachineTab>,
     );
     const selectedRead = screen.getByRole('button', { name: 'tower' });
-    expect(selectedRead).toHaveClass('bg-accent-surface', 'text-accent-ink', 'ring-accent-ink');
+    expect(selectedRead).toHaveClass('bg-accent-surface', 'text-accent-ink');
+    expect(selectedRead).not.toHaveClass('ring-1');
     expect(screen.queryByText('unread')).toBeNull();
 
     rerender(
@@ -50,6 +59,76 @@ describe('machine selection', () => {
     expect(retry).toHaveClass('text-err-ink');
     expect(retry).not.toHaveClass('bg-machine-unread', 'bg-accent-surface', 'ring-accent-ink');
     expect(screen.queryByText('unread')).toBeNull();
+  });
+});
+
+// Regression, user visual review: the address choice and project action must read as
+// part of one flat machine bar, without an icon-only action or a red selection state.
+describe('machine bar', () => {
+  it('shows the current address first and offers every distinct alternate without clipping', async () => {
+    const onSelect = vi.fn();
+    const conn = {
+      url: 'http://10.0.0.5:7890',
+      label: 'tower',
+      alts: ['https://gateway.example.com', 'http://10.0.0.5:7890/'],
+    };
+    render(<MachineAddresses conn={conn} onSelect={onSelect} />);
+
+    const addresses = screen.getByRole('group', { name: 'Addresses on tower' });
+    const choices = Array.from(addresses.querySelectorAll('button'));
+    expect(choices).toHaveLength(2);
+    expect(addresses).toHaveClass('overflow-x-auto');
+    const current = screen.getByRole('button', { name: 'Using 10.0.0.5:7890 on tower' });
+    const alternate = screen.getByRole('button', { name: 'Use gateway.example.com on tower' });
+    expect(choices).toEqual([current, alternate]);
+    expect(current).toHaveAttribute('aria-pressed', 'true');
+    expect(alternate).toHaveAttribute('aria-pressed', 'false');
+    expect(current).toHaveClass('bg-dialog-title', 'text-dialog-title-foreground');
+    expect(alternate).toHaveClass('bg-level-project');
+    expect(current).not.toHaveClass('text-err');
+    expect(alternate).not.toHaveClass('text-err');
+    expect(current).toHaveTextContent('IN USE');
+    expect(current).toHaveTextContent('IP ADDRESS');
+    expect(alternate).toHaveTextContent('HOSTNAME');
+    await userEvent.click(alternate);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('https://gateway.example.com');
+    alternate.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not repeat the active address when its saved URL includes a trailing slash', () => {
+    const conn = {
+      url: 'http://10.0.0.5:7890/',
+      label: 'tower',
+      alts: ['http://10.0.0.5:7890', 'https://gateway.example.com'],
+    };
+    render(<MachineAddresses conn={conn} onSelect={vi.fn()} />);
+    const addresses = screen.getByRole('group', { name: 'Addresses on tower' });
+    expect(addresses.querySelectorAll('button')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Using 10.0.0.5:7890 on tower' })).toHaveAttribute(
+      'aria-pressed', 'true',
+    );
+  });
+
+  it('shows a sole address without suggesting an unavailable route choice', () => {
+    render(<MachineAddresses conn={{ url: 'https://gateway.example.com', label: 'tower' }} />);
+    expect(screen.getByRole('group', { name: 'Addresses on tower' })).toHaveTextContent(
+      'gateway.example.com',
+    );
+    expect(screen.queryByRole('button', { name: /gateway.example.com/ })).toBeNull();
+  });
+
+  it('names the Projects action while preserving the quiet footer variant', async () => {
+    const onPress = vi.fn();
+    const { rerender } = render(<MachineProjectsButton machine="tower" onPress={onPress} />);
+    const projects = screen.getByRole('button', { name: 'Projects on tower' });
+    expect(projects).toHaveTextContent('Projects');
+    expect(projects).toHaveClass('border-edge-strong');
+    await userEvent.click(projects);
+    expect(onPress).toHaveBeenCalledExactlyOnceWith(projects);
+    rerender(<MachineProjectsButton machine="tower" isQuiet onPress={onPress} />);
+    expect(screen.getByRole('button', { name: 'Projects on tower' })).not.toHaveTextContent('Projects');
   });
 });
 

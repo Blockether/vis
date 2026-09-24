@@ -13,9 +13,11 @@ import {
   type Ref,
 } from 'react';
 
+import type { GatewayConn } from '../lib/types';
+import { hostOf, mergeAddresses, normalizeAddress } from '../lib/endpoints';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { IconButton, overlayLayer } from './ui';
+import { Button, IconButton, overlayLayer } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -651,17 +653,9 @@ export function ProjectStatusCounts({
   ));
 }
 
-/**
- * One scrollable machine-state track plus a separate add action. `All` is the first tile
- * only for a fleet; selection and unread activity paint the tile, while overflow stays
- * inside the track.
- */
+/** A flat scrollable row of machine identities; overflow belongs to the row. */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-none bg-level-machine p-0.5">
-      {children}
-    </div>
-  );
+  return <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto">{children}</div>;
 }
 
 /**
@@ -703,13 +697,13 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
         isDown
           ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
           : hasUnread
             ? `bg-machine-unread font-bold text-white focus-visible:outline-white ${isOn ? 'ring-1 ring-inset ring-white' : ''}`
             : isOn
-              ? 'bg-accent-surface font-bold text-accent-ink ring-1 ring-inset ring-accent-ink focus-visible:outline-accent-ink'
+              ? 'bg-accent-surface font-bold text-accent-ink focus-visible:outline-accent-ink'
               : 'text-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
@@ -717,6 +711,66 @@ export function MachineTab({
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
       {hasUnread && !isDown && <span className="sr-only">unread</span>}
     </button>
+  );
+}
+
+/** The route currently used by a machine, followed by its known alternatives. */
+export function MachineAddresses({
+  conn,
+  onSelect,
+}: {
+  conn: GatewayConn;
+  /** Choosing an address pins it, through the same app action as the Machines settings. */
+  onSelect?: (url: string) => void;
+}) {
+  const name = conn.label?.trim() || hostOf(conn.url);
+  const addresses = mergeAddresses([conn.url], conn.alts ?? []);
+  const currentAddress = normalizeAddress(conn.url);
+  const urls = [conn.url, ...addresses.filter((url) => url !== currentAddress)];
+  return (
+    <div
+      role="group"
+      aria-label={`Addresses on ${name}`}
+      className="flex min-w-0 gap-1.5 overflow-x-auto"
+    >
+      {urls.map((url) => {
+        const current = url === conn.url;
+        const hostname = new URL(url).hostname;
+        const kind =
+          /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.startsWith('[')
+            ? 'IP ADDRESS'
+            : 'HOSTNAME';
+        const content = (
+          <>
+            <span className="text-chip font-bold tracking-wide opacity-75">
+              {current ? `IN USE · ${kind}` : kind}
+            </span>
+            <span className="whitespace-nowrap text-meta font-semibold">{hostOf(url)}</span>
+          </>
+        );
+        const face = `flex min-w-max shrink-0 flex-col items-start justify-center rounded-none px-2.5 py-1 font-mono transition-colors duration-150 ${
+          current
+            ? 'bg-dialog-title text-dialog-title-foreground'
+            : 'bg-level-project text-white'
+        }`;
+        return onSelect && urls.length > 1 ? (
+          <button
+            key={url}
+            type="button"
+            aria-label={`${current ? 'Using' : 'Use'} ${hostOf(url)} on ${name}`}
+            aria-pressed={current}
+            onClick={() => onSelect(url)}
+            className={`${face} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink`}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={url} className={face}>
+            {content}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -801,14 +855,31 @@ export function MachineProjectsButton({
 }) {
   const label = `Projects on ${machine}`;
   const title = `Projects on ${machine} — choose one, add one, remove one`;
+  if (isQuiet) {
+    return (
+      <IconButton
+        variant="quiet"
+        label={label}
+        title={title}
+        onClick={(event) => onPress(event.currentTarget)}
+      >
+        <ProjectsIcon className="size-4" />
+      </IconButton>
+    );
+  }
   return (
-    <IconButton
-      variant={isQuiet ? 'quiet' : 'secondary'}
-      label={label}
+    <Button
+      type="button"
+      variant="secondary"
+      density="compact"
+      pressEffect="none"
+      aria-label={label}
       title={title}
+      className="inline-flex items-center gap-1.5"
       onClick={(event) => onPress(event.currentTarget)}
     >
       <ProjectsIcon className="size-4" />
-    </IconButton>
+      Projects
+    </Button>
   );
 }

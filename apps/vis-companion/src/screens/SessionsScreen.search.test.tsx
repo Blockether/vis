@@ -385,9 +385,10 @@ describe('typing does not redraw the list under the thumb', () => {
     const report = screen.getByText('1 match').closest('div');
     expect(report).toBeVisible();
     const row = report!.parentElement!;
-    // The row wraps on a phone and stops wrapping where there is room for both.
+    // The report stays on its own line at every width, behind the machine and routes.
     expect(row.className).toContain('flex-wrap');
-    expect(row.className).toContain('sm:flex-nowrap');
+    expect(report!.className).toContain('order-last');
+    expect(report!.className).toContain('w-full');
     // And it is not sharing a box with the machine's own verb any more.
     expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
   });

@@ -1242,7 +1242,7 @@ export const Machines: Story = {
       await expect(style(chosen).backgroundColor).not.toBe(style(track).backgroundColor);
     }
     await expect(style(chosen).color).not.toBe(style(chosen).backgroundColor);
-    await expect(style(chosen).boxShadow).toContain('inset');
+    await expect(style(chosen).boxShadow).toBe('none');
     await expect(unread).toHaveAttribute('aria-pressed', 'false');
     await expect(unreadSurface).not.toBe(style(track).backgroundColor);
     await expect(unreadSurface).not.toBe(style(chosen).backgroundColor);

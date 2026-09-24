@@ -227,6 +227,7 @@ export function renderSessionsScreen({
   query = '',
   onQuery = () => {},
   onOpen = () => {},
+  onSelectAddress,
   onUnreachable,
   isVisible = true,
   onSearch = () => {},
@@ -239,6 +240,7 @@ export function renderSessionsScreen({
   query?: string;
   onQuery?: (next: string) => void;
   onOpen?: (conn: GatewayConn, sid: string, fresh?: boolean) => void;
+  onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
   onUnreachable?: (message: string | null) => void;
   /** Mounted but off the glass, the way the shell parks it behind a session. */
   isVisible?: boolean;
@@ -412,6 +414,7 @@ export function renderSessionsScreen({
       onQuery={onQuery}
       subscriptions={subscriptions}
       onOpen={onOpen}
+      onSelectAddress={onSelectAddress}
       onUnreachable={onUnreachable}
       onSearch={onSearch}
       share={share}
