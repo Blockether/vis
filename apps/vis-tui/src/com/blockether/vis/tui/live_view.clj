@@ -925,6 +925,7 @@
       (into (if (pos? behind)
               [{:kind :note
                 :node-id id
+                :item-id :history
                 :text (if is-record-unread
                         (str "… " behind " earlier lines are in the record — reading them failed")
                         (str "… reading " behind " earlier lines from the record"))}]
@@ -932,6 +933,8 @@
             (map-indexed (fn [index line]
                            {:kind :log
                             :node-id id
+                            ;; An absolute line number survives new output and earlier-page fills.
+                            :item-id [:line (+ (long behind) (long index))]
                             :text (str line)
                             :tone (get line-tones (+ (- (count lines) (count shown)) index))})
                          shown)))

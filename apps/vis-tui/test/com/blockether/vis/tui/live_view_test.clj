@@ -329,6 +329,88 @@
       (is (:is-following grown))
       (is (= (- (count grown-rows) 6) (long (lv/offset grown grown-rows 6)))))))
 
+(deftest live-log-scroll-keeps-its-line-test
+  (let [p
+        (lv/opened (mounted {:title "Build log" :description ""}
+                            (fixture/log "tail"
+                                         {:label "Output"
+                                          :default-expanded true
+                                          :lines (mapv #(str "line " %) (range 80))})))
+
+        initial
+        (:geometry (paint-frames [p] 80 30))
+
+        up
+        (lv/scrolled (lv/painted p initial) -9)
+
+        first-capture
+        (paint-frames [up] 80 30)
+
+        first-paint
+        (:geometry first-capture)
+
+        parked
+        (lv/painted up first-paint)
+
+        same-capture
+        (paint-frames [parked] 80 30)
+
+        same-paint
+        (:geometry same-capture)
+
+        grown
+        (patched parked {:op :append :node-id "tail" :lines ["line 80"]})
+
+        grown-paint
+        (:geometry (paint-frames [grown] 80 30))
+
+        thumb-rows
+        (fn [capture]
+          (keep-indexed (fn [row line]
+                          (when (str/includes? line "█") row))
+                        (str/split-lines (cap/frame-text (last (:frames capture))))))]
+
+    (is (< 1 (long (:offset first-paint))) "the viewport starts inside the log")
+    (is (= (:offset first-paint) (:offset same-paint))
+        "a second paint must not jump from the current log line back to its header")
+    (is (seq (thumb-rows first-capture)) "the long log has a visible scrollbar thumb")
+    (is (= (thumb-rows first-capture) (thumb-rows same-capture))
+        "the scrollbar thumb stays put when the same log line is being read")
+    (is (= (:offset first-paint) (:offset grown-paint))
+        "new output must not move the line being read while follow-tail is off")
+    (is (= (inc (long (:offset first-paint)))
+           (:offset (:geometry (paint-frames [(lv/scrolled parked 1)] 80 30))))
+        "one downward step moves exactly one log line"))
+  (testing "a late page adds older log lines without moving the line being read"
+    (let [p
+          (lv/opened (mounted {:description ""}
+                              (fixture/log "tail"
+                                           {:label "Output"
+                                            :default-expanded true
+                                            :lines (mapv #(str "line " %) (range 80))})))
+
+          lines
+          (get-in p [:view :nodes 0 :lines])
+
+          tail
+          (assoc-in p [:view :nodes 0 :lines] (subvec lines 40))
+
+          target
+          (first (keep-indexed #(when (= "line 45" (:text %2)) %1) (rows-of tail)))
+
+          [reading eye anchor]
+          (parked tail 6 target)
+
+          filled
+          (update reading :view live/log-head-filled "tail" (subvec lines 0 40) [])
+
+          rows
+          (rows-of filled)]
+
+      (is (= ["tail" [:line 45]] anchor))
+      (is (= (+ eye 39) (lv/offset filled rows 6)))
+      (is (= "line 45" (:text (nth rows (lv/offset filled rows 6))))))))
+
 (deftest live-view-widths-test
   (testing "a column measured wide stays wide while the view is open"
     (let [p
