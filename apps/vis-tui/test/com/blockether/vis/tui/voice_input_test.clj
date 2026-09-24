@@ -14,7 +14,8 @@
 
 (defn- reset-voice!
   []
-  (reset! voice-input/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil}))
+  (reset! voice-input/state
+    {:recorder nil :ticker nil :transcribing? false :workspace-id nil :session-id nil}))
 
 (defdescribe
   gateway-voice-input-test
@@ -27,7 +28,7 @@
           (atom [])
 
           app-db
-          (atom {:active-tab-id "session-1"})]
+          (atom {:active-tab-id :tab-1 :session {:id "session-1"}})]
 
       (reset-voice!)
       (with-redefs [recorder/start!
@@ -56,46 +57,45 @@
         (expect (some #(= {:op :input/append
                            :text "gateway transcript"
                            :source :voice/input
-                           :workspace-id "session-1"}
+                           :workspace-id :tab-1}
                           %)
                       @events))
         (let [texts (mapv :text @events)]
           (expect (some #{"● Preparing voice engine 40%"} texts))
           (expect (some #{"● Transcribing 70%"} texts))))))
-  (it
-    "keeps the session that owned recording even after the active tab changes"
-    (let [events
-          (atom [])
+  (it "keeps the session that owned recording even after the active tab changes"
+      (let [events
+            (atom [])
 
-          seen
-          (atom nil)
+            seen
+            (atom nil)
 
-          app-db
-          (atom {:active-tab-id "first"})]
+            app-db
+            (atom {:active-tab-id :tab-1 :session {:id "session-1"}})]
 
-      (reset-voice!)
-      (with-redefs [recorder/start!
-                    (fn []
-                      {:started-at-ms 0})
+        (reset-voice!)
+        (with-redefs [recorder/start!
+                      (fn []
+                        {:started-at-ms 0})
 
-                    recorder/stop!
-                    (constantly "/tmp/clip.wav")
+                      recorder/stop!
+                      (constantly "/tmp/clip.wav")
 
-                    vis/gateway-transcribe-audio!
-                    (fn [sid _ _]
-                      (reset! seen sid)
-                      "hello")
+                      vis/gateway-transcribe-audio!
+                      (fn [sid _ _]
+                        (reset! seen sid)
+                        "hello")
 
-                    vis/publish-channel-event!
-                    (fn [_ event]
-                      (swap! events conj event))]
+                      vis/publish-channel-event!
+                      (fn [_ event]
+                        (swap! events conj event))]
 
-        (voice-input/start-recording! {:app-db app-db})
-        (reset! app-db {:active-tab-id "second"})
-        (voice-input/stop-and-transcribe! {:app-db app-db})
-        (expect (await-event events #(= :input/append (:op %))))
-        (expect (= "first" @seen))
-        (expect (= "first" (:workspace-id (first (filter #(= :input/append (:op %)) @events))))))))
+          (voice-input/start-recording! {:app-db app-db})
+          (reset! app-db {:active-tab-id :tab-2 :session {:id "session-2"}})
+          (voice-input/stop-and-transcribe! {:app-db app-db})
+          (expect (await-event events #(= :input/append (:op %))))
+          (expect (= "session-1" @seen))
+          (expect (= :tab-1 (:workspace-id (first (filter #(= :input/append (:op %)) @events))))))))
   (it "does not claim that a silent transcription was appended"
       (let [events (atom [])]
         (reset-voice!)
@@ -107,10 +107,32 @@
                       vis/publish-channel-event! (fn [_ event]
                                                    (swap! events conj event))]
 
-          (voice-input/start-recording! {:workspace-id "session-1"})
+          (voice-input/start-recording! {:workspace-id :tab-1 :session-id "session-1"})
           (voice-input/stop-and-transcribe! {})
           (expect (await-event events #(= "Voice produced no audible text" (:text %))))
           (expect (not-any? #(= :input/append (:op %)) @events)))))
+  (it "does not start recording before the tab has a gateway session"
+      (let [events
+            (atom [])
+
+            starts
+            (atom 0)]
+
+        (reset-voice!)
+        (with-redefs [recorder/start!
+                      (fn []
+                        (swap! starts inc))
+
+                      vis/publish-channel-event!
+                      (fn [_ event]
+                        (swap! events conj event))]
+
+          (voice-input/start-recording! {:app-db (atom {:active-tab-id :tab-1 :session nil})})
+          (expect (zero? @starts))
+          (expect (nil? (:recorder @voice-input/state)))
+          (expect (some #(and (= :notify (:op %))
+                              (str/includes? (str (:text %)) "session is ready"))
+                        @events)))))
   ;; Regression, issue #172: microphone initialization failures only reached a transient toast,
   ;; leaving no persistent evidence that Java Sound could not see WSL2's audio server.
   (it
@@ -137,7 +159,7 @@
                         (fn [_ event]
                           (swap! events conj event))]
 
-            (voice-input/start-recording! {})
+            (voice-input/start-recording! {:session-id "session-1"})
             (expect (nil? (:recorder @voice-input/state)))
             (expect (= :java-sound
                        (-> @logs

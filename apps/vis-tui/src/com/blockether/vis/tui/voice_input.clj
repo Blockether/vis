@@ -6,7 +6,8 @@
             [com.blockether.vis.tui.voice-recorder :as recorder]
             [taoensso.telemere :as tel]))
 
-(defonce state (atom {:recorder nil :ticker nil :transcribing? false :workspace-id nil}))
+(defonce state
+  (atom {:recorder nil :ticker nil :transcribing? false :workspace-id nil :session-id nil}))
 
 (defn- publish! [event] (vis/publish-channel-event! :tui event))
 
@@ -24,13 +25,14 @@
 
 (defn- idle-status! [] (publish! {:op :status/clear :id :voice/input}))
 
-(defn- ctx-workspace-id
+(defn- ctx-target
+  "Capture the gateway session and the input tab from the same app state snapshot."
   [ctx]
-  (or (:workspace-id ctx)
-      (some-> ctx
-              :app-db
-              deref
-              :active-tab-id)))
+  (let [db (some-> ctx
+                   :app-db
+                   deref)]
+    {:workspace-id (or (:workspace-id ctx) (:active-tab-id db))
+     :session-id (or (:session-id ctx) (get-in db [:session :id]))}))
 
 (defn- voice-recording-failed-signal
   [throwable message]
@@ -82,37 +84,47 @@
 
 (defn start-recording!
   [ctx]
-  (cond
-    (:transcribing? @state)
-    (publish! {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
-    (:recorder @state) (publish!
-                         {:op :notify :text "Voice recording is already running" :level :warn})
-    :else
-    (let [workspace-id (ctx-workspace-id ctx)]
-      ;; Reaching for the microphone SILENCES the answer being spoken: a
-      ;; machine that keeps talking while the human talks is not holding a
-      ;; conversation. No-op when nothing is playing.
-      (output/stop!)
-      ;; A microphone that refuses (no input device, permission not
-      ;; granted) used to throw out of the keymap: the status line kept
-      ;; whatever it said and the human was told nothing at all.
-      (if-let [rec (try (recorder/start!)
-                        (catch Throwable t
-                          (let [message (recording-failure-text t)]
-                            (reset! state
-                              {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-                            (idle-status!)
-                            (log-voice-recording-failed! t message)
-                            (publish! {:op :notify
-                                       :text (str "Voice cannot record: " message)
-                                       :level :error})
-                            nil)))]
-        (let [started-at-ms (vis/now-ms)]
-          (reset! state {:recorder rec :ticker nil :transcribing? false :workspace-id workspace-id})
-          (let [ticker (start-ticker! rec started-at-ms)]
-            (swap! state assoc :ticker ticker))
-          (voice-status! "● Recording 00:00" :warn))
-        nil))))
+  (let [{:keys [workspace-id session-id]} (ctx-target ctx)]
+    (cond (:transcribing? @state)
+          (publish!
+            {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
+          (:recorder @state)
+          (publish! {:op :notify :text "Voice recording is already running" :level :warn})
+          (str/blank? (str session-id))
+          (publish!
+            {:op :notify :text "Voice is available once this session is ready" :level :warn})
+          :else (do
+                  ;; Reaching for the microphone SILENCES the answer being spoken: a
+                  ;; machine that keeps talking while the human talks is not holding a
+                  ;; conversation. No-op when nothing is playing.
+                  (output/stop!)
+                  ;; A microphone that refuses (no input device, permission not
+                  ;; granted) used to throw out of the keymap: the status line kept
+                  ;; whatever it said and the human was told nothing at all.
+                  (if-let [rec (try (recorder/start!)
+                                    (catch Throwable t
+                                      (let [message (recording-failure-text t)]
+                                        (reset! state {:recorder nil
+                                                       :ticker nil
+                                                       :transcribing? false
+                                                       :workspace-id nil
+                                                       :session-id nil})
+                                        (idle-status!)
+                                        (log-voice-recording-failed! t message)
+                                        (publish! {:op :notify
+                                                   :text (str "Voice cannot record: " message)
+                                                   :level :error})
+                                        nil)))]
+                    (let [started-at-ms (vis/now-ms)]
+                      (reset! state {:recorder rec
+                                     :ticker nil
+                                     :transcribing? false
+                                     :workspace-id workspace-id
+                                     :session-id session-id})
+                      (let [ticker (start-ticker! rec started-at-ms)]
+                        (swap! state assoc :ticker ticker))
+                      (voice-status! "● Recording 00:00" :warn))
+                    nil)))))
 
 (defn- progress-label
   "What the status line says while the gateway-owned engine works."
@@ -142,11 +154,11 @@
       "● Transcribing...")))
 
 (defn- transcribe-and-insert!
-  [audio-file workspace-id]
+  [audio-file session-id workspace-id]
   (future
     (try (voice-status! "● Sending to gateway..." :info)
          (let [text
-               (vis/gateway-transcribe-audio! workspace-id
+               (vis/gateway-transcribe-audio! session-id
                                               audio-file
                                               {:on-progress #(voice-status! (progress-label %)
                                                                             :info)})
@@ -166,7 +178,7 @@
              (log-voice-asr-failed! audio-file t message)
              (voice-status! "○ Voice failed" :error 3000)
              (publish! {:op :notify :text (str "Voice failed: " message) :level :error})))
-         (finally (swap! state assoc :transcribing? false :workspace-id nil)))))
+         (finally (swap! state assoc :transcribing? false :workspace-id nil :session-id nil)))))
 
 (defn stop-and-transcribe!
   [_ctx]
@@ -183,34 +195,45 @@
           workspace-id
           (:workspace-id recording-state)
 
+          session-id
+          (:session-id recording-state)
+
           ;; The state is cleared BEFORE anything can throw. A recorder that fails
           ;; to close used to leave `:recorder` set for the rest of the process,
           ;; so every later Ctrl+B answered "already running" and the only cure
           ;; anyone found was restarting Vis.
           audio-file
-          (try (recorder/stop! rec)
-               (catch Throwable t
-                 (reset! state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-                 (idle-status!)
-                 (publish! {:op :notify
-                            :text (str "Voice recording failed: " (recording-failure-text t))
-                            :level :error})
-                 nil))]
+          (try
+            (recorder/stop! rec)
+            (catch Throwable t
+              (reset! state
+                {:recorder nil :ticker nil :transcribing? false :workspace-id nil :session-id nil})
+              (idle-status!)
+              (publish! {:op :notify
+                         :text (str "Voice recording failed: " (recording-failure-text t))
+                         :level :error})
+              nil))]
 
       (when audio-file
-        (reset! state {:recorder nil :ticker nil :transcribing? true :workspace-id workspace-id})
-        (transcribe-and-insert! audio-file workspace-id)))
+        (reset! state {:recorder nil
+                       :ticker nil
+                       :transcribing? true
+                       :workspace-id workspace-id
+                       :session-id session-id})
+        (transcribe-and-insert! audio-file session-id workspace-id)))
     :else (publish! {:op :notify :text "Voice recording is not running" :level :warn})))
 
 (defn cancel-recording!
   [_ctx]
   (cond (:transcribing? @state)
         (publish! {:op :notify :text "Speech transcription cannot be cancelled" :level :warn})
-        :else (do (when-let [rec (:recorder @state)]
-                    (recorder/stop! rec))
-                  (reset! state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-                  (idle-status!)
-                  (publish! {:op :notify :text "Voice recording cancelled" :level :info}))))
+        :else
+        (do (when-let [rec (:recorder @state)]
+              (recorder/stop! rec))
+            (reset! state
+              {:recorder nil :ticker nil :transcribing? false :workspace-id nil :session-id nil})
+            (idle-status!)
+            (publish! {:op :notify :text "Voice recording cancelled" :level :info}))))
 
 (defn toggle-recording!
   [ctx]
