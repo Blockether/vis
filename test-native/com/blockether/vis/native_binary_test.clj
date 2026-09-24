@@ -469,8 +469,11 @@
 
           code
           (str
-            "import blockether.vis.extension as sdk\n" "import inspect, subprocess\n"
+            "import blockether.vis.extension as sdk\n"
+            "import vis_decisions\n" "import inspect, subprocess\n"
             "assert 'label' in inspect.signature(sdk.ActivityProgress).parameters\n"
+            "assert hasattr(vis_decisions, 'infer') and hasattr(vis_decisions, 'models')\n"
+            "assert 'torch' not in sys.modules and 'blockether.vis.decisions' not in sys.modules\n"
             "assert sdk.ActivityProgress('Inspect SDK', value=1, total=2).value == 1\n"
             "prototype = sdk.Extension(name='native-prototype', description='Local declaration')\n"
             "for operation in [lambda: sdk.register_extension(prototype), "
@@ -2047,11 +2050,9 @@
          "'Native context evidence: Unicode and special-token literals counted; input cap 36000.')")}
       {:input 5000
        :code (str "u = session['utilization']\n"
-                  "assert u['model_input_limit'] == 36000, u\n" "assert u['fold_count'] == 1, u\n"
-                  "m = u['fold_measurement']\n" "assert m['status'] == 'measured', m\n"
-                  "assert m['before_input_tokens'] == 28000, m\n"
-                  "assert m['after_input_tokens'] == 5000, m\n"
-                  "assert m['net_reduction_tokens'] == 23000, m\n"
+                  "assert u['model_input_limit'] == 36000, u\n"
+                  "assert u['latest_measured_input_tokens'] == 5000, u\n"
+                  "assert 'fold_count' not in u and 'fold_measurement' not in u, u\n"
                   "print('Native tokenizer and folding verified')")} {:input 5500}]
 
      respond
@@ -2121,7 +2122,8 @@
                         forms (mapcat :forms
                                       (mapcat #(ps/db-list-session-turn-iterations store (:id %))
                                               (ps/db-list-session-turns store sid)))
-                        health (:health (ps/db-session-usage-stats store sid))
+                        usage (ps/db-session-usage-stats store sid)
+                        health (:health usage)
                         requests (filter #(str/ends-with? (:path %) "/chat/completions") @asked)]
 
                     (expect (= 3 (count forms))
@@ -2130,6 +2132,11 @@
                     (expect (every? #(nil? (:error %)) forms) (pr-str forms))
                     (expect (= "Native tokenizer and folding verified\n" (:stdout (last forms)))
                             (pr-str (last forms)))
+                    (expect (= 1 (:fold-count usage))
+                            (pr-str (select-keys usage [:fold-count :health])))
+                    (expect (= 28000 (get-in health [:fold-measurement "before_input_tokens"])))
+                    (expect (= 5000 (get-in health [:fold-measurement "after_input_tokens"])))
+                    (expect (= 23000 (get-in health [:fold-measurement "net_reduction_tokens"])))
                     (expect (= 36000 (:model-input-limit health)) (pr-str health))
                     (expect (= 5500 (:last-request-tokens health)) (pr-str health))
                     (expect (= 4 (count requests)))

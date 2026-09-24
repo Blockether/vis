@@ -6,7 +6,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.decisions.cache :as cache]
-            [com.blockether.vis.internal.decisions.registry :as registry])
+            [com.blockether.vis.internal.decisions.registry :as registry]
+            [com.blockether.vis.internal.util :as util])
   (:import [ai.djl.huggingface.tokenizers HuggingFaceTokenizer]
            [ai.djl.huggingface.tokenizers.jni TokenizersLibrary]
            [ai.onnxruntime OnnxTensor OnnxValue OrtEnvironment OrtSession OrtSession$Result
@@ -90,7 +91,7 @@
 
 (defn- question
   [id definition]
-  (when-not (and (string? id) (not (str/blank? id)) (instance? java.util.Map definition))
+  (when-not (and (util/non-blank-string? id) (instance? java.util.Map definition))
     (invalid! "Question ids must name JSON object definitions"))
   (let [type
         (get definition "type")
@@ -474,7 +475,7 @@
         questions
         (get request "questions")]
 
-    (when-not (and (string? name) (not (str/blank? name)))
+    (when-not (util/non-blank-string? name)
       (throw (ex-info "Decision model is required" {:type :decisions/model-required})))
     (let [{:keys [model artifact dir model-ref]} (selected-model name)]
       (when-not (assets/installed? artifact (.getPath ^File dir))

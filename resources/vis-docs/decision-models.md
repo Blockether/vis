@@ -8,8 +8,10 @@ when a human should review the result before relying on it.
 
 The `assets-pack` release keeps the existing voice assets and adds a pinned FP32
 inference bundle, a complete training checkpoint and offline training dependencies.
-Model downloads are explicit; starting a gateway never downloads weights. The
-lightweight Python client works without PyTorch.
+Model downloads are explicit; starting a gateway never downloads weights. Inside Vis Python,
+a small first-party client reads and infers without installing the full Python SDK or
+any third-party packages. Install the full `vis-agent` SDK separately for training,
+upload, aliases and remote clients; its training extra is optional.
 
 ## Download the baseline
 
@@ -44,6 +46,39 @@ For a client on another machine, use [a secured
 gateway](gateway-service.md#connect-from-another-machine). Only the gateway needs the
 inference bundle. It will refuse a missing model instead of downloading one during a
 request.
+
+## Ask from Vis Python
+
+Once the gateway machine has the inference bundle, you can ask typed questions in a
+`python_execution` block without installing a Python package into the sandbox:
+
+```python
+import vis_decisions
+
+print(vis_decisions.models())  # Known versions and their installed/resident states.
+answer = vis_decisions.infer(
+    model="laya-typed-decisions",
+    state="A damaged item needs a refund",
+    questions={
+        "intent": {"type": "choice", "instructions": "Choose a request", "criteria": ["refund", "repair"]},
+        "urgency": {"type": "score", "instructions": "Rate urgency", "criteria": ["low", "medium", "high"]},
+        "refundable": {"type": "noul", "instructions": "Can the item be refunded?"},
+    },
+)
+print(answer["answers"], answer["routing"]["model"])
+```
+
+`vis_decisions.model("laya-typed-decisions")` reads one model's status. These calls use
+Vis' existing gateway connection and authentication. They do not download a model or
+install a dependency. An uninstalled model raises `vis_decisions.DecisionGatewayError`
+with `status == 409`; download the model explicitly with the CLI above. The baseline
+`act_probability` in an answer is a diagnostic score, not authorization to act.
+
+The separate `py` extension REPL uses your project's Python interpreter, not the
+`python_execution` sandbox. To call Decisions there or from an external Python app,
+install the full `vis-agent` SDK in that environment and use the `Decisions` and
+`GatewayClient` example below. Only install `[decisions-training]` when you need local
+training or export; neither installation downloads model weights automatically.
 
 ## Train locally with the Python SDK
 

@@ -635,14 +635,18 @@
   portable-store-buttons-test
   ;; GitHub does not load the docs stylesheet: linked images must carry the labels.
   (it
-    "keeps mobile and current-release desktop buttons readable without the documentation stylesheet"
-    (let [version
-          (str/trim (slurp "VIS_VERSION"))
+    "keeps mobile and published-release desktop buttons readable without the documentation stylesheet"
+    (let [published
+          (second (re-find #"releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/vis-companion-"
+                           (slurp "README.md")))
 
           release
-          (str "https://github.com/Blockether/vis/releases/download/v" version
-               "/vis-companion-" version)]
+          (str "https://github.com/Blockether/vis/releases/download/v" published
+               "/vis-companion-" published)]
 
+      ;; VIS_VERSION can advance before a release exists. Both guides keep the last
+      ;; published download until the new artifacts are available.
+      (expect (some? published))
       (doseq [[source prefix]
               [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
 

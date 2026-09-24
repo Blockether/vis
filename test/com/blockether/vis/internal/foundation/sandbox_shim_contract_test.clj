@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.foundation.sandbox-shim-contract-test
   "Repo-wide contract for the built-in Python sandbox shims.
 
-   Every shim is three things that must stay in step: a lazy `shim_*.clj`
-   initializer named by the one distribution manifest, a registered extension,
-   and a `resources/vis-shims/<name>.py` classpath resource. Drift in any one is
+   Every shim is three things that must stay in step: a lazy initializer named by
+   the distribution manifest, a registered extension, and a
+   `resources/vis-shims/<name>.py` classpath resource. Drift in any one is
    invisible until an agent imports the module, so this test pins the boundary."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -15,7 +15,8 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]))
 
-(def ^:private shim-ns-dir "src/com/blockether/vis/internal/foundation")
+(def ^:private shim-ns-dirs
+  ["src/com/blockether/vis/internal/foundation" "src/com/blockether/vis/internal/decisions"])
 
 (def ^:private shim-resource-dir "resources/vis-shims")
 
@@ -37,17 +38,20 @@
 
 (defn- shim-ns-files
   []
-  (->> (.listFiles (io/file shim-ns-dir))
+  (->> shim-ns-dirs
+       (mapcat (fn [dir]
+                 (.listFiles (io/file dir))))
        (filter (fn [^File f]
-                 (re-matches #"shim_.*\.clj" (.getName f))))
+                 (re-matches #"shim(?:_.*)?\.clj" (.getName f))))
        vec))
 
 (defn- shim-ns-sym
   [^File f]
-  (symbol (str "com.blockether.vis.internal.foundation."
-               (-> (.getName f)
-                   (str/replace #"\.clj$" "")
-                   (str/replace "_" "-")))))
+  (symbol (-> (.relativize (.toPath (io/file "src")) (.toPath f))
+              str
+              (str/replace #"\.clj$" "")
+              (str/replace #"[\\/]" ".")
+              (str/replace "_" "-"))))
 
 (defn- registered-shims
   "Every sandbox shim the initialized distribution lends."
@@ -61,11 +65,11 @@
                  ;; vacuous. A door is a capability the HOST performs, so this set is
                  ;; closed and small — anything a wheel can serve is pip's job, not a
                  ;; shim's.
-                 (expect (= #{"shim_attach.clj" "shim_ls.clj"}
-                            (set (map (fn [^File f]
-                                        (.getName f))
-                                      (shim-ns-files))))))
-             (it "lists every shim_*.clj in manifest initialization"
+                 (expect (= '#{com.blockether.vis.internal.foundation.shim-attach
+                               com.blockether.vis.internal.foundation.shim-ls
+                               com.blockether.vis.internal.decisions.shim}
+                            (set (map shim-ns-sym (shim-ns-files))))))
+             (it "lists every shim namespace in manifest initialization"
                  (let [listed
                        (shim-namespaces)
 
