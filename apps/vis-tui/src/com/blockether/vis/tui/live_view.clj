@@ -1852,12 +1852,15 @@
 
 (def ^:private ^:dynamic *hit-row-offset* 0)
 
+(def ^:private bar-right-margin
+  "Space beyond the live scrollbar: two clear columns before the close control
+   and its rail, so the thumb never appears attached to the X above it."
+  5)
+
 (defn- bar-col
-  "The band's scrollbar lane: one column of margin inside the right rail, because
-   the last column there is the lane the TRANSCRIPT draws its own bar in, and two
-   bars sharing one lane read as a single scrollbar fighting itself."
+  "The band's scrollbar lane, inset from the right rail and close control."
   ^long [^long left ^long inner-w]
-  (dec (+ left inner-w)))
+  (- (+ left inner-w) (inc (long bar-right-margin))))
 
 (def ^:private search-air
   "Columns a Search control keeps clear of the scrollbar lane. The open log's bar
@@ -1923,10 +1926,9 @@
     (let [width
           (max 0 (- (long inner-w) 3))
 
-          ;; This body is two columns narrower than the band's interior, so the
-          ;; scrollbar lane sits past its right edge; Search keeps its air from it.
+          ;; The body's right gutter leaves the scrollbar lane and its margin clear.
           col
-          (search-col (bar-col (long left) (+ (long inner-w) 2)))
+          (search-col (bar-col (long left) (+ (long inner-w) 2 (long bar-right-margin))))
 
           ;; Three columns of air between the title and Search — and Search only
           ;; where a title still reads beside it once ellipsized.
@@ -2284,9 +2286,9 @@
         panes
         (vec (remove dormant? panes))
 
-        ;; Inset the body one column on each side, keeping the scrollbar lane clear.
+        ;; Keep wrapping inside the body, before the inset scrollbar lane.
         text-w
-        (max 8 (- (long (:inner-w region)) 6))
+        (max 8 (- (long (:inner-w region)) 6 (long bar-right-margin)))
 
         ;; The pane IN FRONT is the newest view still on the band.
         front
@@ -2377,7 +2379,7 @@
          (let [left (long left)
                inner-w (long inner-w)
                body-left left
-               body-w (- inner-w 2)
+               body-w (- inner-w 2 (long bar-right-margin))
                {:keys [front others collapsed rows-plan stop is-minimized n]} (band-shape panes
                                                                                           region)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
@@ -2426,11 +2428,13 @@
 
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            (when (>= (long sep-row) (long top-limit))
-             (let [title (p/ellipsize (band-title (or front (last panes)) now-ms)
-                                      (max 1 (- body-w 6 (if heading-search 9 0))))]
+             (let [title-w (if heading-search body-w (+ body-w (long bar-right-margin)))
+                   title (p/ellipsize (band-title (or front (last panes)) now-ms)
+                                      (max 1 (- title-w 6 (if heading-search 9 0))))]
+
                (tr/draw-rule! g region sep-row (when (zero? heading-h) title))
                (when (pos? heading-h)
-                 (paint-styled! g body-left title-row body-w t/dialog-fg [p/BOLD] title))
+                 (paint-styled! g body-left title-row title-w t/dialog-fg [p/BOLD] title))
                (paint-fold-control! g region title-row front)
                (when heading-search
                  (paint-heading-search! g region title-row view-id heading-search))))

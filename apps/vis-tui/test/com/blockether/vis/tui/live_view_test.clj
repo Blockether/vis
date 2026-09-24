@@ -830,6 +830,35 @@
           (is (= (select-keys expected [:fg :bg]) (select-keys (get-in frame [row x]) [:fg :bg]))
               "the entire close target has a filled button face"))))))
 
+(deftest live-log-search-scrollbar-spacing-test
+  (let [view (mounted {:title "Build output" :description "Current run"}
+                      (fixture/log "output"
+                                   {:label "Console"
+                                    :default-expanded true
+                                    :lines (mapv #(str "line " %) (range 60))}))]
+    (doseq [following? [false true]]
+      (let [pane (assoc (lv/opened view)
+                   :is-viewer true
+                   :is-following following?)
+            {:keys [frames error]} (paint-frames [pane] 80 30)
+            lines (str/split-lines (cap/frame-text (last frames)))
+            hits (.current interactions/hit-map)
+            close (first (filter #(= :live-viewer-close (:kind %)) hits))
+            search (first (filter #(= :live-log-search (:kind %)) hits))
+            bar-col (first (keep #(str/index-of % "█") lines))
+            close-col (get-in close [:bounds :col])
+            search-col (get-in search [:bounds :col])]
+
+        (is (nil? error))
+        (is (every? some? [close-col search-col bar-col]))
+        (when (every? some? [close-col search-col bar-col])
+          (is (<= (+ search-col 15) close-col)
+              "Search is set back from the close button, on the log row or the fixed heading")
+          (is (<= (+ bar-col 3) close-col)
+              "two empty columns separate the scrollbar from the close button")
+          (is (= 4 (- bar-col (+ search-col 8)))
+              "Search remains four columns clear of the scrollbar"))))))
+
 (deftest live-view-body-inset-and-bottom-gap-test
   ;; #235: the final visible content row must not touch the footer boundary.
   (doseq [cols

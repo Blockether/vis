@@ -800,7 +800,7 @@
                        (grid terminal cols 44)))
 
             details?
-            #(str/includes? (text) "Running the focused tests")]
+            #(str/includes? (str/replace (text) #"[\s│]+" "") "Runningthefocusedtests")]
 
         (binding [interactions/hit-map (interactions/create-hit-map)]
           (with-redefs [state/app-db db]
@@ -1205,7 +1205,7 @@
   ;; A watched run follows the tail of its log, and that carries the log's own row
   ;; — with the Search control on it — out of the window: the retained output had
   ;; no reachable entrance at all. The heading keeps that control, and the band's
-  ;; bar keeps one column of margin from the lane the transcript's bar owns.
+  ;; bar stands left of the close control, clear of the transcript scrollbar.
   (let [cols 120]
     (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 44))
                 ts (doto (TerminalScreen. terminal) (.startScreen))]
@@ -1223,7 +1223,7 @@
                   lines (viewer-lines terminal cols)
                   body (first (filter #(str/includes? % "console line") lines))
                   rail (long (str/last-index-of body "│"))
-                  bar (- rail 2)]
+                  bar (str/last-index-of (subs body 0 rail) "│")]
 
               (is (some? search) "A long log must still expose its Search control")
               (is (= "console" (:node-id search)))
@@ -1238,8 +1238,11 @@
                      (:kind (.lookup interactions/hit-map
                                      (int (+ (long col) (long width) -1))
                                      (int row)))))
-              (is (not= \space (nth body bar)) "The band's bar stands inside the rail")
-              (is (= \space (nth body (dec rail))) "…keeping one column of margin from it")
+              (is (= 4 (- bar (+ (long col) (long width))))
+                  "Search has four clear columns before the bar")
+              (is (<= (+ bar 3) (long (get-in close [:bounds :col])))
+                  "two clear columns separate the bar from the close button")
+              (is (= \space (nth body (dec rail))) "the bar stays clear of the right rail")
               (is (< bar (- cols (long render/MESSAGE_MARGIN_RIGHT) 1))
                   "…and clear of the columns the transcript's own bar owns")
               (is (#'screen/activate-live-region! @db search))
