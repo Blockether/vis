@@ -40,11 +40,10 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-/** A phone-width bar keeps machine and Projects above the address choices. */
+/** A phone-width strip keeps machines and the icon-only Projects action on one line. */
 export const FlatMachineBarCompact: Story = {
   args: {
-    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }],
-    onSelectAddress: fn(),
+    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }, STORY_GATEWAYS[1]],
   },
   decorators: [
     (Story) => (
@@ -56,30 +55,29 @@ export const FlatMachineBarCompact: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const machines = page.getByRole('group', { name: 'Machines' });
-    const addresses = page.getByRole('group', { name: 'Addresses on tower' });
+    const tower = await page.findByRole('button', { name: 'tower' });
+    const other = page.getByRole('button', { name: 'macbook-pro-16-work' });
     const projects = page.getByRole('button', { name: 'Projects on tower' });
-    await expect(projects).toHaveTextContent('Projects');
-    await expect(page.getByRole('button', { name: 'Using 10.0.0.5:7890 on tower' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Use gateway.example.com on tower' })).toBeVisible();
+    await expect(projects).not.toHaveTextContent('Projects');
+    await expect(projects).toHaveClass('border-0');
+    await expect(other).toHaveClass('bg-level-project');
+    await expect(getComputedStyle(other).backgroundColor).not.toBe(
+      getComputedStyle(tower).backgroundColor,
+    );
+    await expect(page.queryByRole('group', { name: /Addresses on/ })).toBeNull();
     const machineBox = machines.getBoundingClientRect();
-    const addressBox = addresses.getBoundingClientRect();
     const projectBox = projects.getBoundingClientRect();
     await expect(
       Math.abs(machineBox.y + machineBox.height / 2 - (projectBox.y + projectBox.height / 2)),
     ).toBeLessThan(2);
-    await expect(addressBox.top).toBeGreaterThan(machineBox.bottom);
-    await expect(getComputedStyle(addresses).overflowX).toBe('auto');
-    await expect(addressBox.right).toBeLessThanOrEqual(
-      machines.parentElement!.getBoundingClientRect().right,
-    );
+    await expect(machineBox.right).toBeLessThan(projectBox.left);
   },
 };
 
-/** The wide bar puts machine, addresses and Projects on one line. */
+/** A wide strip keeps the same controls in a single row without address cards. */
 export const FlatMachineBarWide: Story = {
   args: {
-    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }],
-    onSelectAddress: fn(),
+    conns: [{ ...STORY_FLEET_CONNS[0], alts: ['https://gateway.example.com'] }, STORY_GATEWAYS[1]],
   },
   decorators: [
     (Story) => (
@@ -90,18 +88,15 @@ export const FlatMachineBarWide: Story = {
   ],
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
-    const machines = page.getByRole('group', { name: 'Machines' }).getBoundingClientRect();
-    const addresses = page
-      .getByRole('group', { name: 'Addresses on tower' })
-      .getBoundingClientRect();
-    const projects = page
-      .getByRole('button', { name: 'Projects on tower' })
-      .getBoundingClientRect();
-    await expect(machines.right).toBeLessThan(addresses.left);
-    await expect(addresses.right).toBeLessThan(projects.left);
-    await expect(
-      Math.abs(addresses.y + addresses.height / 2 - (projects.y + projects.height / 2)),
-    ).toBeLessThan(2);
+    const machines = page.getByRole('group', { name: 'Machines' });
+    const projects = page.getByRole('button', { name: 'Projects on tower' });
+    await expect(await page.findByRole('button', { name: 'macbook-pro-16-work' })).toBeVisible();
+    await expect(projects).not.toHaveTextContent('Projects');
+    await expect(page.queryByRole('group', { name: /Addresses on/ })).toBeNull();
+    const machineBox = machines.getBoundingClientRect();
+    const projectBox = projects.getBoundingClientRect();
+    await expect(machineBox.right).toBeLessThan(projectBox.left);
+    await expect(machineBox.y + machineBox.height / 2).toBe(projectBox.y + projectBox.height / 2);
   },
 };
 

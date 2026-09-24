@@ -1,44 +1,39 @@
 // @vitest-environment jsdom
 import { screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 let restore = () => {};
 afterEach(() => restore());
 
-// Regression, user visual review: active and alternate routes should appear beside
-// the machine and named Projects action, instead of disappearing into Settings.
-it('binds an alternate on the scoped machine without changing the machine choice', async () => {
+// Regression, visual review: the machine strip is a single row of machine names
+// and an icon-only project action. Address choices remain in Machines settings.
+it('shows a compact machine strip without current or alternate addresses', async () => {
   const conn = {
     url: 'http://10.0.0.5:7890',
     token: 't',
     label: 'tower',
     alts: ['https://gateway.example.com'],
   };
-  const onSelectAddress = vi.fn();
   const view = renderSessionsScreen({
     machines: [{ label: 'tower', sessions: [listSession()] }],
     at: [conn],
-    onSelectAddress,
   });
   restore = view.restore;
   await screen.findByText('A session');
 
   const strip = screen.getByRole('group', { name: 'Machines' });
   expect(within(strip).getByRole('button', { name: 'tower' })).toHaveAttribute('aria-pressed', 'true');
-  const addresses = within(screen.getByRole('group', { name: 'Addresses on tower' }));
-  expect(addresses.getByRole('button', { name: 'Using 10.0.0.5:7890 on tower' })).toHaveAttribute(
-    'aria-pressed', 'true',
-  );
-  expect(screen.getByRole('button', { name: 'Projects on tower' })).toHaveTextContent('Projects');
-  await userEvent.click(addresses.getByRole('button', { name: 'Use gateway.example.com on tower' }));
-  expect(onSelectAddress).toHaveBeenCalledExactlyOnceWith(conn, 'https://gateway.example.com', true);
-  expect(within(strip).getByRole('button', { name: 'tower' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('group', { name: 'Addresses on tower' })).toBeNull();
+  expect(screen.queryByText('10.0.0.5:7890')).toBeNull();
+  expect(screen.queryByText('gateway.example.com')).toBeNull();
+  const projects = screen.getByRole('button', { name: 'Projects on tower' });
+  expect(projects).not.toHaveTextContent('Projects');
+  expect(projects.querySelector('svg')).toBeInTheDocument();
 });
 
-it('shows only the selected machine’s addresses and keeps failures on retry tiles', async () => {
+it('keeps retry actions without showing routes', async () => {
   const conn = {
     url: 'http://10.0.0.5:7890', token: 't', label: 'tower',
     alts: ['https://gateway.example.com'],
@@ -52,7 +47,6 @@ it('shows only the selected machine’s addresses and keeps failures on retry ti
   await screen.findByText('A session');
   const retry = await screen.findByRole('button', { name: 'Reconnect to mini' });
   expect(retry).toHaveClass('text-err-ink');
-  expect(screen.getByRole('group', { name: 'Addresses on tower' })).toBeVisible();
-  expect(screen.queryByRole('group', { name: 'Addresses on mini' })).toBeNull();
+  expect(screen.queryByRole('group', { name: /Addresses on/ })).toBeNull();
   expect(screen.getByRole('button', { name: 'Projects on tower' })).toBeVisible();
 });

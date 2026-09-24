@@ -13,11 +13,9 @@ import {
   type Ref,
 } from 'react';
 
-import type { GatewayConn } from '../lib/types';
-import { hostOf, mergeAddresses, normalizeAddress } from '../lib/endpoints';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { Button, IconButton, overlayLayer } from './ui';
+import { IconButton, overlayLayer } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -699,78 +697,18 @@ export function MachineTab({
       onClick={onClick}
       className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
         isDown
-          ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
+          ? 'bg-level-project text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
           : hasUnread
             ? `bg-machine-unread font-bold text-white focus-visible:outline-white ${isOn ? 'ring-1 ring-inset ring-white' : ''}`
             : isOn
               ? 'bg-accent-surface font-bold text-accent-ink focus-visible:outline-accent-ink'
-              : 'text-dialog-hint hover:text-white focus-visible:outline-white'
+              : 'bg-level-project text-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
       {hasUnread && !isDown && <span className="sr-only">unread</span>}
     </button>
-  );
-}
-
-/** The route currently used by a machine, followed by its known alternatives. */
-export function MachineAddresses({
-  conn,
-  onSelect,
-}: {
-  conn: GatewayConn;
-  /** Choosing an address pins it, through the same app action as the Machines settings. */
-  onSelect?: (url: string) => void;
-}) {
-  const name = conn.label?.trim() || hostOf(conn.url);
-  const addresses = mergeAddresses([conn.url], conn.alts ?? []);
-  const currentAddress = normalizeAddress(conn.url);
-  const urls = [conn.url, ...addresses.filter((url) => url !== currentAddress)];
-  return (
-    <div
-      role="group"
-      aria-label={`Addresses on ${name}`}
-      className="flex min-w-0 gap-1.5 overflow-x-auto"
-    >
-      {urls.map((url) => {
-        const current = url === conn.url;
-        const hostname = new URL(url).hostname;
-        const kind =
-          /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.startsWith('[')
-            ? 'IP ADDRESS'
-            : 'HOSTNAME';
-        const content = (
-          <>
-            <span className="text-chip font-bold tracking-wide opacity-75">
-              {current ? `IN USE · ${kind}` : kind}
-            </span>
-            <span className="whitespace-nowrap text-meta font-semibold">{hostOf(url)}</span>
-          </>
-        );
-        const face = `flex min-w-max shrink-0 flex-col items-start justify-center rounded-none px-2.5 py-1 font-mono transition-colors duration-150 ${
-          current
-            ? 'bg-dialog-title text-dialog-title-foreground'
-            : 'bg-level-project text-white'
-        }`;
-        return onSelect && urls.length > 1 ? (
-          <button
-            key={url}
-            type="button"
-            aria-label={`${current ? 'Using' : 'Use'} ${hostOf(url)} on ${name}`}
-            aria-pressed={current}
-            onClick={() => onSelect(url)}
-            className={`${face} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink`}
-          >
-            {content}
-          </button>
-        ) : (
-          <span key={url} className={face}>
-            {content}
-          </span>
-        );
-      })}
-    </div>
   );
 }
 
@@ -836,50 +774,26 @@ export function NewSessionButton({
  * the NOUN it opens: the app's one mark for a place on disk, the same folder a
  * project row carries, with the fork inside it left to mean a copy of that place.
  *
- * Project navigation uses a neutral outline beside the machine switcher.
- * The footer keeps its unframed quiet variant. Both name the machine for
- * assistive technology.
- *
- * `pressEffect="none"`: the sheet it opens is anchored on this button's measured box,
- * and a transform moves the box that was measured.
+ * The same borderless icon opens the project inventory from the machine strip.
+ * It names the machine for assistive technology and anchors the sheet without
+ * changing the measured box on press.
  */
 export function MachineProjectsButton({
   machine,
-  isQuiet,
   onPress,
 }: {
   machine: string;
-  /** Use the unframed variant in a footer. */
-  isQuiet?: boolean;
   onPress: (anchor: HTMLElement) => void;
 }) {
   const label = `Projects on ${machine}`;
   const title = `Projects on ${machine} — choose one, add one, remove one`;
-  if (isQuiet) {
-    return (
-      <IconButton
-        variant="quiet"
-        label={label}
-        title={title}
-        onClick={(event) => onPress(event.currentTarget)}
-      >
-        <ProjectsIcon className="size-4" />
-      </IconButton>
-    );
-  }
   return (
-    <Button
-      type="button"
-      variant="secondary"
-      density="compact"
-      pressEffect="none"
-      aria-label={label}
+    <IconButton
+      label={label}
       title={title}
-      className="inline-flex items-center gap-1.5"
       onClick={(event) => onPress(event.currentTarget)}
     >
       <ProjectsIcon className="size-4" />
-      Projects
-    </Button>
+    </IconButton>
   );
 }

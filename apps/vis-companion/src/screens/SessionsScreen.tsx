@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { Banner, Button, overlayLayer } from '../components/ui';
 import {
-  MachineAddresses,
   MachineGap,
   MachineProjectsButton,
   MachineSwitcher,
@@ -288,8 +287,6 @@ interface Props {
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
-  /** Pin an address through the same saved-machine action used by Settings. */
-  onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
   /**
    * The session standing open in the pane beside this list, so the row it belongs to
    * can say so. `null` while nothing is open — and on a phone, where the transcript
@@ -329,7 +326,6 @@ export function SessionsScreen({
   subscriptions,
   onUnreachable,
   onOpen,
-  onSelectAddress,
   openSession = null,
   isVisible,
   onSearch,
@@ -1689,20 +1685,16 @@ export function SessionsScreen({
           </Banner>
         </div>
       )}
-      {/* The switch stays visible even for a fleet of one: it names the machine that
-          owns the projects below. The active route and its alternatives follow that
-          identity, while a named Projects action stays at the trailing edge. On a
-          phone or desk rail the addresses take their own scrollable line; a wide
-          list gives them the space between the machine and Projects. Search reports
-          take a line of their own instead of squeezing any of those controls. */}
+      {/* The switch stays visible even for a fleet of one: it names the machine
+          that owns the projects below. A borderless folder icon stands at the trailing
+          edge, and search reports take their own line. */}
       {/* The phone and desk sidebar use equal 12px vertical insets. On wider
           standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
         <div
-          className={`@container relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:pl-0 sm:pr-4 sm:pt-0'}`}
+          className={`relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:pl-0 sm:pr-4 sm:pt-0'}`}
         >
-          {/* Keep machine identity and Projects on the first line at narrow widths. */}
-          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1 @min-[44rem]:flex-none">
+          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
               {/* The machine tabs are the groups, and exactly one is always active. */}
               {switcherMachines.map((machine) => {
@@ -1747,22 +1739,7 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
-          {scopeMachine && (
-            <div className="order-last w-full min-w-0 @min-[44rem]:order-none @min-[44rem]:w-auto @min-[44rem]:flex-1">
-              <MachineAddresses
-                conn={scopeMachine.conn}
-                onSelect={
-                  onSelectAddress
-                    ? async (url) => {
-                        await onSelectAddress(scopeMachine.conn, url, true);
-                        selectScope(url);
-                      }
-                    : undefined
-                }
-              />
-            </div>
-          )}
-          {/* A search report gets its own line instead of compressing address choices. */}
+          {/* A search report gets its own line instead of compressing the machine switch. */}
           {searching && sessions !== null && (
             <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {/* A filter is a FLEET question, and the count it came back with is the

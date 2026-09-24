@@ -327,7 +327,7 @@ export function App() {
 
   const selectMachineAddress = useCallback(
     async (conn: GatewayConn, url: string, pinned: boolean) => {
-      // Both Settings and Sessions bind the machine whose address was pressed.
+      // Settings binds the machine whose address was chosen.
       const wasActive = conn.url === active?.url;
       if (url !== conn.url) {
         const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
@@ -1268,7 +1268,6 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openSharedTarget}
-              onSelectAddress={selectMachineAddress}
               // WHICH ROW THE TRANSCRIPT BELONGS TO. On a desk the list stands beside
               // the session it opened, so that row wears the open session's mark.
               openSession={openTarget}

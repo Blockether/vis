@@ -1212,7 +1212,6 @@ export const Machines: Story = {
         <NewSessionButton machine={STORY_MACHINES[0].name} isBusy onPress={noop} />
         <NewSessionButton machine={STORY_MACHINES[2].name} disabled onPress={noop} />
         <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
       </Group>
     </Sheet>
   ),

@@ -151,15 +151,15 @@ describe('where "New session" lives', () => {
     expect(sheet.getByRole('button', { name: 'New project' })).toBeVisible();
   });
 
-  // Regression, user report (paraphrased): the machine's Projects action opens its
-  // project inventory, not a new session; the named button keeps the folder mark.
+  // Regression, visual review: the icon-only Projects action opens the machine's
+  // project inventory, not a new session.
   it("names the machine's projects and opens them from a real button", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
 
     const add = screen.getByRole('button', { name: 'Projects on alpha' });
-    expect(add).toHaveTextContent('Projects');
+    expect(add).not.toHaveTextContent('Projects');
     expect(add.querySelector('svg')).toBeInTheDocument();
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
