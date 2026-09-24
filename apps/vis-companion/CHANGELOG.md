@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.28 (6737) — 2026-09-24
+<!-- commit: 21e303caa03d9075a6ed51e8a5ed442e4a374fb8 -->
+
+- Clarify machine and address choices
+- Page through scrollable TUI dialogs
+- Use portable menu and favorite markers in TUI
+- Upgrade decision models to GLiNER2.5
+
 ## 0.2.28 (6729) — 2026-09-24
 <!-- commit: d5e4ffb9d298bd99f19fd14629ee2665a57fef4a -->
 
