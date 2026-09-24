@@ -7435,7 +7435,7 @@
                          (show-sessions!)))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every
-                 ;; configured model (active one marked) plus a "★ router
+                 ;; configured model (active one marked) plus a "* router
                  ;; default" reset. The choice flows through [:set-model …],
                  ;; the SAME per-session pref the C-x m cycle writes.
                  show-model-picker!

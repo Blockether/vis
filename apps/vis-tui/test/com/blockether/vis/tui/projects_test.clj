@@ -1774,38 +1774,29 @@
            (projects/key-action (assoc-in db [:project-sidebar :index] (:index group-entry))
                                 (cap/key-stroke \g))))))
 
-(deftest sidebar-overflow-buttons-align-and-use-vertical-ellipsis-test
-  (let [db
-        (-> (fixture-db)
-            (assoc-in [:project-sidebar :expanded] #{"a"})
-            (assoc-in [:project-sidebar :pages "a"]
-                      {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
+(deftest sidebar-overflow-buttons-align-and-use-portable-marker-test
+  (doseq [cols [32 120]]
+    (let [db (-> (fixture-db)
+                 (assoc-in [:project-sidebar :expanded] #{"a"})
+                 (assoc-in [:project-sidebar :pages "a"]
+                           {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
+          capture (cap/capture! {:cols cols
+                                 :rows 24
+                                 :paint! (fn [{:keys [screen]}]
+                                           (projects/paint! (.newTextGraphics screen) db cols 24))})
+          lines (str/split-lines (cap/frame-text capture))
+          buttons (filter #(contains? #{:project-set-menu :project-details} (:kind %))
+                          (.current projects/hit-map))]
 
-        capture
-        (cap/capture! {:cols 120
-                       :rows 24
-                       :paint! (fn [{:keys [screen]}]
-                                 (projects/paint! (.newTextGraphics screen) db 120 24))})
+      (is (nil? (:error capture)))
+      (is (= 3 (count buttons)))
+      (is (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
+          "Group, Sessions, and saved-session menus share a right-aligned column")
+      (doseq [{:keys [bounds]} buttons
+              :let [{:keys [col row width]} bounds]]
 
-        lines
-        (str/split-lines (cap/frame-text capture))
-
-        buttons
-        (filter #(contains? #{:project-set-menu :project-details} (:kind %))
-                (.current projects/hit-map))]
-
-    (is (nil? (:error capture)))
-    (is (= 3 (count buttons)))
-    (is (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
-        "Group, Sessions, and saved-session menus share a right-aligned column")
-    (doseq [{:keys [bounds]}
-            buttons
-
-            :let [{:keys [col row width]}
-                  bounds]]
-
-      (is (= 3 width))
-      (is (= " ⋮ " (subs (nth lines row) col (+ col width)))))))
+        (is (= 3 width))
+        (is (= " : " (subs (nth lines row) col (+ col width))))))))
 
 (deftest set-buttons-use-web-bands-and-direct-actions-test
   (let [db
@@ -2064,7 +2055,7 @@
     (is (= 3 (get-in live [:bounds :height])))
     (is (= (+ live-row 3) idle-row))
     (is (str/includes? (nth lines live-row) "Writing the tests"))
-    (is (str/includes? (nth lines live-row) "★ ● LIVE"))
+    (is (str/includes? (nth lines live-row) "* LIVE"))
     (is (str/includes? (nth lines idle-row) "IDLE"))
     (is (str/includes? (nth lines (inc live-row)) "live-sess"))
     (is (str/includes? (nth lines (inc live-row)) "12t"))
@@ -2080,11 +2071,13 @@
   (doseq [cols [32 120]]
     (let [db (-> (fixture-db)
                  (assoc-in [:project-sidebar :expanded] #{"a"})
-                 (assoc-in
-                   [:project-sidebar :pages "a"]
-                   {:sessions
-                    [{"id" "live-session" "title" "Writing the tests" "live" true "turn_count" 12}]
-                    :grouped []}))
+                 (assoc-in [:project-sidebar :pages "a"]
+                           {:sessions [{"id" "live-session"
+                                        "title" "Writing the tests"
+                                        "live" true
+                                        "favorite_rank" 1
+                                        "turn_count" 12}]
+                            :grouped []}))
           capture (cap/capture! {:cols cols
                                  :rows 24
                                  :paint! (fn [{:keys [screen]}]
@@ -2097,9 +2090,9 @@
       (is (nil? (:error capture)))
       (is (str/includes? (nth lines row) (if (= cols 32) "Writing the te" "Writing the tests")))
       (is (not (str/includes? (nth lines row) "LIVE")))
-      (is (str/includes? (nth lines (inc row)) "LIVE"))
+      (is (str/includes? (nth lines (inc row)) "* LIVE"))
       (is (= (str/index-of (nth lines row) "Writing")
-             (str/index-of (nth lines (inc row)) "● LIVE")))
+             (str/index-of (nth lines (inc row)) "* LIVE")))
       (is (= (>= cols 38) (str/includes? (nth lines (inc row)) "12t")))
       (is (= (#'theme-test/rgb-tuple theme/status-ok) (:fg status-cell))))))
 

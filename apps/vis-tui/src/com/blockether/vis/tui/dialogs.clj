@@ -5595,7 +5595,7 @@
         (max 1 (- (long width) 2 status-w 2))
 
         title
-        (p/ellipsize (str (when (:favorite? entry) "★ ") (:title entry)) title-w)
+        (p/ellipsize (str (when (:favorite? entry) "* ") (:title entry)) title-w)
 
         status-x
         (+ (long x) (max 2 (- (long width) status-w)))
@@ -6356,7 +6356,7 @@
 (defn model-picker!
   "Searchable per-session model picker — TUI parity with the web footer
    chooser. Lists every configured model as a row (`<provider> / <model>`,
-   the active one marked `● current`) plus a top `★ router default` row
+   the active one marked `● current`) plus a top `* router default` row
    that CLEARS the per-session override. `current` is the session's stored
    model preference (`{:provider <str|kw> :model <str>}`) or nil; it marks
    the active row exactly like the web picker. Returns the chosen item map
@@ -6397,7 +6397,7 @@
            :model nm})
 
         items
-        (vec (cons {:label "★ router default"
+        (vec (cons {:label "* router default"
                     :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
                     :reset? true}
                    model-rows))]

@@ -638,7 +638,7 @@
               :else t/dialog-hint-key)
 
         label
-        (str (when (:favorite? entry) "★ ") (if (= state "IDLE") "○ " "● ") state)]
+        (str (when (:favorite? entry) "* ") state)]
 
     (p/set-colors! g ink t/dialog-bg)
     (p/put-str! g col row (p/truncate-cols label (max 0 available)))))
@@ -1177,14 +1177,14 @@
               (components/button! g
                                   (- (+ left width) 5)
                                   row
-                                  " ⋮ "
+                                  " : "
                                   :project-set-menu
                                   {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (components/button! g
                                 (- (+ left width) 5)
                                 row
-                                " ⋮ "
+                                " : "
                                 :project-details
                                 {:extra {:session (:session entry)
                                          :action [:details

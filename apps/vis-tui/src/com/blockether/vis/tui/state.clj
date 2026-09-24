@@ -1376,7 +1376,7 @@
   :set-model
   ;; Per-session model PICKER (C-x o / palette "Choose Model…"):
   ;; sets the ACTIVE SESSION's model to an EXPLICIT provider+model,
-  ;; or — with both nil (the "★ router default" row) — CLEARS the
+  ;; or — with both nil (the "* router default" row) — CLEARS the
   ;; per-session override. Writes the SAME persisted per-session
   ;; pref the cycle (C-x m) and the web footer picker set, so the
   ;; footer display follows. `db` reflects the current tab.

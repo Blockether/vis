@@ -2536,7 +2536,7 @@
              {:id "early-star" :dir "/w" :position 2 :favorite-rank 1}]]
 
         (expect (= ["early-star" "late-star" "plain"] (mapv :id (group-rows rows))))))
-  (it "paints the star on the starred row alone"
+  (it "paints a single-cell favorite mark on the starred row alone"
       (let [{:keys [^TerminalScreen screen]}
             (term/virtual-screen)
 
@@ -2562,10 +2562,25 @@
                                :favorite-rank 1)
                              false)
                (draw-session g 0 4 40 entry false)
-               (expect (str/includes? (line 0) "★"))
+               (expect (str/includes? (line 0) "* Deploy"))
                (expect (str/includes? (line 0) "Deploy"))
-               (expect (not (str/includes? (line 4) "★"))))
+               (expect (not (str/includes? (line 4) "* Deploy"))))
              (finally (.stopScreen screen))))))
+
+(defdescribe model-picker-portable-marker-test
+             (it "labels the reset choice with a single-cell marker"
+                 (with-redefs [vis/picker-fleet
+                               (constantly [])
+
+                               dlg/list-dialog!
+                               (fn [_ title items opts]
+                                 {:title title :items items :opts opts})]
+
+                   (let [{:keys [title items opts]} (dlg/model-picker! nil nil)]
+                     (expect (= "Session model" title))
+                     (expect (= "* router default" (:label (first items))))
+                     (expect (true? (:reset? (first items))))
+                     (expect (:filter? opts))))))
 
 (defdescribe
   navigator-input-needed-test
