@@ -114,6 +114,26 @@
                                "`probe_path` is not defined")))))
 
 (defdescribe
+  runtime-builtin-shadow-boundary-test
+  "A user loop target named `id` must not stop later blocks at Vis' host/runtime boundary."
+  (it "keeps executing and retains the user's id value across calls"
+      (tpc/with-own [ctx]
+                    (let [looped
+                          (ep/run-python-block ctx "for id in ['first', 'last']:\n    pass" "t1/i1")
+
+                          follow-up
+                          (ep/run-python-block ctx "print(id, 42)" "t1/i2")
+
+                          later
+                          (ep/run-python-block ctx "print('still running')" "t1/i3")]
+
+                      (expect (nil? (:error looped)))
+                      (expect (nil? (:error follow-up)))
+                      (expect (= "last 42" (out follow-up)))
+                      (expect (nil? (:error later)))
+                      (expect (= "still running" (out later)))))))
+
+(defdescribe
   no-auto-repair-test
   "Auto-repair and fabrication/glued detection were REMOVED (2026-06-21). A reply
    that fails to split is NOT salvaged — it errors as a plain SyntaxError and the
