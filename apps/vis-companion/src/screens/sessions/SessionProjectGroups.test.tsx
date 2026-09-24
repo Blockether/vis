@@ -832,7 +832,11 @@ describe('ProjectGroup groups', () => {
       expect(carrier.getData('application/vnd.vis.sessions+json')).toBe(
         JSON.stringify([ROWS[0].id, ROWS[3].id]),
       );
-      expect(carrier.setDragImage.mock.calls[0][0]).toHaveTextContent('2 sessions');
+      const picture = carrier.setDragImage.mock.calls[0][0] as HTMLElement;
+      expect(picture).toHaveTextContent('2 sessions');
+      expect(picture).toHaveTextContent(ROWS[0].title!);
+      expect(picture).toHaveTextContent(ROWS[3].title!);
+      expect(picture).not.toHaveTextContent(ROWS[2].title!);
       fireEvent.drop(wallet, { dataTransfer: carrier });
       await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(1));
       expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[3].id, WALLET);
@@ -891,7 +895,7 @@ describe('ProjectGroup groups', () => {
     for (const session of ROWS) expect(surface(session.id)).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('drags a selected range as a counted batch and files only rows outside the target group', async () => {
+  it('drags a selected range with every row visible and files only rows outside the target group', async () => {
     finePointer();
     const { client } = mount();
     const wallet = await band('Wallet work');
@@ -905,8 +909,8 @@ describe('ProjectGroup groups', () => {
     expect(carrier.getData('text/plain')).toBe(ROWS[3].id);
     const picture = carrier.setDragImage.mock.calls[0][0] as HTMLElement;
     expect(picture).toHaveTextContent('4 sessions');
-    expect(picture).toHaveTextContent(ROWS[3].title!);
-    expect(picture).not.toHaveTextContent(ROWS[0].title!);
+    expect(picture.querySelectorAll('[data-row-surface]')).toHaveLength(ROWS.length);
+    for (const item of ROWS) expect(picture).toHaveTextContent(item.title!);
     fireEvent.drop(wallet, { dataTransfer: carrier });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(2));
     expect(client.assignSessionGroup).toHaveBeenNthCalledWith(1, ROWS[2].id, WALLET);

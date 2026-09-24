@@ -204,49 +204,57 @@ function SessionRowSurface({
 }
 
 /**
- * THE PICTURE A DRAG CARRIES. Left alone the browser paints one, and WebKit - the engine
- * behind the desktop window - paints it from the LAYER the row stands in rather than from
- * the row, so picking up one session put a ghost of every row below it under the cursor.
- * (Reported with a screenshot of the desktop window: one row taken, a column following
- * it.) A picture the row hands over is the picture the browser uses, so the row hands it
- * an opaque copy of ITSELF: one card, the row's own size, held where the pointer took it.
+ * Give WebKit an opaque picture instead of letting it photograph the list layer. For a
+ * selection, copy every visible selected row from this project, not just the picked row
+ * with a count: the first card stays under the pointer and the other cards follow it.
  */
-function carryOneRow(row: HTMLElement, event: DragEvent<HTMLElement>, count = 1): void {
-  // Older web views - and the suite's own carriers - have no picture to set.
+function carryRows(row: HTMLElement, event: DragEvent<HTMLElement>, ids: readonly string[]): void {
   if (typeof event.dataTransfer.setDragImage !== 'function') return;
   const box = row.getBoundingClientRect();
-  const picture = row.cloneNode(true) as HTMLElement;
-  // The copy is a picture, not a row: nothing looking for this session may find it twice.
-  picture.removeAttribute('data-session-row');
-  picture.querySelectorAll('[data-session-id]').forEach((mark) => {
-    mark.removeAttribute('data-session-id');
+  const scope = row.closest('[data-project-root][data-machine]') ?? document;
+  const candidates = ids.length > 1
+    ? Array.from(scope.querySelectorAll<HTMLElement>('[data-session-row]'))
+    : [];
+  const rows = [
+    row,
+    ...ids.filter((id) => id !== row.dataset.sessionRow)
+      .map((id) => candidates.find((candidate) => candidate.dataset.sessionRow === id))
+      .filter((candidate): candidate is HTMLElement => candidate !== undefined),
+  ];
+  const copies = rows.map((source) => {
+    const copy = source.cloneNode(true) as HTMLElement;
+    // These are pictures, not extra sessions for selectors or accessibility to find.
+    copy.removeAttribute('data-session-row');
+    copy.querySelectorAll('[data-session-id]').forEach((mark) => mark.removeAttribute('data-session-id'));
+    // Each row needs its own opaque paper and container query outside the list.
+    copy.className = `${copy.className} @container pointer-events-none overflow-hidden bg-panel ring-1 ring-edge ring-inset`;
+    copy.style.width = `${box.width}px`;
+    copy.style.height = `${source.getBoundingClientRect().height}px`;
+    return copy;
   });
+  const picture = copies.length === 1 ? copies[0] : document.createElement('div');
+  if (copies.length > 1) {
+    picture.className = '@container pointer-events-none bg-panel';
+    picture.append(...copies);
+  }
   picture.setAttribute('aria-hidden', 'true');
-  // Paper of its own, because a see-through card shows the very rows it is carried over,
-  // and its EDGE is drawn inside the box (a border would push the row's own content in and
-  // clip it). It stands exactly ON the row it copies, and a positioned element is a paint
-  // layer of its own: what the engine photographs is this card, not the list it was cut
-  // from. `@container` is what makes the copy read as the row it came from: this row
-  // answers its width to the LIST it stands in, and out here the list is gone, so without
-  // a container of its own the copy loses the second line and its group rail stops short
-  // of the card's own end (reported from the desktop app).
-  picture.className = `${picture.className} @container pointer-events-none overflow-hidden bg-panel ring-1 ring-edge ring-inset`;
-  if (count > 1) {
+  if (ids.length > 1) {
     const badge = document.createElement('span');
     badge.className = 'absolute right-2 top-1 border border-accent bg-panel px-2 font-mono text-meta font-bold text-accent-ink';
-    badge.textContent = `${count} sessions`;
+    badge.textContent = `${ids.length} sessions`;
     picture.append(badge);
   }
+  const height = rows.reduce((sum, source) => sum + source.getBoundingClientRect().height, 0);
   picture.style.position = 'fixed';
-  picture.style.top = `${box.top}px`;
+  // Keep as much of a tall selection in the viewport as possible for WebKit's snapshot.
+  picture.style.top = `${rows.length > 1 ? Math.max(0, Math.min(box.top, window.innerHeight - height)) : box.top}px`;
   picture.style.left = `${box.left}px`;
   picture.style.width = `${box.width}px`;
-  picture.style.height = `${box.height}px`;
+  picture.style.height = `${height}px`;
   picture.style.zIndex = '9999';
   document.body.append(picture);
   event.dataTransfer.setDragImage(picture, event.clientX - box.left, event.clientY - box.top);
-  // The picture is taken as this event returns, so the copy retires before the next frame
-  // is painted and no reader ever sees two rows standing in one place.
+  // WebKit takes the picture as this event returns. Retire it before the next frame.
   window.setTimeout(() => picture.remove(), 0);
 }
 
@@ -490,7 +498,7 @@ export const SessionRow = memo(function SessionRow({
               event.dataTransfer.setData('text/plain', session.id);
               if (ids.length > 1) event.dataTransfer.setData(SESSION_DRAG_MIME, JSON.stringify(ids));
               event.dataTransfer.effectAllowed = 'move';
-              if (rowRef.current) carryOneRow(rowRef.current, event, ids.length);
+              if (rowRef.current) carryRows(rowRef.current, event, ids);
             }
           : undefined
       }
