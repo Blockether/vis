@@ -271,6 +271,9 @@
         },
         "presentation": {
           "$ref": "#/$defs/presentation"
+        },
+        "handle_id": {
+          "$ref": "#/$defs/handle_id"
         }
       },
       "required": [
@@ -370,6 +373,9 @@
         },
         "presentation": {
           "$ref": "#/$defs/presentation"
+        },
+        "handle_id": {
+          "$ref": "#/$defs/handle_id"
         }
       },
       "required": [
@@ -462,6 +468,9 @@
         },
         "presentation": {
           "$ref": "#/$defs/presentation"
+        },
+        "handle_id": {
+          "$ref": "#/$defs/handle_id"
         }
       },
       "required": [
@@ -900,6 +909,9 @@
           "items": {
             "$ref": "#/$defs/section"
           }
+        },
+        "handle_id": {
+          "$ref": "#/$defs/handle_id"
         }
       },
       "required": [
@@ -907,6 +919,12 @@
         "summary",
         "content"
       ]
+    },
+    "handle_id": {
+      "type": "string",
+      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+      "maxLength": 256,
+      "x-vis-max-bytes": 512
     }
   },
   "$ref": "#/$defs/projection"

@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -462,6 +463,77 @@ vis.register_extension(vis.Extension(
             (expect (= "tests" (get-in projection [:rows 0 :presenter])))
             (expect (= "observation" (get-in projection [:rows 0 :signal])))
             (expect (= "Check counter" (get-in projection [:rows 0 :summary])))
+            (expect (activity-contract/valid-projection? projection))))))))
+
+(defdescribe
+  sdk-handle-receipt-test
+  (it
+    "links generic SDK receipts across real Python calls without losing failures"
+    (with-loaded
+      {"visual.py"
+       "import blockether.vis.extension as vis
+
+def compare(handle, note, fail=False):
+    '''Compare one visual result.'''
+    vis.publish_activity(vis.ActivityPresentation(
+        'Checking visual differences', note,
+        (vis.ActivityText(note),), handle_id=handle))
+    if fail:
+        raise ValueError('Comparison unavailable')
+    return {'ok': True}
+
+vis.register_extension(vis.Extension(
+    name='visual-compare', alias='visual_compare',
+    description='Compare visual results',
+    symbols=[vis.Symbol(compare, tag='observation',
+                        activity=vis.Activity(label='Compare visuals', show_start=False))]))
+"}
+      (fn [_ _]
+        (expect (= [] (pyx/load-failures)))
+        (let [ext
+              (registered "visual-compare")
+
+              entry
+              (first (get-in ext [:ext/engine :ext.engine/symbols]))
+
+              events
+              (atom [])]
+
+          (binding [extension/*tool-event-context*
+                    (activity-event/context)
+
+                    extension/*tool-event-sink*
+                    #(swap! events conj %)]
+
+            (extension/invoke-symbol-wrapper ext entry ["comparison-1" "Early finding" false] {})
+            (expect (try (extension/invoke-symbol-wrapper ext
+                                                          entry
+                                                          ["comparison-1" "Temporary failure" true]
+                                                          {})
+                         false
+                         (catch Exception _ true)))
+            (extension/invoke-symbol-wrapper ext entry ["comparison-1" "Final finding" false] {})
+            (extension/invoke-symbol-wrapper ext
+                                             entry
+                                             ["comparison-2" "Other comparison" false]
+                                             {}))
+          (let [projection
+                (activity/presentation (activity/replay @events))
+
+                [head other]
+                (:rows projection)]
+
+            (expect (= 2 (count (:rows projection))))
+            (expect (= "succeeded" (:state head)))
+            (expect (= "comparison-1" (:handle-id head)))
+            (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:children head))))
+            (expect (= "Final finding" (get-in head [:presentation "summary"])))
+            (expect (some #(= "Early finding" (get % "text"))
+                          (get-in head [:presentation "sections" 0 "content"])))
+            (expect (some #(str/includes? (get % "text") "Comparison unavailable")
+                          (get-in head [:presentation "sections" 1 "content"])))
+            (expect (= "comparison-2" (:handle-id other)))
+            (expect (= {:running 0 :succeeded 3 :failed 1 :cancelled 0} (:counts projection)))
             (expect (activity-contract/valid-projection? projection))))))))
 
 (defdescribe

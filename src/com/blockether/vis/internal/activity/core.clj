@@ -32,6 +32,7 @@
            :classification (presenter/classification event)
            :state :running
            :show-start (not (false? (:show-start event)))
+           :extension (:extension event)
            :summary (presenter/row-summary event)
            :group-token (:group-token event)
            :group-head (:group-head event)
@@ -39,6 +40,9 @@
            :evidence (if-let [argument (:argument-summary event)]
                        [{:kind :arguments :text argument}]
                        [])}
+    (:handle-id event)
+    (assoc :handle-id (:handle-id event))
+
     (:presentation event)
     (assoc :presentation (:presentation event))
 
@@ -90,6 +94,9 @@
                           (conj summary-evidence)))
       (seq (:diff-evidence event))
       (update :evidence into (:diff-evidence event))
+
+      (:handle-id event)
+      (assoc :handle-id (:handle-id event))
 
       (:presentation event)
       (assoc :presentation (:presentation event))
@@ -143,7 +150,9 @@
               (fn [rows]
                 (mapv (fn [row]
                         (if (and (= (:id row) (:invocation-id event)) (= :running (:state row)))
-                          (assoc row :presentation (:presentation event))
+                          (cond-> (assoc row :presentation (:presentation event))
+                            (:handle-id event)
+                            (assoc :handle-id (:handle-id event)))
                           row))
                       rows)))
 
@@ -197,11 +206,74 @@
 
 (defn byte-size ^long [snapshot] (long (event/utf8-bytes (wire/json-str snapshot))))
 
-(defn- resource-key-of-type
-  [row resource-type]
-  (some (fn [{:keys [type id]}]
-          (when (and (= resource-type type) id) [type id]))
-        (:resources row)))
+(defn- receipt-presentation
+  "Latest authored outcome, with earlier distinct detail and every distinct failure."
+  [children]
+  (let [current
+        (last children)
+
+        current-view
+        (:presentation current)
+
+        earlier-views
+        (keep :presentation (butlast children))
+
+        latest
+        (or current-view
+            {"headline" (or (get (last earlier-views) "headline") "Activity")
+             "summary" (or (:result-summary current) (:summary current) "")
+             "content" []})
+
+        visible
+        (set (conj (vec (get latest "content"))
+                   {"type" "text" "text" (get latest "summary")}
+                   {"type" "text" "text" (:result-summary current)}))
+
+        earlier
+        (->> (butlast children)
+             (mapcat (fn [{:keys [presentation result-summary]}]
+                       (let [content (get presentation "content")]
+                         (if (seq content)
+                           content
+                           (keep (fn [text]
+                                   (when (seq text) {"type" "text" "text" text}))
+                                 [(get presentation "summary") result-summary])))))
+             (remove visible)
+             distinct
+             vec)
+
+        existing-sections
+        (set (get latest "sections"))
+
+        older-sections
+        (vec (distinct (remove existing-sections (mapcat #(get % "sections") earlier-views))))
+
+        errors
+        (vec (distinct (keep :error-summary children)))
+
+        failed?
+        (= :failed (:state current))]
+
+    (cond-> latest
+      failed?
+      (assoc "headline"
+        "Activity failed" "summary"
+        (or (:error-summary current) (:summary current)))
+
+      (or (seq earlier) (seq older-sections) (seq errors))
+      (update "sections"
+              (fnil into [])
+              (concat (when (seq earlier)
+                        [{"headline" "Earlier details"
+                          "summary" (str (count earlier) " distinct items")
+                          "content" earlier}])
+                      older-sections
+                      (when (seq errors)
+                        [{"headline" "Errors"
+                          "summary" (str (count errors) " distinct errors")
+                          "content" (mapv (fn [error]
+                                            {"type" "text" "text" error})
+                                          errors)}]))))))
 
 (defn- grouped-state
   [children]
@@ -219,10 +291,17 @@
         (:group-head first-row)
 
         state
-        (if (= kind :shell) (:state (last children)) (grouped-state children))
+        (if (= kind :observation) (grouped-state children) (:state (last children)))
 
-        shell-view
-        (when (= kind :shell) (presenter/shell-receipt-presentation children))]
+        view
+        (case kind
+          :shell
+          (presenter/shell-receipt-presentation children)
+
+          :receipt
+          (receipt-presentation children)
+
+          nil)]
 
     (cond-> {;; A head is a ROW, so it needs an id of its own: borrowing its first child's
              ;; id put the same id twice in one tree, and a tree with a duplicate id
@@ -230,25 +309,29 @@
              :id (str "group-" (or (:group-token first-row) (:id first-row)))
              :sequence (:sequence first-row)
              :operation (cond (= kind :shell) :shell
-                              ;; A head that names its own act keeps it: "changed 12 files"
-                              ;; is a verb the reader knows, where "observations" is a bucket.
+                              (= kind :receipt) (:operation first-row)
+                              ;; Observation heads name their act when one was declared.
                               (:operation head) (:operation head)
                               :else :observations)
-             :presenter (if (= kind :shell) :shell :observation)
+             :presenter (if (= kind :observation) :observation (:presenter first-row))
              :classification (:classification first-row)
              :state state
              :children (vec children)
+             :extension (:extension first-row)
              :resources (vec (take event/max-resources (distinct (mapcat :resources children))))
              :evidence []
-             :summary (cond (= kind :shell) (or (get shell-view "summary") (:summary first-row))
+             :summary (cond view (or (get view "summary") (:summary first-row))
                             (:summary head) (:summary head)
                             :else (str "observations · " (count children) " operations"))
              :duration-ms (reduce (fn [total duration]
                                     (Math/addExact (long total) (long duration)))
                                   0
                                   (keep :duration-ms children))}
-      shell-view
-      (assoc :presentation shell-view)
+      view
+      (assoc :presentation view)
+
+      (not= kind :observation)
+      (assoc :handle-id (:handle-id first-row))
 
       (and (= kind :shell) (= :shell (:operation first-row)) (:argument-key first-row))
       (assoc :argument-key (:argument-key first-row))
@@ -262,10 +345,11 @@
       (:result-format head)
       (assoc :result-format (:result-format head)))))
 
-(defn- coalesce-shell-rows
+(defn- coalesce-handle-rows
+  "Group explicit handles once in first-entry order, never by label or argument."
   [rows]
   (let [key-for
-        #(when (= :shell (:presenter %)) (resource-key-of-type % :shell-handle))
+        #(when-let [id (:handle-id %)] [(:extension %) id])
 
         by-handle
         (reduce (fn [groups row]
@@ -285,12 +369,17 @@
            []]
 
       (if-let [row (first remaining)]
-        (let [key (key-for row)]
+        (let [key (key-for row)
+              children (get by-handle key)]
+
           (cond (and key (contains? emitted key)) (recur (rest remaining) emitted result)
-                (and key (next (get by-handle key)))
+                (and key (next children))
                 (recur (rest remaining)
                        (conj emitted key)
-                       (conj result (grouped-row :shell (get by-handle key))))
+                       (conj result
+                             (grouped-row
+                               (if (every? #(= :shell (:presenter %)) children) :shell :receipt)
+                               children)))
                 :else (recur (rest remaining) emitted (conj result row))))
         result))))
 
@@ -323,7 +412,7 @@
        (remove #(and (= :running (:state %)) (false? (:show-start %))))
        (sort-by :sequence)
        vec
-       coalesce-shell-rows
+       coalesce-handle-rows
        coalesce-adjacent-observations
        vec))
 
@@ -357,7 +446,7 @@
 
 (defn- presentation-row
   [{:keys [id sequence operation presenter classification state summary group-token argument-key
-           read-key resources duration-ms result-summary error-summary evidence children
+           read-key handle-id resources duration-ms result-summary error-summary evidence children
            is-truncated summary-format result-format presentation]}]
   (cond-> {:id (str id)
            :sequence (long sequence)
@@ -368,6 +457,9 @@
            :summary (str (or summary ""))
            :resources (mapv presentation-resource resources)
            :evidence (mapv presentation-evidence evidence)}
+    handle-id
+    (assoc :handle-id handle-id)
+
     (some? presentation)
     (assoc :presentation presentation)
 

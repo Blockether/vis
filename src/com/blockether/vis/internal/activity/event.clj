@@ -377,6 +377,8 @@
                (not (and (string? (:read-key event))
                          (re-matches #"[0-9a-f]{64}" (:read-key event)))))
           "malformed read key"
+          (and (contains? event :handle-id) (not (contract/valid-handle-id? (:handle-id event))))
+          "invalid Activity handle id"
           (and (contains? event :show-start) (not (boolean? (:show-start event))))
           "start visibility must be boolean"
           (not (contains? #{:start :content :terminal} (:phase event))) "unknown lifecycle phase"
@@ -478,17 +480,25 @@
   (or (= :terminal (:phase event)) (not (false? (:show-start event)))))
 
 (defn content-event
-  "Validate a whole presentation replacement; text and content never author lifecycle."
+  "Validate an authored replacement; separate opaque handle identity from visible content."
   [ctx invocation {:keys [operation presenter activity workspace-root]} presentation]
   (when-not (contract/valid-presentation? presentation)
     (throw (ex-info "Invalid or oversized Activity presentation"
                     {:type :activity/invalid-content})))
-  (let [public (compact-presentation workspace-root (redact presentation))]
+  (let [public
+        (compact-presentation workspace-root (redact presentation))
+
+        handle-id
+        (or (get public "handle_id") (get public :handle-id))]
+
     (when-not (contract/valid-presentation? public)
       (throw (ex-info "Invalid or oversized Activity presentation"
                       {:type :activity/invalid-content})))
     (checked (cond-> (assoc (base-event ctx invocation operation presenter :content)
-                       :presentation public)
+                       :presentation (dissoc public "handle_id" :handle-id))
+               handle-id
+               (assoc :handle-id handle-id)
+
                (false? (:show-start activity))
                (assoc :show-start false)))))
 
@@ -709,6 +719,8 @@
          vec
          not-empty)))
 
+(defn- shell-handle-ref [refs] (some #(when (= :shell-handle (:type %)) (:id %)) refs))
+
 (defn start-event
   [ctx invocation
    {:keys [operation presenter extension symbol label phrase args classification group-token
@@ -716,6 +728,9 @@
     :as details}]
   (let [refs
         (resource-refs details)
+
+        shell-handle
+        (shell-handle-ref refs)
 
         token
         (or group-token (some explicit-group-token args))
@@ -792,6 +807,9 @@
         summary-format
         (assoc :summary-format summary-format)
 
+        shell-handle
+        (assoc :handle-id shell-handle)
+
         refs
         (assoc :resources refs)
 
@@ -865,7 +883,10 @@
         (argument-key ctx (:args details))
 
         target-identity
-        (read-key ctx operation (:args details))]
+        (read-key ctx operation (:args details))
+
+        handle-id
+        (or (get-in presentation [:value "handle_id"]) (shell-handle-ref refs))]
 
     (checked
       (fit-event
@@ -887,8 +908,11 @@
           target-identity
           (assoc :read-key target-identity)
 
+          handle-id
+          (assoc :handle-id handle-id)
+
           presentation
-          (assoc :presentation (:value presentation))
+          (assoc :presentation (dissoc (:value presentation) "handle_id"))
 
           (and (= outcome :succeeded) (:text summary))
           (assoc :result-summary (:text summary))

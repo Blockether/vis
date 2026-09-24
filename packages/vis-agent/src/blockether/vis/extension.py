@@ -424,9 +424,16 @@ class ActivitySection:
 
 @dataclass(frozen=True, slots=True)
 class ActivityPresentation(ActivitySection):
-    """One atomic symbol presentation retaining all content and non-nested sections."""
+    """One atomic symbol presentation, optionally linked to a persistent handle.
+
+    Use the same non-secret ``handle_id`` for later receipts of one operation in
+    this extension and Python form. Vis shows one current outcome while retaining
+    distinct details, errors and every invocation in history. Omit it for
+    independent calls; a handle is not a label, tool argument or return value.
+    """
 
     sections: tuple[ActivitySection, ...] = ()
+    handle_id: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         ActivitySection.__post_init__(self)
@@ -437,11 +444,27 @@ class ActivityPresentation(ActivitySection):
                 "Activity sections must contain non-nested ActivitySections"
             )
         object.__setattr__(self, "sections", tuple(self.sections))
+        if self.handle_id is not None:
+            if not isinstance(self.handle_id, str):
+                raise TypeError("Activity handle_id must be a string")
+            if (
+                not self.handle_id.strip()
+                or len(self.handle_id) > 256
+                or len(self.handle_id.encode("utf-8")) > 512
+                or any(
+                    ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in self.handle_id
+                )
+            ):
+                raise ValueError(
+                    "Activity handle_id must be one nonblank line of at most 512 UTF-8 bytes"
+                )
 
     def to_wire(self) -> dict[str, Any]:
         value = ActivitySection.to_wire(self)
         if self.sections:
             value["sections"] = [section.to_wire() for section in self.sections]
+        if self.handle_id is not None:
+            value["handle_id"] = self.handle_id
         return value
 
 

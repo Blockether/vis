@@ -279,6 +279,61 @@ nesting sections. Each section has its own disclosure: you can scan its headline
 and summary before opening the complete details. `vis.publish_activity(presentation)`
 replaces the current snapshot while a tool runs; empty content clears the body.
 
+### Link receipts for one operation
+
+When a tool returns a persistent handle and later calls check its progress, pass the
+same `handle_id` in each `ActivityPresentation`. For example, an extension can
+report successive visual findings without showing a separate current card for
+every check:
+
+```python
+import blockether.vis.extension as vis
+
+
+def check_visual_differences(handle: str, finding: str) -> str:
+    """Report one finding for the named visual comparison."""
+    vis.publish_activity(
+        vis.ActivityPresentation(
+            "Checking visual differences",
+            finding,
+            (vis.ActivityText(finding),),
+            handle_id=handle,
+        )
+    )
+    return finding
+
+
+vis.register_extension(
+    vis.Extension(
+        name="visual-comparisons",
+        description="Report visual comparison findings.",
+        alias="visual",
+        symbols=[
+            vis.Symbol(
+                check_visual_differences,
+                activity=vis.Activity(label="Check visual differences", show_start=False),
+            )
+        ],
+    )
+)
+```
+
+Call `visual.check_visual_differences("comparison-7", "One difference")` and
+then `visual.check_visual_differences("comparison-7", "No differences")` in
+the same Python form. Activity shows the latest finding, with the earlier
+finding in its details; expanding the receipt still shows both calls. A different
+handle stays separate. The handle links calls only within the same extension
+and form, not across later forms or other extensions. Use a stable, non-secret
+handle unique to that operation, not its label or arguments, and do not reuse it
+for unrelated work. Omit `handle_id` for standalone calls. It is an optional
+nonblank, single-line string of at most 256 characters and 512 UTF-8 bytes.
+It identifies a receipt; it does not replace tool arguments or results.
+
+The engine stores the handle on each Activity row, not in displayed presentation
+content. It keeps the newest outcome current, retains earlier distinct detail
+and errors, and counts and saves every invocation in history. Shell handles use
+the same grouping with command-specific output and exit reconciliation.
+
 To make summary links clickable in the app and terminal, pass
 `summary_format="markdown"` to `ActivityPresentation` or `ActivitySection`:
 

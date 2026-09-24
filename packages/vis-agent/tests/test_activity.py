@@ -30,6 +30,20 @@ def test_symbol_declares_activity_without_changing_execution():
         vis.Symbol(check, activity={"presenter": "tests"})
 
 
+def test_activity_presentation_links_a_bounded_handle_without_changing_content():
+    receipt = vis.ActivityPresentation(
+        "Checking visual differences",
+        "Comparison running",
+        (vis.ActivityText("First finding"),),
+        handle_id="comparison-1",
+    )
+    assert receipt.to_wire()["handle_id"] == "comparison-1"
+    assert receipt.to_wire()["content"] == [{"type": "text", "text": "First finding"}]
+    for invalid in ("", "  ", "line\nother", "x" * 513, 5):
+        with pytest.raises((TypeError, ValueError)):
+            vis.ActivityPresentation("Compare", "Running", handle_id=invalid)
+
+
 def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
     class Checks:
         @vis.method(activity=vis.Activity(presenter="tests"))
@@ -66,6 +80,37 @@ def test_shared_operation_groups(sample):
     if projection.groups:
         with pytest.raises(FrozenInstanceError):
             projection.groups[0].label = "changed"
+
+
+def test_generic_handle_receipt_round_trips_and_groups_by_first_call():
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(2, paged=False)
+    children = [{**row, "handle_id": "compare-7"} for row in fixture["rows"]]
+    fixture["rows"] = [{**children[0], "id": "group-call-0", "children": children}]
+    projection = ActivityProjection.from_wire(fixture)
+    assert projection.to_wire() == fixture
+    assert projection.rows[0].handle_id == "compare-7"
+    assert [row.handle_id for row in projection.rows[0].children] == [
+        "compare-7",
+        "compare-7",
+    ]
+    assert projection.groups[0].id == "call-0"
+    assert projection.argument_groups[0].id == "call-0"
+
+
+def test_activity_receipt_rejects_invalid_handle_bounds_in_rows_and_presentations():
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(1, paged=False)
+    for invalid in ("界" * 171, "a\x00b"):
+        for place in ("row", "presentation"):
+            row = fixture["rows"][0]
+            target = row if place == "row" else row["presentation"]
+            target["handle_id"] = invalid
+            with pytest.raises(ValueError):
+                ActivityProjection.from_wire(fixture)
+            del target["handle_id"]
 
 
 @pytest.mark.parametrize(

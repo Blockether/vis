@@ -16,32 +16,36 @@
 (h/use-mem-store!)
 
 (defn- emit-operation!
-  [ctx n]
-  (let [inv
-        (event/invocation ctx nil)
+  ([ctx n] (emit-operation! ctx n nil))
+  ([ctx n handle]
+   (let [inv
+         (event/invocation ctx nil)
 
-        details
-        {:operation :read-record
-         :presenter :generic
-         :args [{:path (str "record-" n)}]
-         :activity {:headline "Read record" :show-start false}}]
+         details
+         (cond-> {:operation :read-record
+                  :presenter :generic
+                  :args [{:path (str "record-" n)}]
+                  :activity {:headline "Read record" :show-start false}}
+           handle
+           (assoc :extension "visual.tools"))
 
-    (extension/*tool-event-sink* (event/start-event ctx inv details))
-    (extension/*tool-event-sink*
-      (event/content-event
-        ctx
-        inv
-        details
-        {"headline" "Read record"
-         "summary" (str "Record " n)
-         "content" [{"type" "text" "text" (str "Record " n " " (apply str (repeat 2000 "界")))}]}))
-    (extension/*tool-event-sink* (event/terminal-event ctx
-                                                       inv
-                                                       (assoc details
-                                                         :outcome :succeeded
-                                                         :started-at-ms
-                                                         (System/currentTimeMillis))))
-    (:invocation-id inv)))
+         presentation
+         (cond-> {"headline" "Read record"
+                  "summary" (str "Record " n)
+                  "content" [{"type" "text"
+                              "text" (str "Record " n " " (apply str (repeat 2000 "界")))}]}
+           handle
+           (assoc "handle_id" handle))]
+
+     (extension/*tool-event-sink* (event/start-event ctx inv details))
+     (extension/*tool-event-sink* (event/content-event ctx inv details presentation))
+     (extension/*tool-event-sink* (event/terminal-event ctx
+                                                        inv
+                                                        (assoc details
+                                                          :outcome :succeeded
+                                                          :started-at-ms
+                                                          (System/currentTimeMillis))))
+     (:invocation-id inv))))
 
 (defn- all-rows
   [store sid aid]
@@ -288,11 +292,14 @@
              (try (reset! sid (h/store-session! store {}))
                   (tpc/with-own
                     [pc {}]
-                    (with-redefs [env/run-python-block (fn [_ _ _]
-                                                         (let [ctx (event/context)]
-                                                           (doseq [n (range 145)]
-                                                             (emit-operation! ctx n)))
-                                                         {:stdout "saved"})]
+                    (with-redefs [env/run-python-block
+                                  (fn [_ _ _]
+                                    (let [ctx (event/context)]
+                                      (doseq [n (range 145)]
+                                        (emit-operation! ctx n))
+                                      (doseq [n [145 146]]
+                                        (emit-operation! ctx n "comparison-1")))
+                                    {:stdout "saved"})]
                       (let [result
                             (#'lp/run-python-code pc "pass" :env {:db-info store :session-id @sid})]
                         (expect (nil? (:error result)))
@@ -300,8 +307,15 @@
                         (reset! original (all-rows store @sid @aid)))))
                   (finally (vis/db-dispose-connection! store))))
            (let [reopened (vis/db-create-connection! (str dir))]
-             (try (expect (= 145 (count @original)))
-                  (expect (= @original (all-rows reopened @sid @aid)))
+             (try (expect (= 146 (count @original)))
+                  (expect (= "comparison-1" (:handle-id (last @original))))
+                  (expect (= ["Record 145" "Record 146"]
+                             (mapv #(get-in % [:presentation "summary"])
+                                   (:children (last @original)))))
+                  (let [saved (all-rows reopened @sid @aid)]
+                    (expect (= @original saved))
+                    (expect (contract/valid-projection?
+                              (db/db-activity-page reopened @sid @aid {:after 140}))))
                   (finally (vis/db-dispose-connection! reopened))))
            (finally (fs/delete-tree dir))))))
 

@@ -34,6 +34,23 @@
                                    "declaration"
                                    {"presenter" "tests" "state" "succeeded"})))))
 
+(deftest persistent-handle-id-contract-test
+  (let [fixture
+        (json/read-str (slurp (io/resource "vis-contract/fixtures/activity.json")))
+
+        view
+        {"headline" "Checking visual differences" "summary" "Done" "content" []}]
+
+    (doseq [id ["comparison-1" (apply str (repeat 256 "é"))]]
+      (is (activity/valid-handle-id? id))
+      (is (activity/valid-presentation? (assoc view "handle_id" id)))
+      (is (activity/valid-projection? (assoc-in fixture ["rows" 0 "handle_id"] id))))
+    (doseq [id ["" "  " (apply str (repeat 257 "é")) (apply str (repeat 171 "界")) "line\nbreak"
+                (str "line" (char 8232) "break") true]]
+      (is (not (activity/valid-handle-id? id)))
+      (is (not (activity/valid-presentation? (assoc view "handle_id" id))))
+      (is (not (activity/valid-projection? (assoc-in fixture ["rows" 0 "handle_id"] id)))))))
+
 (deftest shared-activity-admission-test
   (doseq [{:strs [name valid projection]}
           (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-cases.json")))]
@@ -115,8 +132,7 @@
     (is (activity/valid-presentation? presentation))
     (is (activity/valid-presentation? (assoc presentation "content" [table])))
     (is (not (activity/valid-presentation? (assoc presentation
-                                             "content"
-                                             [(assoc table "paths" ["/w/a.clj"])]))))))
+                                             "content" [(assoc table "paths" ["/w/a.clj"])]))))))
 
 (deftest presentation-summary-format-test
   ;; Regression #254: only explicitly marked summaries opt into inline Markdown.

@@ -28,6 +28,14 @@
 (def diff-line-byte-limit
   (get-in schema ["$defs" "diff_line" "properties" "text" "x-vis-truncate-bytes"]))
 
+(defn valid-handle-id?
+  "Opaque, bounded identity for receipts belonging to one live operation."
+  [value]
+  (and (document/valid-json? "activity" "handle_id" value)
+       (<= (alength (.getBytes ^String value StandardCharsets/UTF_8))
+           (long (get-in schema ["$defs" "handle_id" "x-vis-max-bytes"])))
+       (not-any? #(or (< (int %) 32) (contains? #{127 8232 8233} (int %))) value)))
+
 (defn valid-presentation?
   "Admit complete content and non-nested sections with brief headlines and summaries."
   [value]
@@ -37,7 +45,8 @@
                blocks (mapcat #(get % "content") sections)
                bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
 
-           (and (every? #(<= (long (bytes %)) (long summary-byte-limit))
+           (and (or (not (contains? value "handle_id")) (valid-handle-id? (get value "handle_id")))
+                (every? #(<= (long (bytes %)) (long summary-byte-limit))
                         (mapcat #(map % ["headline" "summary"]) sections))
                 (every? (fn [block]
                           (case (get block "type")
@@ -71,6 +80,8 @@
              (map #(get % "id") rows)]
 
          (and (= (count ids) (count (set ids)))
+              (every? #(or (not (contains? % "handle_id")) (valid-handle-id? (get % "handle_id")))
+                      rows)
               (every? #(or (not (contains? % "presentation"))
                            (valid-presentation? (get % "presentation")))
                       rows)
@@ -89,7 +100,9 @@
 
 (defn- first-invocation-id
   [row]
-  (:id (if (= "shell" (:operation row)) (or (first (:children row)) row) row)))
+  (:id (if (and (seq (:children row)) (or (:handle-id row) (= "shell" (:operation row))))
+         (first (:children row))
+         row)))
 
 (defn argument-groups
   "Group exact operation and argument-key pairs within one block. Missing keys stay

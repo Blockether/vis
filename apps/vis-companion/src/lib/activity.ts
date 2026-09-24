@@ -22,6 +22,7 @@ const PAGE_ROW_LIMIT = activitySchema.$defs.projection.properties.history['x-vis
 const PAGE_BYTE_TARGET = activitySchema.$defs.projection.properties.history['x-vis-page-target-bytes'];
 const RESOURCE_LIMIT = activitySchema.$defs.row.properties.resources.maxItems;
 const SUMMARY_BYTE_LIMIT = activitySchema.$defs.section.properties.summary['x-vis-max-bytes'];
+const HANDLE_LIMIT = activitySchema.$defs.handle_id;
 
 type RowSchema = {
   properties: Record<string, { items?: { $ref: string } }>;
@@ -48,7 +49,10 @@ export type OperationGroup = {
 export type ArgumentGroup = Pick<OperationGroup, 'id' | 'rows'>;
 
 function firstInvocationId(row: ActivityRow): string {
-  return (row.operation === 'shell' ? (row.children?.[0] ?? row) : row).id;
+  return (row.children?.length && (row.handle_id !== undefined || row.operation === 'shell')
+    ? row.children[0]
+    : row
+  ).id;
 }
 
 /** Exact operation/argument pairs, within one block. Unknown keys never collapse. */
@@ -278,11 +282,29 @@ export interface ActivitySection {
 
 export interface ActivityPresentation extends ActivitySection {
   sections?: ActivitySection[];
+  handle_id?: string;
+}
+
+function validHandleId(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  return (
+    Array.from(value).length <= HANDLE_LIMIT.maxLength &&
+    new TextEncoder().encode(value).length <= HANDLE_LIMIT['x-vis-max-bytes'] &&
+    !/[\x00-\x1f\x7f\u2028\u2029]/u.test(value)
+  );
 }
 
 function activityPresentationFromWire(value: unknown): ActivityPresentation | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['headline', 'summary', 'content'], ['sections', 'summary_format']))
+  if (
+    !raw ||
+    !hasExactKeys(raw, ['headline', 'summary', 'content'], [
+      'sections',
+      'summary_format',
+      'handle_id',
+    ]) ||
+    (raw.handle_id !== undefined && !validHandleId(raw.handle_id))
+  )
     return null;
   const sections = raw.sections === undefined ? [] : raw.sections;
   if (!Array.isArray(sections)) return null;
@@ -294,7 +316,7 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       !hasExactKeys(
         section,
         ['headline', 'summary', 'content'],
-        index === 0 ? ['sections', 'summary_format'] : ['summary_format'],
+        index === 0 ? ['sections', 'summary_format', 'handle_id'] : ['summary_format'],
       )
     )
       return null;
@@ -327,6 +349,7 @@ export interface ActivityRow {
   summary: string;
   summary_format?: ActivityTextFormat;
   argument_key?: string;
+  handle_id?: string;
   read_key?: string;
   group_token?: string;
   duration_ms?: number;
@@ -609,6 +632,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
         .map(activityEvidenceFromWire)
         .filter((item): item is ActivityEvidence => item !== null)
     : null;
+  const handleId = raw.handle_id === undefined ? undefined : optionalText(raw.handle_id);
   const groupToken = raw.group_token === undefined ? undefined : optionalText(raw.group_token);
   const argumentKey =
     typeof raw.argument_key === 'string' &&
@@ -655,6 +679,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     resources.length > RESOURCE_LIMIT ||
     evidence === null ||
     evidence.length !== evidenceRaw!.length ||
+    (raw.handle_id !== undefined && !validHandleId(handleId)) ||
     (raw.group_token !== undefined && groupToken === undefined) ||
     (raw.argument_key !== undefined && argumentKey === undefined) ||
     (raw.read_key !== undefined && readKey === undefined) ||
@@ -680,6 +705,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     summary: raw.summary,
     resources,
     evidence,
+    ...(handleId !== undefined ? { handle_id: handleId } : {}),
     ...(groupToken !== undefined ? { group_token: groupToken } : {}),
     ...(argumentKey !== undefined ? { argument_key: argumentKey } : {}),
     ...(readKey !== undefined ? { read_key: readKey } : {}),

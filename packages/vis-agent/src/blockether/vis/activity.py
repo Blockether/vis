@@ -19,6 +19,17 @@ from blockether.vis._contracts import definition, validate
 from ._wire import freeze, to_wire
 
 
+def _valid_handle_id(value: str) -> bool:
+    limits = definition("activity", "handle_id")
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= limits["maxLength"]
+        and len(value.encode("utf-8")) <= limits["x-vis-max-bytes"]
+        and not any(ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in value)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ActivityResource:
     """A typed reference to a resource involved in an invocation, identified by `id`."""
@@ -59,9 +70,10 @@ class ActivityRow:
     """One invocation's lifecycle, outcome and human-readable evidence.
 
     `id` and `sequence` preserve identity and ordering. `state` describes the
-    outcome; `summary` is display text, not a replacement for status. Shell polls
-    can appear as `children`. `presentation` contains the extension's selected
-    content, while `evidence` retains engine-observed information.
+    outcome; `summary` is display text, not a replacement for status. Linked
+    receipts appear as `children` with their shared `handle_id`. `presentation`
+    contains the extension's selected content, while `evidence` retains
+    engine-observed information.
     """
 
     id: str
@@ -74,6 +86,7 @@ class ActivityRow:
     resources: tuple[ActivityResource, ...]
     evidence: tuple[ActivityEvidence, ...]
     argument_key: str | None = None
+    handle_id: str | None = None
     group_token: str | None = None
     duration_ms: int | None = None
     result_summary: str | None = None
@@ -123,7 +136,11 @@ class ActivityRow:
 
 
 def _first_invocation_id(row: ActivityRow) -> str:
-    return (row.children[0] if row.operation == "shell" and row.children else row).id
+    return (
+        row.children[0]
+        if row.children and (row.handle_id is not None or row.operation == "shell")
+        else row
+    ).id
 
 
 def _operation_group_label(operation: str, rows: list[ActivityRow]) -> str:
@@ -247,6 +264,10 @@ class ActivityProjection:
             nonlocal leaf_count
             for row in rows:
                 presentation = row.get("presentation")
+                for carrier in (row, presentation):
+                    if carrier is not None and "handle_id" in carrier:
+                        if not _valid_handle_id(carrier["handle_id"]):
+                            raise ValueError("invalid Activity handle id")
                 sections = (
                     [presentation, *presentation.get("sections", [])]
                     if presentation is not None

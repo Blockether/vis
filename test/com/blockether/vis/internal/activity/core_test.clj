@@ -40,6 +40,98 @@
                               (assoc :error (ex-info (str result) {}))))])))
 
 (defdescribe
+  generic-handle-receipts-test
+  (it
+    "shows one current comparison but retains earlier findings and all invocations"
+    (let [ctx
+          (event/context)
+
+          receipt
+          (fn [id headline summary body]
+            {:activity {:render (fn [_ _]
+                                  {"headline" headline
+                                   "summary" summary
+                                   "handle_id" id
+                                   "content" [{"type" "text" "text" body}]})}
+             :extension "visual.tools"
+             :presenter :generic
+             :label "Checking visual differences"})
+
+          pairs
+          [(event-pair ctx
+                       :compare :succeeded
+                       :started (receipt "compare-1" "Comparing" "In progress" "Early finding"))
+           (event-pair ctx
+                       :compare-status :succeeded
+                       :finished (receipt "compare-1" "Comparison finished"
+                                          "Two differences" "Latest finding"))
+           (event-pair ctx
+                       :compare :succeeded
+                       :other (receipt "compare-2" "Comparison finished"
+                                       "No differences" "Other comparison"))
+           (event-pair ctx
+                       :compare :succeeded
+                       :unlinked {:label "Checking visual differences" :extension "visual.tools"})
+           (event-pair ctx
+                       :compare :succeeded
+                       :foreign (assoc (receipt "compare-1" "Foreign comparison"
+                                                "Finished" "Foreign")
+                                  :extension "other.tools"))]
+
+          projection
+          (activity/presentation (activity/replay (mapcat identity pairs)))
+
+          [head & remainder]
+          (:rows projection)]
+
+      (expect (= 4 (count (:rows projection))))
+      (expect (= "Comparison finished" (get-in head [:presentation "headline"])))
+      (expect (= "Two differences" (get-in head [:presentation "summary"])))
+      (expect (= ["Early finding" "Latest finding"]
+                 (mapv #(get % "text")
+                       (concat (get-in head [:presentation "sections" 0 "content"])
+                               (get-in head [:presentation "content"])))))
+      (expect (= ["compare" "compare-status"] (mapv :operation (:children head))))
+      (expect (= ["compare-1" "compare-2" nil "compare-1"] (mapv :handle-id (cons head remainder))))
+      (expect (= 5 (get-in projection [:counts :succeeded])))
+      (expect (contract/valid-projection? projection))))
+  (it
+    "preserves unique summaries and observed output without a detail body"
+    (let [ctx
+          (event/context)
+
+          receipt
+          (fn [summary]
+            {:extension "visual.tools"
+             :presenter :generic
+             :activity {:render (fn [_ _]
+                                  {"headline" "Checking visual differences"
+                                   "summary" summary
+                                   "handle_id" "compare-3"
+                                   "content" []})}})
+
+          pairs
+          [(event-pair ctx :compare :succeeded "Original result" (receipt "Early status"))
+           (event-pair ctx :compare-status :succeeded "Final result" (receipt "Done"))]
+
+          projection
+          (activity/presentation (activity/replay (mapcat identity pairs)))
+
+          head
+          (first (:rows projection))
+
+          earlier
+          (get-in head [:presentation "sections" 0 "content"])]
+
+      (expect (= 1 (count (:rows projection))))
+      (expect (= "Done" (get-in head [:presentation "summary"])))
+      (expect (= ["Early status" "\"Original result\""] (mapv #(get % "text") earlier)))
+      (expect (= 2 (count (:children head))))
+      (expect (= (get-in head [:children 0 :id])
+                 (:id (first (contract/operation-groups (:rows projection))))))
+      (expect (contract/valid-projection? projection)))))
+
+(defdescribe
   lossless-history-test
   ;; Regression #212: neither invocation count nor aggregate bytes may discard history.
   (it "retains every admitted operation and its detail past both former receipt limits"

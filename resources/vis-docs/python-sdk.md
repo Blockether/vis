@@ -359,6 +359,12 @@ Use `event.activity` to read an Activity receipt with immutable rows, outcome co
 and evidence. Its `groups` property groups invocations by operation;
 `argument_groups` groups calls with identical arguments. These reader views leave
 `rows` and serialization unchanged. A receipt can be one page of history: check
+`rows` and serialization unchanged. A row with a persistent `handle_id` may
+represent several calls in `children`: read the head for the latest outcome,
+then expand the children for each invocation and its own state and evidence.
+The handle is scoped to its extension and Python form, so it is not a session-wide
+identifier. See [Link receipts for one operation](extension-api.md#link-receipts-for-one-operation)
+for a Python extension example. A receipt can be one page of history: check
 `history` and `omitted` before treating it as complete.
 
 `event.view` decodes view lifecycle events. The records describe input forms, live
