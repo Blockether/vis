@@ -10,14 +10,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 
-_REQUIRED = {
+from ._models import ARCHITECTURES
+
+_REQUIRED_LAYA = {
     "model.onnx",
     "rl_agent_config.json",
     "tokenizer/tokenizer.json",
     "tokenizer/tokenizer_config.json",
 }
+_REQUIRED_GLINER = {
+    "model.onnx",
+    "config.json",
+    "encoder_config/config.json",
+    "tokenizer/tokenizer.json",
+    "tokenizer/tokenizer_config.json",
+}
 _MAX_EXPANDED = 3_000_000_000
-_MAX_ARCHIVE = 1_600_000_000
+_MAX_ARCHIVE = 2_400_000_000
 _CHUNK = 1024 * 1024
 
 
@@ -43,25 +52,47 @@ def _source(bundle: Path) -> list[Path]:
     ):
         raise ValueError("Decision inference provenance or license is missing")
     provenance = json.loads(source.read_text(encoding="utf-8"))
+    model_id = provenance.get("model")
+    gliner = isinstance(model_id, str) and model_id in ARCHITECTURES
     if (
-        provenance.get("model") != "laya-typed-decisions"
+        not isinstance(model_id, str)
+        or model_id not in {"laya-typed-decisions", *ARCHITECTURES}
         or provenance.get("kind") != "inference"
         or provenance.get("format") != "onnx"
         or provenance.get("precision") != "fp32"
         or provenance.get("license") != "Apache-2.0"
         or not isinstance(provenance.get("revision"), str)
         or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", provenance["revision"])
+        or (not gliner and provenance.get("family") is not None)
     ):
-        raise ValueError("Only a complete Laya FP32 inference bundle can be uploaded")
+        raise ValueError(
+            "Only a complete supported FP32 inference bundle can be uploaded"
+        )
+    if gliner and (
+        provenance.get("family") != "gliner2.5"
+        or provenance.get("architecture") != ARCHITECTURES[model_id]
+    ):
+        raise ValueError("GLiNER bundle provenance has the wrong architecture")
     entries = provenance.get("files")
-    if not isinstance(entries, dict) or not _REQUIRED <= entries.keys():
+    required = _REQUIRED_GLINER if gliner else _REQUIRED_LAYA
+    if not isinstance(entries, dict) or not required <= entries.keys():
         raise ValueError("Decision bundle is missing its inference inventory")
     if not all(
-        name in {"model.onnx", "model.onnx.data", "rl_agent_config.json"}
+        name
+        in {
+            "model.onnx",
+            "model.onnx.data",
+            "config.json" if gliner else "rl_agent_config.json",
+        }
+        or (gliner and name == "encoder_config/config.json")
         or re.fullmatch(r"tokenizer/[A-Za-z0-9_.-]+\.(?:json|txt)", name)
         for name in entries
     ):
         raise ValueError("Decision bundle contains non-inference files")
+    if gliner:
+        config = json.loads((bundle / "config.json").read_text(encoding="utf-8"))
+        if config.get("architecture") != ARCHITECTURES[model_id]:
+            raise ValueError("GLiNER bundle config has the wrong architecture")
     paths = []
     expanded = 0
     for path in bundle.rglob("*"):

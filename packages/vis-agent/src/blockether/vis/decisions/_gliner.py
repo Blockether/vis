@@ -21,7 +21,8 @@ import onnxruntime as ort
 import torch
 from gliner2 import AutoExtractor
 
-ARCHITECTURES = {"gliner2.5-base": "boundary", "gliner2.5-decide": "span"}
+from ._models import ARCHITECTURES
+
 INPUT_NAMES = ("input_ids", "attention_mask", "label_indices")
 PROBES = (
     (

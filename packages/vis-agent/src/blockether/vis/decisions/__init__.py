@@ -44,7 +44,7 @@ class Decisions:
         """Answer choice, score and noul questions, including the action head.
 
         ``model`` is mandatory and must refer to an installed version or alias.
-        Results retain the gateway's Laya answer and ``routing.model`` fields.
+        Results retain the selected model and ``routing.model`` fields.
         Baseline action probabilities are not approved for autonomous execution.
         """
         if not isinstance(model, str) or not model.strip():

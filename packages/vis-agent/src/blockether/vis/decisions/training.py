@@ -127,6 +127,14 @@ class TrainingBundle:
         return cls(root)
 
     @classmethod
+    def _catalog(cls) -> list[dict]:
+        return _manifest()
+
+    @classmethod
+    def _open_url(cls, url: str):
+        return urlopen(url, timeout=60)
+
+    @classmethod
     def fetch(cls, *, model_ref: str, cache_dir: str | Path) -> TrainingBundle:
         """Download exactly a catalog-pinned checkpoint once; reuse it offline.
 
@@ -136,7 +144,7 @@ class TrainingBundle:
         catalog = next(
             (
                 item
-                for item in _manifest()
+                for item in cls._catalog()
                 if model_ref == f"{item['id']}@{item['revision']}"
             ),
             None,
@@ -165,7 +173,7 @@ class TrainingBundle:
             size = 0
             digest = hashlib.sha256()
             with (
-                urlopen(artifact["url"], timeout=60) as response,
+                cls._open_url(artifact["url"]) as response,
                 archive_path.open("wb") as output,
             ):
                 for chunk in iter(lambda: response.read(_CHUNK), b""):

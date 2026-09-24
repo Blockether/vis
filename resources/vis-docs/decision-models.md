@@ -137,6 +137,51 @@ or quality failure does not produce a deployable result, though a successfully s
 checkpoint can remain for diagnosis. Training and export consume substantial local CPU,
 RAM and disk; the extra is not needed for inference-only clients.
 
+### Train either GLiNER2.5 decision model
+
+If you need the ordinary GLiNER2.5 base model or GLiNER2.5-Decide instead of Laya,
+use a **separate Python 3.12 environment** with `vis-agent[decisions-gliner-training]`.
+The GLiNER extra pins Transformers 4; the Laya training extra pins Transformers 5.
+Installing either extra does not download weights. Obtain the complete, pinned
+training checkpoint for `gliner2.5-base` or `gliner2.5-decide` explicitly, then
+use `GlinerTrainingBundle.open` on its local `training` directory. When you have
+network access, `GlinerTrainingBundle.fetch` explicitly downloads a catalog-pinned
+`model_ref` (`<model>@<revision>`) into a `cache_dir`. Neither `open` nor the
+trainer fetches a model.
+
+The JSONL rows and separate held-out data have the same `state`, `question`,
+`target` and `action` fields as the Laya example above. Keep training and
+held-out inputs distinct. GLiNER uses its own configuration; for example,
+`{"epochs":1,"max_steps":100,"encoder_lr":0.00001,"task_lr":0.0005}`.
+Set both minimum accuracies in `policy.json` from your use case, not from a
+baseline model. Then run:
+
+```python
+from blockether.vis.decisions.gliner_training import GlinerTrainer, GlinerTrainingBundle
+
+base = GlinerTrainingBundle.open("/path/to/gliner-training")
+with GlinerTrainer(base) as trainer:
+    result = trainer.finetune(
+        train_data="train.jsonl",
+        eval_data="eval.jsonl",
+        training_config="gliner-config.json",
+        validation_policy="policy.json",
+        output_dir="my-gliner-version",  # must not exist yet
+    )
+print(result.checkpoint_dir, result.inference_bundle, result.validation_report)
+```
+
+You can reopen `result.checkpoint_dir` with `GlinerTrainingBundle.open` in a
+new process and train or export again without network access. To export without
+training, call `trainer.prepare_fp32` on a complete checkpoint with `eval_data`,
+`validation_policy` and a new `output_dir`. Use `Decisions.upload_model(result)`
+and the same version, alias and inference calls below. The archive sent to the
+gateway contains only ONNX inference files; it does not include the checkpoint
+or labeled examples. GLiNER inference here covers decision classification and
+act/escalate, not entity or JSON extraction. Export and training require
+substantial CPU, RAM and disk. These weights are not approved for autonomous
+actions without representative, held-out validation.
+
 ## Publish explicitly and select a version
 
 Configure `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` as described in the [Python SDK
