@@ -77,6 +77,7 @@ def watched(recorder):
         DESCRIPTION,
         lambda: polls.pop(0) if len(polls) > 1 else polls[0],
         log_of,
+        stop_on_failure=False,
     )
     recorder.asked = asked
     return recorder, verdict
@@ -311,6 +312,52 @@ def test_watch_can_open_before_github_reports_jobs(recorder, jobs, status):
         assert not recorder.patched()
 
 
+def test_failed_job_stops_live_watch_before_other_matrix_jobs_finish(recorder):
+    # A completed failed job is actionable even while another job still runs.
+    polls = []
+
+    def poll():
+        polls.append(True)
+        if len(polls) > 1:
+            pytest.fail("Watch continued polling after a job failed")
+        return fixture("run-mid.json")
+
+    result = gh.watch(TITLE, DESCRIPTION, poll, lambda _job_id, _lines: failing_log())
+
+    assert result.ending == "job_failure"
+    assert (
+        "Job failed; run still active"
+        in gh._watch_activity(phase="success", result=result).summary
+    )
+    assert result.status == "in_progress"
+    assert result.conclusion == ""
+    assert not result.is_stopped_by_human
+    assert [one.job_id for one in result.failed_logs] == ["95742028770"]
+    assert result.failed_logs[0].lines == tuple(failing_log())
+    assert node(recorder.picture(), "run")["tone"] == "error"
+    assert recorder.ops()[-1]["op"] == "close"
+    assert polls == [True]
+
+
+def test_failed_job_ends_watch_on_the_poll_that_reports_it(recorder):
+    first = fixture("run-mid.json")
+    failed = next(job for job in first["jobs"] if job["conclusion"] == "failure")
+    failed["status"] = "in_progress"
+    failed["conclusion"] = None
+    polls = [first, fixture("run-mid.json")]
+
+    result = gh.watch(
+        TITLE, DESCRIPTION, lambda: polls.pop(0), lambda _job_id, _lines: failing_log()
+    )
+
+    assert polls == []
+    assert result.ending == "job_failure"
+    assert result.status == "in_progress"
+    assert [one.job_id for one in result.failed_logs] == [str(failed["databaseId"])]
+    assert node(recorder.picture(), "run")["text"] == "Stopped watching: job failed"
+    assert recorder.ops()[-1]["op"] == "close"
+
+
 def test_progress_keeps_known_counts_across_empty_polls(recorder):
     shape = gh.run_shape({"status": "pending", "jobs": []})
     progress = node({"nodes": gh.declared_nodes(shape)}, "progress")
@@ -401,7 +448,13 @@ def test_a_ticking_run_writes_its_log_pane_once_per_change(recorder, monkeypatch
         polls.append(len(polls))
         return fixture("run-mid.json") if len(polls) < 6 else fixture("run-final.json")
 
-    gh.watch(TITLE, DESCRIPTION, poll, lambda job_id, lines: failing_log())
+    gh.watch(
+        TITLE,
+        DESCRIPTION,
+        poll,
+        lambda job_id, lines: failing_log(),
+        stop_on_failure=False,
+    )
     written = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: elapsed time in the selected
@@ -465,6 +518,7 @@ def test_a_late_log_still_archives_complete_log_pictures(recorder):
         DESCRIPTION,
         lambda: polls.pop(0) if len(polls) > 1 else polls[0],
         lambda job_id, lines: [] if job_id == unpublished else failing_log(),
+        stop_on_failure=False,
     )
 
     assert result.conclusion == "success"
@@ -550,6 +604,7 @@ def test_a_human_selection_is_read_back_and_kept_across_the_next_poll(recorder):
         DESCRIPTION,
         poll,
         log_of,
+        stop_on_failure=False,
     )
 
     selection_ops = [
@@ -633,6 +688,7 @@ def test_a_selection_change_refreshes_details_even_while_github_is_unavailable(
         DESCRIPTION,
         poll,
         lambda job_id, _lines: [f"log for {job_id}"],
+        stop_on_failure=False,
     )
 
     assert recorder.node("jobs")["selected_ids"] == [selected]
@@ -719,7 +775,10 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     vis._host = stopping
     polls = [fixture("run-mid.json"), fixture("run-final.json")]
     verdict = gh.watch(
-        TITLE, DESCRIPTION, lambda: polls.pop(0) if len(polls) > 1 else polls[0]
+        TITLE,
+        DESCRIPTION,
+        lambda: polls.pop(0) if len(polls) > 1 else polls[0],
+        stop_on_failure=False,
     )
 
     # Whatever ended it, the model is answered the same shape — here, the run half-done.
@@ -762,6 +821,7 @@ def test_a_stop_answers_the_failure_the_run_already_had(recorder):
         DESCRIPTION,
         lambda: polls.pop(0) if len(polls) > 1 else polls[0],
         log_of,
+        stop_on_failure=False,
     )
 
     assert verdict.ending == "interrupted"
@@ -790,7 +850,11 @@ def test_cancelled_run_ends_watch_without_a_replacement(
     polls.append(cancelled)
 
     result = gh.watch(
-        TITLE, DESCRIPTION, lambda: polls.pop(0), superseded_by=lambda: None
+        TITLE,
+        DESCRIPTION,
+        lambda: polls.pop(0),
+        superseded_by=lambda: None,
+        stop_on_failure=False,
     )
 
     assert not polls
@@ -825,7 +889,9 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     # overtook a running CI run, the settled record said "finished" while its rows
     # remained queued/in progress forever. Close it as superseded and make every
     # unfinished row explicitly superseded instead of preserving a stale action state.
-    result = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
+    result = gh.watch(
+        TITLE, DESCRIPTION, poll, superseded_by=lambda: newer, stop_on_failure=False
+    )
 
     assert len(polls) == 1
     assert result.ending == "superseded"
@@ -867,7 +933,7 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
 
     # Regression: one temporary CLI, network, or API failure ended the view while the run
     # was still alive. GitHub outages are state too: retain the last picture and retry.
-    result = gh.watch(TITLE, DESCRIPTION, poll)
+    result = gh.watch(TITLE, DESCRIPTION, poll, stop_on_failure=False)
 
     assert result.conclusion == "failure"
     assert not polls
@@ -888,7 +954,7 @@ def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
             return fixture("run-mid.json")
         raise RuntimeError("gh run view failed: run was deleted")
 
-    result = gh.watch(TITLE, DESCRIPTION, poll)
+    result = gh.watch(TITLE, DESCRIPTION, poll, stop_on_failure=False)
 
     assert len(attempts) == gh.MAX_CONSECUTIVE_POLL_FAILURES + 1
     assert result.ending == "poll_failure"
@@ -916,7 +982,7 @@ def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
             recorder.close(reason="interrupted")
         return fixture("run-mid.json")
 
-    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+    verdict = gh.watch(TITLE, DESCRIPTION, poll, stop_on_failure=False)
 
     # Hours passed with the run still going and nothing here counted them.
     assert seen[-1] - seen[0] > 3 * 3600
@@ -1041,6 +1107,7 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
         DESCRIPTION,
         poll,
         lambda job_id, _lines: requested_logs.append(job_id) or ["log"],
+        stop_on_failure=False,
     )
 
     assert outcome.ending == "interrupted"
@@ -1413,7 +1480,7 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
         events.append(f"log {job_id}")
         return [f"log for {job_id}"]
 
-    gh.watch(TITLE, DESCRIPTION, poll, log_of)
+    gh.watch(TITLE, DESCRIPTION, poll, log_of, stop_on_failure=False)
 
     second_poll = [index for index, one in enumerate(events) if one == "poll"][1]
     assert events.index(f"log {selected}") < second_poll

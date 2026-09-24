@@ -1233,7 +1233,9 @@ def _harvest_failed_logs(payload, log_of, cache):
                 return
 
 
-def _watch_outcome(payload, cache, superseded=None, failure=None, view=None):
+def _watch_outcome(
+    payload, cache, superseded=None, failure=None, view=None, job_failure=False
+):
     """One typed CI verdict using retained logs only; `_harvest_failed_logs` fills them."""
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     failed = []
@@ -1253,6 +1255,8 @@ def _watch_outcome(payload, cache, superseded=None, failure=None, view=None):
         if superseded
         else "poll_failure"
         if failure
+        else "job_failure"
+        if job_failure
         else "completed"
         if str(payload.get("status") or "") == "completed"
         else "interrupted"
@@ -1486,15 +1490,18 @@ def _nap(
             )
 
 
-def watch(title, description, poll, log_of=None, superseded_by=None):
-    """Open a selectable CI view, patch it until the run ends, answer its picture.
+def watch(
+    title, description, poll, log_of=None, superseded_by=None, *, stop_on_failure=True
+):
+    """Watch a CI run until it ends or a failed job needs attention.
 
     Job selection is shared live state. Each tick reads it before deriving the next shape, so a
     Companion tap changes the steps and logs the extension writes; absent a tap, all parallel
     running jobs follow together, then the last failed (or last) job becomes the default.
 
-    The loop ends when GitHub says the run is over, when a later commit starts the same workflow,
-    when `gh` stops answering, or when the human presses Interrupt — never on an invented duration.
+    A terminal failed job stops the view even if other matrix legs are still running. Diagnostic
+    full-run watches can set `stop_on_failure=False`. A newer run, unavailable GitHub, or a human
+    Stop also ends this watch; none of them cancels the workflow.
     """
     payload = poll()
     # The run facts answer the last poll whose picture reached the human: a poll that
@@ -1508,6 +1515,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     unavailable_attempts = 0
     terminal_failure = None
     selection_snapshots = []
+    job_failure = False
     with (
         vis.live(title, declared_nodes(shape), description=description) as view,
         _watch_commands(view),
@@ -1515,7 +1523,10 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
         try:
             _show_selection_logs(view, shape, log_of, log_cache, FAILED_TAIL_LINES)
             shown_selection = _selection_signature(shape)
-            while not shape["is_over"]:
+            while not shape["is_over"] and (
+                not stop_on_failure
+                or not any(row["tone"] == "error" for row in shape["rows"])
+            ):
                 if view.is_interrupted:
                     break
                 try:
@@ -1605,6 +1616,20 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 )
                 shape = fresh
                 published = payload
+            job_failure = (
+                stop_on_failure
+                and not shape["is_over"]
+                and not view.is_interrupted
+                and not superseded
+                and not terminal_failure
+                and any(row["tone"] == "error" for row in shape["rows"])
+            )
+            if job_failure:
+                view["run"].set(
+                    "Stopped watching: job failed",
+                    tone="error",
+                    detail=f"{shape['headline']} · other jobs may still be running",
+                )
             if shape["is_over"]:
                 _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
                 selection_snapshots = _archive_selection_snapshots(
@@ -1625,12 +1650,16 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 reason="superseded",
                 selection_snapshots=selection_snapshots,
             )
+        elif job_failure:
+            view.close(reason="failed", selection_snapshots=selection_snapshots)
         else:
             view.close(selection_snapshots=selection_snapshots)
         # The view is closed, so the person watching already has their stop. What the MODEL
         # is owed is the reason the run broke, and a watch that ended early never asked.
         _harvest_failed_logs(published, log_of, log_cache)
-        return _watch_outcome(published, log_cache, superseded, terminal_failure, view)
+        return _watch_outcome(
+            published, log_cache, superseded, terminal_failure, view, job_failure
+        )
 
 
 def _watch_run(run=None, repo=None, pr=None):
@@ -1774,6 +1803,7 @@ def _watch_activity(*, phase, result, **_):
         "superseded": "Newer run took over",
         "poll_failure": "Could not refresh workflow",
         "interrupted": "Stopped watching",
+        "job_failure": "Job failed; run still active",
     }.get(result.ending)
     if verdict is None:
         verdict = {"success": "Succeeded", "failure": "Failed"}.get(
@@ -1881,9 +1911,10 @@ class Gh:
         URL; without `run` or `pr`, the newest run on the current branch is selected. `pr` is a
         pull-request number, branch, URL, or `"current"`; it watches that PR's aggregate checks
         through the same view. `run` and `pr` are mutually exclusive. Any running run yields when
-        a newer run starts the same workflow, branch and event. `repo` is `owner/name` for
-        another repository. Stopping returns the last published run facts and cached failed
-        logs without fetching more logs after Stop.
+        a newer run starts the same workflow, branch and event. A failed job also stops the
+        view promptly, even while other jobs are running; the result retains the run’s in-progress
+        status and the failed log. `repo` is `owner/name` for another repository. Human Stop
+        returns the last published run facts and cached failed logs without fetching more after Stop.
         """
         return _watch_run(run, repo, pr)
 
@@ -1894,7 +1925,7 @@ gh = Gh()
 PROMPT = """gh_ surface active — GitHub through the gh CLI (gh):
   login(hostname="github.com")          authenticate through private human input
   runs(repo=None, limit=10)             recent Actions runs, newest first
-  watch(run=None, repo=None, pr=None)   one run or PR checks, live, to its end
+  watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
 Every answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
 the human can watch and stop; its WatchOutcome carries every job, step and failed-log tail once. Use
 watch() instead of a shell polling loop — it signs in by itself when needed."""
