@@ -113,6 +113,30 @@
     (is (str/includes? rendered "BUILD_ERROR_MARKER"))
     (is (str/includes? rendered "BUILD_DETAIL_MARKER"))))
 
+(deftest automatic-preparation-ignores-caller-project-environment-test
+  (python-runtime/ensure-library!)
+  (with-uv-fixture
+    "printf '%s\n' \"${UV_PROJECT_ENVIRONMENT:-unset}\" >> \"$0.environments\"\nexit 0\n"
+    (fn [dir uv]
+      (let [environment-log
+            (io/file (str uv ".environments"))
+
+            configure-index!
+            @#'python-runtime/uv-index!]
+
+        (with-redefs-fn {#'python-runtime/uv-index! (fn [^ProcessBuilder builder]
+                                                      (configure-index! builder)
+                                                      (.put (.environment builder)
+                                                            "UV_PROJECT_ENVIRONMENT"
+                                                            "/foreign/extension-project"))
+                         #'python-runtime/bundled-uv! (constantly uv)
+                         #'python-runtime/project-packages (constantly dir)}
+          (fn []
+            (#'python-runtime/run-uv! dir [uv "sync"])
+            (python-runtime/ensure-project! dir)
+            (is (= ["/foreign/extension-project" "unset"]
+                   (str/split-lines (slurp environment-log))))))))))
+
 (deftest vis-index-reaches-uv-processes-test
   ;; #183: a Vis index must reach both explicit uv and automatic project preparation.
   (python-runtime/ensure-library!)

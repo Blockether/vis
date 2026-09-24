@@ -318,6 +318,8 @@
   (.destroyForcibly process)
   (.waitFor process 5 TimeUnit/SECONDS))
 
+(def ^:dynamic ^:private *extension-preparation?* false)
+
 (defn- run-uv!
   "Run bundled uv. Failure and timeout retain phase, exit and safe diagnostics."
   ([project command] (run-uv! project command {}))
@@ -326,10 +328,13 @@
          (if (= "pip" (second command)) :install (keyword (second command)))
 
          process
-         (try (.start (doto (ProcessBuilder. ^java.util.List command)
-                        (.directory project)
-                        uv-index!
-                        (.redirectErrorStream true)))
+         (try (let [builder (doto (ProcessBuilder. ^java.util.List command)
+                              (.directory project)
+                              uv-index!
+                              (.redirectErrorStream true))]
+                (when *extension-preparation?*
+                  (.remove (.environment builder) "UV_PROJECT_ENVIRONMENT"))
+                (.start builder))
               (catch java.io.IOException e
                 (throw (installer-error "uv" phase {:out (.getMessage e)}))))
 
@@ -449,31 +454,30 @@
    otherwise uv owns lock updates, dependency groups and its package cache."
   [^File project]
   (locking preparation-lock
-    (try (let [ready? (try (run-uv! project
-                                    [(bundled-uv!) "sync" "--check" "--offline" "--python"
-                                     (Interpreter/pythonExecutable)])
-                           true
-                           (catch clojure.lang.ExceptionInfo _ false))]
-           (when-not ready?
-             (preparation-stage! project "installing")
-             (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)]))
-           (let [packages (project-packages project)]
-             (preparation-stage! project (if ready? "cached" "ready"))
-             packages))
-         (catch Throwable t
-           (preparation-stage! project "failed")
-           (let [data
-                 (ex-data t)
+    (binding [*extension-preparation?* true]
+      (try
+        (let [ready? (try (run-uv! project
+                                   [(bundled-uv!) "sync" "--check" "--offline" "--python"
+                                    (Interpreter/pythonExecutable)])
+                          true
+                          (catch clojure.lang.ExceptionInfo _ false))]
+          (when-not ready?
+            (preparation-stage! project "installing")
+            (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)]))
+          (let [packages (project-packages project)]
+            (preparation-stage! project (if ready? "cached" "ready"))
+            packages))
+        (catch Throwable t
+          (preparation-stage! project "failed")
+          (let [data (ex-data t)
+                cause (installer-error "uv"
+                                       (or (:phase data) :prepare)
+                                       (assoc data
+                                         :diagnostics (or (:diagnostics data) (.getMessage t))))]
 
-                 cause
-                 (installer-error "uv"
-                                  (or (:phase data) :prepare)
-                                  (assoc data
-                                    :diagnostics (or (:diagnostics data) (.getMessage t))))]
-
-             (throw (ex-info (str "Extension preparation failed: " (.getMessage cause))
-                             (assoc (ex-data cause) :type ::project-preparation-failed)
-                             cause)))))))
+            (throw (ex-info (str "Extension preparation failed: " (.getMessage cause))
+                            (assoc (ex-data cause) :type ::project-preparation-failed)
+                            cause))))))))
 
 (def ^:private shared-sync-selection-options
   {"--locked" 0

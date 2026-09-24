@@ -92,9 +92,9 @@ describe('folding a project', () => {
   });
 
   // Regression, user report, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
-  // a persisted project with zero sessions still wore a disclosure chevron, even though
-  // there was no session list for that control to reveal.
-  it('does not make an empty project a disclosure', async () => {
+  // a persisted empty project needs a meaningful disclosure: its Sessions and Groups
+  // sets expose creation and archived items even when there are no session rows.
+  it('discloses an empty project so its sets remain accessible', async () => {
     const view = renderSessionsScreen({
       machines: [
         {
@@ -115,8 +115,18 @@ describe('folding a project', () => {
     });
     try {
       await waitFor(() => expect(view.getByText('0 sessions')).toBeVisible());
-      expect(view.getByText('vis').closest('button')).toBeNull();
-      expect(view.queryByLabelText(/^(Expand|Collapse) vis$/)).toBeNull();
+      expect(view.getByLabelText('Collapse vis')).toBeEnabled();
+      expect(
+        view.getByRole('button', { name: 'Actions for sessions in /Users/dev/vis' }),
+      ).toBeVisible();
+      fireEvent.click(view.getByLabelText('Collapse vis'));
+      expect(
+        view.queryByRole('button', { name: 'Actions for sessions in /Users/dev/vis' }),
+      ).toBeNull();
+      fireEvent.click(view.getByLabelText('Expand vis'));
+      expect(
+        view.getByRole('button', { name: 'Actions for sessions in /Users/dev/vis' }),
+      ).toBeVisible();
     } finally {
       view.restore();
     }

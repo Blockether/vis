@@ -1229,7 +1229,7 @@ describe('what the axis does while the work is still moving', () => {
     expect(screen.getByRole('button', { name: /Search ×7/ }).textContent).toContain('1 running');
     expect(screen.queryByText(/search-6 · running/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
-    expect(document.querySelector('[data-activity-row="0:live-6"]')).not.toBeNull();
+    expect(document.querySelector('[data-activity-row="0:live-6"]')).toBeVisible();
     const step = screen.getByRole('button', { name: /Searched.*search-4/ });
     fireEvent.click(step);
     expect(screen.getByText('result-4')).toBeVisible();

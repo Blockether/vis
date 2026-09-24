@@ -1439,7 +1439,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             </span>
             <TextButton
               isCaption
-              className="pointer-events-auto relative shrink-0 whitespace-nowrap font-bold"
+              className="pointer-events-auto relative shrink-0 whitespace-nowrap"
               aria-label={
                 running === 1
                   ? 'Open the live session'

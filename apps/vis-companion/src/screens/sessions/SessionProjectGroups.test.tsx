@@ -484,14 +484,14 @@ describe('ProjectGroup groups', () => {
     const sessionsAction = within(sheet(`Sessions in ${ROOT}`)).getByRole('button', {
       name: 'New session',
     });
-    expect(sessionsAction.querySelector('svg.lucide-square-pen')).not.toBeNull();
+    expect(sessionsAction.querySelectorAll('svg.lucide-square-pen')).toHaveLength(1);
     expect(sessionsAction.querySelector('svg.lucide-play')).toBeNull();
     await user.click(document.body);
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
     const groupAction = within(sheet(`Groups in ${ROOT}`)).getByRole('button', {
       name: 'New session',
     });
-    expect(groupAction.querySelector('svg.lucide-square-pen')).not.toBeNull();
+    expect(groupAction.querySelectorAll('svg.lucide-square-pen')).toHaveLength(1);
     expect(groupAction.querySelector('svg.lucide-play')).toBeNull();
   });
 

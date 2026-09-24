@@ -36,7 +36,7 @@ describe('the NEW badge', () => {
     const mark = await screen.findByText('NEW ×2');
     // ONE mark per row: a chip of its own beside the title was a second status line,
     // saying in one place what the row already says in the other.
-    expect(mark.closest('[data-session-status]')).not.toBeNull();
+    expect(mark.closest('[data-session-status]')).toBeVisible();
   });
 
   it('says nothing about a session the gateway calls read', async () => {

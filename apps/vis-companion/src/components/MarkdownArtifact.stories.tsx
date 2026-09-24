@@ -1,9 +1,9 @@
+import type { ComponentProps } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor } from 'storybook/test';
 
 import { LOG_TEXT, NOTE_ANNOTATED, NOTE_MARKDOWN } from '../dev/story-data';
 import { type DocumentChrome, MarkdownAnnotator, MarkdownArtifact } from './MarkdownArtifact';
-import type { GatewayClient } from '../lib/gateway';
 import { quoteOf, renderAnnotated } from '../lib/markdown-annotations';
 
 /**
@@ -112,7 +112,9 @@ ${RICH_PARAGRAPH}
 
 > A quotation with *emphasis* follows the same paragraph layout rules.`;
 const RICH_SOURCE = new Blob([RICH_TEXT], { type: 'text/markdown' });
-const readerClient = { base: 'http://127.0.0.1:7777' } as GatewayClient;
+const readerClient = { base: 'http://127.0.0.1:7777' } as ComponentProps<
+  typeof MarkdownArtifact
+>['client'];
 
 function fittedParagraph(prose: HTMLElement) {
   expect(prose).toHaveAttribute('data-justice');

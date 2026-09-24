@@ -114,16 +114,22 @@ describe('project removal is available only from project management', () => {
     expect(within(header).queryByRole('button', { name: 'Actions for project' })).toBeNull();
     expect(within(header).queryByRole('group', { name: 'project actions' })).toBeNull();
     expect(header.querySelector('[data-swipe-track]')).toBeNull();
-    // The create verb stands on the set it creates in, and falls back to this band only
-    // when the project paints no set — an empty project, or one folded shut.
-    expect(within(project).getByRole('button', { name: /^New session/ })).toBeEnabled();
+    // The project band remains free of menus; creation stays in the Sessions set
+    // even when it has no rows.
+    const sessionsAction = within(project).getByRole('button', {
+      name: 'Actions for sessions in /Users/dev/project',
+    });
+    expect(sessionsAction).toBeEnabled();
+    fireEvent.click(sessionsAction);
+    const menu = within(await screen.findByRole('dialog', { name: 'Sessions in project' }));
+    expect(menu.getByRole('button', { name: 'New session' })).toBeEnabled();
     if (count > 0) {
       fireEvent.click(within(header).getByRole('button', { name: 'Collapse project' }));
       expect(within(project).queryByText('First')).toBeNull();
       fireEvent.click(within(header).getByRole('button', { name: 'Expand project' }));
       expect(await within(project).findByText('First')).toBeInTheDocument();
     } else {
-      expect(within(header).queryByRole('button', { name: /^(Collapse|Expand) / })).toBeNull();
+      expect(within(header).getByRole('button', { name: 'Collapse project' })).toBeEnabled();
     }
     expect(screen.getByRole('button', { name: 'Projects on alpha' })).toBeEnabled();
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);

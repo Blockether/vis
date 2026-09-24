@@ -21,28 +21,36 @@ const alpha = () => [
   },
 ];
 
+const sessionsMenu = async (root = '/Users/dev/project', project = 'project') => {
+  await userEvent.click(screen.getByRole('button', { name: `Actions for sessions in ${root}` }));
+  return within(await screen.findByRole('dialog', { name: `Sessions in ${project}` }));
+};
+
+const startSession = async () => {
+  await userEvent.click((await sessionsMenu()).getByRole('button', { name: 'New session' }));
+};
+
 // Regression, user report (new sessions belong to a project, not a machine): the create
-// button used to live on the fleet and machine headers, where it had no project owner,
-// and it sent the home-shortened display path back as the workspace root — on a gateway
-// that resolved `~` relatively, creating in `~/vis` produced the impossible `~/vis/~/vis`.
+// action must use the project's canonical root, never a home-shortened display path.
 describe('where "New session" lives', () => {
-  it('stands once on the project header, naming its machine and its project', async () => {
+  it('offers creation in the project Sessions set, not on the machine band', async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
 
-    const create = named(/^New session on/);
-    expect(create).toHaveLength(1);
-    expect(create[0]!.getAttribute('aria-label')).toBe('New session on alpha');
-    // Several machines are on screen at once, so the row says which one AND which project.
-    expect(create[0]!.getAttribute('title')).toBe('New session on alpha, in project');
-    // The word repeated once per project; the mark says the same thing in 37px, and the
-    // name it gave up is on the label and the tooltip above.
-    expect(create[0]!.textContent).toBe('');
-    expect(create[0]!.querySelector('svg')).toBeInTheDocument();
-    // It sits inside the project header's trailing cluster, never on the machine band.
-    const header = within(screen.getByLabelText('project sessions'));
-    expect(header.getByRole('button', { name: 'New session on alpha' })).toBe(create[0]);
+    const project = within(screen.getByLabelText('project sessions'));
+    const actions = project.getAllByRole('button', {
+      name: 'Actions for sessions in /Users/dev/project',
+    });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(actions[0]).toBeVisible();
+    expect(
+      within(screen.getByLabelText('Machines')).queryByRole('button', { name: /New session/ }),
+    ).toBeNull();
+
+    const menu = await sessionsMenu();
+    expect(menu.getByRole('button', { name: 'New session' })).toBeEnabled();
   });
 
   // Regression, user report (paraphrased: creating a new session from the app took
@@ -61,7 +69,7 @@ describe('where "New session" lives', () => {
     // The post-create fleet re-read never lands while this test watches.
     view.holdList();
     view.requests.length = 0;
-    await userEvent.click(screen.getByRole('button', { name: 'New session on alpha' }));
+    await startSession();
 
     await waitFor(() => expect(opened).toHaveLength(1));
     expect(opened[0]).toMatch(/^created-/);
@@ -83,7 +91,7 @@ describe('where "New session" lives', () => {
     await screen.findByText('First');
 
     view.holdList();
-    await userEvent.click(screen.getByRole('button', { name: 'New session on alpha' }));
+    await startSession();
     await waitFor(() => expect(opened).toHaveLength(1));
 
     // The gateway now carries the created session, fresher than everything held.
@@ -112,7 +120,7 @@ describe('where "New session" lives', () => {
     expect(qualifier.textContent).toContain('1 session');
 
     view.requests.length = 0;
-    await userEvent.click(screen.getByRole('button', { name: 'New session on alpha' }));
+    await startSession();
 
     // ...and SENDS the real one.
     const create = view.requests.find(
@@ -156,10 +164,6 @@ describe('where "New session" lives', () => {
     const add = screen.getByRole('button', { name: 'Projects on alpha' });
     expect(add.textContent).toBe('');
     expect(add.querySelector('svg')).toBeInTheDocument();
-    // ...and the plus is left to mean exactly one thing on this screen: a session.
-    expect(add.innerHTML).not.toBe(
-      screen.getAllByRole('button', { name: /^New session on/ })[0]!.innerHTML,
-    );
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
     expect(await screen.findByRole('dialog')).toBeVisible();
@@ -241,8 +245,12 @@ describe('where "New session" lives', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Use project' }));
 
     const project = await screen.findByLabelText('dev sessions');
-    const create = within(project).getByRole('button', { name: 'New session on alpha' });
-    expect(create.getAttribute('title')).toBe('New session on alpha, in dev');
+    expect(
+      within(project).getByRole('button', { name: 'Actions for sessions in /Users/dev' }),
+    ).toBeVisible();
+    expect(
+      (await sessionsMenu('/Users/dev', 'dev')).getByRole('button', { name: 'New session' }),
+    ).toBeEnabled();
   });
 
   // Regression, user report (the machine band struck out on a screenshot, with the create
@@ -283,11 +291,11 @@ describe('machine, project and session are three different shapes', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Collapse project' }));
     expect(screen.queryByText('First')).toBeNull();
-    // The verb stays outside the fold.
-    expect(screen.getByRole('button', { name: 'New session on alpha' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Actions for sessions in /Users/dev/project' })).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: 'Expand project' }));
     expect(screen.getByText('First')).toBeVisible();
+    expect((await sessionsMenu()).getByRole('button', { name: 'New session' })).toBeEnabled();
   });
 
   // Regression, user report (the empty list repeated the Projects control already shown
@@ -389,6 +397,6 @@ describe('the machine strip', () => {
     await userEvent.click(strip.getByRole('button', { name: /^beta/ }));
     expect(await screen.findByText('Second')).toBeVisible();
     expect(screen.queryByText('First')).toBeNull();
-    expect(screen.getByRole('button', { name: 'New session on beta' })).toBeVisible();
+    expect((await sessionsMenu()).getByRole('button', { name: 'New session' })).toBeEnabled();
   });
 });

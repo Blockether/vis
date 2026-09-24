@@ -257,7 +257,7 @@ describe('a desk keeps the list beside the conversation', () => {
     };
     const mark = await screen.findByText('NEW ×2', {}, { timeout: 5_000 });
     // In the row's ONE status mark, where the same row otherwise reads IDLE.
-    expect(mark.closest('[data-session-status]')).not.toBeNull();
+    expect(mark.closest('[data-session-status]')).toBeVisible();
 
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');

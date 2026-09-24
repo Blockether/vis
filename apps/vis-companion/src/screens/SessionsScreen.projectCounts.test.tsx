@@ -349,8 +349,9 @@ describe('the live count on a project band', () => {
     restore = view.restore;
 
     await screen.findByRole('button', { name: 'Open the live session' });
-    fireEvent.click(screen.getByRole('button', { name: 'Groups in project' }));
-    fireEvent.click(await screen.findByText('Show archived'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for groups in /Users/dev/project' }));
+    const menu = within(await screen.findByRole('dialog', { name: 'Groups in project' }));
+    fireEvent.click(menu.getByRole('button', { name: 'Show archived groups' }));
     await screen.findByText('Archived');
     expect(screen.queryByRole('button', { name: 'Open the live session' })).toBeNull();
   });

@@ -500,7 +500,7 @@ describe('Justice prose', () => {
     expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justice');
     view.rerender(<Markdown hardBreaks>{'First line.\nSecond line with **emphasis**.'}</Markdown>);
     expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justice');
-    expect(view.container.querySelector('br')).not.toBeNull();
+    expect(view.container.querySelectorAll('br')).toHaveLength(1);
     expect(view.getByText('emphasis').tagName).toBe('STRONG');
   });
 });

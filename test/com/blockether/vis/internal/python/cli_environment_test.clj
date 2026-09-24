@@ -529,7 +529,10 @@
                                        @requests))
                         2)
                     (pr-str @requests))
-            (expect (every? #(str/starts-with? (:path %) "/private/") @requests)
+            ;; Extension dependencies may also consult the caller's default index.
+            (expect (not-any? #(and (str/starts-with? (:path %) "/public/")
+                                    (re-find #"shared[-_]base" (:path %)))
+                              @requests)
                     (pr-str @requests))))
         (finally (.stop server 0) (delete-tree! dir))))))
 
