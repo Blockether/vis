@@ -680,6 +680,15 @@
 
 (defdescribe
   prompt-core-test
+  ;; LintLang H5/H6: pin response defaults and the conditions for patch retry and completion.
+  (it "states the output default and exact retry and completion conditions"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (expect (str/includes? text "Prompt v1."))
+        (expect (str/includes?
+                  text
+                  "Respond in plain text unless the user or tool requires another format."))
+        (expect (str/includes? text "for stale anchors, read only the indicated region"))
+        (expect (str/includes? text "After changed-file checks pass"))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
@@ -917,7 +926,7 @@
           "or explicit authorization in applicable project instructions"
           "Honor narrower user requests"
           "Other external actions (releases, messages, deployments, live service restarts) require an explicit request"
-          "When relevant checks pass, finish the authorized workflow"
+          "After changed-file checks pass, finish the authorized workflow"
           "only for new edits, failures, or a concrete unresolved risk"]]
         (expect (str/includes? text required)))
       ;; Regression: a blanket CORE prohibition overrode repository Git opt-in.
@@ -1579,7 +1588,8 @@
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule
                 ["use a FRESH ANCHOR from the last result or re-read the target"
-                 "A refused patch writes nothing" "read only the indicated region if needed"
+                 "A refused patch writes nothing"
+                 "for stale anchors, read only the indicated region"
                  "confirm the intended target before retrying"
                  "For parse errors, fix the replacement syntax and retry with the same anchors"]]
           (expect (str/includes? text rule) rule)))))
