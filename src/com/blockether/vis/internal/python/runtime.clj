@@ -404,7 +404,10 @@
        (catch clojure.lang.ExceptionInfo e
          (throw (ex-info (str (.getMessage e)
                               "\nRun vis-agent python uv sync --project "
-                              (pr-str (.getCanonicalPath project))
+                              (if (= (.getCanonicalFile project)
+                                     (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
+                                "."
+                                (pr-str (.getCanonicalPath project)))
                               ", then /reload; or use /reload --sync.")
                          (assoc (ex-data e) :type ::project-sync-required)
                          e)))))

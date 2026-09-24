@@ -320,6 +320,36 @@
          (finally (doseq [file (reverse (file-seq project))]
                     (io/delete-file file true))))))
 
+(deftest manual-project-sync-advice-uses-current-directory-test
+  (let [current
+        (.getCanonicalFile (io/file (System/getProperty "user.dir")))
+
+        elsewhere
+        (temp-dir "vis manual uv other")]
+
+    (try (with-redefs-fn {#'python-runtime/bundled-uv! (constantly "/bundled/uv")
+                          #'python-runtime/run-uv! (fn [_ _]
+                                                     (throw (ex-info "uv sync failed" {})))}
+           (fn []
+             (let [same-dir
+                   (try (python-runtime/prepared-project current)
+                        (catch clojure.lang.ExceptionInfo e e))
+
+                   other-dir
+                   (try (python-runtime/prepared-project elsewhere)
+                        (catch clojure.lang.ExceptionInfo e e))]
+
+               (is (= (str "uv sync failed\nRun vis-agent python uv sync --project ."
+                           ", then /reload; or use /reload --sync.")
+                      (.getMessage same-dir)))
+               (is (= (str "uv sync failed\nRun vis-agent python uv sync --project "
+                           (pr-str (.getCanonicalPath elsewhere))
+                           ", then /reload; or use /reload --sync.")
+                      (.getMessage other-dir)))
+               (is (= ::python-runtime/project-sync-required (:type (ex-data same-dir)))))))
+         (finally (doseq [file (reverse (file-seq elsewhere))]
+                    (io/delete-file file true))))))
+
 (deftest automatic-project-preparation-test
   (python-runtime/ensure-library!)
   (let [project
