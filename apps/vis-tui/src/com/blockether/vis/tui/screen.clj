@@ -6121,8 +6121,10 @@
         (when sid (if (contains? selected sid) (sort selected) [sid]))
 
         pick
-        (if (:show-details? entry)
-          {:id :details}
+        (cond
+          (:show-details? entry) {:id :details}
+          (#{:new :new-session} (:initial-action entry)) {:id (:initial-action entry)}
+          :else
           (with-dialog-lock
             #(dlg/select-dialog!
                screen

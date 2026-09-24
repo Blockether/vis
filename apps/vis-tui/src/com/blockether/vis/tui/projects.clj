@@ -529,8 +529,26 @@
                 updated)
           (min before (count updated))))))
 
+(defn- row-height
+  "A saved session occupies a title, a metadata line and a breathing line."
+  [entry]
+  (if (= :project-session (:kind entry)) 3 1))
+
+(defn- fit-back
+  "Fill the visible area backwards from `end` with whole rows only."
+  [entries end capacity]
+  (loop [start
+         (long end)
+
+         remaining
+         (long capacity)]
+
+    (if (and (pos? start) (<= (long (row-height (nth entries (dec start)))) remaining))
+      (recur (dec start) (- remaining (long (row-height (nth entries (dec start))))))
+      (subvec entries start end))))
+
 (defn visible-entries
-  "Scroll projects and alerts together, retaining the parent of a clipped alert group."
+  "Scroll whole cards into view, retaining the project above a clipped child."
   [db rows]
   (let [entries
         (sidebar-entries db)
@@ -541,23 +559,103 @@
         index
         (max 0 (long (or (get-in db [:project-sidebar :index]) 0)))
 
-        end
-        (min (count entries) (max capacity index))
+        first-end
+        (loop [end
+               0
 
-        start
-        (max 0 (- end capacity))
+               remaining
+               capacity]
+
+          (if (and (< end (count entries)) (<= (long (row-height (nth entries end))) remaining))
+            (recur (inc end) (- remaining (long (row-height (nth entries end)))))
+            end))
+
+        end
+        (min (count entries) (max first-end index))
 
         visible
-        (subvec entries start end)]
+        (fit-back entries end capacity)]
 
-    (if (and (not (get-in db [:project-sidebar :search]))
+    (if (and (seq visible)
+             (not (get-in db [:project-sidebar :search]))
              (> capacity 1)
              (not= :project-select (:kind (first visible))))
-      (into [(first (filter #(and (= :project-select (:kind %))
-                                  (= (:project (first visible)) (:project %)))
-                            entries))]
-            (take-last (dec capacity) visible))
+      (let [tail
+            (fit-back entries end (dec capacity))
+
+            parent
+            (first (filter #(and (= :project-select (:kind %))
+                                 (= (:project (first tail)) (:project %)))
+                           entries))]
+
+        (if (and (seq tail) parent) (into [parent] tail) visible))
       visible)))
+
+(defn- row-bg
+  "Mirror the web's project, set and open-session surfaces using the shared palette."
+  [{:keys [kind set]} active?]
+  (cond (and active? (= :project-session kind))
+        (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
+        (= :project-set kind) (case set
+                                :groups
+                                (t/mix-color t/terminal-bg t/header-active-tab-bg 0.08)
+
+                                :sessions
+                                (t/mix-color t/terminal-bg t/text-fg 0.06)
+
+                                t/terminal-bg)
+        (= :project-select kind) (t/mix-color t/terminal-bg t/text-fg 0.04)
+        active? t/input-field-bg
+        :else t/terminal-bg))
+
+(defn- session-age
+  [modified]
+  (when-let [ms (dlg/date->millis modified)]
+    (let [elapsed (max 0 (quot (- (System/currentTimeMillis) ms) 60000))]
+      (cond (< elapsed 60) (str elapsed "m")
+            (< elapsed 1440) (str (quot elapsed 60) "h")
+            :else (str (quot elapsed 1440) "d")))))
+
+(defn- paint-session-status!
+  "Show session activity (and favorite) in a stable column."
+  [g entry col row available]
+  (let [state
+        (:status entry)
+
+        ink
+        (cond (= state "LIVE") t/status-ok
+              (= state "STOPPED") t/status-bad
+              (or (str/starts-with? state "INPUT")
+                  (str/starts-with? state "NEW")
+                  (#{"WAITING" "DIRTY"} state))
+              t/warning-fg
+              :else t/dialog-hint-key)
+
+        label
+        (str (when (:favorite? entry) "★ ") (if (= state "IDLE") "○ " "● ") state)]
+
+    (p/set-colors! g ink t/dialog-bg)
+    (p/put-str! g col row (p/truncate-cols label (max 0 available)))))
+
+(defn- paint-session-meta!
+  "Place activity and metadata in an adaptive second row."
+  [g entry left width row]
+  (let [left
+        (long left)
+
+        width
+        (long width)]
+
+    (when (< width 48)
+      (paint-session-status! g entry (+ left 5) row (max 0 (- width (if (>= width 38) 22 10)))))
+    (when (>= width 38)
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (when (>= width 48)
+        (p/put-str! g (+ left 5) row (p/truncate-cols (str (get-in entry [:session "id"])) 10)))
+      (when (pos? (long (:turns entry)))
+        (p/put-str! g (- (+ left width) 15) row (p/truncate-cols (str (:turns entry) "t") 6)))
+      (when-let [age (session-age (:modified-at entry))]
+        (p/put-str! g (- (+ left width) 6) row (p/truncate-cols age 4))))))
 
 (defn- row-status
   [entry sidebar width]
@@ -573,16 +671,7 @@
     " NEW "
 
     :project-session
-    (str (when (:favorite? entry) "★ ")
-         (:status entry)
-         (when (pos? (long (:turns entry))) (str " · " (:turns entry) "t"))
-         (when-let [modified (:modified-at entry)]
-           (when-let [ms (dlg/date->millis modified)]
-             (let [elapsed (max 0 (quot (- (System/currentTimeMillis) ms) 60000))]
-               (str " · "
-                    (cond (< elapsed 60) (str elapsed "m")
-                          (< elapsed 1440) (str (quot elapsed 60) "h")
-                          :else (str (quot elapsed 1440) "d")))))))
+    ""
 
     (:project-set :project-page :project-group-page :project-state :project-updates)
     ""
@@ -945,7 +1034,8 @@
       (let [left (long left)
             width (long width)
             rows (long rows)
-            sidebar (:project-sidebar db)]
+            sidebar (:project-sidebar db)
+            visible (if (:adding sidebar) [] (visible-entries db rows))]
 
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -967,12 +1057,9 @@
                               :project-add {:accent? (and (:focused? sidebar)
                                                           (zero? (long (or (:index sidebar) 0))))})
           (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide))
-        (doseq [[offset {:keys [index project kind label] :as entry}]
-                ;; An open add field owns the rows area: its completions are drawn
-                ;; there in place of the project list.
-                (map-indexed vector (if (:adding sidebar) [] (visible-entries db rows)))
-                :let [row (+ 4 (long offset))
-                      child? (not= :project-select kind)
+        (doseq [[{:keys [index project kind label] :as entry} row]
+                (map vector visible (reductions + 4 (map row-height visible)))
+                :let [child? (not= :project-select kind)
                       alert? (contains? #{:project-input :project-unread} kind)
                       active? (case kind
                                 :project-session
@@ -983,19 +1070,21 @@
                                 (= (str (get project "id")) (:active-project-id db))
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
-                      status (p/truncate-cols (row-status entry sidebar width)
-                                              (max 0 (- width (if (= :project-session kind) 11 9))))
-                      status-col (- (+ left width)
-                                    (if (= :project-session kind) 4 2)
-                                    (long (p/display-width status)))
+                      status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
+                      status-col
+                      (- (+ left width)
+                         (cond (= :project-session kind) (if (>= width 48) 21 7)
+                               (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
+                               :else 2)
+                         (long (p/display-width status)))
                       row-left (+ left (if child? 2 0))
                       name-width (max 0 (- status-col row-left 1))]]
 
-          (binding [t/dialog-bg (if active? t/input-field-bg t/terminal-bg)]
+          (binding [t/dialog-bg (row-bg entry active?)]
             (p/set-colors! g
                            (if (= :project-group kind) (t/group-ink (:color entry)) t/dialog-fg)
                            t/dialog-bg)
-            (p/fill-rect! g (inc left) row (max 0 (- width 2)) 1)
+            (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
             (p/styled g
                       (if active? [p/BOLD] [])
                       (dlg/draw-selectable-row! g
@@ -1046,13 +1135,33 @@
                                        t/warning-fg
                                        :else t/dialog-hint-key)
                                  t/dialog-bg)
-                  (p/put-str! g status-col row status))))
-          (.register interactions/hit-map
-                     (assoc entry
-                       :bounds {:col (inc left)
-                                :row row
-                                :width (max 0 (- width (if (= :project-session kind) 4 2)))
-                                :height 1}))
+                  (p/put-str! g status-col row status)))
+            (when (= :project-session kind)
+              (when (>= width 48) (paint-session-status! g entry status-col row 14))
+              (paint-session-meta! g entry left width (inc row)))
+            (when (= :project-group kind)
+              (p/set-colors! g (t/group-ink (:color entry)) t/dialog-bg)
+              (p/put-str! g (inc left) row "▏")))
+          (.register
+            interactions/hit-map
+            (assoc entry
+              :bounds
+              {:col (inc left) :row row :width (max 0 (- width 2)) :height (row-height entry)}))
+          (when (and (= :project-set kind) (#{:groups :sessions} (:set entry)))
+            (let [pid (str (get project "id"))]
+              (components/button!
+                g
+                (- (+ left width) 9)
+                row
+                " + "
+                (if (= :groups (:set entry)) :project-group-add :project-session-add)
+                {:extra {:project-id pid}})
+              (components/button! g
+                                  (- (+ left width) 5)
+                                  row
+                                  " ⋯ "
+                                  :project-set-menu
+                                  {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (.register interactions/hit-map
                        (assoc entry
@@ -1061,13 +1170,14 @@
                                   (str (get-in entry [:session "id"]))]
                          :bounds {:col (+ left 2) :row row :width 2 :height 1})))
           (when (= :project-session kind)
-            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-            (p/put-str! g (- (+ left width) 3) row "▸")
-            (.register interactions/hit-map
-                       {:kind :project-details
-                        :session (:session entry)
-                        :action [:details (str (get-in entry [:session "id"]))]
-                        :bounds {:col (- (+ left width) 3) :row row :width 2 :height 1}})))
+            (components/button! g
+                                (- (+ left width) 6)
+                                row
+                                " ⋯ "
+                                :project-details
+                                {:extra {:session (:session entry)
+                                         :action [:details
+                                                  (str (get-in entry [:session "id"]))]}})))
         (when (and (empty? (:items sidebar)) (not (:adding sidebar)) (> rows 8))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (p/put-str! g
@@ -1129,7 +1239,8 @@
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
                  :project-session :project-selection :project-details :project-set :project-page
                  :project-group-page :project-state :project-add :project-hide :project-suggest
-                 :project-new-folder :project-search :project-search-field :project-updates}
+                 :project-new-folder :project-search :project-search-field :project-updates
+                 :project-group-add :project-session-add :project-set-menu}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
                   (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
@@ -1154,6 +1265,30 @@
                                      :project-page :project-group-page
                                      :project-state :project-updates)
                     (:action hit)
+
+                    (:project-group-add :project-session-add)
+                    (when-let [entry (some #(when (and (= :project-set (:kind %))
+                                                       (= (:project-id hit)
+                                                          (str (get-in % [:project "id"])))
+                                                       (= (:set %)
+                                                          (if (= :project-group-add (:kind hit))
+                                                            :groups
+                                                            :sessions)))
+                                              %)
+                                           (sidebar-entries db))]
+                      [:menu
+                       (assoc entry
+                         :initial-action
+                         (if (= :project-group-add (:kind hit)) :new :new-session))])
+
+                    :project-set-menu
+                    (when-let [entry (some #(when (and (= :project-set (:kind %))
+                                                       (= (:project-id hit)
+                                                          (str (get-in % [:project "id"])))
+                                                       (= (:set hit) (:set %)))
+                                              %)
+                                           (sidebar-entries db))]
+                      [:menu entry])
 
                     :project-suggest
                     [:add-commit (:path hit)]
@@ -1203,7 +1338,11 @@
                                      (if (= :project-session (:kind entry))
                                        [:details (str (get-in entry [:session "id"]))]
                                        [:noop]))
-        (= \+ (.getCharacter key)) [:add]
+        (= \+ (.getCharacter key))
+        (let [entry (when (pos? index) (nth (sidebar-entries db) (dec index) nil))]
+          (if (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry)))
+            [:menu (assoc entry :initial-action (if (= :groups (:set entry)) :new :new-session))]
+            [:add]))
         (= \g (.getCharacter key))
         ;; `g` opens the row's own menu: group actions on a group row, project
         ;; actions on a project row. Nothing to act on above the first row.
