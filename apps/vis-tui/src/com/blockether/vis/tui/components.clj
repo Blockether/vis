@@ -1,17 +1,5 @@
 (ns com.blockether.vis.tui.components
-  "Reusable header/tab UI components.
-
-   Each drawable here is a self-contained fn that paints into a Lanterna
-   `TextGraphics` and — when asked — registers its OWN click region, so the
-   same widget can't drift between call sites (the bug that left the tab
-   close `✕` painted in one place and made clickable in another, or not at
-   all). Two kinds live here:
-
-     - text layout helpers — `truncate-with-ellipsis`, `center-padded`
-     - drawable components — `close-button!`, `tab-cell!`
-
-   Components own their visual contract AND their interaction contract
-   (the click region's `:kind`), keeping `header.clj` a thin layout caller."
+  "Reusable terminal components that own their drawing and click regions."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -20,97 +8,11 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.theme :as t]
-            [com.blockether.vis.tui.header-model :as vh]
             [com.blockether.vis.tui.format :as fmt])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]))
 
 (set! *unchecked-math* :warn-on-boxed)
-
-;; ── text layout ─────────────────────────────────────────────────────────────
-(defn truncate-with-ellipsis
-  "Truncate `s` so its display width fits in `max-cols`. When truncation
-   actually happens, append `vh/workspace-ellipsis` so overflow is visible."
-  ^String [s ^long max-cols]
-  (let [s
-        (or s "")
-
-        ;; Reserve the ellipsis's ACTUAL display width, not 1: `…` (U+2026) is
-        ;; EAW=A and renders TWO columns on ambiguous-wide terminals, so a fixed
-        ;; `(dec max-cols)` over-ran the cell by a column.
-        ew
-        (p/display-width vh/workspace-ellipsis)]
-
-    (cond (<= max-cols 0) ""
-          (<= (p/display-width s) max-cols) s
-          (<= max-cols ew) (p/truncate-cols vh/workspace-ellipsis max-cols)
-          :else (str (p/truncate-cols s (- max-cols ew)) vh/workspace-ellipsis))))
-
-(defn center-padded
-  "Centre `s` inside a `cell-w`-wide cell with `vh/tab-entry-padding`
-   reserved on each side; ellipsises overflow."
-  ^String [s ^long cell-w]
-  (let [inner
-        (max 0 (- cell-w (* 2 (long vh/tab-entry-padding))))
-
-        text
-        (truncate-with-ellipsis s inner)
-
-        text-w
-        (p/display-width text)
-
-        pad-total
-        (max 0 (- cell-w text-w))
-
-        left
-        (quot pad-total 2)
-
-        right
-        (- pad-total left)]
-
-    (str (apply str (repeat left \space)) text (apply str (repeat right \space)))))
-
-(def ^{:const true} close-button-width
-  "Cells a `close-button!` occupies: a leading space + 1-col `✕` + a\n  trailing space. No divider — the bare ✕ reads as a button, not `|x`."
-  3)
-
-(def ^{:private true} close-button-glyph " ✕ ")
-
-(defn close-button!
-  "Draw a ` ✕ ` close affordance (space-padded ✕, no divider) at (col,row).
-   At rest the ✕ sits on its OWN chip — the shared `button-fg`/`button-bg`
-   pair every other TUI button uses at rest — so it reads as a SEPARATE
-   button pinned to the tab's right edge instead of blending into the tab
-   surface (a gray ✕ vanished on the inactive near-white tab; a white ✕
-   melted into the active blue tab). The dark `button-fg` glyph stays legible
-   on the light chip, and the chip's contrast against BOTH tab backgrounds is
-   the affordance.
-   On hover the cap escalates to a red pill (`close-button-hover-fg` bg behind
-   a white `header-active-tab-fg` ✕) to signal the destructive click.
-   Registers its `:close-tab` click region for `workspace-id`. Returns the
-   consumed width (`close-button-width`)."
-  [g col row _tab-fg _tab-bg workspace-id register?]
-  (let [hovered
-        (.hovered interactions/hit-map)
-
-        hovered?
-        (and (= :close-tab (:kind hovered)) (= workspace-id (:workspace-id hovered)))]
-
-    (p/clear-styles! g)
-    (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg t/button-fg)
-                   (if hovered? t/close-button-hover-fg t/button-bg))
-    (p/enable! g p/BOLD)
-    (p/put-str! g col row close-button-glyph)
-    (p/clear-styles! g)
-    (when register?
-      (.register interactions/hit-map
-                 {:bounds {:row row :col col :width close-button-width}
-                  :kind :close-tab
-                  :workspace-id workspace-id
-                  :text workspace-id
-                  :enabled? true}))
-    close-button-width))
 
 (defn button!
   "Generic clickable button: paint `label` (already space-padded, e.g. \" < \") as
@@ -248,7 +150,7 @@
           ;; side on input-field-bg — so the query text isn't jammed against the
           ;; field edge. That's padding the box border can't give.
           qtext
-          (truncate-with-ellipsis qshow find-input-width)
+          (p/ellipsize qshow find-input-width)
 
           qfield
           (str " "
@@ -364,261 +266,6 @@
 ;; (The header help/search chips are painted inline by `header.clj` — see its
 ;; right-slot cluster — so there's no shared chip def here.)
 
-(def ^{:private true} tab-divider-glyph
-  ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
-  ;; reads gentler than a solid │ between tabs / cluster chips. Box-drawing
-  ;; (EAW=A → one column in target terminals, same class as the borders).
-  "┊")
-
-(defn tab-divider!
-  "Paint a 1-col dotted `┊` divider (between tabs, or between header-cluster
-   chips) at (col,row). Painted in the high-contrast accent (dark on a light
-   terminal, light on a dark one) so the sparse dotted glyph is actually
-   visible — `footer-fg` washed it out."
-  [g col row]
-  (p/clear-styles! g)
-  (p/set-colors! g t/text-fg t/terminal-bg)
-  (p/put-str! g col row tab-divider-glyph)
-  (p/clear-styles! g))
-
-(def ^{:private true} tab-group-divider-glyph
-  ;; U+2502 LIGHT VERTICAL — a SOLID bar between PROJECT groups, deliberately
-  ;; heavier than the dotted ┊ between same-project tabs so a group edge
-  ;; reads at a glance.
-  "│")
-
-(defn tab-group-divider!
-  "Paint the 1-col solid `│` divider that separates PROJECT groups in the
-   tab strip. Same-project neighbours get the softer dotted `tab-divider!`."
-  [g col row]
-  (p/clear-styles! g)
-  (p/set-colors! g t/text-fg t/terminal-bg)
-  (p/put-str! g col row tab-group-divider-glyph)
-  (p/clear-styles! g))
-
-;; ── tab cell ────────────────────────────────────────────────────────────────
-(defn- tab-border-cols
-  "Column offsets 0..width-1 to underline for a tab that CARRIES a steady cue —
-   `:ready` (finished, unread) and `:input` (parked on the operator) — the WHOLE
-   width, so the caller draws one solid line in the cell's own colour.
-   Running tabs no longer use a per-column mask (they get an animated sweep,
-   see `running-border!`); idle tabs (`nil`) get nothing."
-  [status ^long width]
-  (case status
-    (:ready :input)
-    (range width)
-
-    nil))
-
-(defn- running-border!
-  "Paint the RUNNING tab's bottom border: a CONTINUOUS underline (no gaps — it
-   runs under the label too) carrying a single bright amber band that sweeps
-   left→right and restarts at the right edge. Continuous coverage + one moving
-   highlight reads as smooth forward motion, unlike the old every-other-column
-   parity mask that inverted the WHOLE line each tick (spaces + flicker).
-
-   ONE uniform mechanism for EVERY column: `underline-cell!` folds an SGR
-   UNDERLINE into the already-painted cell and recolours its foreground — dim
-   amber (`warning-fg`) as the steady base, bright amber (`warning-border`)
-   for the cells the sweeping band currently covers. The SAME underline shape
-   sits under blank padding AND under the number/label glyphs (their text just
-   tints amber as the band passes), so the line has ONE consistent weight and
-   position — no `▁` block vs SGR-line mismatch, no per-character gaps.
-
-   Phase is off the wall clock, so the running turn's own repaints animate it
-   with no extra timer."
-  [g ^long left row ^long width]
-  (let [phase
-        (quot (System/currentTimeMillis) 110)
-
-        band
-        (max 3 (quot width 3))
-
-        head
-        (long (mod phase (+ width band)))
-
-        lo
-        (max 0 (- head band))
-
-        hi
-        (min width head)]
-
-    (doseq [c (range width)]
-      (let [x (+ left (long c))
-            in-band? (and (>= (long c) lo) (< (long c) hi))]
-
-        (p/underline-cell! g x row (if in-band? t/warning-border t/warning-fg))))))
-
-(defn tab-cell!
-  "Draw one workspace tab into the band at [left,row] spanning `width` cells:
-
-     - the bg slab (active = inverted bold; inactive = dim italic);
-     - a STATUS BORDER painted as a per-column UNDERLINE along the bottom of
-       the cell (this replaced the old 2-col status prefix / edge rails, so the
-       number now sits FLUSH \u2014 no leading gap). The border is all theme
-       colour (no block glyphs, nothing to clash with the surface) and IS the
-       status cue:
-         :running -> a CONTINUOUS amber underline with a bright band sweeping
-                     left→right along the title portion (the working crawl,
-                     smooth — no gaps, no flicker); the close button stays still;
-         :ready   -> the whole cell glows GREEN (`status-ok`) under a steady,
-                     solid underline \u2014 the \"ready to check\" outline;
-         nil      -> NO border \u2014 an idle tab keeps the plain surface
-                     background and blends in;
-     - the centered `<num> | <label>`, given `close-button-width` fewer cells
-       so it never collides with the \u2715;
-     - an ALWAYS-VISIBLE `close-button!` pinned to the right edge (when the
-       cell is wide enough to host both a title and the button).
-
-   Registers the cell's `:workspace-entry` region FIRST, then the \u2715
-   `:close-tab` region ON TOP, so a click on the glyph wins the topmost
-   (last-registered) lookup and closes the tab instead of selecting it.
-
-   `opts` keys: :left :row :width :label :tab-no :status :active? :workspace-id
-   :index :register? :closable?"
-  [g
-   {:keys [left row width label tab-no status active? workspace-id index register? closable?]
-    :or {closable? true}}]
-  (let [width
-        (long width)
-
-        left
-        (long left)
-
-        show-close?
-        (and closable? (>= width (+ (long close-button-width) 3)))
-
-        inner-w
-        (if show-close? (max 0 (- width (long close-button-width))) width)
-
-        ready?
-        (= status :ready)
-
-        ;; A tab whose run is PARKED on a human. Nothing else in the strip demands
-        ;; an ACTION: `:running` says wait, `:ready` says read when you like, this
-        ;; one says the turn cannot move until you answer it — so it takes the
-        ;; warning colour the rest of the TUI reserves for "you".
-        input?
-        (= status :input)
-
-        ;; An input-needed tab burns amber (border + label), a ready tab glows
-        ;; green; otherwise the normal active / inactive theme fg carries the
-        ;; underline border.
-        fg
-        (cond input? t/warning-fg
-              ready? t/status-ok
-              active? t/header-active-tab-fg
-              :else t/border-fg)
-
-        bg
-        (if active? t/header-active-tab-bg t/dialog-bg)
-
-        ;; The per-column status border (a dashed/steady/none underline mask)
-        ;; is painted LAST, after the cell is fully drawn \u2014 see below.
-        num-str
-        (when tab-no (str tab-no))
-
-        display
-        (if num-str (str num-str " | " label) label)
-
-        text
-        (center-padded display inner-w)
-
-        ;; Where the tab number lands once `display` is centre-padded, so we can
-        ;; repaint just those digits in a contrasting colour.
-        lead
-        (count (take-while #(= \space %) text))
-
-        num-fg
-        (cond input? t/warning-fg
-              ready? t/status-ok
-              active? t/header-tab-number-fg
-              :else t/header-active-tab-accent)]
-
-    (p/clear-styles! g)
-    (p/set-colors! g fg bg)
-    (p/enable! g (if active? p/BOLD p/ITALIC))
-    (p/fill-rect! g left row width 1)
-    (p/put-str! g left row text)
-    (when (and num-str
-               (<= (+ lead (count num-str)) (count text))
-               (= num-str (subs text lead (+ lead (count num-str)))))
-      (p/clear-styles! g)
-      (p/set-colors! g num-fg bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g (+ left lead) row num-str))
-    (when (and num-str (<= (+ lead (count num-str) 3) (count text)))
-      (p/clear-styles! g)
-      (p/set-colors! g fg bg)
-      (when active? (p/enable! g p/BOLD))
-      (p/put-str! g (+ left lead (count num-str) 1) row "|"))
-    (p/clear-styles! g)
-    (when register?
-      (.register interactions/hit-map
-                 {:bounds {:row row :col left :width width}
-                  :kind :workspace-entry
-                  :index index
-                  :workspace-id workspace-id
-                  :text workspace-id
-                  :enabled? true}))
-    (when show-close? (close-button! g (+ left inner-w) row fg bg workspace-id register?))
-    ;; Status border LAST, over the fully painted cell:
-    ;;   :ready   -> fold a steady UNDERLINE into every cell (solid green line);
-    ;;   :input   -> the same steady line, amber, under an amber label — a
-    ;;               demand must not blink away like the running sweep;
-    ;;   :running -> `running-border!` — a continuous dim amber underline with a
-    ;;               bright `warning-border` band sweeping across it (smooth,
-    ;;               gapless, animated by the running turn's own repaints);
-    ;;   nil      -> nothing.
-    (case status
-      (:ready :input)
-      (doseq [c (tab-border-cols status width)]
-        (p/underline-cell! g (+ left (long c)) row))
-
-      :running
-      (running-border! g left row inner-w)
-
-      nil)))
-
-;; ── inert title ─────────────────────────────────────────────────────────────
-(defn title!
-  "Paint an INERT, centered header title in [left,row] over `width` cells —
-   bold on the header surface, ellipsised on overflow. Registers no click
-   region: a single-workspace title is not a switcher and must not look or
-   behave like one."
-  [g row left width text]
-  (when (pos? (long width))
-    (let [shown
-          (truncate-with-ellipsis text width)
-
-          w
-          (p/display-width shown)
-
-          col
-          (+ (long left) (max 0 (quot (- (long width) w) 2)))]
-
-      (p/clear-styles! g)
-      (p/set-colors! g t/header-fg t/terminal-bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g col row shown)
-      (p/clear-styles! g))))
-
-(defn nav-arrow!
-  "Paint a workspace-overflow navigation arrow `glyph` at (col,row) as a FILLED
-   BUTTON CHIP - routed through the shared `button!`, so the < > read as the
-   SAME control as the F1/F2 and id-copy buttons (inverted cap at rest, lifts to
-   the accent + bold on hover) instead of a bare character. Registers its
-   `:workspace-entry` click region keyed by `direction` (`:prev` / `:next`), so a
-   click still cycles the visible tab window."
-  [g row col glyph direction register?]
-  (button! g
-           col
-           row
-           (str " " glyph " ")
-           :workspace-entry
-           {:extra {:index direction :workspace-id direction :text direction}
-            :register? register?}))
-
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-sections
   "Sections of `[keys description]` rows shown in the C-x h help card, grouped
@@ -648,11 +295,8 @@
      ["M-> · C-x j · C-l · C-End" "Jump to latest — end-of-buffer (or click the ↓ latest chip)"]
      ["M-<" "Jump to the top — beginning-of-buffer"]
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
-     ["Tab · Shift+Tab" "Next · previous workspace"] ["C-x ← · C-x →" "Previous · next workspace"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
-     [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]
-     ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]
-     [(keymap/label-for :close-tab) "Close (kill) the current workspace tab"]]}
+     [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]]}
    {:title "Folding"
     :rows [["C-x TAB · C-x S-Tab" "Fold / unfold every disclosure (thinking, tool calls)"]
            [(keymap/label-for :toggle-detail-labels)
@@ -664,7 +308,7 @@
            ["C-w · C-d" "Kill word back · delete char forward"]
            ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-           ["Mouse" "Click a tab to switch · ✕ close · + new session · ↓ latest to jump down"]]}])
+           ["Mouse" "Click a session in Projects · ↓ latest jumps down"]]}])
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!

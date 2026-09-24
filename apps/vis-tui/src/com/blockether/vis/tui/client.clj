@@ -646,14 +646,17 @@
    The gateway owns the ordering, so a caller that wants ten rows asks for ten instead of
    downloading the fleet to slice it locally - and a read that names no cut and no limit
    is answered with the head window, never the fleet."
-  [{:keys [limit after root project-id id-prefix ids grouped]}]
+  [{:keys [limit after root project-id id-prefix ids grouped archived group-limit group-offset]}]
   (let [qs (->> [(when limit (str "limit=" (enc limit)))
                  (when (seq (str after)) (str "after=" (enc after)))
                  (when (seq (str root)) (str "root=" (enc root)))
                  (when (seq (str project-id)) (str "project_id=" (enc project-id)))
                  (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))
                  (when (seq ids) (str "ids=" (enc (str/join "," (map str ids)))))
-                 (when grouped (str "grouped=" (enc (name grouped))))]
+                 (when grouped (str "grouped=" (enc (name grouped))))
+                 (when archived (str "archived=" (enc (name archived))))
+                 (when group-limit (str "group_limit=" (enc group-limit)))
+                 (when group-offset (str "group_offset=" (enc group-offset)))]
                 (remove nil?)
                 (str/join "&"))]
     (cond-> "/v1/sessions"
@@ -682,6 +685,7 @@
   (let [body (send-json! "GET" (session-window-path opts))]
     {:sessions (vec (get body "sessions"))
      :grouped (vec (get body "grouped"))
+     :awaiting (vec (get body "awaiting"))
      :next-cursor (get body "next_cursor")
      :has-more (boolean (get body "has_more"))
      :total (get body "total")}))
@@ -808,6 +812,16 @@
   [sid is-favorite]
   (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:is_favorite (boolean is-favorite)}))
 
+(defn set-session-title!
+  "Rename a saved session. The gateway rejects empty names and returns the updated soul."
+  [sid title]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:title title}))
+
+(defn set-session-archived!
+  "Archive or unarchive a saved session; the gateway refuses busy turns and echoes the soul."
+  [sid archived?]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:archived (boolean archived?)}))
+
 (defn reorder-project-sessions!
   "Persist a project's manual session order in one gateway call. Loose named
    sessions are adopted atomically; guests owned by another project are not moved."
@@ -833,6 +847,26 @@
                        (str "?" qs)))
          "groups")))
 
+(defn list-session-groups-page
+  "One stored-order window of the project's groups, including the archive view."
+  [{:keys [project-id root archived limit offset]}]
+  (let [qs
+        (->> [(when project-id (str "project=" (enc project-id)))
+              (when (and (nil? project-id) root) (str "root=" (enc root)))
+              (when archived (str "archived=" (enc (name archived))))
+              (when limit (str "limit=" (enc limit)))
+              (when (some? offset) (str "offset=" (enc offset)))]
+             (remove nil?)
+             (str/join "&"))
+
+        body
+        (send-json! "GET" (str "/v1/session-groups?" qs))]
+
+    {:groups (vec (get body "groups"))
+     :total (long (or (get body "total") 0))
+     :session-total (long (or (get body "session_total") 0))
+     :has-more (boolean (get body "has_more"))}))
+
 (defn create-session-group!
   "POST /v1/session-groups - create a group inside a project named by :project-id
    or :root. :name is required and unique within the project; :color is a palette
@@ -851,8 +885,8 @@
                 (assoc :root root))))
 
 (defn update-session-group!
-  "PATCH /v1/session-groups/:gid - rename, recolour or reorder one group."
-  [gid {:keys [name color position]}]
+  "PATCH /v1/session-groups/:gid - rename, recolour, reorder or archive one group."
+  [gid {:keys [name color position] :as fields}]
   (send-json! "PATCH"
               (str "/v1/session-groups/" (enc gid))
               (cond-> {}
@@ -863,7 +897,10 @@
                 (assoc :color color)
 
                 position
-                (assoc :position position))))
+                (assoc :position position)
+
+                (contains? fields :archived)
+                (assoc :archived (boolean (:archived fields))))))
 
 (defn delete-session-group!
   "DELETE /v1/session-groups/:gid - drop a group. `mode` says what becomes of its
@@ -2356,6 +2393,11 @@
   [path]
   (send-json! "GET" (str "/v1/fs?path=" (enc (or path "")))))
 
+(defn create-directory!
+  "Create a folder on the gateway host in `path`; the returned entry owns its full path."
+  [path name]
+  (send-json! "POST" "/v1/fs/actions/mkdir" {:path path :name name}))
+
 ;; Names consumed by the terminal application. The transport API itself keeps route-oriented names.
 (def gateway-assign-project! assign-project!)
 
@@ -2375,6 +2417,8 @@
 
 (def gateway-create-project! create-project!)
 
+(def gateway-create-directory! create-directory!)
+
 (def gateway-create-session-group! create-session-group!)
 
 (def gateway-create-session! create-session!)
@@ -2389,6 +2433,8 @@
 
 (def gateway-delete-session-group! delete-session-group!)
 
+(def gateway-delete-project! delete-project!)
+
 (def gateway-drain-idle! drain-idle!)
 
 (def gateway-ensure-project-for-root! ensure-project-for-root!)
@@ -2402,6 +2448,8 @@
 (def gateway-list-projects list-projects)
 
 (def gateway-list-session-groups list-session-groups)
+
+(def gateway-list-session-groups-page list-session-groups-page)
 
 (def gateway-list-sessions list-sessions)
 
@@ -2488,6 +2536,10 @@
 (def gateway-set-router-fallback! set-router-fallback!)
 
 (def gateway-set-session-favorite! set-session-favorite!)
+
+(def gateway-set-session-title! set-session-title!)
+
+(def gateway-set-session-archived! set-session-archived!)
 
 (def gateway-set-session-model! set-session-model!)
 

@@ -1318,13 +1318,6 @@
 
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
 
-(defn- activate-tab-entry-hit!
-  "Switch to the workspace represented by a header click region."
-  [refresh-active-tab! hit]
-  (let [before (:active-tab-id @state/app-db)]
-    (state/dispatch [:select-tab-index (:index hit)])
-    (when-not (= before (:active-tab-id @state/app-db)) (refresh-active-tab! false))))
-
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
 
@@ -2335,16 +2328,17 @@
   (let [dir (projects/add-field-dir (:text field))]
     (when-not (= dir (:dir field))
       (state/dispatch [:project-sidebar {:adding (projects/add-field-listing field dir nil)}])
-      (vis/worker-future "tui-project-suggest"
-                         (fn []
-                           (let [rows (try (get (vis/gateway-browse-directories dir) "entries")
-                                           (catch Throwable _ nil))]
-                             (when-let [open (get-in @state/app-db [:project-sidebar :adding])]
-                               (when (= dir (projects/add-field-dir (:text open)))
-                                 (state/dispatch
-                                   [:project-sidebar
-                                    {:adding
-                                     (projects/add-field-listing open dir (or rows []))}])))))))))
+      (vis/worker-future
+        "tui-project-suggest"
+        (fn []
+          (let [listing (try (vis/gateway-browse-directories dir) (catch Throwable _ nil))]
+            (when-let [open (get-in @state/app-db [:project-sidebar :adding])]
+              (when (= dir (projects/add-field-dir (:text open)))
+                (state/dispatch
+                  [:project-sidebar
+                   {:adding
+                    (assoc (projects/add-field-listing open dir (or (get listing "entries") []))
+                      :listing-path (get listing "path"))}])))))))))
 
 (defn- store-add-field!
   "Store the rail's add field and follow it with the completions its text asks
@@ -2424,62 +2418,6 @@
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
-
-(defn- close-tab-with-prompt!
-  "Close tab `tab-id` (nil = the active tab), deciding EXPLICITLY what happens
-   to a running turn instead of silently detaching. An idle tab closes
-   immediately (pure detach - unchanged). A tab with a running turn (or
-   pending sends) pops a chooser:
-
-     - Keep running in background - today's detach: the daemon keeps
-       working, the session stays resumable and reattaches (missed output
-       replayed from the turn's start) via C-x b / the session navigator.
-     - Cancel the turn and close - fires the server-side cancel
-       (`:cancel-tab-turn`, tid-less fallback included) before closing.
-
-   Esc aborts the close entirely. Mirrors the old Ctrl+W bookkeeping:
-   refresh the active tab only when it actually changed, persist only when
-   a tab was really removed (closing the last tab is a reducer no-op)."
-  [screen refresh-active-tab! persist-tabs! tab-id]
-  (let [db
-        @state/app-db
-
-        active-id
-        (:active-tab-id db)
-
-        target-id
-        (or tab-id active-id)
-
-        snap
-        (if (= target-id active-id) db (get-in db [:tab-locals target-id]))
-
-        busy?
-        (boolean (or (:loading? snap) (seq (:pending-sends snap))))
-
-        choice
-        (if busy?
-          (some-> (with-dialog-lock #(dlg/list-dialog!
-                                       screen
-                                       "Turn still running"
-                                       [{:id :background
-                                         :label "Keep running in background (reattach later)"}
-                                        {:id :cancel-close :label "Cancel the turn and close"}]
-                                       {:enter-label "choose" :height :content}))
-                  :id)
-          :background)]
-
-    (when choice
-      (let [before-active
-            (:active-tab-id @state/app-db)
-
-            before-n
-            (count (:tabs @state/app-db))]
-
-        (when (= choice :cancel-close) (state/dispatch [:cancel-tab-turn target-id]))
-        (state/dispatch [:close-tab target-id])
-        (when (not= before-n (count (:tabs @state/app-db)))
-          (when (not= before-active (:active-tab-id @state/app-db)) (refresh-active-tab! false))
-          (persist-tabs!))))))
 
 (defn- paint-search-bar!
   "Call-site adapter for `components/find-bar!` — the reusable find bar and its
@@ -3854,8 +3792,7 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :workspace-entry :header-help :header-agents :footer-goal :header-tasks :header-search
-    :header-new-session})
+  #{:copy-id :header-help :header-agents :footer-goal :header-tasks :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -5649,73 +5586,317 @@
   (when (and pid (seq ids))
     (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil))))
 
-(defn- project-groups
-  "Read the session groups of every listed project in ONE pass. Keyed by project id, so the
-   rail can nest a group row under its project without a second round trip while
-   painting. A project whose read fails simply shows no groups this refresh."
-  [projects]
-  (into {}
-        (keep (fn [project]
-                (when-let [pid (some-> (get project "id")
-                                       str)]
-                  [pid
-                   (vec (try (vis/gateway-list-session-groups {:project-id pid})
-                             (catch Throwable _ nil)))])))
-        projects))
+(defn- project-page-size
+  "Keep the gateway window close to the terminal height, with room for project bands."
+  []
+  (max 5 (min 30 (- (long (or (get-in @state/app-db [:layout :rows]) 24)) 10))))
+
+(defn- project-search-page-size
+  "A search hit may have a snippet below it; keep both inside one terminal page."
+  []
+  (max 5 (min 40 (quot (- (long (or (get-in @state/app-db [:layout :rows]) 24)) 8) 2))))
+
+(defn- fetch-project-search-page!
+  "Hydrate one ranked hit window by id, including archived and unloaded sessions."
+  [request-id matches offset]
+  (let [limit
+        (project-search-page-size)
+
+        window
+        (vec (take limit (drop offset matches)))
+
+        ids
+        (mapv :id window)]
+
+    (try (let [rows
+               (if (seq ids)
+                 (:sessions (vis/gateway-list-sessions-page
+                              {:ids ids :limit limit :archived :include}))
+                 [])
+
+               by-id
+               (into {}
+                     (map (fn [session]
+                            [(str (get session "id")) session])
+                          rows))
+
+               found
+               (into []
+                     (keep (fn [match]
+                             (when-let [session (get by-id (str (:id match)))]
+                               {:session session :match match})))
+                     window)]
+
+           (state/dispatch [:project-search-loaded request-id matches found offset limit
+                            (< (+ offset limit) (count matches))]))
+         (catch Throwable _
+           (state/dispatch [:project-search-failed request-id "gateway unavailable"])))))
+
+(defn- search-projects!
+  "Settle typing before the gateway search; stale queries never hydrate or repaint."
+  [field]
+  (let [request-id
+        (str (java.util.UUID/randomUUID))
+
+        needle
+        (str/trim (:text field))]
+
+    (state/dispatch [:project-search-change field request-id])
+    (when (seq needle)
+      (vis/worker-future
+        "tui-project-search"
+        (fn []
+          (Thread/sleep 200)
+          (when (= request-id (get-in @state/app-db [:project-sidebar :search :request-id]))
+            (try
+              (let [matches (vis/gateway-search-session-matches needle)]
+                (when (= request-id (get-in @state/app-db [:project-sidebar :search :request-id]))
+                  (fetch-project-search-page! request-id matches 0)))
+              (catch Throwable _
+                (state/dispatch [:project-search-failed request-id "gateway unavailable"])))))))))
+
+(defn- page-focus-index
+  "Compute the cursor against the page and group rows a gateway answer will paint."
+  [db pid page group-page]
+  (let [sidebar
+        (:project-sidebar db)
+
+        changes
+        (cond-> {:pages (assoc (:pages sidebar) pid page)}
+          group-page
+          (assoc :groups
+            (assoc (:groups sidebar) pid (:groups group-page)) :group-total
+            (assoc (:group-total sidebar) pid (:total group-page))))]
+
+    (projects/focused-index db changes)))
+
+(defn- load-project-page!
+  "Read one saved-session window and one group window, never preallocating local views."
+  [pid & [automatic?]]
+  (let [request-id
+        (str (java.util.UUID/randomUUID))
+
+        page
+        (get-in @state/app-db [:project-sidebar :pages pid])
+
+        limit
+        (project-page-size)
+
+        offset
+        (long (or (:group-offset page) 0))
+
+        session-archive?
+        (true? (get-in @state/app-db [:project-sidebar :session-archived? pid]))
+
+        group-archive?
+        (true? (get-in @state/app-db [:project-sidebar :group-archived? pid]))
+
+        session-archive
+        (if session-archive? :only :exclude)
+
+        group-archive
+        (if group-archive? :only :exclude)
+
+        request-page
+        (assoc page
+          :loading? (or (:loading? page) (not automatic?))
+          :error nil
+          :request-id request-id)]
+
+    (state/dispatch [:project-page-request pid request-id
+                     (when-not automatic? (page-focus-index @state/app-db pid request-page nil))
+                     automatic?])
+    (vis/worker-future
+      "tui-project-page"
+      (fn []
+        (try
+          (let [groups
+                (vis/gateway-list-session-groups-page
+                  {:project-id pid :archived group-archive :limit limit :offset offset})
+
+                sessions
+                (vis/gateway-list-sessions-page {:project-id pid
+                                                 :limit limit
+                                                 :after (:after page)
+                                                 :archived session-archive
+                                                 :grouped :aside
+                                                 :group-limit limit
+                                                 :group-offset offset})
+
+                ;; The two sets switch archives independently. Read the group's
+                ;; members with the group view when the loose window differs.
+                grouped
+                (if (= group-archive session-archive)
+                  (:grouped sessions)
+                  (:grouped (vis/gateway-list-sessions-page {:project-id pid
+                                                             :limit 1
+                                                             :archived group-archive
+                                                             :grouped :aside
+                                                             :group-limit limit
+                                                             :group-offset offset})))
+
+                active-id
+                (when (= pid (:active-project-id @state/app-db))
+                  (some-> (get-in @state/app-db [:session :id])
+                          str))
+
+                loaded?
+                (some #(= active-id (str (get % "id")))
+                      (concat (:sessions sessions) grouped (:awaiting sessions)))
+
+                current
+                (when (and active-id (not loaded?))
+                  (first (:sessions (vis/gateway-list-sessions-page {:ids [active-id]
+                                                                     :archived session-archive}))))
+
+                page-data
+                (assoc sessions
+                  :grouped grouped
+                  :group-size limit
+                  :current current)
+
+                db
+                @state/app-db
+
+                next-page
+                (merge (get-in db [:project-sidebar :pages pid])
+                       (assoc page-data
+                         :loading? false
+                         :error nil))]
+
+            (state/dispatch [:project-page-loaded pid request-id page-data groups
+                             (when-not automatic? (page-focus-index db pid next-page groups))
+                             automatic?]))
+          (catch Throwable _
+            (let [db
+                  @state/app-db
+
+                  next-page
+                  (assoc (get-in db [:project-sidebar :pages pid])
+                    :loading? false
+                    :error "Load failed")]
+
+              (state/dispatch [:project-page-failed pid request-id
+                               (page-focus-index db pid next-page nil)]))))))))
 
 (defn- refresh-projects!
-  "Refresh the sidebar off the input thread, retaining the last usable list on failure."
-  []
-  (state/dispatch [:project-sidebar {:loading? true :error nil}])
+  "Refresh gateway-owned projects off the input thread, retaining the last usable list."
+  [& [automatic?]]
+  (when-not automatic? (state/dispatch [:project-sidebar {:loading? true :error nil}]))
   (vis/worker-future
     "tui-projects"
     (fn []
-      (try (let [projects
-                 (vec (vis/gateway-list-projects))
+      (try
+        (let [items
+              (projects/with-gateway-counts (vec (vis/gateway-list-projects))
+                                            (vis/gateway-projects-overview))
 
-                 ;; The rail's counters are the GATEWAY's: a project's running,
-                 ;; waiting and NEW sessions include the ones no tab here holds.
-                 overview
-                 (try (vis/gateway-projects-overview) (catch Throwable _ nil))
+              sidebar
+              (:project-sidebar @state/app-db)
 
-                 items
-                 (projects/with-gateway-counts projects overview)]
+              first-id
+              (or (when (some #(= (:active-project-id @state/app-db) (str (get % "id"))) items)
+                    (:active-project-id @state/app-db))
+                  (some-> items
+                          first
+                          (get "id")
+                          str))
 
-             (state/dispatch [:project-sidebar
-                              {:items items :groups (project-groups items) :loading? false}]))
-           (catch Throwable _
-             (state/dispatch [:project-sidebar
-                              {:loading? false :error "Load failed · r retry"}]))))))
+              expanded
+              (or (:expanded sidebar) (if first-id #{first-id} #{}))
+
+              changes
+              {:items items :pages (or (:pages sidebar) {}) :expanded expanded :loading? false}]
+
+          (state/dispatch [:project-sidebar
+                           (assoc changes :index (projects/focused-index @state/app-db changes))])
+          (doseq [pid
+                  expanded
+
+                  :when (some #(= pid (str (get % "id"))) items)]
+
+            (load-project-page! pid automatic?)))
+        (catch Throwable _
+          (state/dispatch [:project-sidebar {:loading? false :error "Load failed · r retry"}]))))))
+
+(defn- start-projects-refresh!
+  "Follow fleet status/title deltas and periodically catch arrivals outside this TUI."
+  []
+  (let [dirty?
+        (atom false)
+
+        stop
+        (try (vis/gateway-fleet-subscribe! (fn [event]
+                                             (when (#{"session.status" "session.title_updated"}
+                                                    (get event "type"))
+                                               (reset! dirty? true))))
+             (catch Throwable _
+               (fn [])))
+
+        thread
+        (Thread. ^Runnable
+                 (fn []
+                   (loop [last-read 0]
+                     (when-not (:shutdown? @state/app-db)
+                       (let [sidebar (:project-sidebar @state/app-db)
+                             now (System/currentTimeMillis)
+                             ready? (and (:open? sidebar)
+                                         (not (:adding sidebar))
+                                         (not (:search sidebar))
+                                         (not (:removing sidebar))
+                                         (not (:loading? sidebar))
+                                         (not-any? :loading? (vals (:pages sidebar))))
+                             due? (and ready? (or @dirty? (>= (- now last-read) 8000)))]
+
+                         (when due? (reset! dirty? false) (refresh-projects! true))
+                         (try (Thread/sleep 1000) (catch InterruptedException _ nil))
+                         (recur (if due? now last-read))))))
+                 "vis-tui-projects-refresh")]
+
+    (.setDaemon thread true)
+    (.start thread)
+    (fn []
+      (stop)
+      (.interrupt thread)
+      (try (.join thread 500) (catch InterruptedException _ nil)))))
 
 (defn- request-project!
-  "Load a project's ordered tab specifications without blocking input or reviving a stale choice."
-  [project open!]
+  "Expand/collapse a project. Its saved rows arrive on demand, not as local tabs."
+  [project _open!]
   (when-let [pid (some-> (get project "id")
                          str)]
-    (let [request-id (str (java.util.UUID/randomUUID))
-          current? #(= request-id (get-in @state/app-db [:project-sidebar :request-id]))]
+    (let [sidebar (:project-sidebar @state/app-db)
+          expanded (:expanded sidebar)
+          open? (not (contains? expanded pid))]
 
       (state/dispatch [:project-sidebar
-                       {:opening pid :request-id request-id :error nil :focused? false}])
-      (if (some #(= pid (:project-id %)) (:tabs @state/app-db))
-        (open! [])
-        (vis/worker-future
-          "tui-open-project"
-          (fn []
-            (try
-              (let [members (vis/gateway-list-sessions {:project-id pid})
-                    specs (mapv (fn [s]
-                                  {:session-id (str (get s "id"))
-                                   :label (get s "title")
-                                   :project-id pid
-                                   :root (or (get s "work_dir") (get project "workspace_root"))})
-                                (sort-by #(or (get % "project_position") Long/MAX_VALUE) members))]
+                       {:expanded ((if open? conj disj) (or expanded #{}) pid) :focused? true}])
+      (when (and open? (not (get-in sidebar [:pages pid :sessions]))) (load-project-page! pid)))))
 
-                (when (current?) (open! specs)))
-              (catch Throwable _
-                (when (current?)
-                  (state/dispatch [:project-sidebar
-                                   {:opening nil :error "Open failed · select to retry"}]))))))))))
+(defn- choose-project!
+  "Open this project's current view, one saved session, or a fresh session in its root."
+  [project open-saved! start-new!]
+  (when-let [pid (some-> (get project "id")
+                         str)]
+    (state/dispatch [:project-sidebar {:adding nil :focused? true :error nil}])
+    (if (some #(= pid (:project-id %)) (:tabs @state/app-db))
+      (state/dispatch [:select-project pid [] (str (java.util.UUID/randomUUID))])
+      (vis/worker-future
+        "tui-choose-project"
+        (fn []
+          (try (let [page (vis/gateway-list-sessions-page
+                            {:project-id pid :limit 1 :grouped :aside :group-limit 1})
+                     saved (first (concat (:sessions page) (:grouped page)))]
+
+                 (if-let [sid (some-> (get saved "id")
+                                      str)]
+                   (open-saved! sid)
+                   (let [build-id (str (java.util.UUID/randomUUID))]
+                     (state/dispatch [:select-project pid [] build-id])
+                     (start-new! (get project "workspace_root") build-id))))
+               (catch Throwable error
+                 (state/dispatch [:project-sidebar
+                                  {:error (str "Choose failed · " (ex-message error))}]))))))))
 
 (defn- add-project!
   "Get or create a root-bound project from a path typed in the rail's own field."
@@ -5731,6 +5912,31 @@
                                 (state/dispatch [:project-sidebar
                                                  {:loading? false
                                                   :error "Add failed · check directory"}])))))))
+
+(defn- create-project-folder!
+  "Create a folder in the gateway listing, then add its returned path as a project."
+  [screen field add!]
+  (if-let [parent (:listing-path field)]
+    (when-let [entered (with-dialog-lock
+                         #(dlg/text-input-dialog! screen "New folder" "Folder name"))]
+      (let [name (str/trim entered)]
+        (when-not (str/blank? name)
+          (when-not (get-in @state/app-db [:project-sidebar :saving?])
+            (state/dispatch [:project-sidebar {:saving? true :error nil}])
+            (vis/worker-future
+              "tui-create-project-folder"
+              (fn []
+                (try (let [path (get (vis/gateway-create-directory! parent name) "path")]
+                       (when-not (seq path)
+                         (throw (ex-info "Gateway did not return the folder path" {})))
+                       (state/dispatch [:project-sidebar {:adding nil :saving? false}])
+                       (add! path))
+                     (catch Throwable error
+                       (state/dispatch [:project-sidebar
+                                        {:saving? false
+                                         :error (str "Folder failed · "
+                                                     (ex-message error))}])))))))))
+    (state/dispatch [:project-sidebar {:error "Wait for the folder listing"}])))
 
 (defn- group-color-items
   "One pick row per palette token, straight from the gateway contract's closed
@@ -5751,6 +5957,32 @@
                [{:id ::new-group :label "＋ New group…"}
                 {:id ::remove-group :label "✗ Remove from group"}])))
 
+(defn- move-project-sessions!
+  "File the chosen saved IDs one at a time, clearing only successful selections."
+  [pid ids gid]
+  (when (and pid (seq ids))
+    (vis/worker-future "tui-project-group-move"
+                       (fn []
+                         (let [succeeded
+                               (reduce (fn [moved sid]
+                                         (try (vis/gateway-assign-session-group! sid gid)
+                                              (conj moved sid)
+                                              (catch Throwable _ moved)))
+                                       []
+                                       ids)
+
+                               failed
+                               (- (count ids) (count succeeded))]
+
+                           (state/dispatch [:project-sessions-moved pid succeeded])
+                           (refresh-projects!)
+                           (vis/notify!
+                             (if (pos? failed)
+                               (str "Could not move " failed " of " (count ids) " sessions")
+                               (str (if gid "Moved " "Ungrouped ") (count ids) " sessions"))
+                             :level (if (pos? failed) :warn :success)
+                             :ttl-ms copy-success-ttl-ms))))))
+
 (defn- create-group!
   "Ask for a group name and colour, create it inside `pid`, and refresh the rail.
    Returns the new group, or nil when the human cancels or the name is taken -
@@ -5769,9 +6001,10 @@
                                                             (assoc :color color)))
                        (catch Throwable _ nil))]
 
-        (refresh-projects!)
         (if (get group "id")
-          (do (vis/notify! "Created group" :level :success :ttl-ms copy-success-ttl-ms) group)
+          (do (refresh-projects!)
+              (vis/notify! "Created group" :level :success :ttl-ms copy-success-ttl-ms)
+              group)
           (do (vis/notify! "Could not create that group - the name may already be taken"
                            :level :warn
                            :ttl-ms copy-success-ttl-ms)
@@ -5811,12 +6044,55 @@
                              :level :success
                              :ttl-ms copy-success-ttl-ms)))))))))
 
+(defn- show-session-details!
+  "Read the selected saved row's metrics/health without switching or hydrating its view."
+  [screen sid session]
+  (when (and sid session) (with-dialog-lock #(dlg/session-metrics-dialog! screen sid session))))
+
+(defn- remove-project!
+  "Confirm the destructive gateway operation; only a successful answer drops local rows."
+  [screen project]
+  (when-let [pid (some-> (get project "id")
+                         str)]
+    (when (with-dialog-lock #(dlg/confirm-dialog!
+                               screen
+                               "Remove project"
+                               [(str "Remove "
+                                     (projects/project-label project)
+                                     " and its "
+                                     (long (or (get project "session_count") 0))
+                                     " saved sessions?")
+                                "This deletes their transcripts and cannot be undone."]))
+      (when-not (get-in @state/app-db [:project-sidebar :removing])
+        (state/dispatch [:project-sidebar {:removing pid :progress "Removing…" :error nil}])
+        (vis/worker-future
+          "tui-project-remove"
+          (fn []
+            (try (let [result (vis/gateway-delete-project! pid {:is-recursive? true})
+                       deleted (mapv str (get result "deleted_session_ids"))]
+
+                   (state/dispatch [:project-sidebar {:progress "Updating views…"}])
+                   (doseq [sid deleted]
+                     (state/dispatch [:session-deleted sid]))
+                   (state/dispatch [:project-removed pid])
+                   (refresh-projects!)
+                   (vis/notify! "Removed project and its saved sessions"
+                                :level :success
+                                :ttl-ms copy-success-ttl-ms))
+                 (catch Throwable error
+                   (state/dispatch [:project-sidebar
+                                    {:error (str "Remove failed · " (ex-message error))}])
+                   (vis/notify! (str "Could not remove project: " (ex-message error))
+                                :level :warn
+                                :ttl-ms copy-success-ttl-ms))
+                 (finally (state/dispatch [:project-sidebar {:removing nil :progress nil}])))))))))
+
 (defn- sidebar-row-menu!
   "The rail's ⋯ menu for the row under the cursor: group verbs on a group row,
    project verbs on a project row. Every verb that changes the gateway refreshes
    the rail from the gateway's own answer. `start-in-group!` is called with a
    group id and its project root when the human starts a session from a group."
-  [screen entry start-in-group!]
+  [screen entry start-in-group! & [choose!]]
   (let [group
         (:group entry)
 
@@ -5831,24 +6107,204 @@
         (some-> (get group "id")
                 str)
 
+        session
+        (:session entry)
+
+        sid
+        (some-> (get session "id")
+                str)
+
+        selected
+        (get-in @state/app-db [:project-sidebar :selected pid] #{})
+
+        moving
+        (when sid (if (contains? selected sid) (sort selected) [sid]))
+
         pick
-        (with-dialog-lock
-          #(dlg/select-dialog!
-             screen
-             (if gid
-               (str "Group · " (get group "name"))
-               (str "Project · " (projects/project-label project)))
-             (if gid
-               [{:id :new-session :label "＋ New session here"} {:id :rename :label "Rename group…"}
-                {:id :recolour :label "Change group colour…"} {:id :new :label "＋ New group…"}
-                {:id :delete :label "✗ Delete group"}]
-               [{:id :new :label "＋ New group…"} {:id :refresh :label "Refresh projects"}])))]
+        (if (:show-details? entry)
+          {:id :details}
+          (with-dialog-lock
+            #(dlg/select-dialog!
+               screen
+               (cond sid (str "Session · " (:label entry))
+                     gid (str "Group · " (get group "name"))
+                     (= :project-set (:kind entry))
+                     (str (:label entry) " · " (projects/project-label project))
+                     :else (str "Project · " (projects/project-label project)))
+               (cond
+                 sid
+                 (cond-> [{:id :details :label "Show session details"}
+                          {:id :toggle-session
+                           :label (if (contains? selected sid) "Deselect session" "Select session")}
+                          {:id :move-session
+                           :label (if (> (count moving) 1)
+                                    (str "Move " (count moving) " selected sessions…")
+                                    "Move to group…")}
+                          {:id :favorite
+                           :label (if (:favorite? entry) "Unstar session" "Star session")}
+                          {:id :rename-session :label "Rename session…"}]
+                   (not (some? (get group "archived_at")))
+                   (conj {:id (if (get session "archived_at") :unarchive-session :archive-session)
+                          :label
+                          (if (get session "archived_at") "Unarchive session" "Archive session")})
+
+                   true
+                   (conj {:id :delete-session :label "Delete session…"}))
+                 gid (vec
+                       (concat
+                         (when-not (get group "archived_at")
+                           (concat [{:id :new-session :label "＋ New session here"}]
+                                   (when (seq selected)
+                                     [{:id :move-selected
+                                       :label (str "Move " (count selected) " selected here")}])))
+                         [{:id :rename :label "Rename group…"}
+                          {:id :recolour :label "Change group colour…"}
+                          {:id (if (get group "archived_at") :unarchive-group :archive-group)
+                           :label (if (get group "archived_at") "Unarchive group" "Archive group")}
+                          {:id :delete :label "✗ Delete group"}]))
+                 (= :sessions (:set entry))
+                 (cond-> [{:id :toggle-session-archive
+                           :label (if (:archived? entry)
+                                    "Hide archived sessions"
+                                    "Show archived sessions")}
+                          {:id :new-session :label "＋ New session here"}
+                          {:id :new :label "＋ New group…"}]
+                   (seq selected)
+                   (conj {:id :ungroup-selected
+                          :label (str "Ungroup " (count selected) " selected sessions")}))
+                 (= :groups (:set entry))
+                 [{:id :new :label "＋ New group…"}
+                  {:id :toggle-group-archive
+                   :label (if (:archived? entry) "Hide archived groups" "Show archived groups")}]
+                 :else [{:id :use-project :label "Use project"} {:id :new :label "＋ New group…"}
+                        {:id :refresh :label "Refresh projects"}
+                        {:id :delete-project :label "✗ Remove project and sessions…"}]))))]
 
     (case (:id pick)
+      :use-project
+      (when choose! (choose! project))
+
+      :delete-project
+      (remove-project! screen project)
+
+      :toggle-session
+      (when sid (state/dispatch [:project-session-select-toggle pid sid]))
+
+      :move-selected
+      (move-project-sessions! pid (sort selected) gid)
+
+      :ungroup-selected
+      (move-project-sessions! pid (sort selected) nil)
+
+      :move-session
+      (when (and pid (seq moving))
+        (try (let [groups
+                   (vis/gateway-list-session-groups {:project-id pid})
+
+                   pick
+                   (with-dialog-lock #(dlg/searchable-select! screen
+                                                              "Move sessions to group…"
+                                                              (group-move-items groups)
+                                                              {:placeholder "Type to filter groups…"
+                                                               :enter-label "move"}))]
+
+               (when pick
+                 (let [id
+                       (:id pick)
+
+                       gid
+                       (cond (= (str ::new-group) (str id)) (get (create-group! screen pid) "id")
+                             (= (str ::remove-group) (str id)) nil
+                             :else id)]
+
+                   (when (or (= (str ::remove-group) (str id)) gid)
+                     (move-project-sessions! pid moving gid)))))
+             (catch Throwable _
+               (vis/notify! "Could not load project groups"
+                            :level :warn
+                            :ttl-ms copy-success-ttl-ms))))
+
+      :details
+      (show-session-details! screen sid session)
+
+      :favorite
+      (vis/worker-future "tui-session-favorite"
+                         (fn []
+                           (try (vis/gateway-set-session-favorite! sid (not (:favorite? entry)))
+                                (refresh-projects!)
+                                (catch Throwable _
+                                  (vis/notify! "Could not change favorite"
+                                               :level :warn
+                                               :ttl-ms copy-success-ttl-ms)))))
+
+      :rename-session
+      (when-let [entered (with-dialog-lock
+                           #(dlg/text-input-dialog! screen
+                                                    "Rename session" "Session name"
+                                                    :initial (str (or (get session "title") ""))))]
+        (if (str/blank? (str entered))
+          (vis/notify! "A session name cannot be empty" :level :warn :ttl-ms copy-success-ttl-ms)
+          (when (not= (str/trim (str entered)) (str/trim (str (get session "title"))))
+            (vis/worker-future "tui-session-rename"
+                               (fn []
+                                 (try (vis/gateway-set-session-title! sid (str/trim (str entered)))
+                                      (refresh-projects!)
+                                      (catch Throwable _
+                                        (vis/notify! "Could not rename session"
+                                                     :level :warn
+                                                     :ttl-ms copy-success-ttl-ms))))))))
+
+      (:archive-session :unarchive-session)
+      (let [away? (= :archive-session (:id pick))]
+        (if (and away? (or (true? (get session "live")) (true? (get session "is_awaiting_input"))))
+          (vis/notify! "This session is still active. Archive it once its turn is done."
+                       :level :warn
+                       :ttl-ms copy-success-ttl-ms)
+          (vis/worker-future
+            "tui-session-archive"
+            (fn []
+              (try (vis/gateway-set-session-archived! sid away?)
+                   (refresh-projects!)
+                   (catch Throwable error
+                     (vis/notify!
+                       (if (= 409 (:http-status (ex-data error)))
+                         "This session is still active. Archive it once its turn is done."
+                         (str "Could not " (if away? "archive" "unarchive")
+                              " session: " (ex-message error)))
+                       :level :warn
+                       :ttl-ms copy-success-ttl-ms)))))))
+
+      :delete-session
+      (when (with-dialog-lock #(dlg/confirm-dialog! screen
+                                                    "Delete session"
+                                                    (str "Permanently delete "
+                                                         (:label entry)
+                                                         "? This cannot be undone.")))
+        (vis/worker-future
+          "tui-session-delete"
+          (fn []
+            (try (vis/gateway-close-session! sid)
+                 ;; Unlike closing a local view, a DELETE removes the saved row.
+                 ;; Its event drops that exact id, never whichever tab is now active.
+                 (state/dispatch [:session-deleted sid])
+                 (state/dispatch [:project-sessions-moved pid [sid]])
+                 (refresh-projects!)
+                 (vis/notify! "Deleted session" :level :success :ttl-ms copy-success-ttl-ms)
+                 (catch Throwable error
+                   (vis/notify! (str "Could not delete session: " (ex-message error))
+                                :level :warn
+                                :ttl-ms copy-success-ttl-ms))))))
+
+      :toggle-session-archive
+      (when pid (state/dispatch [:project-session-archive-toggle pid]) (load-project-page! pid))
+
+      :toggle-group-archive
+      (when pid (state/dispatch [:project-group-archive-toggle pid]) (load-project-page! pid))
+
       :new-session
       ;; Starting FROM a group row files the session as the gateway mints it, so the
       ;; new conversation opens INSIDE the band the cursor stood on (BLO-167).
-      (when (and gid start-in-group!) (start-in-group! gid (get project "workspace_root")))
+      (when (and pid start-in-group!) (start-in-group! gid (get project "workspace_root")))
 
       :new
       (when pid (create-group! screen pid))
@@ -5859,31 +6315,73 @@
                                                                     :initial (str (get group
                                                                                        "name"))))]
         (when-not (str/blank? (str entered))
-          (try (vis/gateway-update-session-group! gid {:name (str/trim (str entered))})
-               (catch Throwable _ nil))
-          (refresh-projects!)))
+          (vis/worker-future
+            "tui-group-rename"
+            (fn []
+              (try (vis/gateway-update-session-group! gid {:name (str/trim (str entered))})
+                   (refresh-projects!)
+                   (catch Throwable _
+                     (vis/notify! "Could not rename group"
+                                  :level :warn
+                                  :ttl-ms copy-success-ttl-ms)))))))
 
       :recolour
       (when-let [color (:id (with-dialog-lock
                               #(dlg/select-dialog! screen "Group colour" (group-color-items))))]
-        (try (vis/gateway-update-session-group! gid {:color color}) (catch Throwable _ nil))
-        (refresh-projects!))
+        (vis/worker-future "tui-group-colour"
+                           (fn []
+                             (try (vis/gateway-update-session-group! gid {:color color})
+                                  (refresh-projects!)
+                                  (catch Throwable _
+                                    (vis/notify! "Could not change group colour"
+                                                 :level :warn
+                                                 :ttl-ms copy-success-ttl-ms))))))
+
+      (:archive-group :unarchive-group)
+      (let [away? (= :archive-group (:id pick))]
+        (vis/worker-future
+          "tui-group-archive"
+          (fn []
+            (try (vis/gateway-update-session-group! gid {:archived away?})
+                 (refresh-projects!)
+                 (catch Throwable error
+                   (vis/notify!
+                     (if (= 409 (:http-status (ex-data error)))
+                       "This group has an active session. Archive it once its turn is done."
+                       (str "Could not " (if away? "archive" "unarchive")
+                            " group: " (ex-message error)))
+                     :level :warn
+                     :ttl-ms copy-success-ttl-ms))))))
 
       :delete
-      ;; BLO-167: the delete asks what becomes of the members, because a group is
-      ;; a folder to some people and a batch to others. `:detach` is first, so the
-      ;; harmless answer is the one under the cursor.
+      ;; BLO-167: the delete asks what becomes of the members. Cancel never
+      ;; touches the gateway; only the answer's exact IDs update local views.
       (when-let [answer (:id (with-dialog-lock
                                #(dlg/select-dialog!
                                   screen
                                   (str "Delete group · " (get group "name"))
                                   [{:id :detach :label "Keep its sessions, ungrouped"}
                                    {:id :with-sessions :label "✗ Delete its sessions too"}])))]
-        (try (vis/gateway-delete-session-group! gid answer) (catch Throwable _ nil))
-        (refresh-projects!)
-        (vis/notify! (if (= :with-sessions answer) "Deleted group and its sessions" "Deleted group")
-                     :level :success
-                     :ttl-ms copy-success-ttl-ms))
+        (vis/worker-future "tui-group-delete"
+                           (fn []
+                             (try (let [result (vis/gateway-delete-session-group! gid answer)
+                                        scattered (get result "scattered_session_ids")
+                                        deleted (get result "deleted_session_ids")]
+
+                                    (doseq [id deleted]
+                                      (state/dispatch [:session-deleted (str id)]))
+                                    (state/dispatch [:project-sessions-moved pid
+                                                     (mapv str (concat scattered deleted))])
+                                    (refresh-projects!)
+                                    (vis/notify! (if (= :with-sessions answer)
+                                                   "Deleted group and its sessions"
+                                                   "Deleted group")
+                                                 :level :success
+                                                 :ttl-ms copy-success-ttl-ms))
+                                  (catch Throwable error
+                                    (vis/notify! (str "Could not delete group: " (ex-message error))
+                                                 :level :warn
+                                                 :ttl-ms copy-success-ttl-ms))))))
 
       :refresh
       (refresh-projects!)
@@ -5898,18 +6396,85 @@
 
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key."
-  [key select! add! refresh! menu!]
+  [key select! add! refresh! menu! open-session! & [new-folder!]]
   (when (and (instance? MouseAction key)
              (= MouseActionType/MOVE (.getActionType ^MouseAction key))
              (.updateHovered projects/hit-map ^MouseAction key))
     (state/dispatch [:bump-render-version]))
-  (when-let [[action value] (projects/key-action @state/app-db key)]
+  (when-let [[action value detail] (projects/key-action @state/app-db key)]
     (case action
+      :toggle-session
+      (state/dispatch [:project-session-select-toggle value detail])
+
+      :search
+      (state/dispatch [:project-search-open])
+
+      :search-close
+      (state/dispatch [:project-search-close])
+
+      :search-change
+      (if (= (:text value) (get-in @state/app-db [:project-sidebar :search :text]))
+        (state/dispatch [:project-sidebar
+                         {:search (merge (get-in @state/app-db [:project-sidebar :search]) value)}])
+        (search-projects! value))
+
+      :search-page
+      (let [search (get-in @state/app-db [:project-sidebar :search])
+            offset (max 0
+                        (+ (long (or (:offset search) 0))
+                           (* (long (or (:page-size search) (project-search-page-size)))
+                              (if (= value :next) 1 -1))))
+            request-id (str (java.util.UUID/randomUUID))]
+
+        (when (seq (:matches search))
+          (state/dispatch [:project-search-page request-id offset])
+          (vis/worker-future "tui-project-search-page"
+                             #(fetch-project-search-page! request-id (:matches search) offset))))
+
+      :updates
+      (let [db @state/app-db
+            [page groups] (get-in db [:project-sidebar :pages value :incoming])]
+
+        (when page
+          (state/dispatch [:project-updates-accepted value
+                           (page-focus-index db value page groups)])))
+
       :menu
       (menu! value)
 
       :select
       (do (state/dispatch [:project-sidebar {:adding nil}]) (select! value))
+
+      :toggle-project
+      (when-let [project (some #(when (= value (str (get % "id"))) %)
+                               (get-in @state/app-db [:project-sidebar :items]))]
+        (select! project))
+
+      :toggle-group
+      (let [sidebar (:project-sidebar @state/app-db)
+            path [:group-folds value]
+            folded (get-in sidebar path #{})]
+
+        (state/dispatch [:project-sidebar
+                         {:group-folds
+                          (assoc (:group-folds sidebar)
+                            value ((if (contains? folded detail) disj conj) folded detail))}]))
+
+      :toggle-sessions
+      (let [sidebar (:project-sidebar @state/app-db)]
+        (state/dispatch [:project-sidebar
+                         {:sessions-folded? (update (:sessions-folded? sidebar) value not)}]))
+
+      :page
+      (do (state/dispatch [:project-page-turn value detail]) (load-project-page! value))
+
+      :group-page
+      (do (state/dispatch [:project-group-turn value detail]) (load-project-page! value))
+
+      :details
+      (when-let [entry (some #(when (= value (str (get-in % [:session "id"]))) %)
+                             (projects/sidebar-entries @state/app-db))]
+        (menu! (assoc entry :show-details? true)))
 
       :session
       (let [before (:active-tab-id @state/app-db)]
@@ -5917,7 +6482,9 @@
         (state/dispatch [:project-sidebar
                          {:opening nil :request-id nil :focused? false :adding nil}])
         (state/dispatch [:select-tab-by-session value])
-        (when-not (= before (:active-tab-id @state/app-db)) (refresh! false)))
+        (if (= before (:active-tab-id @state/app-db))
+          (when open-session! (open-session! value))
+          (refresh! false)))
 
       :add
       ;; Adding happens IN the rail: `+` opens its own field on the row under the
@@ -5930,7 +6497,14 @@
       (store-add-field! value)
 
       :add-commit
-      (do (state/dispatch [:project-sidebar {:adding nil}]) (add! value))
+      (when-not (get-in @state/app-db [:project-sidebar :saving?])
+        (state/dispatch [:project-sidebar {:adding nil}])
+        (add! value))
+
+      :add-folder
+      (when (and new-folder! (not (get-in @state/app-db [:project-sidebar :saving?])))
+        (when-let [field (get-in @state/app-db [:project-sidebar :adding])]
+          (new-folder! field)))
 
       :refresh
       (refresh-projects!)
@@ -6240,6 +6814,9 @@
            workspace-refresh-thread
            (volatile! nil)
 
+           project-refresh-cleanup
+           (volatile! nil)
+
            agent-team-cleanup
            (volatile! nil)
 
@@ -6400,6 +6977,7 @@
                         ;; the same strict AFTER-FIRST-FRAME boundary.
                         (vreset! provider-limits-thread (start-provider-limits-thread!))
                         (vreset! workspace-refresh-thread (start-workspace-refresh-thread!))
+                        (vreset! project-refresh-cleanup (start-projects-refresh!))
                         (vreset! agent-team-cleanup
                                  (agent-team/start-refresh! #(get-in @state/app-db [:session :id])
                                                             #(state/dispatch [:bump-render-version
@@ -6486,20 +7064,6 @@
                    (let [sid (str id)]
                      (when-not (get @session-live-listeners sid)
                        (vswap! session-live-listeners assoc sid (subscribe-session-live! id)))))
-                 ;; Pre-allocate NAME-ONLY member tabs AND wire each one's PERSISTENT
-                 ;; event subscription up front. A pending tab that is never focused
-                 ;; this session otherwise has NO subscription until first focus
-                 ;; (hydrate-pending-tab! -> open-session-tab! -> ensure-session-live!),
-                 ;; so a turn started from a SIBLING (the app / another TUI) on that
-                 ;; session never reaches its idle tab ("not subscribed, turn not live").
-                 ;; ensure-session-live! is idempotent and the mux shares one socket,
-                 ;; so subscribing every launch-project member here is cheap.
-                 preallocate-project-tabs! (fn [specs]
-                                             (when (seq specs)
-                                               (state/dispatch [:preallocate-project-tabs specs])
-                                               (doseq [{:keys [session-id]} specs]
-                                                 (when session-id
-                                                   (ensure-session-live! session-id)))))
                  open-session-tab!
                  (fn [{:keys [id history] :as session-result} notify? & [background?]]
                    (when (and id session-result)
@@ -6861,38 +7425,6 @@
                          (if (:reset? choice)
                            (state/dispatch [:set-model nil nil])
                            (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
-                 ;; Show the launch PROJECT's OTHER member sessions as NAME-ONLY
-                 ;; tabs immediately (the startup tab already resumed one). A
-                 ;; project IS a tab set: every member's tab appears in the strip
-                 ;; up front — title only, NO transcript fetch, NO focus change —
-                 ;; and its transcript hydrates lazily on first focus (see
-                 ;; hydrate-pending-tab!). One list-sessions scan, zero resumes.
-                 restore-project-tabs!
-                 (fn restore-project-tabs! []
-                   (when-let [pid (ensure-launch-project-id!)]
-                     (vis/worker-future
-                       "tui-restore-project-tabs"
-                       (fn []
-                         (try (let [root (launch-root)
-                                    specs (mapv (fn [s]
-                                                  (let [title (str (get s "title"))]
-                                                    {:session-id (str (get s "id"))
-                                                     :label (when-not (str/blank? title) title)
-                                                     :project-id pid
-                                                     :root root}))
-                                                (project-member-sessions pid))]
-
-                                (when (seq specs)
-                                  (preallocate-project-tabs! specs)
-                                  ;; The eagerly-resumed startup tab was minted BEFORE
-                                  ;; the member list was known, so it sits at the head
-                                  ;; of the strip whatever its stored slot. Re-seat the
-                                  ;; member tabs into `project_position` order, THEN
-                                  ;; persist — the persisted order is the restored
-                                  ;; order, so a relaunch is a fixed point.
-                                  (state/dispatch [:order-project-tabs (mapv :session-id specs)])
-                                  (persist-tabs!)))
-                              (catch Throwable _ nil))))))
                  rearm-startup! (fn []
                                   ;; A provider may have appeared since the last attempt, so reload the
                                   ;; config the worker reads before arming the same deferred startup.
@@ -6936,9 +7468,7 @@
                              (vreset! gateway-slash-load (start-deferred-gateway-slash-load! id))
                              (start-deferred-improve-settings-load!)
                              (when (and (:resume opts) (not (:dialog-open? @state/app-db)))
-                               (show-sessions!))
-                             (when-not (or (:session-id opts) (:resume opts))
-                               (restore-project-tabs!)))
+                               (show-sessions!)))
                            (and error (vis-config/no-provider-ex error))
                            (if (compare-and-set! startup-retried? false true)
                              (do
@@ -6969,38 +7499,38 @@
                        ;; fresh one so the bind has a home instead of an orphan session.
                        (state/dispatch [:open-building-tab startup-build-id]))
                      (rearm-startup!)))
-                 select-project!
-                 (fn [project]
-                   (request-project!
-                     project
-                     (fn [specs]
-                       (let [pid (str (get project "id"))
-                             build-id (str (java.util.UUID/randomUUID))]
-
-                         (state/dispatch [:select-project pid specs build-id])
-                         (doseq [{:keys [session-id]} specs]
-                           (ensure-session-live! session-id))
-                         (when (some #(= build-id (:build-id %)) (:tabs @state/app-db))
-                           (start-new-session! (:config @state/app-db)
-                                               nil
-                                               {:build-id build-id
-                                                :root (get project "workspace_root")}))
-                         (persist-tabs!)))))
+                 select-project! #(request-project! % nil)
                  add-project! #(add-project! % select-project!)
                  switch-project! toggle-project-sidebar!
-                 sidebar-key! #(project-sidebar-key! %
-                                                     select-project!
-                                                     add-project!
-                                                     refresh-active-tab!
-                                                     (fn [entry]
-                                                       (sidebar-row-menu!
-                                                         screen
-                                                         entry
-                                                         (fn [gid root]
-                                                           (start-new-session!
-                                                             (:config @state/app-db)
-                                                             nil
-                                                             {:root root :group-id gid})))))]
+                 sidebar-key! #(project-sidebar-key!
+                                 %
+                                 select-project!
+                                 add-project!
+                                 refresh-active-tab!
+                                 (fn [entry]
+                                   (sidebar-row-menu!
+                                     screen
+                                     entry
+                                     (fn [gid root]
+                                       (start-new-session! (:config @state/app-db)
+                                                           nil
+                                                           {:root root :group-id gid}))
+                                     (fn [project]
+                                       (choose-project!
+                                         project
+                                         (fn [sid]
+                                           (switch-session! {:action :switch :id sid}))
+                                         (fn [root build-id]
+                                           (start-new-session! (:config @state/app-db)
+                                                               nil
+                                                               {:root root :build-id build-id}))))))
+                                 (fn [sid]
+                                   (vis/worker-future "tui-open-saved-session"
+                                                      (fn []
+                                                        (switch-session! {:action :switch
+                                                                          :id sid}))))
+                                 (fn [field]
+                                   (create-project-folder! screen field add-project!)))]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.
@@ -7315,10 +7845,6 @@
                                      :header-search
                                      (state/dispatch [:search-open])
 
-                                     :header-new-session
-                                     (do (state/dispatch [:reset-input])
-                                         (switch-session! {:action :new}))
-
                                      :footer-model
                                      (show-model-picker!)
 
@@ -7626,10 +8152,6 @@
                                  :header-search
                                  (state/dispatch [:search-open])
 
-                                 :header-new-session
-                                 (do (state/dispatch [:reset-input])
-                                     (switch-session! {:action :new}))
-
                                  :footer-model
                                  (show-model-picker!)
 
@@ -7639,15 +8161,6 @@
 
                                  :switch-session
                                  (switch-session! {:action :switch :id (:text hit)})
-
-                                 :workspace-entry
-                                 (activate-tab-entry-hit! refresh-active-tab! hit)
-
-                                 :close-tab
-                                 (close-tab-with-prompt! screen
-                                                         refresh-active-tab!
-                                                         persist-tabs!
-                                                         (:workspace-id hit))
 
                                  ;; new expanded = current collapsed (flip).
                                  :toggle-details
@@ -7792,10 +8305,6 @@
                                  :header-search
                                  (state/dispatch [:search-open])
 
-                                 :header-new-session
-                                 (do (state/dispatch [:reset-input])
-                                     (switch-session! {:action :new}))
-
                                  :footer-model
                                  (show-model-picker!)
 
@@ -7826,15 +8335,6 @@
 
                                  :switch-session
                                  (switch-session! {:action :switch :id (:text hit)})
-
-                                 :workspace-entry
-                                 (activate-tab-entry-hit! refresh-active-tab! hit)
-
-                                 :close-tab
-                                 (close-tab-with-prompt! screen
-                                                         refresh-active-tab!
-                                                         persist-tabs!
-                                                         (:workspace-id hit))
 
                                  :toggle-details
                                  (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
@@ -8043,7 +8543,7 @@
                    (do (activate-detail-label! screen db key) (recur))
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
-                         {:keys [action state workspace-index character]}
+                         {:keys [action state character]}
                          (if escaped-char
                            {:action :escaped-typing :state (:input db) :character escaped-char}
                            (resolve-prefix! screen db (input/handle-key key (:input db))))]
@@ -8191,12 +8691,6 @@
                                                       (interactions/assign-labels
                                                         (.current interactions/hit-map))])
 
-                                     :close-tab
-                                     (close-tab-with-prompt! screen
-                                                             refresh-active-tab!
-                                                             persist-tabs!
-                                                             nil)
-
                                      :toggle-voice-recording
                                      (try (voice-input/toggle-recording! {:app-db state/app-db})
                                           (catch Throwable t
@@ -8319,38 +8813,8 @@
                                  (run-command! cmd)))
                              (recur))
 
-                         :select-tab-index
-                         (do (let [tabs (vis-header/project-tabs @state/app-db)
-                                   n (count tabs)
-                                   before (:active-tab-id @state/app-db)]
-
-                               ;; A numeric jump (C-x N / M-N) to a workspace that
-                               ;; isn't open: surface it as a TUI notice instead of
-                               ;; silently swallowing the keystroke. :next/:prev and
-                               ;; in-range indexes fall through to the normal switch.
-                               (if (and (integer? workspace-index)
-                                        (or (neg? (long workspace-index))
-                                            (>= (long workspace-index) (long n))))
-                                 (vis/notify! (str "No workspace "
-                                                   (inc (long workspace-index))
-                                                   " — only "
-                                                   n
-                                                   (if (= 1 n) " tab open" " tabs open"))
-                                              :level :warn
-                                              :ttl-ms 3000)
-                                 (do (state/dispatch [:select-tab-index workspace-index])
-                                     (when-not (= before (:active-tab-id @state/app-db))
-                                       (refresh-active-tab! false)))))
-                             (recur))
-
-                         :close-tab
-                         (do (close-tab-with-prompt! screen refresh-active-tab! persist-tabs! nil)
-                             (recur))
-
                          :new-session
-                         ;; Ctrl+N — start a fresh session in a new tab (same
-                         ;; path as the Ctrl+P palette "New Session" and the
-                         ;; header `+` button). Reset the draft first so the
+                         ;; Start a fresh session with a clean composer draft.
                          ;; new session opens on a clean buffer.
                          (do (when-not (:dialog-open? @state/app-db)
                                (state/dispatch [:reset-input])
@@ -8617,6 +9081,8 @@
              ;; no-op when shutdown? was already true) finish before we
              ;; tear down the screen.
              (state/dispatch [:shutdown])
+             (when-let [cleanup @project-refresh-cleanup]
+               (try (cleanup) (catch Throwable _ nil)))
              (when-let [cleanup @agent-team-cleanup]
                (cleanup))
              (when-let [task @startup-task]

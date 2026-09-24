@@ -281,357 +281,51 @@
                 write-by-text (fn [text]
                                 (some #(when (= text (:text %)) %) @writes))]
 
-            ;; A single session now renders as an active tab (its label carries
-            ;; the active-tab fg), while the copy badge keeps its own hover fg.
+            ;; The title stays legible while the copy badge keeps its own hover fg.
             (expect (= t/header-active-tab-fg (:fg title-write)))
             ;; Badge is a copy BUTTON (` #123e4567 `); hovering fills the chip
             ;; with the shared accent while preserving its inverse foreground.
             (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 "))))
             (expect (= t/header-active-tab-accent (:bg (write-by-text " #123e4567 ")))))))))
 
-;; Regression, user report: Tokyo Night painted the new-session plus in pale blue on
-;; its bright green cap, leaving the meaningful glyph at 1.25:1 contrast.
-(defdescribe new-session-plus-contrast-test
-             (it "uses the cap's contrast ink in Tokyo Night"
-                 (try (t/apply-theme! :tokyonight-night)
-                      (.reset interactions/hit-map)
-                      (let [writes
-                            (atom [])
-
-                            db
-                            {:title "Chat"
-                             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                             :active-tab-id :one
-                             :tabs [{:id :one :label "application-request"}]}]
-
-                        (.beginFrame interactions/hit-map)
-                        (header/draw-header! (dummy-text-graphics writes) db 0 160)
-                        (.commitFrame interactions/hit-map)
-                        (let [plus (some #(when (= " + " (:text %)) %) @writes)]
-                          (expect (some? plus))
-                          (expect (= (t/contrast-ink t/code-success-fg) (:fg plus)))
-                          (expect (= t/code-success-fg (:bg plus)))))
-                      (finally (t/apply-theme! nil)))))
-
-;; Regression, task td-b200ee: equal-width cells left large empty pads around a
-;; one-character title while truncating the longer neighbouring title.
+;; Regression: removing the numbered strip must leave only the active session title,
+;; even when other sessions remain live in the local state.
 (defdescribe
-  adaptive-tab-width-grid-test
-  (it
-    "uses spare columns for the labels that need them at narrow and wide widths"
-    (let [tabs
-          [{:id :short :label "A"} {:id :long :label "A substantially longer workspace"}]
-
-          db
-          {:title "Chat"
-           :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-           :active-tab-id :short
-           :tabs tabs}
-
-          narrow
-          (paint-header-grid 100 db)
-
-          wide
-          (paint-header-grid 220 db)
-
-          switched
-          (paint-header-grid 220 (assoc db :active-tab-id :long))
-
-          widths
-          #(mapv (comp :width :bounds) (:tabs %))]
-
-      ;; Real back-buffer rows keep both labels and both selectable cells at 100 cols.
-      (expect (str/includes? (:row narrow) "1 | A"))
-      (expect (= 2 (count (:tabs narrow))))
-      (expect (every? pos? (widths narrow)))
-      ;; The long title receives the otherwise wasted cells at both representative sizes.
-      (expect (> (second (widths narrow)) (first (widths narrow))))
-      (expect (> (second (widths wide)) (first (widths wide))))
-      (expect (str/includes? (:row wide) "A substantially longer workspace"))
-      ;; Selection changes paint only; geometry remains stable.
-      (expect (= (mapv :bounds (:tabs wide)) (mapv :bounds (:tabs switched))))))
-  (it "keeps adjacent cells separated by one painted grid column"
-      (let [{:keys [characters tabs]}
-            (paint-header-grid 100
-                               {:title "Chat"
-                                :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                                :active-tab-id :short
-                                :tabs [{:id :short :label "A"}
-                                       {:id :long :label "Long workspace"}]})
-
-            [first-tab second-tab]
-            tabs
-
-            first-col
-            (get-in first-tab [:bounds :col])
-
-            divider
-            (+ first-col (get-in first-tab [:bounds :width]))
-
-            second-col
-            (get-in second-tab [:bounds :col])]
-
-        (expect (= (inc divider) second-col))
-        ;; The divider is a terminal-paper column between two differently painted cells.
-        (expect (= t/header-active-tab-bg (.getBackgroundColor (nth characters first-col))))
-        (expect (= t/terminal-bg (.getBackgroundColor (nth characters divider))))
-        (expect (= t/dialog-bg (.getBackgroundColor (nth characters second-col)))))))
-
-(defdescribe
-  draw-header-tab-entries-test
-  (it
-    "shows clickable arrows when workspaces overflow the 60 percent center slot"
-    (.reset interactions/hit-map)
-    (let [writes
-          (atom [])
-
-          g
-          (dummy-text-graphics writes)
-
-          tabs
-          (mapv (fn [i]
-                  {:id (keyword (str "tab-" i)) :label (str "Tab " i)})
-                (range 1 9))
-
-          db
-          {:title "Chat"
-           :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-           :active-tab-id :tab-5
-           :tabs tabs}]
-
-      (.beginFrame interactions/hit-map)
-      (header/draw-header! g db 0 160)
-      (.commitFrame interactions/hit-map)
-      (let [left-arrow
-            (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %)
-                  (.current interactions/hit-map))
-
-            right-arrow
-            (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %)
-                  (.current interactions/hit-map))
-
-            active-hit
-            (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %)
-                  (.current interactions/hit-map))]
-
-        ;; The tab strip is shifted right by 4 cols — the leftmost ` + ` new-session
-        ;; button (3 cols) plus a 1-col gap — so the prev arrow moved 51→55. The
-        ;; right arrow is unchanged: `+` shrinks the window's width by the same 4 it
-        ;; pushed the left edge, so `left+width` (the right arrow's
-        ;; anchor) is invariant.
-        (expect (= {:row 1 :col 55 :width 3} (:bounds left-arrow)))
-        (expect (= {:row 1 :col 106 :width 3} (:bounds right-arrow)))
-        (expect (some? active-hit))
-        (expect (= left-arrow (.lookup interactions/hit-map 55 1)))
-        ;; col 51 is now the ` + ` new-session button, ahead of the tab strip.
-        (expect (= :header-new-session (:kind (.lookup interactions/hit-map 51 1))))
-        ;; The right nav arrow sits at the centre's right edge, which the
-        ;; right-aligned F1/F2/F3 chip cluster paints over - so it is
-        ;; registered + correctly bounded but not the topmost click target.
-        (expect (some? right-arrow)))))
-  (it
-    "pads workspace labels with breathing room inside each cell"
-    ;; The 62-col centre slot reserves 4 cols at the left for the ` + `
-    ;; new-session button (3) + a 1-col gap, leaving 58 for the tabs. With 3
-    ;; workspaces and 2 dividers that's 56 shared → cells of 19/19/18. The first
-    ;; cell is 19 wide.
-    ;; tab-entry-padding=1 reserves a space on each side, so the rendered text
-    ;; starts and ends with a space even when the label is short.
-    (.reset interactions/hit-map)
-    (let [writes
-          (atom [])
-
-          g
-          (dummy-text-graphics writes)
-
-          db
-          {:title "Chat"
-           :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-           :active-tab-id :main
-           :tabs [{:id :main :label "Main"} {:id :two :label "Two"} {:id :three :label "Three"}]}]
-
-      (.beginFrame interactions/hit-map)
-      (header/draw-header! g db 0 166)
-      (.commitFrame interactions/hit-map)
-      (let [tab-writes
-            (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)
-
-            main-write
-            (some #(when (str/includes? (:text %) "Main") %) tab-writes)]
-
-        (expect (some? main-write))
-        ;; First and last visible cells must keep at least one padding cell.
-        (expect (str/starts-with? (:text main-write) " "))
-        (expect (str/ends-with? (:text main-write) " "))
-        ;; Each cell now reserves `components/close-button-width` (3) cells on
-        ;; the right for the always-visible ✕ close button (` ✕ `, no divider),
-        ;; so the first cell (19 cols wide) paints its label over 19-3 = 16 cols
-        ;; and a separate " ✕ " write covers the rest.
-        (expect (= 16 (p/display-width (:text main-write))))
-        (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
-  (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            db
-            {:title "Solo"
+  single-session-title-test
+  (it "centers one title and registers no tab targets on a wide terminal"
+      (let [db
+            {:title "Current conversation"
              :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :main
-             :tabs [{:id :main :label "Main"}]}]
+             :active-tab-id :current
+             :tabs [{:id :other :label "Other conversation"}
+                    {:id :current :label "Outdated label"}]}
 
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 80)
-        (.commitFrame interactions/hit-map)
-        (let [tab-writes (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)]
-          (expect (not-any? #(str/includes? (str (:text %)) "✕") tab-writes))
-          (expect (empty? (filter #(= :close-tab (:kind %)) (.current interactions/hit-map)))))))
-  (it "truncates oversized workspace labels with an ellipsis instead of a hard cut"
-      ;; Five long-labelled workspaces in a 48-col centre slot → cell width 9 (or 10
-      ;; for the first three with the +1 remainder). After 2-col padding the
-      ;; inner area is < label width, so truncation kicks in with the
-      ;; ellipsis glyph.
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
+            {:keys [row tabs]}
+            (paint-header-grid 160 db)
 
-            g
-            (dummy-text-graphics writes)
+            {:keys [center-x center-w]}
+            (vh/slot-layout 160)
 
-            db
-            {:title "Chat"
-             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :one
-             :tabs (mapv (fn [i]
-                           {:id (keyword (str "t-" i)) :label (str "LongTabLabel" i)})
-                         (range 5))}]
+            start
+            (.indexOf ^String row "Current conversation")]
 
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 160)
-        (.commitFrame interactions/hit-map)
-        (let [tab-writes
-              (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)
-
-              ellipsised
-              (some #(when (str/includes? (:text %) "…") %) tab-writes)]
-
-          (expect (some? ellipsised)))))
-  (it "clamps visible workspace count to at most 8 even when the centre slot is huge"
-      ;; cols=400 → centre slot ≈ 240. Without a cap fluid layout would show
-      ;; all 12 workspaces; the policy caps the visible window at 8 and the rest
-      ;; reach via the prev/next arrows.
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            tabs
-            (mapv (fn [i]
-                    {:id (keyword (str "big-" i)) :label (str "Big " i)})
-                  (range 12))
-
-            db
-            {:title "Chat"
-             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :big-0
-             :tabs tabs}]
-
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 400)
-        (.commitFrame interactions/hit-map)
-        (let [tab-hits-by-id
-              (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %)))
-                      (.current interactions/hit-map))
-
-              has-arrows?
-              (boolean (and (some #(= :prev (:index %)) (.current interactions/hit-map))
-                            (some #(= :next (:index %)) (.current interactions/hit-map))))]
-
-          (expect (= 8 (count tab-hits-by-id)))
-          (expect has-arrows?))))
-  (it "keeps the natural-fit count when the slot is too narrow for the min cap"
-      ;; cols=150 -> centre slot 54, natural fit = quot(54,14) = 3 < min=5,
-      ;; so we degrade to the natural fit instead of squeezing five
-      ;; unreadable workspaces into 54 cols.
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            tabs
-            (mapv (fn [i]
-                    {:id (keyword (str "narrow-" i)) :label (str "N" i)})
-                  (range 8))
-
-            db
-            {:title "Chat"
-             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :narrow-0
-             :tabs tabs}]
-
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 150)
-        (.commitFrame interactions/hit-map)
-        (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %)))
-                                     (.current interactions/hit-map))]
-          (expect (= 3 (count tab-hits-by-id)))))))
-
-(defdescribe
-  tab-input-needed-test
-  "A tab whose run is PARKED on an unanswered human-input request. Every other
-   cue in the strip is about work the machine is doing — `:running` says wait,
-   `:ready` says read it when you like — so a session standing on the operator
-   painted exactly like one getting on with the job, and it stood there until
-   somebody happened to open that tab."
-  (it "paints a parked background tab's label in the warning colour"
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            db
-            {:title "Chat"
-             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :tab-1
-             :tabs [{:id :tab-1 :label "Front"} {:id :tab-2 :label "Parked"}]
-             ;; A background tab's open form lives in its own `:tab-locals` half —
-             ;; the same place its `:loading?` waits out a turn.
-             :tab-locals {:tab-2 {:human-input {:request {"id" "req-1"}}}}}
-
-            write-with
-            (fn [needle]
-              (some #(when (str/includes? (str (:text %)) needle) %) @writes))]
-
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 160)
-        (.commitFrame interactions/hit-map)
-        (expect (= t/warning-fg (:fg (write-with "Parked"))))
-        (expect (not= t/warning-fg (:fg (write-with "Front"))))))
-  (it "leaves the strip alone when no tab is waiting on anybody"
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            db
-            {:title "Chat"
-             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-             :active-tab-id :tab-1
-             :tabs [{:id :tab-1 :label "Front"} {:id :tab-2 :label "Quiet"}]}]
-
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 160)
-        (.commitFrame interactions/hit-map)
-        (expect (not= t/warning-fg
-                      (:fg (some #(when (str/includes? (str (:text %)) "Quiet") %) @writes)))))))
+        (expect (= (+ center-x (quot (- center-w (count "Current conversation")) 2)) start))
+        (expect (not (str/includes? row "Other conversation")))
+        (expect (not (str/includes? row "Outdated label")))
+        (expect (not (str/includes? row " + ")))
+        (expect (empty? tabs))
+        (expect (not-any? #(#{:workspace-entry :close-tab} (:kind %))
+                          (.current interactions/hit-map)))))
+  (it "ellipsizes the active title without showing other session names at narrow widths"
+      (let [row (:row (paint-header-grid 80
+                                         {:title "A current conversation with a very long title"
+                                          :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+                                          :tabs [{:id :other :label "Other conversation"}]}))]
+        (expect (str/includes? row "A current conversation"))
+        (expect (str/includes? row "…"))
+        (expect (not (str/includes? row "Other conversation")))))
+  (it "uses the shared untitled fallback"
+      (expect (str/includes? (:row (paint-header-grid
+                                     160
+                                     {:session {:id "123e4567-e89b-12d3-a456-426614174000"}}))
+                             vh/untitled-session-label))))

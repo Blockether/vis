@@ -253,50 +253,30 @@
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))
         (expect (not= :cycle-reasoning
                       (:action (input/handle-key (ctrl-key (Character. \r)) state))))))
-  (it
-    "Tab/Shift+Tab and C-x arrows switch workspaces; bare Ctrl+arrows are word motion"
-    (let [state (-> (input/empty-input)
-                    (input/paste-text "keep"))]
-      ;; Plain Tab cycles forward, Shift+Tab (both decodings) backward.
-      (expect (= {:action :select-tab-index :workspace-index :next :state state}
-                 (input/handle-key (special-key KeyType/Tab) state)))
-      (expect (= {:action :select-tab-index :workspace-index :prev :state state}
-                 (input/handle-key (special-key KeyType/ReverseTab) state)))
-      (expect (= {:action :select-tab-index :workspace-index :prev :state state}
-                 (input/handle-key (KeyStroke. KeyType/Tab false false true) state)))
-      ;; C-x ←/→ are the Emacs prev/next-buffer way to switch workspaces.
-      (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) state))]
-        (expect (= {:action :select-tab-index :workspace-index :prev :state state}
-                   (input/handle-key (special-key KeyType/ArrowLeft) armed)))
-        (expect (= {:action :select-tab-index :workspace-index :next :state state}
-                   (input/handle-key (special-key KeyType/ArrowRight) armed))))
-      ;; C-x <digit> jumps straight to workspace N (C-x 1 … C-x 9) — the SAME
-      ;; :select-tab-index the M-N chords fire (1-based on screen, 0-based
-      ;; index). C-x 0 has no target → the prefix aborts.
-      (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) state))]
-        (expect (= {:action :select-tab-index :workspace-index 0 :state state}
-                   (input/handle-key (char-key (Character. \1)) armed)))
-        (expect (= {:action :select-tab-index :workspace-index 8 :state state}
-                   (input/handle-key (char-key (Character. \9)) armed)))
-        (expect (= :continue (:action (input/handle-key (char-key (Character. \0)) armed)))))
-      ;; BARE Ctrl+arrow is word motion now (NOT a workspace switch).
-      (expect (= :continue (:action (input/handle-key (ctrl-special-key KeyType/ArrowLeft) state))))
-      (expect (= :continue
-                 (:action (input/handle-key (ctrl-special-key KeyType/ArrowRight) state))))
-      (expect (= {:action :continue :state state}
-                 (input/handle-key (ctrl-key (Character. \1)) state)))
-      (expect (= {:action :continue :state state}
-                 (input/handle-key (ctrl-key (Character. \9)) state)))
-      ;; Alt+<digit> (M-1 … M-9) jumps straight to workspace N (1-based
-      ;; on screen, 0-based index). Alt+0 has no target → ignored.
-      (expect (= {:action :select-tab-index :workspace-index 0 :state state}
-                 (input/handle-key (alt-key (Character. \1)) state)))
-      (expect (= {:action :select-tab-index :workspace-index 2 :state state}
-                 (input/handle-key (alt-key (Character. \3)) state)))
-      (expect (= {:action :select-tab-index :workspace-index 8 :state state}
-                 (input/handle-key (alt-key (Character. \9)) state)))
-      (expect (= {:action :continue :state state}
-                 (input/handle-key (alt-key (Character. \0)) state)))))
+  (it "bare Tab, reverse Tab and indexed chords never change sessions"
+      (let [state
+            (-> (input/empty-input)
+                (input/paste-text "keep"))
+
+            unchanged
+            {:action :continue :state state}
+
+            armed
+            (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+
+        (expect (= unchanged (input/handle-key (special-key KeyType/Tab) state)))
+        (expect (= unchanged (input/handle-key (special-key KeyType/ReverseTab) state)))
+        (expect (= unchanged (input/handle-key (KeyStroke. KeyType/Tab false false true) state)))
+        (expect (= unchanged (input/handle-key (special-key KeyType/ArrowLeft) armed)))
+        (expect (= unchanged (input/handle-key (special-key KeyType/ArrowRight) armed)))
+        (expect (= unchanged (input/handle-key (char-key (Character. \1)) armed)))
+        (expect (= unchanged (input/handle-key (alt-key (Character. \3)) state)))
+        (expect (= :continue
+                   (:action (input/handle-key (ctrl-special-key KeyType/ArrowLeft) state))))
+        (expect (= :continue
+                   (:action (input/handle-key (ctrl-special-key KeyType/ArrowRight) state))))
+        (expect (= {:action :toggle-all-details :state state}
+                   (input/handle-key (special-key KeyType/Tab) armed)))))
   (it "Alt+Left/Right move by whitespace-delimited words"
       ;; Word motion rides Alt+arrow (the xterm modified-arrow sequence, which
       ;; some terminals deliver).

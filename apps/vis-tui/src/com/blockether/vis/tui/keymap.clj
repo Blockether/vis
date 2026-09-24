@@ -124,7 +124,6 @@
    ;; Palette-only — the Session band of the hydra is full, and the project rail
    ;; advertises its own `g` menu.
    {:action :session-group :key \d :label "move to group" :group "Session" :show-when :never}
-   {:action :close-tab :key \k :label "close tab" :group "Session" :show-when :multi-tab}
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}

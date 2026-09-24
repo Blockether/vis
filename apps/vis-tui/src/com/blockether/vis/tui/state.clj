@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.header-model :as vh]
             [com.blockether.vis.tui.chat :as chat]
@@ -2091,6 +2092,51 @@
                             [:cancel-local-turn token]))
                      tokens)})))))
 
+(reg-event-fx
+  :project-removed
+  ;; The gateway has confirmed recursive deletion. Session-deleted already pruned
+  ;; its exact returned IDs; keep any other local views/drafts, but detach them
+  ;; from the removed project so no tab points back into it.
+  (fn [before [_ pid]]
+    (let [db
+          (-> before
+              ensure-tabs
+              sync-active-tab)
+
+          sidebar
+          (:project-sidebar db)
+
+          tabs
+          (mapv (fn [tab]
+                  (if (= pid (:project-id tab)) (assoc tab :project-id nil) tab))
+                (:tabs db))
+
+          fallback
+          (when (= pid (:active-project-id db)) (or (first (filter :project-id tabs)) (first tabs)))
+
+          db
+          (-> db
+              (assoc :tabs tabs)
+              (update :project-active-tabs dissoc pid)
+              (update :launch-project-id #(when (not= pid %) %))
+              (assoc :project-sidebar (-> sidebar
+                                          (update :items
+                                                  #(filterv (fn [project]
+                                                              (not= pid (str (get project "id"))))
+                                                     %))
+                                          (update :expanded disj pid)
+                                          (assoc :index 0)
+                                          (update :pages dissoc pid)
+                                          (update :groups dissoc pid)
+                                          (update :group-total dissoc pid)
+                                          (update :selected dissoc pid)
+                                          (update :session-archived? dissoc pid)
+                                          (update :group-archived? dissoc pid)
+                                          (update :sessions-folded? dissoc pid)
+                                          (update :group-folds dissoc pid))))]
+
+      (if fallback (activate-tab-fx (assoc db :active-project-id nil) (:id fallback)) {:db db}))))
+
 (reg-event-db :set-mouse-selection
               (fn [db [_ selection]]
                 (assoc db :mouse-selection selection)))
@@ -2611,6 +2657,298 @@
 (reg-event-db :project-sidebar
               (fn [db [_ changes]]
                 (update db :project-sidebar merge changes)))
+
+(reg-event-db
+  :project-search-open
+  (fn [db _]
+    (let [sidebar (:project-sidebar db)]
+      (if (:search sidebar)
+        db
+        (assoc db
+          :project-sidebar
+          (assoc sidebar
+            :search
+            {:text "" :cursor 0 :matches [] :rows [] :offset 0 :return-index (:index sidebar)}
+            :index 0
+            :adding nil
+            :focused? true))))))
+
+(reg-event-db :project-search-change
+              (fn [db [_ field request-id]]
+                (-> db
+                    (assoc-in [:project-sidebar :search]
+                              (merge (get-in db [:project-sidebar :search])
+                                     field
+                                     {:request-id request-id
+                                      :matches []
+                                      :rows []
+                                      :offset 0
+                                      :has-more? false
+                                      :loading? (not (str/blank? (:text field)))
+                                      :error nil}))
+                    (assoc-in [:project-sidebar :index] 0))))
+
+(reg-event-db :project-search-loaded
+              (fn [db [_ request-id matches rows offset page-size has-more?]]
+                (if (= request-id (get-in db [:project-sidebar :search :request-id]))
+                  (update-in db
+                             [:project-sidebar :search]
+                             merge
+                             {:matches matches
+                              :rows rows
+                              :offset offset
+                              :page-size page-size
+                              :has-more? has-more?
+                              :loading? false
+                              :error nil})
+                  db)))
+
+(reg-event-db :project-search-failed
+              (fn [db [_ request-id message]]
+                (if (= request-id (get-in db [:project-sidebar :search :request-id]))
+                  (update-in db [:project-sidebar :search] merge {:loading? false :error message})
+                  db)))
+
+(reg-event-db :project-search-page
+              (fn [db [_ request-id offset]]
+                (-> db
+                    (update-in [:project-sidebar :search]
+                               merge
+                               {:request-id request-id :offset offset :loading? true :error nil})
+                    (assoc-in [:project-sidebar :index] 0))))
+
+(reg-event-db :project-search-close
+              (fn [db _]
+                (let [index (get-in db [:project-sidebar :search :return-index])]
+                  (-> db
+                      (assoc-in [:project-sidebar :search] nil)
+                      (assoc-in [:project-sidebar :index] (or index 0))))))
+
+(reg-event-db :project-session-select-toggle
+              (fn [db [_ pid sid]]
+                (update-in db
+                           [:project-sidebar :selected pid]
+                           (fn [selected]
+                             ((if (contains? selected sid) disj conj) (or selected #{}) sid)))))
+
+(reg-event-db :project-sessions-moved
+              (fn [db [_ pid succeeded]]
+                (update-in db [:project-sidebar :selected pid] #(apply disj (or % #{}) succeeded))))
+
+(reg-event-db :project-session-archive-toggle
+              (fn [db [_ pid]]
+                (-> db
+                    (update-in [:project-sidebar :session-archived? pid] not)
+                    ;; Hidden selections must not move sessions from the other archive view.
+                    (assoc-in [:project-sidebar :selected pid] #{})
+                    ;; A cursor belongs to one archive cut. Invalidate the in-flight
+                    ;; request and start the other view at its own first page.
+                    (update-in [:project-sidebar :pages pid]
+                               #(assoc %
+                                  :request-id nil
+                                  :after nil
+                                  :history []
+                                  :sessions []
+                                  :grouped []
+                                  :awaiting []
+                                  :current nil
+                                  :has-more false
+                                  :next-cursor nil
+                                  :error nil)))))
+
+(reg-event-db :project-group-archive-toggle
+              (fn [db [_ pid]]
+                (-> db
+                    (update-in [:project-sidebar :group-archived? pid] not)
+                    ;; Selection and a group page belong to the old archive view.
+                    (assoc-in [:project-sidebar :selected pid] #{})
+                    (assoc-in [:project-sidebar :groups pid] [])
+                    (assoc-in [:project-sidebar :group-total pid] 0)
+                    (update-in [:project-sidebar :pages pid]
+                               #(assoc %
+                                  :request-id nil
+                                  :group-offset 0
+                                  :grouped []
+                                  :error nil)))))
+
+(defn- hold-project-window
+  "Refresh known rows in place, reserving new arrivals and reorders for adoption."
+  [before after]
+  (let [ids
+        (mapv #(str (get % "id")) before)
+
+        incoming
+        (mapv #(str (get % "id")) after)
+
+        rows
+        (into {}
+              (map (fn [row]
+                     [(str (get row "id")) row])
+                   after))
+
+        known
+        (filterv rows ids)
+
+        pending
+        (remove (set ids) incoming)]
+
+    (if (or (nil? before) (and (seq before) (empty? known)))
+      {:rows (vec after) :pending 0}
+      {:rows (mapv rows known) :pending (max (count pending) (if (= ids incoming) 0 1))})))
+
+(reg-event-db
+  :project-page-request
+  (fn [db [_ pid request-id focus-index automatic?]]
+    (cond-> (update-in db
+                       [:project-sidebar :pages pid]
+                       #(cond-> (assoc %
+                                  :error nil
+                                  :request-id request-id) (not automatic?) (assoc :loading? true)))
+      (some? focus-index)
+      (assoc-in [:project-sidebar :index] focus-index))))
+
+(reg-event-db
+  :project-page-loaded
+  (fn [db [_ pid request-id page group-page focus-index automatic?]]
+    (if (= request-id (get-in db [:project-sidebar :pages pid :request-id]))
+      (let [old
+            (get-in db [:project-sidebar :pages pid])
+
+            old-groups
+            (get-in db [:project-sidebar :groups pid])
+
+            loose
+            (if automatic?
+              (hold-project-window (:sessions old) (:sessions page))
+              {:rows (:sessions page) :pending 0})
+
+            grouped
+            (if automatic?
+              (hold-project-window (:grouped old) (:grouped page))
+              {:rows (:grouped page) :pending 0})
+
+            groups
+            (if automatic?
+              (hold-project-window old-groups (:groups group-page))
+              {:rows (:groups group-page) :pending 0})
+
+            pending
+            (+ (long (:pending loose)) (long (:pending grouped)) (long (:pending groups)))
+
+            held?
+            (pos? pending)
+
+            next-page
+            (cond-> (merge old
+                           page
+                           {:sessions (:rows loose)
+                            :grouped (:rows grouped)
+                            :loading? false
+                            :error nil
+                            :pending-count pending
+                            :incoming (when held? [page group-page])})
+              held?
+              (assoc :next-cursor
+                (:next-cursor old) :has-more
+                (:has-more old)))
+
+            changes
+            {:pages (assoc (get-in db [:project-sidebar :pages]) pid next-page)
+             :groups (assoc (get-in db [:project-sidebar :groups]) pid (:rows groups))
+             :group-total (assoc (get-in db [:project-sidebar :group-total])
+                            pid (:total group-page))}
+
+            next-index
+            (if automatic?
+              (when-not (get-in db [:project-sidebar :search]) (projects/focused-index db changes))
+              focus-index)]
+
+        (cond-> (update db :project-sidebar merge changes)
+          (some? next-index)
+          (assoc-in [:project-sidebar :index] next-index)))
+      db)))
+
+(reg-event-db :project-updates-accepted
+              (fn [db [_ pid focus-index]]
+                (if-let [[page group-page] (get-in db [:project-sidebar :pages pid :incoming])]
+                  (cond-> (-> db
+                              (update-in [:project-sidebar :pages pid]
+                                         #(merge % page {:incoming nil :pending-count 0}))
+                              (assoc-in [:project-sidebar :groups pid] (:groups group-page))
+                              (assoc-in [:project-sidebar :group-total pid] (:total group-page)))
+                    (some? focus-index)
+                    (assoc-in [:project-sidebar :index] focus-index))
+                  db)))
+
+(reg-event-db :project-page-failed
+              (fn [db [_ pid request-id focus-index]]
+                (if (= request-id (get-in db [:project-sidebar :pages pid :request-id]))
+                  (cond-> (update-in db
+                                     [:project-sidebar :pages pid]
+                                     assoc
+                                     :loading? false
+                                     :error "Load failed")
+                    (some? focus-index)
+                    (assoc-in [:project-sidebar :index] focus-index))
+                  db)))
+
+(reg-event-db :project-page-turn
+              (fn [db [_ pid direction]]
+                (let [path
+                      [:project-sidebar :pages pid]
+
+                      page
+                      (get-in db path)
+
+                      history
+                      (vec (:history page))]
+
+                  (case direction
+                    :next
+                    (if-let [cursor (:next-cursor page)]
+                      (assoc-in db
+                        path
+                        (assoc page
+                          :history (conj history (:after page))
+                          :after cursor))
+                      db)
+
+                    :previous
+                    (if (seq history)
+                      (assoc-in db
+                        path
+                        (assoc page
+                          :history (pop history)
+                          :after (peek history)))
+                      db)
+
+                    db))))
+
+(reg-event-db :project-group-turn
+              (fn [db [_ pid direction]]
+                (let [path
+                      [:project-sidebar :pages pid :group-offset]
+
+                      offset
+                      (long (or (get-in db path) 0))
+
+                      size
+                      (long (or (get-in db [:project-sidebar :pages pid :group-size]) 20))
+
+                      total
+                      (long (or (get-in db [:project-sidebar :group-total pid]) 0))
+
+                      next-offset
+                      (case direction
+                        :previous
+                        (max 0 (- offset size))
+
+                        :next
+                        (if (< (+ offset size) total) (+ offset size) offset)
+
+                        offset)]
+
+                  (assoc-in db path next-offset))))
 
 (reg-event-fx :select-project
               ;; Switching is ONLY a view change: no close, cancel, release or queue effects.

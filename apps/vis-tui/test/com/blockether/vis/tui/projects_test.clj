@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
@@ -182,9 +183,6 @@
   (let [workers
         (atom [])
 
-        opened
-        (atom [])
-
         requests
         (atom [])]
 
@@ -195,22 +193,32 @@
                   (fn [_ f]
                     (swap! workers conj f))
 
-                  vis/gateway-list-sessions
+                  vis/gateway-list-session-groups-page
                   (fn [opts]
-                    (swap! requests conj opts)
-                    [{"id" "late" "project_position" 1} {"id" "first" "project_position" 0}])]
+                    (swap! requests conj [:groups opts])
+                    {:groups [] :total 0})
 
-      (#'screen/request-project! {"id" "c" "workspace_root" "/work/c"} #(swap! opened conj %))
-      (is (empty? @requests) "The input thread does not fetch sessions")
+                  vis/gateway-list-sessions-page
+                  (fn [opts]
+                    (swap! requests conj [:sessions opts])
+                    (if (:ids opts)
+                      {:sessions [{"id" "a1" "title" "Current"}]}
+                      {:sessions [{"id" "saved-outside-tui" "title" "Saved"}]
+                       :total 40
+                       :has-more true
+                       :next-cursor "next"}))]
+
+      (#'screen/request-project! project-a nil)
+      (is (empty? @requests) "No gateway I/O or local view creation on input")
       ((first @workers))
-      (is (= [{:project-id "c"}] @requests))
-      (is (= ["first" "late"] (mapv :session-id (first @opened))))
-      (is (every? #(= "/work/c" (:root %)) (first @opened)))
-      (reset! opened [])
-      (#'screen/request-project! {"id" "d"} #(swap! opened conj %))
-      (#'screen/request-project! project-a #(swap! opened conj %))
-      ((last @workers))
-      (is (= [[]] @opened) "Late results cannot override a cached project choice"))))
+      (is (= [:groups :sessions :sessions] (mapv first @requests)))
+      (is (= :aside (get-in @requests [1 1 :grouped])))
+      (is (<= (get-in @requests [1 1 :limit]) 30))
+      (is (= ["a1"] (get-in @requests [2 1 :ids])))
+      (is (= "a1" (get-in @state/app-db [:project-sidebar :pages "a" :current "id"])))
+      (is (= "saved-outside-tui"
+             (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "id"])))
+      (is (= 3 (count (:tabs @state/app-db))) "Pages must not allocate open views"))))
 
 (deftest project-errors-and-add-test
   (with-redefs [state/app-db
@@ -220,7 +228,7 @@
                 (fn [_ f]
                   (f))
 
-                vis/gateway-list-sessions
+                vis/gateway-list-session-groups-page
                 (fn [_]
                   (throw (ex-info "offline" {})))
 
@@ -233,7 +241,7 @@
      (fn [_]
        (throw (ex-info "Must not open" {}))))
     (is (= "a" (:active-project-id @state/app-db)))
-    (is (str/includes? (get-in @state/app-db [:project-sidebar :error]) "Open failed"))
+    (is (str/includes? (get-in @state/app-db [:project-sidebar :pages "c" :error]) "Load failed"))
     (#'screen/refresh-projects!)
     (is (= [project-a project-b] (get-in @state/app-db [:project-sidebar :items])))
     (is (false? (get-in @state/app-db [:project-sidebar :loading?]))))
@@ -255,6 +263,7 @@
                 (fn [_])
                 (fn [path]
                   (#'screen/add-project! path select!))
+                (fn [_])
                 (fn [_])
                 (fn [_])))]
          ;; Adding a project is a rail action, not a dialog: `+` opens the field in
@@ -538,6 +547,7 @@
                (fn [_])
                #(swap! added conj %)
                (fn [_])
+               (fn [_])
                (fn [_])))
 
             field
@@ -736,21 +746,23 @@
             menu! (fn [_]
                     (throw (ex-info "Wrong menu action" {})))]
 
-        (is (true?
-              (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add! refresh! menu!)))
-        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu!)
+        (is
+          (true?
+            (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add! refresh! menu! nil)))
+        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu! nil)
         (is (= "b" (:active-project-id @state/app-db)))
         (is (= "background-turn" (:gateway-turn-id @state/app-db)))
-        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh! menu!)
+        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh! menu! nil)
         (is (= {:text "" :cursor 0}
                (select-keys (get-in @state/app-db [:project-sidebar :adding]) [:text :cursor])))
-        (#'screen/project-sidebar-key! (cap/key-stroke \/) select! add! refresh! menu!)
-        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu!)
+        (#'screen/project-sidebar-key! (cap/key-stroke \/) select! add! refresh! menu! nil)
+        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh! menu! nil)
         (is (= ["/"] @added))
         (is (nil? (get-in @state/app-db [:project-sidebar :adding])))
-        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh! menu!)
+        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh! menu! nil)
         (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
-        (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh! menu!)))
+        (is (nil?
+              (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh! menu! nil)))
         (let [capture (cap/capture! {:keys [\w]
                                      :paint! (fn [{:keys [screen]}]
                                                (#'screen/resolve-prefix!
@@ -830,7 +842,7 @@
                      :paint!
                      (fn [{:keys [screen]}]
                        (#'screen/render-frame! screen 144 24 (fixture-db) 1000)
-                       (let [hit (first (filter #(= :workspace-entry (:kind %))
+                       (let [hit (first (filter #(>= (long (get-in % [:bounds :col] 0)) 48)
                                                 (.current interactions/hit-map)))
                              {:keys [col row]} (:bounds hit)
                              mouse (MouseAction. MouseActionType/CLICK_DOWN
@@ -970,20 +982,11 @@
 
 (deftest project-input-grid-and-navigation-test
   (doseq [pointer? [true false]]
-    (let [refreshes (atom [])
-          workers (atom [])
-          opened (atom false)]
-
+    (let [refreshes (atom [])]
       (with-redefs [state/app-db (atom (assoc (attention-fixture-db)
                                          :project-active-tabs {"b" :tab-4}))
-                    vis/worker-future (fn [_ f]
-                                        (swap! workers conj f))
-                    vis/gateway-list-sessions (constantly [])]
+                    timg/images-protocol (constantly nil)]
 
-        (#'screen/request-project!
-         {"id" "uncached"}
-         (fn [_]
-           (reset! opened true)))
         (state/dispatch [:project-sidebar {:focused? true :index 2}])
         (let [background (get-in @state/app-db [:tab-locals :tab-4])
               capture (cap/capture!
@@ -1004,7 +1007,9 @@
                          (fn [notify?]
                            (swap! refreshes conj notify?))
                          (fn [_]
-                           (throw (ex-info "Wrong menu action" {}))))]
+                           (throw (ex-info "Wrong menu action" {})))
+                         (fn [_]
+                           nil))]
 
           (is (nil? (:error capture)))
           (is (re-find #"Companion +2 tabs · 1 running · 1 needs input" text))
@@ -1025,9 +1030,7 @@
                  (input/input->text (get-in @state/app-db [:tab-locals :tab-1 :input]))))
           (is (= background (get-in @state/app-db [:tab-locals :tab-4])))
           (is (= [false] @refreshes))
-          (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
-          ((first @workers))
-          (is (false? @opened) "A late project lookup cannot replace the selected request"))))))
+          (is (false? (get-in @state/app-db [:project-sidebar :focused?]))))))))
 
 (deftest project-input-scroll-test
   (let [tabs
@@ -1197,7 +1200,9 @@
                          (fn [notify?]
                            (swap! refreshes conj notify?))
                          (fn [_]
-                           (throw (ex-info "Wrong menu action" {}))))]
+                           (throw (ex-info "Wrong menu action" {})))
+                         (fn [_]
+                           nil))]
 
           (is (nil? (:error capture)))
           (is (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
@@ -1258,6 +1263,7 @@
                 hover! #(#'screen/project-sidebar-key!
                           (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. (int %) (int %2)))
                           identity
+                          (constantly nil)
                           (constantly nil)
                           (constantly nil)
                           (constantly nil))]
@@ -1362,3 +1368,1720 @@
     (is (= "Gateway" (:label (second (action 3)))))
     (is (= [:noop] (action 0)))
     (is (= [:noop] (action 99)))))
+
+(deftest saved-project-page-shows-sessions-not-opened-here-test
+  ;; The project navigator reads gateway pages rather than the TUI's open views.
+  (let [page
+        {:sessions [{"id" "never-opened" "title" "Saved elsewhere" "group_id" nil}
+                    {"id" "loose-2" "title" "Another saved session" "group_id" nil}]
+         :grouped [{"id" "filed" "title" "Filed elsewhere" "group_id" "g1"}]
+         :total 32
+         :next-cursor "next"
+         :has-more true}
+
+        db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"] page)
+            (assoc-in [:project-sidebar :groups "a"] [group-release]))
+
+        entries
+        (projects/sidebar-entries db)]
+
+    (is (= [:project-select :project-set :project-group :project-session :project-set
+            :project-session :project-session :project-page :project-select]
+           (mapv :kind entries)))
+    (is (= ["filed" "never-opened" "loose-2"]
+           (mapv #(get-in % [:session "id"]) (filter #(= :project-session (:kind %)) entries))))
+    (is (= [:session "never-opened"] (:action (nth entries 5))))
+    (is (= [:page "a" :next] (:action (nth entries 7))))
+    (is (= [:toggle-project "a"] (:action (first entries))))))
+
+(deftest saved-project-pins-attention-and-current-off-page-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "loose" "title" "A saved row"}]
+                       :grouped [{"id" "filed" "group_id" "g1"}]
+                       :awaiting [{"id" "waiting" "title" "Needs input"}
+                                  {"id" "filed" "group_id" "g1"}]
+                       :current {"id" "a1" "title" "Active off page"}})
+            (assoc-in [:project-sidebar :groups "a"] [group-release]))
+
+        entries
+        (projects/sidebar-entries db)
+
+        sessions
+        (filterv #(= :project-session (:kind %)) entries)]
+
+    (is (= ["waiting" "a1" "filed" "loose"] (mapv #(get-in % [:session "id"]) sessions)))
+    (is (= ["Attention" "Groups" "Sessions"]
+           (mapv :label (filter #(= :project-set (:kind %)) entries))))))
+
+(deftest saved-project-off-page-attention-opens-through-the-rail-test
+  (let [asked
+        (atom [])
+
+        opened
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups-page
+                  (fn [_]
+                    {:groups [] :total 0})
+
+                  vis/gateway-list-sessions-page
+                  (fn [opts]
+                    (swap! asked conj opts)
+                    (if (:ids opts)
+                      {:sessions [{"id" "a1" "title" "Current"}]}
+                      {:sessions [{"id" "idle" "title" "On this page"}]
+                       :awaiting [{"id" "waiting"
+                                   "title" "Needs a reply"
+                                   "live" true
+                                   "is_awaiting_input" true}]
+                       :total 40
+                       :has-more true
+                       :next-cursor "next"}))]
+
+      (#'screen/load-project-page! "a")
+      (state/dispatch [:project-sidebar {:expanded #{"a"} :index 3}])
+      (let [entries (projects/sidebar-entries @state/app-db)]
+        (is (= "waiting" (get-in (nth entries 2) [:session "id"])))
+        (is (= "INPUT NEEDED" (:status (nth entries 2))))
+        (is (= [:session "waiting"] (projects/key-action @state/app-db (cap/key-stroke :enter)))))
+      (#'screen/project-sidebar-key!
+       (cap/key-stroke :enter)
+       (fn [_])
+       (fn [_])
+       (fn [_])
+       (fn [_])
+       #(swap! opened conj %))
+      (is (= ["waiting"] @opened))
+      (is (= "a" (:project-id (first @asked))))
+      (is (= 3 (count (:tabs @state/app-db))) "A pinned row is not an open TUI view"))))
+
+(deftest saved-project-row-state-and-metadata-test
+  (let [rows
+        [{"id" "need"
+          "title" "A question"
+          "is_awaiting_input" true
+          "awaiting_input_count" 2
+          "live" true} {"id" "live" "title" "Running" "live" true}
+         {"id" "stopped"
+          "title" "Interrupted"
+          "was_interrupted" true
+          "is_unread" true
+          "unread_answers" 1}
+         {"id" "new"
+          "title" "Unread"
+          "is_unread" true
+          "unread_answers" 2
+          "favorite_rank" 3
+          "turn_count" 4
+          "modified_at" "2026-09-24T00:00:00Z"}
+         {"id" "waiting" "title" "Suspended" "status" "suspended"}
+         {"id" "a1" "title" nil "turn_count" 1}
+         {"id" "archived" "title" "Archived" "archived_at" "2026-09-24T00:00:00Z"}
+         {"id" "idle" "title" "Quiet"}]
+
+        db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"] {:sessions rows :grouped []}))
+
+        entries
+        (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
+
+    (is (= ["INPUT NEEDED ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"]
+           (mapv :status entries)))
+    (is (= "Keep this draft" (:label (nth entries 5))))
+    (is (true? (:favorite? (nth entries 3))))
+    (is (= 4 (:turns (nth entries 3))))
+    (is (= "2026-09-24T00:00:00Z" (:modified-at (nth entries 3))))))
+
+(deftest saved-project-attachment-only-draft-test
+  (let [db
+        (-> (fixture-db)
+            (assoc :input (input/empty-input)
+                   :attachments [{:id "image"}])
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "a1" "title" nil}] :grouped []}))
+
+        row
+        (first (filter #(= :project-session (:kind %)) (projects/sidebar-entries db)))]
+
+    (is (= "1 unsent attachment" (:label row)))
+    (is (= "DIRTY" (:status row)))))
+
+(deftest saved-session-menu-actions-use-the-gateway-test
+  (let [calls
+        (atom [])
+
+        entry
+        {:kind :project-session
+         :label "Saved elsewhere"
+         :project project-a
+         :session {"id" "saved" "title" "Saved elsewhere"}}]
+
+    (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
+                                                 (f))
+                     #'screen/refresh-projects! #(swap! calls conj [:refresh])
+                     #'vis/worker-future (fn [_ f]
+                                           (f))
+                     #'vis/gateway-set-session-favorite! (fn [sid value]
+                                                           (swap! calls conj [:star sid value]))
+                     #'vis/gateway-set-session-title! (fn [sid title]
+                                                        (swap! calls conj [:rename sid title]))
+                     #'dlg/select-dialog! (fn [& _]
+                                            {:id :favorite})
+                     #'dlg/text-input-dialog! (fn [& _]
+                                                "  New title  ")
+                     #'dlg/session-metrics-dialog! (fn [_ sid session]
+                                                     (swap! calls conj
+                                                       [:details sid (get session "id")]))}
+      (fn []
+        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :favorite? true) nil)
+        (is (= [[:star "saved" true] [:refresh] [:star "saved" false] [:refresh]] @calls))
+        (reset! calls [])
+        (with-redefs [dlg/select-dialog! (fn [& _]
+                                           {:id :rename-session})]
+          (#'screen/sidebar-row-menu! nil entry nil))
+        (is (= [[:rename "saved" "New title"] [:refresh]] @calls))
+        (reset! calls [])
+        (#'screen/sidebar-row-menu! nil (assoc entry :show-details? true) nil)
+        (is (= [[:details "saved" "saved"]] @calls))
+        (reset! calls [])
+        (with-redefs [vis/gateway-set-session-favorite!
+                      (fn [& _]
+                        (throw (ex-info "offline" {})))
+
+                      vis/notify!
+                      (fn [message & _]
+                        (swap! calls conj [:warning message]))]
+
+          (#'screen/sidebar-row-menu! nil entry nil))
+        (is (= [[:warning "Could not change favorite"]] @calls))))))
+
+(deftest saved-session-archive-view-is-independent-and-gateway-paged-test
+  (let [asked
+        (atom [])
+
+        db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:after "old-cursor"
+                       :history [nil]
+                       :group-offset 0
+                       :sessions [{"id" "loose" "title" "Normal"}]}))]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups-page
+                  (fn [opts]
+                    (swap! asked conj [:groups opts])
+                    {:groups [group-release] :total 1})
+
+                  vis/gateway-list-sessions-page
+                  (fn [opts]
+                    (swap! asked conj [:sessions opts])
+                    (cond (:ids opts) {:sessions (if (= :only (:archived opts)) [] [{"id" "a1"}])}
+                          (= :only (:archived opts))
+                          {:sessions
+                           [{"id" "away" "title" "Put away" "archived_at" "2026-09-24T00:00:00Z"}]
+                           :grouped [{"id" "filed-away" "group_id" "g1"}]
+                           :total 1}
+                          :else {:sessions [{"id" "loose" "title" "Normal"}]
+                                 :grouped [{"id" "filed-active" "group_id" "g1"}]
+                                 :total 1}))]
+
+      (state/dispatch [:project-session-archive-toggle "a"])
+      (is (true? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
+      (is (nil? (get-in @state/app-db [:project-sidebar :pages "a" :after])))
+      (is (empty? (get-in @state/app-db [:project-sidebar :pages "a" :history])))
+      (#'screen/load-project-page! "a")
+      (is (= :only (get-in @asked [1 1 :archived])))
+      (is (= :exclude (get-in @asked [2 1 :archived])))
+      (let [entries (projects/sidebar-entries @state/app-db)]
+        (is (some #(= "Sessions · Archived" (:label %)) entries))
+        (is (= ["filed-active" "away"]
+               (mapv #(get-in % [:session "id"])
+                     (filter #(= :project-session (:kind %)) entries)))))
+      (state/dispatch [:project-session-archive-toggle "a"])
+      (is (false? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
+      (is (= [group-release] (get-in @state/app-db [:project-sidebar :groups "a"])))
+      (#'screen/load-project-page! "a")
+      (is (= :exclude (get-in @asked [5 1 :archived])))
+      (is (= ["a1" "filed-active" "loose"]
+             (mapv #(get-in % [:session "id"])
+                   (filter #(= :project-session (:kind %))
+                           (projects/sidebar-entries @state/app-db))))))))
+
+(deftest saved-session-archive-and-delete-confirmation-test
+  (let [calls
+        (atom [])
+
+        pick
+        (atom :archive-session)
+
+        confirmed?
+        (atom false)
+
+        entry
+        {:kind :project-session
+         :label "Saved elsewhere"
+         :project project-a
+         :session {"id" "saved" "title" "Saved elsewhere"}}]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-set-session-archived!
+                  (fn [sid away]
+                    (swap! calls conj [:archive sid away]))
+
+                  vis/gateway-close-session!
+                  (fn [sid]
+                    (swap! calls conj [:delete sid]))
+
+                  vis/notify!
+                  (fn [& _]
+                    nil)
+
+                  screen/refresh-projects!
+                  (fn []
+                    (swap! calls conj [:refresh]))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [& _]
+                    {:id @pick})
+
+                  dlg/confirm-dialog!
+                  (fn [& _]
+                    @confirmed?)]
+
+      (#'screen/sidebar-row-menu!
+       nil
+       (assoc entry :session (assoc (:session entry) "live" true))
+       nil)
+      (is (empty? @calls) "Busy sessions must not be archived")
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= [[:archive "saved" true] [:refresh]] @calls))
+      (reset! calls [])
+      (reset! pick :unarchive-session)
+      (#'screen/sidebar-row-menu!
+       nil
+       (assoc entry :session (assoc (:session entry) "archived_at" "now"))
+       nil)
+      (is (= [[:archive "saved" false] [:refresh]] @calls))
+      (reset! calls [])
+      (reset! pick :delete-session)
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (empty? @calls) "Canceling deletion leaves the gateway untouched")
+      (reset! confirmed? true)
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= [[:delete "saved"] [:refresh]] @calls))
+      (is (= :tab-1 (:active-tab-id @state/app-db))
+          "Deleting an unopened row does not change focus"))))
+
+(deftest saved-session-archive-set-menu-has-keyboard-and-pointer-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
+
+        entry
+        (first (filter #(= "Sessions" (:label %)) (projects/sidebar-entries db)))
+
+        selected
+        (assoc-in db [:project-sidebar :index] (:index entry))
+
+        choice
+        (atom nil)
+
+        loaded
+        (atom [])]
+
+    (is (= [:menu entry] (projects/key-action selected (cap/key-stroke \g))))
+    (cap/capture! {:cols 120
+                   :rows 24
+                   :paint! (fn [{:keys [screen]}]
+                             (projects/paint! (.newTextGraphics screen) selected 120 24))})
+    (let [hit
+          (first (filter #(and (= :project-set (:kind %)) (= "Sessions" (:label %)))
+                         (.current projects/hit-map)))
+
+          {:keys [col row]}
+          (:bounds hit)]
+
+      (is (= :menu
+             (first (projects/key-action selected
+                                         (MouseAction. MouseActionType/CLICK_DOWN
+                                                       3
+                                                       (TerminalPosition. (int col) (int row))))))))
+    (with-redefs-fn {#'state/app-db (atom selected)
+                     #'screen/with-dialog-lock (fn [f]
+                                                 (f))
+                     #'screen/load-project-page! #(swap! loaded conj %)
+                     #'dlg/select-dialog! (fn [_ _ items]
+                                            (reset! choice items)
+                                            {:id :toggle-session-archive})}
+      (fn []
+        (#'screen/sidebar-row-menu! nil entry nil)
+        (is (= "Show archived sessions" (:label (first @choice))))
+        (is (true? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
+        (is (= ["a"] @loaded))
+        (#'screen/sidebar-row-menu! nil (assoc entry :archived? true) nil)
+        (is (= "Hide archived sessions" (:label (first @choice))))
+        (is (false? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))))))
+
+(deftest saved-session-deleting-the-active-row-reconciles-its-id-test
+  (let [attempts
+        (atom [])
+
+        fail?
+        (atom true)
+
+        entry
+        {:kind :project-session
+         :label "Current"
+         :project project-a
+         :session {"id" "a1" "title" "Current"}}]
+
+    (with-redefs [state/app-db
+                  (atom (assoc-in (fixture-db) [:project-sidebar :selected "a"] #{"a1"}))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-close-session!
+                  (fn [sid]
+                    (swap! attempts conj sid)
+                    (when @fail? (throw (ex-info "offline" {}))))
+
+                  vis/notify!
+                  (fn [& _]
+                    nil)
+
+                  screen/refresh-projects!
+                  (fn []
+                    nil)
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [& _]
+                    {:id :delete-session})
+
+                  dlg/confirm-dialog!
+                  (fn [& _]
+                    true)]
+
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= "a1" (get-in @state/app-db [:session :id])) "A failed DELETE keeps the active view")
+      (is (= #{"a1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (reset! fail? false)
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= ["a1" "a1"] @attempts))
+      (is (= "a2" (get-in @state/app-db [:session :id])))
+      (is (= [:tab-2 :tab-3] (mapv :id (:tabs @state/app-db))))
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))))
+
+(deftest saved-session-selection-has-keyboard-and-pointer-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "s1" "title" "First"} {"id" "s2" "title" "Second"}]
+                       :grouped []}))
+
+        entry
+        (first (filter #(= "s1" (get-in % [:session "id"])) (projects/sidebar-entries db)))
+
+        selected
+        (assoc-in db [:project-sidebar :index] (:index entry))]
+
+    (is (= [:toggle-session "a" "s1"] (projects/key-action selected (cap/key-stroke \space))))
+    (with-redefs [state/app-db (atom selected)]
+      (#'screen/project-sidebar-key!
+       (cap/key-stroke \space)
+       identity
+       identity
+       identity
+       identity
+       nil)
+      (is (= #{"s1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (let [capture (cap/capture!
+                      {:cols 120
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) @state/app-db 120 24))})
+            hit (first (filter #(and (= :project-session (:kind %))
+                                     (= "s1" (get-in % [:session "id"])))
+                               (.current projects/hit-map)))
+            {:keys [col row]} (:bounds hit)]
+
+        (is (nil? (:error capture)))
+        (is (str/includes? (cap/frame-text capture) "☑ First"))
+        (is (= [:menu hit]
+               (projects/key-action @state/app-db
+                                    (MouseAction. MouseActionType/CLICK_DOWN
+                                                  3
+                                                  (TerminalPosition. (int col) (int row))))))
+        (is (= [:toggle-session "a" "s1"]
+               (projects/key-action @state/app-db
+                                    (MouseAction. MouseActionType/CLICK_DOWN
+                                                  1
+                                                  (TerminalPosition. (int (inc col)) (int row))))))
+        (#'screen/project-sidebar-key!
+         (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int (inc col)) (int row)))
+         identity
+         identity
+         identity
+         identity
+         nil)
+        (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))
+      (#'screen/project-sidebar-key!
+       (cap/key-stroke \space)
+       identity
+       identity
+       identity
+       identity
+       nil)
+      (is (= #{"s1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (#'screen/project-sidebar-key!
+       (cap/key-stroke \space)
+       identity
+       identity
+       identity
+       identity
+       nil)
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (state/dispatch [:project-session-select-toggle "a" "s1"])
+      (state/dispatch [:project-session-archive-toggle "a"])
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))))
+
+(deftest selected-session-move-keeps-failed-rows-and-reports-partial-error-test
+  (let [initial
+        (-> (grouped-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :selected "a"] #{"s1" "s2"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "s1" "title" "First"} {"id" "s2" "title" "Second"}]
+                       :grouped []}))
+
+        assigned
+        (atom {})
+
+        calls
+        (atom [])
+
+        notices
+        (atom [])
+
+        group-entry
+        (first (filter #(= "g1" (get-in % [:group "id"])) (projects/sidebar-entries initial)))
+
+        loose-entry
+        (first (filter #(= :sessions (:set %)) (projects/sidebar-entries initial)))]
+
+    (with-redefs [state/app-db
+                  (atom initial)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-assign-session-group!
+                  (fn [sid gid]
+                    (swap! calls conj [sid gid])
+                    (when (= sid "s2") (throw (ex-info "offline" {})))
+                    (swap! assigned assoc sid gid))
+
+                  screen/refresh-projects!
+                  (fn []
+                    (let [rows (get-in @state/app-db [:project-sidebar :pages "a" :sessions])]
+                      (state/dispatch
+                        [:project-sidebar
+                         {:pages
+                          {"a" {:sessions (filterv #(not (contains? @assigned (get % "id"))) rows)
+                                :grouped (mapv #(assoc % "group_id" (get @assigned (get % "id")))
+                                               (filter #(contains? @assigned (get % "id"))
+                                                       rows))}}}]))
+                    (swap! calls conj [:refresh]))
+
+                  vis/notify!
+                  (fn [message & _]
+                    (swap! notices conj message))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [_ _ _]
+                    {:id :move-selected})]
+
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [["s1" "g1"] ["s2" "g1"] [:refresh]] @calls))
+      (is (= #{"s2"} (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (= ["s1"]
+             (mapv #(get-in % [:session "id"])
+                   (filter (fn [row]
+                             (= "g1" (get-in row [:session "group_id"])))
+                           (projects/sidebar-entries @state/app-db)))))
+      (is (= ["s2"]
+             (mapv #(get % "id") (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
+      (is (some #(str/includes? % "1 of 2") @notices))
+      (reset! calls [])
+      (reset! notices [])
+      (with-redefs [dlg/select-dialog! (fn [_ _ _]
+                                         {:id :ungroup-selected})]
+        (#'screen/sidebar-row-menu! nil loose-entry nil))
+      (is (= [["s2" nil] [:refresh]] @calls))
+      (is (= #{"s2"} (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (some #(str/includes? % "1 of 1") @notices)))))
+
+(deftest single-and-selected-session-move-uses-project-groups-test
+  (let [db
+        (-> (grouped-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "s1" "title" "First"} {"id" "s2" "title" "Second"}]
+                       :grouped []}))
+
+        entry
+        (first (filter #(= "s1" (get-in % [:session "id"])) (projects/sidebar-entries db)))
+
+        calls
+        (atom [])
+
+        options
+        (atom [])
+
+        pick
+        (atom "g2")]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups
+                  (fn [opts]
+                    (is (= {:project-id "a"} opts))
+                    [group-release group-gateway])
+
+                  vis/gateway-assign-session-group!
+                  (fn [sid gid]
+                    (swap! calls conj [sid gid]))
+
+                  screen/refresh-projects!
+                  #(swap! calls conj [:refresh])
+
+                  vis/notify!
+                  (fn [& _]
+                    nil)
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [_ _ items]
+                    (is (some #(= :move-session (:id %)) items))
+                    {:id :move-session})
+
+                  dlg/searchable-select!
+                  (fn [_ _ items _]
+                    (reset! options items)
+                    {:id @pick})]
+
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= [["s1" "g2"] [:refresh]] @calls))
+      (is (= ["g1" "g2" ::screen/new-group ::screen/remove-group] (mapv :id @options)))
+      (reset! calls [])
+      (state/dispatch [:project-session-select-toggle "a" "s1"])
+      (state/dispatch [:project-session-select-toggle "a" "s2"])
+      (state/dispatch [:project-session-select-toggle "b" "other"])
+      (reset! pick ::screen/remove-group)
+      (#'screen/sidebar-row-menu! nil entry nil)
+      (is (= [["s1" nil] ["s2" nil] [:refresh]] @calls))
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (= #{"other"} (get-in @state/app-db [:project-sidebar :selected "b"]))))))
+
+(deftest group-creation-edit-and-new-session-refresh-test
+  (let [initial
+        (-> (grouped-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
+
+        entries
+        (projects/sidebar-entries initial)
+
+        group-entry
+        (first (filter #(= "g1" (get-in % [:group "id"])) entries))
+
+        loose-entry
+        (first (filter #(= :sessions (:set %)) entries))
+
+        calls
+        (atom [])
+
+        notices
+        (atom [])
+
+        choice
+        (atom :new)
+
+        typed
+        (atom "  New group  ")
+
+        fail?
+        (atom false)]
+
+    (with-redefs [state/app-db
+                  (atom initial)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/text-input-dialog!
+                  (fn [& _]
+                    @typed)
+
+                  dlg/select-dialog!
+                  (fn [_ title items]
+                    (if (= title "Group colour")
+                      {:id "cyan"}
+                      (do (is (some #(= :new-session (:id %)) items)) {:id @choice})))
+
+                  vis/gateway-create-session-group!
+                  (fn [opts]
+                    (swap! calls conj [:create opts])
+                    {"id" "new"})
+
+                  vis/gateway-update-session-group!
+                  (fn [gid opts]
+                    (swap! calls conj [:update gid opts])
+                    (when @fail? (throw (ex-info "offline" {}))))
+
+                  screen/refresh-projects!
+                  #(swap! calls conj [:refresh])
+
+                  vis/notify!
+                  (fn [message & _]
+                    (swap! notices conj message))]
+
+      (#'screen/sidebar-row-menu! nil loose-entry nil)
+      (is (= [[:create {:name "New group" :project-id "a" :color "cyan"}] [:refresh]] @calls))
+      (reset! choice :rename)
+      (reset! typed "  Renamed  ")
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (reset! choice :recolour)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [[:update "g1" {:name "Renamed"}] [:refresh] [:update "g1" {:color "cyan"}] [:refresh]]
+             (subvec @calls 2)))
+      (reset! fail? true)
+      (reset! notices [])
+      (reset! choice :rename)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [:update "g1" {:name "Renamed"}] (last @calls))
+          "A failed rename does not refresh as though it succeeded")
+      (is (some #(str/includes? % "Could not rename group") @notices))
+      (reset! choice :new-session)
+      (#'screen/sidebar-row-menu! nil loose-entry #(swap! calls conj [:start %1 %2]))
+      (#'screen/sidebar-row-menu! nil group-entry #(swap! calls conj [:start %1 %2]))
+      (is (= [[:start nil "/work/vis"] [:start "g1" "/work/vis"]]
+             (subvec @calls (- (count @calls) 2)))))))
+
+(deftest saved-project-pagers-and-pointer-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release group-gateway])
+            (assoc-in [:project-sidebar :group-total "a"] 12)
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "saved-1" "title" "First saved"}]
+                       :grouped []
+                       :next-cursor "next"
+                       :has-more true
+                       :total 90
+                       :group-size 2
+                       :group-offset 0}))
+
+        entries
+        (projects/sidebar-entries db)
+
+        paint
+        (cap/capture! {:cols 144
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 144 24))})
+
+        row
+        (first (filter #(= :project-session (:kind %)) (.current projects/hit-map)))
+
+        {:keys [col row]}
+        (:bounds row)]
+
+    (is (nil? (:error paint)))
+    (is (= [:session "saved-1"]
+           (projects/key-action
+             db
+             (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row))))))
+    (let [detail
+          (first (filter #(= :project-details (:kind %)) (.current projects/hit-map)))
+
+          bounds
+          (:bounds detail)
+
+          selected
+          (assoc-in db
+            [:project-sidebar :index]
+            (:index (first (filter #(= :project-session (:kind %)) entries))))]
+
+      (is (= [:details "saved-1"]
+             (projects/key-action db
+                                  (MouseAction. MouseActionType/CLICK_DOWN
+                                                1
+                                                (TerminalPosition. (int (:col bounds))
+                                                                   (int (:row bounds)))))))
+      (is (= [:details "saved-1"] (projects/key-action selected (cap/key-stroke \d))))
+      (is (= :menu
+             (first (projects/key-action db
+                                         (MouseAction. MouseActionType/CLICK_DOWN
+                                                       3
+                                                       (TerminalPosition. (int col) (int row))))))))
+    (is (some #(= [:group-page "a" :next] (:action %)) entries))
+    (with-redefs [state/app-db (atom db)]
+      (state/dispatch [:project-group-turn "a" :next])
+      (is (= 2 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
+      (state/dispatch [:project-group-turn "a" :previous])
+      (is (= 0 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
+      (state/dispatch [:project-page-turn "a" :next])
+      (is (= "next" (get-in @state/app-db [:project-sidebar :pages "a" :after])))
+      (state/dispatch [:project-page-request "a" "new"])
+      (state/dispatch [:project-page-loaded "a" "stale" {:sessions [{"id" "stale"}]}
+                       {:groups [] :total 0}])
+      (is (= "saved-1" (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "id"])))
+      (state/dispatch [:project-page-turn "a" :previous])
+      (is (nil? (get-in @state/app-db [:project-sidebar :pages "a" :after]))))))
+
+(deftest group-archive-view-is-independent-of-loose-sessions-test
+  (let [requests
+        (atom [])
+
+        db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "loose" "title" "Loose"}]
+                       :grouped [{"id" "filed-active" "group_id" "g1"}]
+                       :group-size 2
+                       :group-offset 2
+                       :request-id "old"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :selected "a"] #{"filed-active"}))]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups-page
+                  (fn [opts]
+                    (swap! requests conj [:groups opts])
+                    {:groups (if (= :only (:archived opts))
+                               [(assoc group-gateway "archived_at" "today")]
+                               [group-release])
+                     :total 1})
+
+                  vis/gateway-list-sessions-page
+                  (fn [opts]
+                    (swap! requests conj [:sessions opts])
+                    {:sessions (if (= :only (:archived opts)) [] [{"id" "loose" "title" "Loose"}])
+                     :grouped [(if (= :only (:archived opts))
+                                 {"id" "filed-archived" "group_id" "g2"}
+                                 {"id" "filed-active" "group_id" "g1"})]})]
+
+      (state/dispatch [:project-group-archive-toggle "a"])
+      (is (true? (get-in @state/app-db [:project-sidebar :group-archived? "a"])))
+      (is (nil? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (= 0 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
+      (state/dispatch [:project-page-loaded "a" "old" {:sessions [{"id" "stale"}]} {:groups []}])
+      (#'screen/load-project-page! "a")
+      (let [entries (projects/sidebar-entries @state/app-db)]
+        (is (= ["Groups · Archived" "Sessions"]
+               (mapv :label (filter #(= :project-set (:kind %)) entries))))
+        (is (= ["Gateway"] (mapv :label (filter #(= :project-group (:kind %)) entries))))
+        (is (= "ARCHIVED" (:status (first (filter #(= :project-session (:kind %)) entries)))))
+        (is (= ["filed-archived" "loose"]
+               (mapv #(get-in % [:session "id"])
+                     (filter #(= :project-session (:kind %)) entries)))))
+      (is (= :only (:archived (second (first @requests)))))
+      (is (= :exclude (:archived (second (second @requests)))))
+      (is (some #(= :only (:archived (second %))) (filter #(= :sessions (first %)) @requests)))
+      (state/dispatch [:project-session-archive-toggle "a"])
+      (#'screen/load-project-page! "a")
+      (is (= ["filed-archived"]
+             (mapv #(get-in % [:session "id"])
+                   (filter #(= :project-session (:kind %))
+                           (projects/sidebar-entries @state/app-db)))))
+      (state/dispatch [:project-group-archive-toggle "a"])
+      (#'screen/load-project-page! "a")
+      (is (= ["Release apps"]
+             (mapv :label
+                   (filter #(= :project-group (:kind %))
+                           (projects/sidebar-entries @state/app-db)))))
+      (state/dispatch [:project-group-archive-toggle "a"])
+      (state/dispatch [:project-page-request "a" "empty"])
+      (state/dispatch [:project-page-loaded "a" "empty"
+                       {:sessions [] :grouped [] :current nil :loading? false}
+                       {:groups [] :total 0}])
+      (is (some #(= "No archived groups" (:label %)) (projects/sidebar-entries @state/app-db))))))
+
+(deftest group-archive-and-delete-actions-keep-failures-visible-test
+  (let [choice
+        (atom :archive-group)
+
+        mode
+        (atom nil)
+
+        calls
+        (atom [])
+
+        notices
+        (atom [])
+
+        fail?
+        (atom false)
+
+        db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :selected "a"] #{"a2"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release]))
+
+        group-entry
+        {:kind :project-group :project project-a :group group-release}]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [_ _ items]
+                    (if (or (some #(= :archive-group (:id %)) items)
+                            (some #(= :unarchive-group (:id %)) items))
+                      (do (when (some #(= :unarchive-group (:id %)) items)
+                            (is (not-any? #(= :new-session (:id %)) items)))
+                          {:id @choice})
+                      (when @mode {:id @mode})))
+
+                  vis/gateway-update-session-group!
+                  (fn [gid opts]
+                    (swap! calls conj [:archive gid opts])
+                    (when @fail? (throw (ex-info "gateway unavailable" {}))))
+
+                  vis/gateway-delete-session-group!
+                  (fn [gid selected-mode]
+                    (swap! calls conj [:delete gid selected-mode])
+                    (when @fail? (throw (ex-info "gateway unavailable" {})))
+                    (if (= :detach selected-mode)
+                      {"scattered_session_ids" ["a2"] "deleted_session_ids" []}
+                      {"scattered_session_ids" [] "deleted_session_ids" ["a2"]}))
+
+                  screen/refresh-projects!
+                  #(swap! calls conj [:refresh])
+
+                  vis/notify!
+                  (fn [message & _]
+                    (swap! notices conj message))]
+
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [[:archive "g1" {:archived true}] [:refresh]] @calls))
+      (reset! fail? true)
+      (reset! choice :unarchive-group)
+      (#'screen/sidebar-row-menu!
+       nil
+       (assoc group-entry :group (assoc group-release "archived_at" "today"))
+       nil)
+      (is (= [:archive "g1" {:archived false}] (last @calls)))
+      (is (some #(str/includes? % "Could not unarchive group") @notices))
+      (reset! fail? false)
+      (reset! choice :delete)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= 3 (count @calls)) "Cancel at the choice does not touch the gateway")
+      (reset! mode :detach)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [[:delete "g1" :detach] [:refresh]] (take-last 2 @calls)))
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (some #(= :tab-2 (:id %)) (:tabs @state/app-db)) "Detach keeps the open session")
+      (reset! mode :with-sessions)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [[:delete "g1" :with-sessions] [:refresh]] (take-last 2 @calls)))
+      (is (not-any? #(= :tab-2 (:id %)) (:tabs @state/app-db))
+          "Delete prunes only its returned IDs")
+      (reset! fail? true)
+      (#'screen/sidebar-row-menu! nil group-entry nil)
+      (is (= [:delete "g1" :with-sessions] (last @calls)))
+      (is (some #(str/includes? % "Could not delete group") @notices)))))
+
+(deftest groups-set-menu-reveals-its-own-archive-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []})
+            (assoc-in [:project-sidebar :selected "a"] #{"a2"}))
+
+        reads
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [_ _ items]
+                    (is (some #(= :toggle-group-archive (:id %)) items))
+                    {:id :toggle-group-archive})]
+
+      (with-redefs-fn {#'screen/load-project-page! #(swap! reads conj %)}
+        (fn []
+          (#'screen/sidebar-row-menu!
+           nil
+           (first (filter #(= :groups (:set %)) (projects/sidebar-entries @state/app-db)))
+           nil)
+          (is (= ["a"] @reads))
+          (is (true? (get-in @state/app-db [:project-sidebar :group-archived? "a"])))
+          (is (nil? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
+          (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"]))))))))
+
+(deftest project-inventory-refresh-keeps-its-row-test
+  (let [saved
+        {"id" "a1" "title" "Pinned"}
+
+        base
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :pages] {"a" {:sessions [saved]} "b" {:sessions []}})
+            (assoc-in [:project-sidebar :expanded] #{"a"}))
+
+        focused
+        (first (filter #(= "a1" (get-in % [:session "id"])) (projects/sidebar-entries base)))
+
+        db
+        (assoc-in base [:project-sidebar :index] (:index focused))]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-projects
+                  (constantly [project-b project-a])
+
+                  vis/gateway-projects-overview
+                  (constantly {})
+
+                  screen/load-project-page!
+                  (fn [_])]
+
+      (#'screen/refresh-projects!)
+      (is (= "a1"
+             (get-in (nth (projects/sidebar-entries @state/app-db)
+                          (dec (get-in @state/app-db [:project-sidebar :index])))
+                     [:session "id"])))
+      (is (true? (get-in @state/app-db [:project-sidebar :focused?]))))))
+
+(deftest project-chooser-creates-a-gateway-folder-test
+  (let [field
+        (assoc (projects/add-field-listing {:text "/work/" :cursor 6}
+                                           "/work/"
+                                           (get browse-listing "entries"))
+          :listing-path "/work")
+
+        calls
+        (atom [])
+
+        db
+        (assoc-in (fixture-db) [:project-sidebar :adding] field)]
+
+    (is (= [:add-folder] (projects/key-action db (KeyStroke. \n true false))))
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/text-input-dialog!
+                  (fn [_ _ _ & _]
+                    "new")
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-create-directory!
+                  (fn [parent name]
+                    (swap! calls conj [:mkdir parent name])
+                    {"path" "/work/new"})]
+
+      (#'screen/create-project-folder! nil field #(swap! calls conj [:add %]))
+      (is (= [[:mkdir "/work" "new"] [:add "/work/new"]] @calls)))))
+
+(deftest project-chooser-folder-cancel-and-failure-test
+  (let [field
+        {:listing-path "/work"}
+
+        calls
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/text-input-dialog!
+                  (fn [_ _ _ & _]
+                    nil)
+
+                  vis/worker-future
+                  (fn [_ _]
+                    (swap! calls conj :worker))]
+
+      (#'screen/create-project-folder! nil field #(swap! calls conj [:add %]))
+      (is (empty? @calls))
+      (is (not (get-in @state/app-db [:project-sidebar :saving?]))))
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/text-input-dialog!
+                  (fn [_ _ _ & _]
+                    "new")
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-create-directory!
+                  (fn [_ _]
+                    (throw (ex-info "No permission" {})))]
+
+      (#'screen/create-project-folder! nil field #(swap! calls conj [:add %]))
+      (is (empty? @calls))
+      (is (not (get-in @state/app-db [:project-sidebar :saving?])))
+      (is (re-find #"No permission" (get-in @state/app-db [:project-sidebar :error]))))))
+
+(deftest project-chooser-opens-existing-or-saved-session-test
+  (let [opened
+        (atom [])
+
+        pages
+        (atom 0)]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-sessions-page
+                  (fn [_]
+                    (swap! pages inc)
+                    {:sessions [{"id" "saved"}]})]
+
+      (#'screen/choose-project!
+       project-b
+       #(swap! opened conj [:open %])
+       #(swap! opened conj [:new %]))
+      (is (= 0 @pages) "An open view switches without a gateway read")
+      (is (= "b" (:active-project-id @state/app-db)))
+      (is (empty? @opened))
+      (swap! state/app-db update
+        :tabs
+        #(filterv (fn [tab]
+                    (= "a" (:project-id tab)))
+           %))
+      (#'screen/choose-project!
+       project-b
+       #(swap! opened conj [:open %])
+       #(swap! opened conj [:new %]))
+      (is (= [[:open "saved"]] @opened))
+      (is (= 1 @pages)))))
+
+(deftest project-removal-is-confirmed-and-failure-preserves-sessions-test
+  (let [answer
+        (atom false)
+
+        failure
+        (atom false)
+
+        calls
+        (atom [])
+
+        initial
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :pages] {"a" {:sessions [{"id" "a2"}]}})
+            (assoc-in [:project-sidebar :selected "a"] #{"a2"}))]
+
+    (with-redefs [state/app-db
+                  (atom initial)
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/confirm-dialog!
+                  (fn [_ title message]
+                    (is (= "Remove project" title))
+                    (is (str/includes? (str message) "cannot be undone"))
+                    @answer)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-delete-project!
+                  (fn [pid opts]
+                    (swap! calls conj [:delete pid opts])
+                    (when @failure (throw (ex-info "offline" {})))
+                    {"deleted_session_ids" ["a2"]})
+
+                  screen/refresh-projects!
+                  #(swap! calls conj [:refresh])
+
+                  vis/notify!
+                  (fn [& _])]
+
+      (#'screen/remove-project! nil project-a)
+      (is (empty? @calls) "Cancel sends no destructive request")
+      (reset! answer true)
+      (reset! failure true)
+      (#'screen/remove-project! nil project-a)
+      (is (= [[:delete "a" {:is-recursive? true}]] @calls))
+      (is (= "a2" (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "id"])))
+      (is (some #(= :tab-2 (:id %)) (:tabs @state/app-db)))
+      (is (str/includes? (get-in @state/app-db [:project-sidebar :error]) "Remove failed"))
+      (reset! failure false)
+      (#'screen/remove-project! nil project-a)
+      (is (= [:refresh] (last @calls)))
+      (is (not-any? #(= :tab-2 (:id %)) (:tabs @state/app-db)))
+      (is (= "b" (:active-project-id @state/app-db))
+          "Removing the active project focuses a surviving one")
+      (is (not-any? #(= "a" (:project-id %)) (:tabs @state/app-db)))
+      (is (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
+      (is (nil? (get-in @state/app-db [:project-sidebar :removing]))))))
+
+(deftest project-menu-chooses-or-removes-only-the-project-row-test
+  (let [choice
+        (atom :use-project)
+
+        calls
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  screen/with-dialog-lock
+                  (fn [f]
+                    (f))
+
+                  dlg/select-dialog!
+                  (fn [_ _ items]
+                    (is (= #{:use-project :delete-project}
+                           (set (map :id
+                                     (filter #(#{:use-project :delete-project} (:id %)) items)))))
+                    {:id @choice})
+
+                  screen/remove-project!
+                  (fn [_ project]
+                    (swap! calls conj [:remove (get project "id")]))]
+
+      (#'screen/sidebar-row-menu!
+       nil
+       {:kind :project-select :project project-a}
+       nil
+       #(swap! calls conj [:choose (get % "id")]))
+      (reset! choice :delete-project)
+      (#'screen/sidebar-row-menu!
+       nil
+       {:kind :project-select :project project-b}
+       nil
+       #(swap! calls conj [:choose (get % "id")]))
+      (is (= [[:choose "a"] [:remove "b"]] @calls)))))
+
+(deftest empty-project-chooses-its-own-root-test
+  (let [started (atom nil)]
+    (with-redefs [state/app-db (atom (update (fixture-db)
+                                             :tabs
+                                             #(filterv (fn [tab]
+                                                         (= "a" (:project-id tab)))
+                                                %)))
+                  vis/worker-future (fn [_ f]
+                                      (f))
+                  vis/gateway-list-sessions-page (constantly {:sessions [] :grouped []})]
+
+      (#'screen/choose-project!
+       project-b
+       (fn [_]
+         (throw (ex-info "No saved row" {})))
+       (fn [root build-id]
+         (reset! started [root build-id])))
+      (is (= "/work/companion" (first @started)))
+      (is (= "b" (:active-project-id @state/app-db)))
+      (is (= (second @started) (:build-id (last (:tabs @state/app-db))))))))
+
+(deftest project-removal-shows-progress-before-request-test
+  (let [pending (atom nil)]
+    (with-redefs [state/app-db (atom (fixture-db))
+                  screen/with-dialog-lock (fn [f]
+                                            (f))
+                  dlg/confirm-dialog! (fn [& _]
+                                        true)
+                  vis/worker-future (fn [_ f]
+                                      (reset! pending f))]
+
+      (#'screen/remove-project! nil project-a)
+      (is (= "a" (get-in @state/app-db [:project-sidebar :removing])))
+      (is (fn? @pending))
+      (let [capture (cap/capture!
+                      {:cols 100
+                       :rows 18
+                       :paint!
+                       (fn [{:keys [screen]}]
+                         (projects/paint! (.newTextGraphics screen) @state/app-db 100 18))})]
+        (is (str/includes? (cap/frame-text capture) "Removing…"))))))
+
+(deftest project-page-refresh-keeps-focus-on-the-same-project-test
+  (let [base
+        (-> (fixture-db)
+            (assoc :active-project-id "b"
+                   :session {:id "b1"})
+            (assoc-in [:project-sidebar :pages] {"a" {:sessions [{"id" "old"}]} "b" {:sessions []}})
+            (assoc-in [:project-sidebar :expanded] #{"a"}))
+
+        b-row
+        (first (filter #(and (= :project-select (:kind %)) (= "b" (get-in % [:project "id"])))
+                       (projects/sidebar-entries base)))
+
+        db
+        (assoc-in base [:project-sidebar :index] (:index b-row))]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups-page
+                  (constantly {:groups [] :total 0})
+
+                  vis/gateway-list-sessions-page
+                  (constantly {:sessions [{"id" "old"} {"id" "new" "title" "New session"}]
+                               :grouped []
+                               :awaiting []
+                               :has-more false})]
+
+      (#'screen/load-project-page! "a")
+      (is (= "b"
+             (get-in (nth (projects/sidebar-entries @state/app-db)
+                          (dec (get-in @state/app-db [:project-sidebar :index])))
+                     [:project "id"]))))))
+
+(deftest project-search-finds-unloaded-and-archived-results-test
+  (let [db (-> (fixture-db)
+               (assoc-in [:project-sidebar :pages] {"a" {:sessions []}})
+               (assoc-in [:project-sidebar :search]
+                         {:text "needle"
+                          :cursor 6
+                          :loading? false
+                          :matches [{:id "b9" :in-reply? true}]
+                          :rows [{:session {"id" "b9"
+                                            "project_id" "b"
+                                            "archived_at" "yesterday"
+                                            "title" "Unopened result"}
+                                  :match {:id "b9" :in-reply? true}}]}))]
+    (is (= [:search] (projects/key-action (fixture-db) (KeyStroke. \/ false false))))
+    (is (= ["b9"]
+           (->> (projects/sidebar-entries db)
+                (keep #(get-in % [:session "id"]))
+                vec)))
+    (is (= "b" (get-in (first (filter :session (projects/sidebar-entries db))) [:project "id"])))))
+
+(deftest project-automatic-refresh-holds-new-rows-until-accepted-test
+  (let [db (-> (fixture-db)
+               (assoc-in [:project-sidebar :expanded] #{"a"})
+               (assoc-in [:project-sidebar :pages]
+                         {"a" {:sessions [{"id" "a1" "title" "First"}]
+                               :grouped []
+                               :after nil
+                               :history []
+                               :request-id "first"}}))]
+    (with-redefs [state/app-db (atom db)]
+      (state/dispatch [:project-page-loaded "a" "first"
+                       {:sessions [{"id" "a-new" "title" "New"} {"id" "a1" "title" "Updated"}]
+                        :grouped []
+                        :total 2} {:groups [] :total 0} nil true])
+      (is (= ["a1"]
+             (mapv #(get % "id") (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
+      (is (= "Updated" (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "title"])))
+      (is (= [:updates "a"]
+             (:action (first (filter #(= :project-updates (:kind %))
+                                     (projects/sidebar-entries @state/app-db)))))))))
+
+(deftest project-automatic-refresh-holds-arrivals-after-empty-page-test
+  (let [db (-> (fixture-db)
+               (assoc-in [:project-sidebar :expanded] #{"a"})
+               (assoc-in [:project-sidebar :pages]
+                         {"a" {:sessions [] :grouped [] :request-id "empty" :has-more false}}))]
+    (with-redefs [state/app-db (atom db)]
+      (state/dispatch
+        [:project-page-loaded "a" "empty"
+         {:sessions [{"id" "new" "title" "Arrived"}] :grouped [] :has-more false :total 1}
+         {:groups [] :total 0} nil true])
+      (is (empty? (get-in @state/app-db [:project-sidebar :pages "a" :sessions])))
+      (is (= 1 (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
+      (let [update-row (first (filter #(= :project-updates (:kind %))
+                                      (projects/sidebar-entries @state/app-db)))]
+        (is (= [:updates "a"] (:action update-row)))
+        (is (= "1 new update · Enter to show" (:label update-row)))))))
+
+(deftest project-search-hydrates-ranked-unloaded-group-and-archive-test
+  (let [db
+        (-> (fixture-db)
+            (assoc :layout {:rows 18})
+            (assoc-in [:project-sidebar :index] 1)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :group-folds] {"a" #{"g"}})
+            (assoc-in [:project-sidebar :pages]
+                      {"a" {:sessions [{"id" "a1" "title" "Already loaded"}]
+                            :after "cursor"
+                            :history [nil]}}))
+
+        original
+        (:project-sidebar db)
+
+        matches
+        [{:id "b9" :in-reply? true :reply-snippet "answer found"}
+         {:id "a5" :in-request? true :request-snippet "request found"}]
+
+        calls
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-search-session-matches
+                  (fn [q]
+                    (swap! calls conj [:search q])
+                    matches)
+
+                  vis/gateway-list-sessions-page
+                  (fn [options]
+                    (swap! calls conj [:hydrate options])
+                    {:sessions [{"id" "a5" "project_id" "a" "group_id" "g" "title" "Grouped"}
+                                {"id" "b9"
+                                 "project_id" "b"
+                                 "archived_at" "yesterday"
+                                 "title" "Archived reply"}]})]
+
+      (let [press! (fn [key]
+                     (#'screen/project-sidebar-key!
+                      (cap/key-stroke key)
+                      identity
+                      identity
+                      identity
+                      identity
+                      nil))]
+        (press! \/)
+        (is (= "" (get-in @state/app-db [:project-sidebar :search :text])))
+        (press! \q)
+        (is (= [[:search "q"] [:hydrate {:ids ["b9" "a5"] :limit 5 :archived :include}]] @calls))
+        (let [entries (projects/sidebar-entries @state/app-db)]
+          (is (= ["b9" "a5"] (mapv #(get-in % [:session "id"]) (filter :session entries))))
+          (is (= ["Companion / Archived reply" "Vis / Grouped"]
+                 (mapv :label (filter :session entries))))
+          (is (some #(str/includes? (:label %) "reply: answer found") entries))
+          (is (some #(str/includes? (:label %) "request: request found") entries)))
+        (press! :esc)
+        (is (nil? (get-in @state/app-db [:project-sidebar :search])))
+        (is (= (select-keys original [:pages :expanded :group-folds :index])
+               (select-keys (:project-sidebar @state/app-db)
+                            [:pages :expanded :group-folds :index])))))))
+
+(deftest project-search-stale-requests-pagination-and-recovery-test
+  (let [jobs
+        (atom [])
+
+        calls
+        (atom [])
+
+        failure?
+        (atom false)
+
+        matches
+        (mapv (fn [i]
+                {:id (str "s" i) :in-title? true})
+              (range 7))]
+
+    (with-redefs [state/app-db
+                  (atom (assoc (fixture-db) :layout {:rows 18}))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (swap! jobs conj f))
+
+                  vis/gateway-search-session-matches
+                  (fn [q]
+                    (swap! calls conj [:search q])
+                    (if (= q "none") [] matches))
+
+                  vis/gateway-list-sessions-page
+                  (fn [options]
+                    (swap! calls conj [:hydrate options])
+                    (when @failure? (throw (ex-info "offline" {})))
+                    {:sessions (mapv (fn [id]
+                                       {"id" id "project_id" "a" "title" id})
+                                     (reverse (:ids options)))})]
+
+      (state/dispatch [:project-search-open])
+      (#'screen/search-projects! {:text "old" :cursor 3})
+      (#'screen/search-projects! {:text "new" :cursor 3})
+      (is (some #(= "Searching sessions…" (:label %)) (projects/sidebar-entries @state/app-db)))
+      ((second @jobs))
+      ((first @jobs))
+      (is (= [[:search "new"]
+              [:hydrate {:ids ["s0" "s1" "s2" "s3" "s4"] :limit 5 :archived :include}]]
+             @calls))
+      (is (= ["s0" "s1" "s2" "s3" "s4"]
+             (mapv #(get-in % [:session "id"])
+                   (get-in @state/app-db [:project-sidebar :search :rows]))))
+      (let [more (first (filter #(= [:search-page :next] (:action %))
+                                (projects/sidebar-entries @state/app-db)))]
+        (state/dispatch [:project-sidebar {:index (:index more)}])
+        (#'screen/project-sidebar-key!
+         (cap/key-stroke :enter)
+         identity
+         identity
+         identity
+         identity
+         nil))
+      ((last @jobs))
+      (is (= 5 (get-in @state/app-db [:project-sidebar :search :offset])))
+      (is (= ["s5" "s6"]
+             (mapv #(get-in % [:session "id"])
+                   (get-in @state/app-db [:project-sidebar :search :rows]))))
+      (is (false? (get-in @state/app-db [:project-sidebar :search :has-more?])))
+      (let [previous (first (filter #(= [:search-page :previous] (:action %))
+                                    (projects/sidebar-entries @state/app-db)))]
+        (state/dispatch [:project-sidebar {:index (:index previous)}])
+        (#'screen/project-sidebar-key!
+         (cap/key-stroke :enter)
+         identity
+         identity
+         identity
+         identity
+         nil)
+        ((last @jobs)))
+      (is (zero? (get-in @state/app-db [:project-sidebar :search :offset])))
+      (let [stale-id (get-in @state/app-db [:project-sidebar :search :request-id])]
+        (#'screen/search-projects! {:text "none" :cursor 4})
+        (state/dispatch [:project-search-loaded stale-id matches [] 5 5 false])
+        ((last @jobs)))
+      (is (some #(= "No saved sessions match" (:label %)) (projects/sidebar-entries @state/app-db)))
+      (reset! failure? true)
+      (#'screen/search-projects! {:text "error" :cursor 5})
+      ((last @jobs))
+      (is (some #(str/includes? (:label %) "Search failed · gateway unavailable")
+                (projects/sidebar-entries @state/app-db)))
+      (reset! failure? false)
+      (#'screen/search-projects! {:text "retry" :cursor 5})
+      ((last @jobs))
+      (is (nil? (get-in @state/app-db [:project-sidebar :search :error])))
+      (is (= 5 (count (get-in @state/app-db [:project-sidebar :search :rows])))))))
+
+(deftest project-update-affordance-preserves-focused-session-test
+  (let [base
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages]
+                      {"a" {:sessions [{"id" "a1" "title" "Current"}]
+                            :grouped []
+                            :request-id "loaded"
+                            :has-more false}}))
+
+        focused
+        (->> (projects/sidebar-entries base)
+             (filter #(= "a1" (get-in % [:session "id"])))
+             first
+             :index)
+
+        db
+        (assoc-in base [:project-sidebar :index] focused)]
+
+    (with-redefs [state/app-db (atom db)]
+      (state/dispatch [:project-page-loaded "a" "loaded"
+                       {:sessions [{"id" "new" "title" "Incoming"}
+                                   {"id" "a1" "title" "Current revised"}]
+                        :grouped []
+                        :has-more false
+                        :total 2} {:groups [] :total 0} nil true])
+      (is (= "a1"
+             (get-in (nth (projects/sidebar-entries @state/app-db)
+                          (dec (get-in @state/app-db [:project-sidebar :index])))
+                     [:session "id"])))
+      (is (= 1 (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
+      (let [capture (cap/capture!
+                      {:cols 144
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) @state/app-db 144 24))})
+            hit (first (filter #(= :project-updates (:kind %)) (.current projects/hit-map)))
+            {:keys [col row]} (:bounds hit)]
+
+        (is (nil? (:error capture)))
+        (is (= [:updates "a"]
+               (projects/key-action @state/app-db
+                                    (MouseAction. MouseActionType/CLICK_DOWN
+                                                  1
+                                                  (TerminalPosition. (int col) (int row))))))
+        (#'screen/project-sidebar-key!
+         (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))
+         identity
+         identity
+         identity
+         identity
+         nil))
+      (is (= ["new" "a1"]
+             (mapv #(get % "id") (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
+      (is (zero? (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
+      (is (nil? (get-in @state/app-db [:project-sidebar :pages "a" :incoming])))
+      (is (= "a1"
+             (get-in (nth (projects/sidebar-entries @state/app-db)
+                          (dec (get-in @state/app-db [:project-sidebar :index])))
+                     [:session "id"]))))))
+
+(deftest project-search-mouse-button-and-empty-state-test
+  (with-redefs [state/app-db (atom (fixture-db))]
+    (let [paint! (fn []
+                   (cap/capture!
+                     {:cols 144
+                      :rows 24
+                      :paint! (fn [{:keys [screen]}]
+                                (projects/paint! (.newTextGraphics screen) @state/app-db 144 24))}))
+          press! (fn [key]
+                   (#'screen/project-sidebar-key! key identity identity identity identity nil))]
+
+      (is (nil? (:error (paint!))))
+      (let [hit (first (filter #(= :project-search (:kind %)) (.current projects/hit-map)))
+            {:keys [col row]} (:bounds hit)]
+
+        (is (some? hit))
+        (press!
+          (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))))
+      (is (some? (get-in @state/app-db [:project-sidebar :search])))
+      (is (some #(= "Type to search saved sessions" (:label %))
+                (projects/sidebar-entries @state/app-db)))
+      (is (nil? (:error (paint!))))
+      (is (some #(= :project-search-field (:kind %)) (.current projects/hit-map)))
+      (press! (cap/key-stroke :esc))
+      (is (nil? (get-in @state/app-db [:project-sidebar :search]))))))
+
+(deftest project-refresh-subscription-lifecycle-test
+  (let [sink
+        (atom nil)
+
+        stops
+        (atom 0)
+
+        reads
+        (atom [])
+
+        db
+        (assoc-in (fixture-db) [:project-sidebar :open?] false)]
+
+    (with-redefs [state/app-db
+                  (atom db)
+
+                  vis/gateway-fleet-subscribe!
+                  (fn [callback]
+                    (reset! sink callback)
+                    #(swap! stops inc))
+
+                  screen/refresh-projects!
+                  (fn [automatic?]
+                    (swap! reads conj automatic?))]
+
+      (let [stop (#'screen/start-projects-refresh!)]
+        (try (is (fn? @sink))
+             (@sink {"type" "session.title_updated"})
+             (Thread/sleep 100)
+             (is (empty? @reads) "Closed panes do not refresh")
+             (state/dispatch [:project-sidebar {:open? true}])
+             (loop [attempt 0]
+               (when (and (empty? @reads) (< attempt 40)) (Thread/sleep 50) (recur (inc attempt))))
+             (is (= [true] @reads))
+             (finally (stop)))
+        (is (= 1 @stops))))))

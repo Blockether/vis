@@ -491,3 +491,58 @@
             (is (nil? (client/improve-update! 9 {"status" "open"})))
             (is (nil? (client/improve-settings! {"mode" "off"})))
             (is (nil? (client/improve-review!)))))))))
+
+(deftest saved-session-page-query-omits-absent-filters-test
+  ;; A nil cursor or filter must not become the literal string "nil" on the wire.
+  (is (= "/v1/sessions?limit=10&project_id=a&grouped=aside"
+         (#'client/session-window-path {:limit 10 :project-id "a" :grouped :aside})))
+  (is (= "/v1/sessions?ids=saved" (#'client/session-window-path {:ids ["saved"]}))))
+
+(deftest saved-session-rename-uses-the-gateway-patch-test
+  (let [requests (atom [])]
+    (with-redefs-fn {#'client/send-json! (fn [verb path body]
+                                           (swap! requests conj [verb path body])
+                                           {"id" "sid" "title" (get body :title)})}
+      (fn []
+        (is (= "New name" (get (client/set-session-title! "sid" "New name") "title")))
+        (is (= [["PATCH" "/v1/sessions/sid" {:title "New name"}]] @requests))))))
+
+(deftest saved-session-archive-uses-the-gateway-patch-test
+  (let [requests (atom [])]
+    (with-redefs [client/send-json! (fn [verb path body]
+                                      (swap! requests conj [verb path body])
+                                      {"id" "sid" "archived_at" (when (:archived body) "now")})]
+      (is (= "now" (get (client/set-session-archived! "sid" true) "archived_at")))
+      (is (nil? (get (client/set-session-archived! "sid" false) "archived_at")))
+      (is (= [["PATCH" "/v1/sessions/sid" {:archived true}]
+              ["PATCH" "/v1/sessions/sid" {:archived false}]]
+             @requests)))))
+
+(deftest session-group-archive-and-delete-use-distinct-gateway-requests-test
+  (let [requests (atom [])]
+    (with-redefs-fn {#'client/send-json! (fn [& args]
+                                           (swap! requests conj (vec args))
+                                           {"id" "group-1"
+                                            "archived_at" (when (:archived (last args)) "now")})}
+      (fn []
+        (is (= "now" (get (client/update-session-group! "group-1" {:archived true}) "archived_at")))
+        (is (nil? (get (client/update-session-group! "group-1" {:archived false}) "archived_at")))
+        (client/delete-session-group! "group-1" :detach)
+        (client/delete-session-group! "group-1" :with-sessions)
+        (is (= [["PATCH" "/v1/session-groups/group-1" {:archived true}]
+                ["PATCH" "/v1/session-groups/group-1" {:archived false}]
+                ["DELETE" "/v1/session-groups/group-1"]
+                ["DELETE" "/v1/session-groups/group-1?sessions=delete"]]
+               @requests))))))
+
+(deftest project-folder-and-removal-use-gateway-test
+  (let [requests (atom [])]
+    (with-redefs [client/send-json! (fn [& args]
+                                      (swap! requests conj (vec args))
+                                      {"path" "/work/new" "deleted_session_ids" ["saved"]})]
+      (is (= "/work/new" (get (client/create-directory! "/work" "new") "path")))
+      (is (= ["saved"]
+             (get (client/delete-project! "a" {:is-recursive? true}) "deleted_session_ids")))
+      (is (= [["POST" "/v1/fs/actions/mkdir" {:path "/work" :name "new"}]
+              ["DELETE" "/v1/projects/a?is_recursive=true"]]
+             @requests)))))

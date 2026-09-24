@@ -50,6 +50,10 @@ or [Getting started](resources/vis-docs/index.md) to try it.
 
 ## Screenshot gallery
 
+The terminal images show an earlier header with session tabs. Current builds show
+only the active session title; [Projects](resources/vis-docs/index.md#find-and-manage-saved-sessions-in-the-terminal)
+lists saved sessions.
+
 <table width="100%">
   <tr>
     <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task."></a></td>

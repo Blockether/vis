@@ -1047,22 +1047,7 @@
                                                                              :state state}
       ;; C-x <letter> → a vis verb (plain second key).
       (and c (keymap/prefix-action-for c)) {:action (keymap/prefix-action-for c) :state state}
-      ;; C-x ← / C-x → → previous / next workspace (Emacs previous-buffer /
-      ;; next-buffer). The switch-to-buffer LIST is C-x b (a `:show-sessions`
-      ;; prefix verb resolved by the `prefix-action-for` clause above).
-      (= KeyType/ArrowLeft (.getKeyType key))
-      {:action :select-tab-index :workspace-index :prev :state state}
-      (= KeyType/ArrowRight (.getKeyType key))
-      {:action :select-tab-index :workspace-index :next :state state}
-      ;; C-x <digit> → jump straight to workspace N (C-x 1 … C-x 9), the Emacs
-      ;; numeric buffer reflex (mirrors the M-1 … M-9 chords). Digits are 1-based
-      ;; on screen, the index 0-based; C-x 0 is ignored (no 0th workspace). A
-      ;; non-existent N is caught downstream and surfaced as a TUI notice.
-      (and c (Character/isDigit c) (not= \0 c))
-      {:action :select-tab-index :workspace-index (dec (Character/digit c 10)) :state state}
-      ;; C-x TAB / C-x S-TAB → Emacs global fold cycle (org `<backtab>`):
-      ;; toggle EVERY disclosure collapsed↔expanded in one keystroke. Living behind
-      ;; the C-x prefix keeps it off bare Tab/S-Tab (which switch workspaces).
+      ;; C-x TAB / C-x S-TAB toggle every disclosure without binding bare Tab.
       (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key)) {:action :toggle-all-details
                                                              :state state}
       :else {:action :continue :state state})))
@@ -1149,11 +1134,6 @@
                                                                    :state (move-word-left state)}
             (and alt (not ctrl) (= (Character/toLowerCase c) \f)) {:action :continue
                                                                    :state (move-word-right state)}
-            ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
-            ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
-            ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
-            (and alt (Character/isDigit c) (not= \0 c))
-            {:action :select-tab-index :workspace-index (dec (Character/digit c 10)) :state state}
             ;; No DIRECT app-verb chords remain — every verb (help included, now
             ;; C-x h) is C-x-prefixed or in the palette. Clause kept total in
             ;; case a direct chord is re-added.
@@ -1162,10 +1142,8 @@
             ;; letter payload into the prompt.
             (or ctrl alt) {:action :continue :state state}
             :else {:action :continue :state (insert-char state c)}))
-        KeyType/Tab (if (.isShiftDown key)
-                      {:action :select-tab-index :workspace-index :prev :state state}
-                      {:action :select-tab-index :workspace-index :next :state state})
-        KeyType/ReverseTab {:action :select-tab-index :workspace-index :prev :state state}
+        KeyType/Tab {:action :continue :state state}
+        KeyType/ReverseTab {:action :continue :state state}
         ;; App verbs live on cross-platform Ctrl chords (Ctrl+F search, Ctrl+R
         ;; reasoning, …) + the Ctrl+P palette, dispatched from `keymap/bindings`
         ;; in the Character branch above. While

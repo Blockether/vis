@@ -151,7 +151,7 @@
                     (set (map :id (mapcat :items (:groups (spec db))))))]
           (expect (not (contains? (ids {}) :close-tab)))
           (expect (not (contains? (ids {}) :fork-at-turn)))
-          (expect (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab))
+          (expect (not (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab)))
           (expect (contains? (ids {:messages [{:role :user}]}) :fork-at-turn))
           ;; palette-only verbs are never painted. The voice conversation MODE is
           ;; one of them ON PURPOSE: a fifth verb in Tools re-packs the hydra and

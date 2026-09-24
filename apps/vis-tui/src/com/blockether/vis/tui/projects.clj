@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
@@ -126,71 +127,407 @@
   [project]
   (paths/abbreviate-home (get project "name" "Untitled project")))
 
-(defn sidebar-entries
-  "Project counters and actionable sessions, in shared paint/keyboard order.
-   Waiting tabs are not running. Unread replies persist until their tab is opened."
+(defn- session-local
+  [db sid]
+  (when-let [tab (some (fn [tab]
+                         (when (= sid
+                                  (some-> (get-in (tab-state db tab) [:session :id])
+                                          str))
+                           tab))
+                       (:tabs db))]
+    (tab-state db tab)))
+
+(defn session-status
+  "The app's gateway-backed status precedence, with the TUI's local unsent draft."
+  [session current? dirty? group-archived?]
+  (let [live?
+        (true? (get session "live"))
+
+        unread
+        (if (or live? current? (not= true (get session "is_unread")))
+          0
+          (max 0 (long (or (get session "unread_answers") 0))))]
+
+    (cond (or (get session "archived_at") group-archived?) "ARCHIVED"
+          (true? (get session "is_awaiting_input"))
+          (let [n (long (or (get session "awaiting_input_count") 1))]
+            (if (> n 1) (str "INPUT NEEDED ×" n) "INPUT NEEDED"))
+          live? "LIVE"
+          (and (true? (get session "was_interrupted")) (pos? unread)) "STOPPED"
+          (pos? unread) (if (> unread 1) (str "NEW ×" unread) "NEW")
+          (= "suspended" (get session "status")) "WAITING"
+          dirty? "DIRTY"
+          :else "IDLE")))
+
+(defn- saved-entries
+  "Rows from gateway windows. Open TUI views are never the source of the inventory."
   [db]
-  (->> (get-in db [:project-sidebar :items])
-       (mapcat
-         (fn [project]
-           (let [pid
-                 (str (get project "id"))
+  (let [sidebar (:project-sidebar db)]
+    (->>
+      (:items sidebar)
+      (mapcat
+        (fn [project]
+          (let [pid (str (get project "id"))
+                expanded? (contains? (:expanded sidebar) pid)
+                page (get-in sidebar [:pages pid])
+                archived? (true? (get-in sidebar [:session-archived? pid]))
+                groups-archived? (true? (get-in sidebar [:group-archived? pid]))
+                groups (get-in sidebar [:groups pid])
+                by-group (group-by #(str (get % "group_id")) (:grouped page))
+                loaded-ids (set (map #(str (get % "id")) (concat (:sessions page) (:grouped page))))
+                pinned (->> (concat (:awaiting page)
+                                    (when (= (str (get-in db [:session :id]))
+                                             (str (get-in page [:current "id"])))
+                                      [(:current page)]))
+                            (filter #(and % (not (contains? loaded-ids (str (get % "id"))))))
+                            (reduce (fn [rows session]
+                                      (if (some #(= (get % "id") (get session "id")) rows)
+                                        rows
+                                        (conj rows session)))
+                                    []))
+                session-row
+                (fn [session]
+                  (let [sid (str (get session "id"))
+                        local (session-local db sid)
+                        draft (input/input->text (:input local))
+                        dirty? (or (not (str/blank? draft))
+                                   (seq (:attachments local))
+                                   (seq (:pending-sends local)))
+                        title (or (not-empty (some-> (get session "title")
+                                                     str/trim))
+                                  (when dirty?
+                                    (not-empty (some-> draft
+                                                       str/split-lines
+                                                       first
+                                                       str/trim)))
+                                  (when (seq (:attachments local))
+                                    (str (count (:attachments local))
+                                         " unsent attachment"
+                                         (when (not= 1 (count (:attachments local))) "s")))
+                                  "Untitled session")
+                        group (some #(when (= (str (get % "id")) (str (get session "group_id"))) %)
+                                    groups)]
 
-                 tabs
-                 (filterv #(= pid (:project-id %)) (:tabs db))
+                    {:kind :project-session
+                     :project project
+                     :session session
+                     :label title
+                     :selected? (contains? (get-in sidebar [:selected pid] #{}) sid)
+                     :favorite? (some? (get session "favorite_rank"))
+                     :status (session-status session
+                                             (= sid
+                                                (some-> (get-in db [:session :id])
+                                                        str))
+                                             dirty?
+                                             (some? (get group "archived_at")))
+                     :turns (long (or (get session "turn_count") 0))
+                     :modified-at (or (get session "modified_at") (get session "created_at"))
+                     :action [:session sid]}))]
 
-                 waiting
-                 (filterv #(:human-input (tab-state db %)) tabs)
+            (into
+              [{:kind :project-select
+                :project project
+                :label (project-label project)
+                :tab-count (long (or (get project "session_count") 0))
+                :running (long (or (get project "live_count") 0))
+                :needs-input (long (or (get project "awaiting_count") 0))
+                :unread (long (or (get project "unread_count") 0))
+                :expanded? expanded?
+                :action [:toggle-project pid]}]
+              (when expanded?
+                (concat
+                  (when (pos? (long (or (:pending-count page) 0)))
+                    [{:kind :project-updates
+                      :project project
+                      :label (str (:pending-count page)
+                                  " new update"
+                                  (when (not= 1 (:pending-count page)) "s")
+                                  " · Enter to show")
+                      :action [:updates pid]}])
+                  (when (seq pinned)
+                    (cons {:kind :project-set :label "Attention" :project project :action [:noop]}
+                          (map session-row pinned)))
+                  [{:kind :project-set
+                    :label (if groups-archived? "Groups · Archived" "Groups")
+                    :project project
+                    :archived? groups-archived?
+                    :set :groups
+                    :action [:noop]}]
+                  (mapcat (fn [group]
+                            (let [gid (str (get group "id"))
+                                  folded? (contains? (get-in sidebar [:group-folds pid]) gid)]
 
-                 unread
-                 (set (filter #(and (:unread? %) (not= (:id %) (:active-tab-id db))) tabs))
+                              (cons {:kind :project-group
+                                     :project project
+                                     :group group
+                                     :label (get group "name" "Untitled group")
+                                     :color (get group "color")
+                                     :group-count (long (or (get group "session_count") 0))
+                                     :folded? folded?
+                                     :action [:toggle-group pid gid]}
+                                    (when-not folded? (map session-row (get by-group gid))))))
+                          groups)
+                  (when (pos? (long (or (:group-offset page) 0)))
+                    [{:kind :project-group-page
+                      :project project
+                      :label "← Previous groups"
+                      :action [:group-page pid :previous]}])
+                  (when (< (+ (long (or (:group-offset page) 0)) (count groups))
+                           (long (or (get-in sidebar [:group-total pid]) 0)))
+                    [{:kind :project-group-page
+                      :project project
+                      :label "More groups →"
+                      :action [:group-page pid :next]}])
+                  (when (and groups-archived?
+                             (not (:loading? page))
+                             (not (:error page))
+                             (zero? (long (or (get-in sidebar [:group-total pid]) 0))))
+                    [{:kind :project-state :project project :label "No archived groups"}])
+                  [{:kind :project-set
+                    :label (if archived? "Sessions · Archived" "Sessions")
+                    :project project
+                    :archived? archived?
+                    :set :sessions
+                    :action [:toggle-sessions pid]}]
+                  (when-not (get-in sidebar [:sessions-folded? pid])
+                    (map session-row (:sessions page)))
+                  (when (and (not (get-in sidebar [:sessions-folded? pid])) (seq (:history page)))
+                    [{:kind :project-page
+                      :project project
+                      :label "← Previous sessions"
+                      :action [:page pid :previous]}])
+                  (when (and (not (get-in sidebar [:sessions-folded? pid])) (:has-more page))
+                    [{:kind :project-page
+                      :project project
+                      :label "More sessions →"
+                      :action [:page pid :next]}])
+                  (when (:loading? page)
+                    [{:kind :project-state :project project :label "Loading sessions…"}])
+                  (when-let [error (:error page)]
+                    [{:kind :project-state :project project :label (str error " · r retry")}])
+                  (when (and (not (:loading? page))
+                             (not (:error page))
+                             (empty? (:sessions page))
+                             (or archived? (empty? groups)))
+                    [{:kind :project-state
+                      :project project
+                      :label (if archived? "No archived sessions" "No saved sessions")}])))))))
+      (map-indexed #(assoc %2 :index (inc (long %1))))
+      vec)))
 
-                 running
-                 (count (filter #(let [local (tab-state db %)] (and (:loading? local)
-                                                                    (not (:human-input local))))
-                                tabs))
+(defn- search-entries
+  "One gateway-search window; normal folds and cursors stay parked underneath."
+  [db]
+  (let [sidebar
+        (:project-sidebar db)
 
-                 counts
-                 (project-counts project running (count waiting) (count unread))]
+        {:keys [text loading? error matches rows offset has-more?]}
+        (:search sidebar)
 
-             (into
-               [{:kind :project-select
-                 :project project
-                 :label (project-label project)
-                 :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
-                 :running (:running counts)
-                 :needs-input (:needs-input counts)
-                 :unread (:unread counts)
-                 :action [:select project]}]
-               (concat
-                 ;; Groups nest under their project: a group row is the project's
-                 ;; own structure, so it sits above the attention rows.
-                 (map (fn [group]
-                        {:kind :project-group
-                         :project project
-                         :group group
-                         :label (get group "name" "Untitled group")
-                         :color (get group "color")
-                         :group-count (long (or (get group "session_count") 0))
-                         :action [:select project]})
-                      (get-in db [:project-sidebar :groups pid]))
-                 (map (fn [tab]
-                        (let [local
-                              (tab-state db tab)
+        projects
+        (into {}
+              (map (fn [project]
+                     [(str (get project "id")) project])
+                   (:items sidebar)))
 
-                              session-id
-                              (or (get-in local [:session :id])
-                                  (get-in local [:human-input :request :session-id]))]
+        title
+        (fn [session]
+          (or (not-empty (some-> (get session "title")
+                                 str/trim))
+              "Untitled session"))
 
-                          {:kind (if (:human-input local) :project-input :project-unread)
-                           :project project
-                           :tab-id (:id tab)
-                           :unread? (contains? unread tab)
-                           :label (model/title-or-placeholder (:label tab))
-                           :action [:session (str session-id)]}))
-                      (filter #(or (:human-input (tab-state db %)) (contains? unread %)) tabs)))))))
-       (map-indexed #(assoc %2 :index (inc (long %1))))
-       vec))
+        hits
+        (mapcat
+          (fn [{:keys [session match]}]
+            (let [sid
+                  (str (get session "id"))
+
+                  pid
+                  (str (get session "project_id"))
+
+                  project
+                  (get projects pid {"id" pid "name" "Other sessions"})
+
+                  snippet
+                  (or (:request-snippet match) (:reply-snippet match))
+
+                  place
+                  (cond (:in-title? match) "title"
+                        (:in-request? match) "request"
+                        (:in-reply? match) "reply"
+                        (:in-thinking? match) "thinking"
+                        :else "match")]
+
+              (cond-> [{:kind :project-session
+                        :project project
+                        :session session
+                        :label (str (project-label project) " / " (title session))
+                        :favorite? (some? (get session "favorite_rank"))
+                        :status (session-status session
+                                                (= sid (str (get-in db [:session :id])))
+                                                false
+                                                false)
+                        :turns (long (or (get session "turn_count") 0))
+                        :modified-at (or (get session "modified_at") (get session "created_at"))
+                        :action [:session sid]}]
+                (seq snippet)
+                (conj {:kind :project-state
+                       :project project
+                       :label (str "↳ " place ": " (str/replace snippet #"\s+" " "))
+                       :action [:noop]}))))
+          rows)
+
+        total
+        (count matches)
+
+        offset
+        (long (or offset 0))]
+
+    (->> (concat
+           (when (pos? offset)
+             [{:kind :project-page
+               :label "← Previous search results"
+               :action [:search-page :previous]}])
+           hits
+           (when has-more?
+             [{:kind :project-page :label "More search results →" :action [:search-page :next]}])
+           (when loading? [{:kind :project-state :label "Searching sessions…"}])
+           (when error [{:kind :project-state :label (str "Search failed · " error)}])
+           (when (and (not loading?) (not error) (zero? total))
+             [{:kind :project-state
+               :label
+               (if (str/blank? text) "Type to search saved sessions" "No saved sessions match")}]))
+         (map-indexed #(assoc %2 :index (inc (long %1))))
+         vec)))
+
+(defn sidebar-entries
+  "Project and saved-session rows in shared paint/keyboard order."
+  [db]
+  (cond (get-in db [:project-sidebar :search]) (search-entries db)
+        (contains? (:project-sidebar db) :pages) (saved-entries db)
+        :else (->>
+                (get-in db [:project-sidebar :items])
+                (mapcat
+                  (fn [project]
+                    (let [pid
+                          (str (get project "id"))
+
+                          tabs
+                          (filterv #(= pid (:project-id %)) (:tabs db))
+
+                          waiting
+                          (filterv #(:human-input (tab-state db %)) tabs)
+
+                          unread
+                          (set (filter #(and (:unread? %) (not= (:id %) (:active-tab-id db))) tabs))
+
+                          running
+                          (count (filter #(let [local (tab-state db %)] (and (:loading? local)
+                                                                             (not (:human-input
+                                                                                    local))))
+                                         tabs))
+
+                          counts
+                          (project-counts project running (count waiting) (count unread))]
+
+                      (into
+                        [{:kind :project-select
+                          :project project
+                          :label (project-label project)
+                          :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
+                          :running (:running counts)
+                          :needs-input (:needs-input counts)
+                          :unread (:unread counts)
+                          :action [:select project]}]
+                        (concat
+                          ;; Groups nest under their project: a group row is the project's
+                          ;; own structure, so it sits above the attention rows.
+                          (map (fn [group]
+                                 {:kind :project-group
+                                  :project project
+                                  :group group
+                                  :label (get group "name" "Untitled group")
+                                  :color (get group "color")
+                                  :group-count (long (or (get group "session_count") 0))
+                                  :action [:select project]})
+                               (get-in db [:project-sidebar :groups pid]))
+                          (map (fn [tab]
+                                 (let [local
+                                       (tab-state db tab)
+
+                                       session-id
+                                       (or (get-in local [:session :id])
+                                           (get-in local [:human-input :request :session-id]))]
+
+                                   {:kind (if (:human-input local) :project-input :project-unread)
+                                    :project project
+                                    :tab-id (:id tab)
+                                    :unread? (contains? unread tab)
+                                    :label (model/title-or-placeholder (:label tab))
+                                    :action [:session (str session-id)]}))
+                               (filter #(or (:human-input (tab-state db %)) (contains? unread %))
+                                       tabs)))))))
+                (map-indexed #(assoc %2 :index (inc (long %1))))
+                vec)))
+
+(defn- entry-id
+  "Stable row identity across gateway refreshes; display labels and counts can change."
+  [entry]
+  (let [pid (some-> (get-in entry [:project "id"])
+                    str)]
+    [(:kind entry) pid
+     (case (:kind entry)
+       :project-session
+       (some-> (get-in entry [:session "id"])
+               str)
+
+       :project-group
+       (some-> (get-in entry [:group "id"])
+               str)
+
+       :project-set
+       (:set entry)
+
+       :project-select
+       nil
+
+       (:action entry))]))
+
+(defn focused-index
+  "Keep the same saved row under the cursor when a project/page refresh reorders it.
+   If it vanished, focus its project; if that vanished, clamp to a surviving row."
+  [db changes]
+  (let [before
+        (long (or (get-in db [:project-sidebar :index]) 0))
+
+        entries
+        (sidebar-entries db)
+
+        row
+        (nth entries (dec before) nil)
+
+        updated
+        (sidebar-entries (update db :project-sidebar merge changes))
+
+        key
+        (when row (entry-id row))
+
+        pid
+        (second key)]
+
+    (if (or (zero? before) (get-in db [:project-sidebar :adding]))
+      before
+      (or (some (fn [entry]
+                  (when (= key (entry-id entry)) (:index entry)))
+                updated)
+          (some (fn [entry]
+                  (when (and (= :project-select (:kind entry))
+                             (= pid
+                                (some-> (get-in entry [:project "id"])
+                                        str)))
+                    (:index entry)))
+                updated)
+          (min before (count updated))))))
 
 (defn visible-entries
   "Scroll projects and alerts together, retaining the parent of a clipped alert group."
@@ -213,8 +550,9 @@
         visible
         (subvec entries start end)]
 
-    (if (and (> capacity 1)
-             (#{:project-group :project-input :project-unread} (:kind (first visible))))
+    (if (and (not (get-in db [:project-sidebar :search]))
+             (> capacity 1)
+             (not= :project-select (:kind (first visible))))
       (into [(first (filter #(and (= :project-select (:kind %))
                                   (= (:project (first visible)) (:project %)))
                             entries))]
@@ -222,7 +560,7 @@
       visible)))
 
 (defn- row-status
-  [entry opening width]
+  [entry sidebar width]
   (case (:kind entry)
     :project-group
     (let [n (long (:group-count entry))]
@@ -234,6 +572,21 @@
     :project-unread
     " NEW "
 
+    :project-session
+    (str (when (:favorite? entry) "★ ")
+         (:status entry)
+         (when (pos? (long (:turns entry))) (str " · " (:turns entry) "t"))
+         (when-let [modified (:modified-at entry)]
+           (when-let [ms (dlg/date->millis modified)]
+             (let [elapsed (max 0 (quot (- (System/currentTimeMillis) ms) 60000))]
+               (str " · "
+                    (cond (< elapsed 60) (str elapsed "m")
+                          (< elapsed 1440) (str (quot elapsed 60) "h")
+                          :else (str (quot elapsed 1440) "d")))))))
+
+    (:project-set :project-page :project-group-page :project-state :project-updates)
+    ""
+
     (let [{:keys [tab-count running needs-input unread project]}
           entry
 
@@ -243,15 +596,19 @@
           separator
           (if (and (< (long width) 48) (pos? (long unread))) " " " · ")]
 
-      (str
-        tab-count
-        (if (= 1 tab-count) " tab" " tabs")
-        (when (pos? (long running))
-          (str separator running (if (and (pos? (long needs-input)) compact?) " run" " running")))
-        (when (pos? (long needs-input))
-          (str separator needs-input (if (pos? (long unread)) " input" " needs input")))
-        (when (pos? (long unread)) (str separator unread " NEW"))
-        (when (= (get project "id") opening) " · Loading…")))))
+      (if (= (get project "id") (:removing sidebar))
+        (or (:progress sidebar) "Removing…")
+        (str
+          tab-count
+          (if (= 1 tab-count)
+            (if (= :toggle-project (first (:action entry))) " session" " tab")
+            (if (= :toggle-project (first (:action entry))) " sessions" " tabs"))
+          (when (pos? (long running))
+            (str separator running (if (and (pos? (long needs-input)) compact?) " run" " running")))
+          (when (pos? (long needs-input))
+            (str separator needs-input (if (pos? (long unread)) " input" " needs input")))
+          (when (pos? (long unread)) (str separator unread " NEW"))
+          (when (= (get project "id") (:opening sidebar)) " · Loading…"))))))
 
 (defn add-field
   "The inline add field's empty state — what `+` opens in place of a modal."
@@ -338,6 +695,7 @@
   (-> field
       (assoc :dir dir
              :rows (vec rows)
+             :listing-path nil
              :loading? (nil? rows))
       (dissoc :index)))
 
@@ -439,6 +797,27 @@
           (and (= KeyType/Character kind) ch) [:adding (add-field-insert field ch)]
           :else [:noop])))
 
+(defn- search-field-action
+  "Edit the inline query without changing the saved project folds or page cursors."
+  [field ^KeyStroke key]
+  (let [kind
+        (.getKeyType key)
+
+        ch
+        (.getCharacter key)]
+
+    (cond (= KeyType/Escape kind) [:search-close]
+          (= KeyType/ArrowUp kind) [:move -1]
+          (= KeyType/ArrowDown kind) [:move 1]
+          (= KeyType/Backspace kind) [:search-change (add-field-erase field -1)]
+          (= KeyType/Delete kind) [:search-change (add-field-erase field 1)]
+          (= KeyType/ArrowLeft kind) [:search-change (add-field-caret field -1)]
+          (= KeyType/ArrowRight kind) [:search-change (add-field-caret field 1)]
+          (= KeyType/Home kind) [:search-change (add-field-caret field :home)]
+          (= KeyType/End kind) [:search-change (add-field-caret field :end)]
+          (and (= KeyType/Character kind) ch) [:search-change (add-field-insert field ch)]
+          :else [:noop])))
+
 (defn- paint-suggestions!
   "Draw the directories the open field completes to on the rows the project list
    normally holds: the folder's name, and the branch of one that is already a git
@@ -525,8 +904,30 @@
                               left
                               width
                               (max 0
-                                   (- (long rows) (if (get-in db [:project-sidebar :error]) 8 7))))
+                                   (- (long rows) (if (get-in db [:project-sidebar :error]) 9 8))))
+          (components/button!
+            g
+            (+ (long left) 2)
+            (- (long rows) (if (get-in db [:project-sidebar :error]) 5 4))
+            (if (get-in db [:project-sidebar :saving?]) "Creating folder…" "＋ New folder  Ctrl+N")
+            :project-new-folder)
           cursor)))))
+
+(defn- paint-search-field!
+  [g db cols rows]
+  (when-let [field (get-in db [:project-sidebar :search])]
+    (when-let [{:keys [left width]} (geometry db cols rows)]
+      (when (and (> (long width) 8) (> (long rows) 6))
+        (.register interactions/hit-map
+                   {:kind :project-search-field
+                    :bounds {:col (long left) :row 3 :width (long width) :height 1}})
+        (dlg/draw-text-input-field! g
+                                    (long left)
+                                    3
+                                    (long width)
+                                    (str (:text field))
+                                    (long (or (:cursor field) 0))
+                                    "Search saved sessions")))))
 
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
@@ -559,6 +960,7 @@
         (when (and (>= width 18) (> rows 3))
           (p/set-fg! g t/header-fg)
           (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects"))
+          (when (>= width 30) (components/button! g (- (+ left width) 13) 1 " ⌕ " :project-search))
           (components/button! g
                               (- (+ left width) 9)
                               1 " + "
@@ -572,12 +974,20 @@
                 :let [row (+ 4 (long offset))
                       child? (not= :project-select kind)
                       alert? (contains? #{:project-input :project-unread} kind)
-                      active? (if child?
-                                (= (:tab-id entry) (:active-tab-id db))
-                                (= (str (get project "id")) (:active-project-id db)))
-                      status (p/truncate-cols (row-status entry (:opening sidebar) width)
-                                              (max 0 (- width 9)))
-                      status-col (- (+ left width) 2 (long (p/display-width status)))
+                      active? (case kind
+                                :project-session
+                                (= (str (get-in entry [:session "id"]))
+                                   (str (get-in db [:session :id])))
+
+                                :project-select
+                                (= (str (get project "id")) (:active-project-id db))
+
+                                (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
+                      status (p/truncate-cols (row-status entry sidebar width)
+                                              (max 0 (- width (if (= :project-session kind) 11 9))))
+                      status-col (- (+ left width)
+                                    (if (= :project-session kind) 4 2)
+                                    (long (p/display-width status)))
                       row-left (+ left (if child? 2 0))
                       name-width (max 0 (- status-col row-left 1))]]
 
@@ -595,13 +1005,29 @@
                                                 (and (:focused? sidebar) (= index (:index sidebar)))
                                                 (str (case kind
                                                        :project-select
-                                                       (dlg/choice-mark true active?)
+                                                       (if (:expanded? entry)
+                                                         "▾ "
+                                                         (if (contains? sidebar :pages)
+                                                           "▸ "
+                                                           (dlg/choice-mark true active?)))
 
                                                        :project-input
                                                        "! "
 
                                                        :project-group
-                                                       "◆ "
+                                                       (if (:folded? entry) "▸ " "◆ ")
+
+                                                       :project-session
+                                                       (if (:selected? entry) "☑ " "◻ ")
+
+                                                       :project-set
+                                                       "  "
+
+                                                       (:project-page :project-group-page)
+                                                       "  "
+
+                                                       :project-state
+                                                       "  "
 
                                                        "● ")
                                                      label)))
@@ -623,7 +1049,25 @@
                   (p/put-str! g status-col row status))))
           (.register interactions/hit-map
                      (assoc entry
-                       :bounds {:col (inc left) :row row :width (max 0 (- width 2)) :height 1})))
+                       :bounds {:col (inc left)
+                                :row row
+                                :width (max 0 (- width (if (= :project-session kind) 4 2)))
+                                :height 1}))
+          (when (= :project-session kind)
+            (.register interactions/hit-map
+                       (assoc entry
+                         :kind :project-selection
+                         :action [:toggle-session (str (get project "id"))
+                                  (str (get-in entry [:session "id"]))]
+                         :bounds {:col (+ left 2) :row row :width 2 :height 1})))
+          (when (= :project-session kind)
+            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+            (p/put-str! g (- (+ left width) 3) row "▸")
+            (.register interactions/hit-map
+                       {:kind :project-details
+                        :session (:session entry)
+                        :action [:details (str (get-in entry [:session "id"]))]
+                        :bounds {:col (- (+ left width) 3) :row row :width 2 :height 1}})))
         (when (and (empty? (:items sidebar)) (not (:adding sidebar)) (> rows 8))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (p/put-str! g
@@ -638,24 +1082,26 @@
             (p/put-str! g (+ left 2) (- rows 4) (p/truncate-cols error (max 0 (- width 4))))))
         (when (> rows 5)
           (let [available (max 0 (- width 4))
-                hints (if (:adding sidebar)
-                        ;; The field owns the keyboard while it is open, so the rail
-                        ;; spells what fills it in and what ends it.
-                        ["↵ add · ⇥ complete · ↑↓ pick · Esc cancel"
-                         "↵ add · ⇥ fill · ↑↓ pick · Esc cancel" "↵ add · ⇥ fill · Esc cancel"
-                         "↵ add project · Esc cancel" "↵ add · Esc cancel" "↵ add · Esc"]
-                        ["↑↓ select · ↵ open · g menu · C-x w hide · Esc chat"
-                         "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
-                         ;; The narrowest rail still spells every verb: tighter
-                         ;; separators buy the room the words need.
-                         "↑↓·↵ open·g menu·C-x w hide·Esc chat" "↑↓ · ↵ · g menu · C-x w hide · Esc"
-                         "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
-                         "↑↓ ↵ g C-x w Esc"])
+                hints (cond (:search sidebar) ["↑↓ results · ↵ open · Esc clear search"
+                                               "↑↓ · ↵ open · Esc clear" "↵ open · Esc clear"]
+                            (:adding sidebar) ["↵ add · ⇥ complete · Ctrl+N folder · Esc cancel"
+                                               "↵ add · ⇥ fill · Ctrl+N folder · Esc cancel"
+                                               "↵ add · Ctrl+N folder · Esc cancel"
+                                               "↵ add · Ctrl+N folder · Esc" "↵ add · Esc cancel"
+                                               "↵ add · Esc"]
+                            :else ["↑↓·↵ open·Space mark·g menu·C-x w hide·Esc chat"
+                                   "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
+                                   ;; The narrowest rail still spells every verb: tighter
+                                   ;; separators buy the room the words need.
+                                   "↑↓·↵ open·g menu·C-x w hide·Esc chat"
+                                   "↑↓ · ↵ · g menu · C-x w hide · Esc"
+                                   "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
+                                   "↑↓ ↵ g C-x w Esc"])
                 hint (or (first (filter #(<= (p/display-width %) available) hints)) (last hints))]
 
             (p/set-colors! g t/dialog-hint t/dialog-bg)
             (p/put-str! g (+ left 2) (- rows 2) (p/truncate-cols hint available))))))
-    (let [cursor (paint-add-field! g db cols rows)]
+    (let [cursor (or (paint-add-field! g db cols rows) (paint-search-field! g db cols rows))]
       (.commitFrame hit-map)
       cursor)))
 
@@ -681,7 +1127,9 @@
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
-                 :project-add :project-hide :project-suggest}
+                 :project-session :project-selection :project-details :project-set :project-page
+                 :project-group-page :project-state :project-add :project-hide :project-suggest
+                 :project-new-folder :project-search :project-search-field :project-updates}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
                   (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
@@ -691,13 +1139,33 @@
                       [:adding (add-field-move field delta)]
                       [:move delta]))
                   (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
+                       (= 3 (.getButton mouse))
+                       (#{:project-select :project-group :project-set :project-session
+                          :project-selection}
+                        (:kind hit)))
+                  [:menu hit]
+                  (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
                        (= 1 (.getButton mouse)))
                   (case (:kind hit)
-                    (:project-select :project-group :project-input :project-unread)
+                    (:project-select :project-group
+                                     :project-input :project-unread
+                                     :project-session :project-selection
+                                     :project-details :project-set
+                                     :project-page :project-group-page
+                                     :project-state :project-updates)
                     (:action hit)
 
                     :project-suggest
                     [:add-commit (:path hit)]
+
+                    :project-new-folder
+                    [:add-folder]
+
+                    :project-search
+                    [:search]
+
+                    :project-search-field
+                    [:focus]
 
                     :project-add
                     [:add]
@@ -710,21 +1178,38 @@
             (when (and (:focused? sidebar) (= MouseActionType/CLICK_DOWN (.getActionType mouse)))
               [:blur-pass])))
         (not (:focused? sidebar)) nil
+        (and (:adding sidebar) (.isCtrlDown key) (= \n (.getCharacter key)))
+        (when-not (:saving? sidebar) [:add-folder])
         (or (.isCtrlDown key) (.isAltDown key)) nil
-        ;; The inline `+` field owns every ordinary key while it is open: a path
-        ;; is typed, not navigated.
         (:adding sidebar) (add-field-action (:adding sidebar) key)
+        (and (:search sidebar) (= KeyType/Enter (.getKeyType key)))
+        (if (pos? index) (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]) [:noop])
+        (:search sidebar) (search-field-action (:search sidebar) key)
+        (= \/ (.getCharacter key)) [:search]
         (= KeyType/Escape (.getKeyType key)) [:blur]
         (= KeyType/Tab (.getKeyType key)) [:blur]
         (= KeyType/ArrowUp (.getKeyType key)) [:move -1]
         (= KeyType/ArrowDown (.getKeyType key)) [:move 1]
         (= KeyType/Enter (.getKeyType key))
         (if (zero? index) [:add] (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]))
+        (= \space (.getCharacter key)) (let [entry (when (pos? index)
+                                                     (nth (sidebar-entries db) (dec index) nil))]
+                                         (if (= :project-session (:kind entry))
+                                           [:toggle-session (str (get-in entry [:project "id"]))
+                                            (str (get-in entry [:session "id"]))]
+                                           [:noop]))
+        (= \d (.getCharacter key)) (let [entry (when (pos? index)
+                                                 (nth (sidebar-entries db) (dec index) nil))]
+                                     (if (= :project-session (:kind entry))
+                                       [:details (str (get-in entry [:session "id"]))]
+                                       [:noop]))
         (= \+ (.getCharacter key)) [:add]
         (= \g (.getCharacter key))
         ;; `g` opens the row's own menu: group actions on a group row, project
         ;; actions on a project row. Nothing to act on above the first row.
         (let [entry (when (pos? index) (nth (sidebar-entries db) (dec index) nil))]
-          (if (#{:project-select :project-group} (:kind entry)) [:menu entry] [:noop]))
+          (if (#{:project-select :project-group :project-set :project-session} (:kind entry))
+            [:menu entry]
+            [:noop]))
         (= \r (.getCharacter key)) [:refresh]
         :else [:noop]))))
