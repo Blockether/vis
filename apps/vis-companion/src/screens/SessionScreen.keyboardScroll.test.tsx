@@ -112,9 +112,9 @@ function installFrames() {
   };
 }
 
-/** Is the "↓ Latest" offer on screen? */
+/** Is the jump-down offer on screen? */
 function latestOffered(): boolean {
-  return !!screen.queryByRole('button', { name: /Latest/ });
+  return !!screen.queryByRole('button', { name: /\d+ messages?/ });
 }
 
 describe("the keyboard against the reader's place", () => {

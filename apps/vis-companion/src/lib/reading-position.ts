@@ -172,7 +172,7 @@ export function heightSettler(
 }
 
 /**
- * Whether the "↓ Latest" offer has anything to offer.
+ * Whether the jump-down offer has anything to offer.
  *
  * Two facts, and either one alone withdraws it: the transcript is already
  * chasing the end (`following`), or the end is already on screen. A screen that
@@ -184,4 +184,17 @@ export function heightSettler(
 export function shouldOfferLatest(box: ScrollBox | null, following: boolean): boolean {
   if (!box || following) return false;
   return !isAtBottom(box);
+}
+
+/** Count user and assistant bubbles not yet fully above the viewport's bottom edge. */
+export function messagesBelow(viewport: HTMLElement, transcript: HTMLElement | null): number {
+  if (!transcript) return 0;
+  const edge = viewport.getBoundingClientRect().bottom;
+  const messages = transcript.querySelectorAll<HTMLElement>('[data-transcript-message]');
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].getBoundingClientRect().bottom <= edge) {
+      return messages.length - index - 1;
+    }
+  }
+  return messages.length;
 }

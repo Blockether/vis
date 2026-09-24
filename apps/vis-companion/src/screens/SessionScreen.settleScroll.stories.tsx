@@ -212,7 +212,7 @@ export const ReaderInTheNewestTurn: Story = {
     const line = () => canvas.getAllByText(marker).at(-1)!;
     const offset = () => line().getBoundingClientRect().top - viewport.getBoundingClientRect().top;
     const chosen = offset();
-    await expect(canvas.getByRole('button', { name: /Latest/ })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /\d+ messages?/ })).toBeVisible();
 
     persisted = true;
     for (const on of listeners)
@@ -241,7 +241,7 @@ export const ReaderInTheNewestTurn: Story = {
     await waitFor(() => expect(canvasElement.querySelector('[data-live="true"]')).toBeNull());
     await paint();
     await expect(Math.abs(offset() - chosen)).toBeLessThan(2);
-    await expect(canvas.getByRole('button', { name: /Latest/ })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /\d+ messages?/ })).toBeVisible();
   },
 };
 

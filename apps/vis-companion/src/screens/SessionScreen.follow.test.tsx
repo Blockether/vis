@@ -101,9 +101,9 @@ function installObserver(): (element: Element) => void {
   };
 }
 
-/** Is the "↓ Latest" offer on screen? */
+/** Is the jump-down offer on screen? */
 function latestOffered(): boolean {
-  return !!screen.queryByRole('button', { name: /Latest/ });
+  return !!screen.queryByRole('button', { name: /\d+ messages?/ });
 }
 
 describe('a reader reaching the end of a turn that is still being written', () => {
@@ -212,6 +212,54 @@ describe('a reader reaching the end of a turn that is still being written', () =
     expect(viewport.scrollTop).toBe(chosenTop);
     expect(moves).toEqual([]);
   });
+
+  it('updates the message count as the reader scrolls and the transcript grows', async () => {
+    const paint = installFrames();
+    const resize = installObserver();
+    const live = { height: 46_000 };
+    renderSessionScreen({
+      session: sessionFixture({ id: 'remaining-messages', status: 'running' }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
+    const content = viewport.firstElementChild!;
+    measure(viewport, live, []);
+    await paint();
+
+    const messages = Array.from(viewport.querySelectorAll<HTMLElement>('[data-transcript-message]'));
+    expect(messages).toHaveLength(6);
+    const scrollStart = live.height - SHELL - 900;
+    const ends = [100, 300, 500, 700, 850, 1200];
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ bottom: SHELL } as DOMRect);
+    messages.forEach((message, index) => {
+      vi.spyOn(message, 'getBoundingClientRect').mockImplementation(
+        () => ({ bottom: scrollStart + ends[index] - viewport.scrollTop }) as DOMRect,
+      );
+    });
+
+    noteReaderGesture();
+    viewport.scrollTop = scrollStart;
+    fireEvent.scroll(viewport);
+    await paint();
+    expect(screen.getByRole('button', { name: /2 messages/ }).textContent).toContain('2 messages');
+
+    noteReaderGesture();
+    viewport.scrollTop += 100;
+    fireEvent.scroll(viewport);
+    await paint();
+    expect(screen.getByRole('button', { name: /1 message$/ }).textContent).toContain('1 message');
+
+    ends[4] += 300;
+    ends[5] += 300;
+    act(() => resize(content));
+    await paint();
+    expect(screen.getByRole('button', { name: /2 messages/ }).textContent).toContain('2 messages');
+  });
+
   // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: WebKit can keep
   // scrolling with native momentum after touchcancel and after the gesture grace.
   // The viewport visibly retreated into a running turn, but follow stayed armed, so

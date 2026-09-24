@@ -149,7 +149,7 @@ export const LiveRegrouping: Story = {
     const offset = () => content.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
     const chosen = offset();
     await expect(Math.abs(chosen + 4)).toBeLessThan(1);
-    await expect(canvas.getByRole('button', { name: /Latest/ })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /\d+ messages?/ })).toBeVisible();
 
     const update = async (revision: number) => {
       for (const on of listeners)
@@ -168,8 +168,8 @@ export const LiveRegrouping: Story = {
       await expect(Math.abs(offset() - chosen)).toBeLessThan(1);
     }
 
-    // The same updates must still follow the end after the reader chooses Latest.
-    await userEvent.click(canvas.getByRole('button', { name: /Latest/ }));
+    // The same updates must still follow the end after the reader chooses to jump down.
+    await userEvent.click(canvas.getByRole('button', { name: /\d+ messages?/ }));
     await waitFor(() =>
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(1),
     );

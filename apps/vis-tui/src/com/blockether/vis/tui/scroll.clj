@@ -131,7 +131,7 @@
   (and (pos? max-s) (< (displayed sc max-s) max-s)))
 
 (defn jump-chip-visible?
-  "True when the \"↓ latest\" jump-to-bottom chip should paint: the user is
+  "True when the jump-to-bottom message count chip should paint: the user is
    PARKED above the live bottom (`:at` intent) AND the bottom actually sits
    off-screen below. It takes BOTH predicates:
 

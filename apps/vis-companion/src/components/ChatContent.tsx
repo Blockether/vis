@@ -3686,7 +3686,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   const paintSkip = useMeasuredPaintSkip(streaming);
 
   return (
-    <article className="flow-root mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
+    <article
+      className="flow-root mt-4 w-full"
+      aria-busy={streaming}
+      ref={paintSkip}
+      data-transcript-message
+    >
       <div
         className={`mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
@@ -3952,7 +3957,7 @@ export const UserMessage = memo(function UserMessage({
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
   // the last-resort overflow guard while hyphenation keeps the rag even.
   return (
-    <article className="mt-4 w-full">
+    <article className="mt-4 w-full" data-transcript-message>
       <div className="mb-2 flex min-h-11 flex-wrap items-center justify-between gap-2 font-mono text-meta font-bold text-you-role mouse:min-h-7">
         <span>
           {requestKind === 'council' ? 'Council' : 'You'}

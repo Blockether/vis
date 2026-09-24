@@ -292,7 +292,7 @@
     [["Enter" "Send — or queue it while a turn is running"]
      ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
      ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-     ["M-> · C-x j · C-l · C-End" "Jump to latest — end-of-buffer (or click the ↓ latest chip)"]
+      ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
      ["M-<" "Jump to the top — beginning-of-buffer"]
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
@@ -308,7 +308,7 @@
            ["C-w · C-d" "Kill word back · delete char forward"]
            ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-           ["Mouse" "Click a session in Projects · ↓ latest jumps down"]]}])
+            ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!

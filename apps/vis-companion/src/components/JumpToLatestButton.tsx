@@ -3,9 +3,10 @@ import { ArrowDownIcon } from './icons';
 
 /** The transcript's single floating action returns a reader to the newest turn. */
 export function JumpToLatestButton({
+  remaining,
   className = '',
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement>) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { remaining: number }) {
   return (
     <button
       type="button"
@@ -13,7 +14,7 @@ export function JumpToLatestButton({
       {...props}
     >
       <ArrowDownIcon className="size-3" />
-      Latest
+      {remaining} {remaining === 1 ? 'message' : 'messages'}
     </button>
   );
 }

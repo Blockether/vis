@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.attachment-intake-test :as intake-fixture]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.file-picker :as picker]
@@ -37,6 +38,27 @@
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
+(defdescribe remaining-messages-jump-test
+  (it "counts bubbles whose end still sits below the viewport, including a partial bubble"
+      (let [remaining (ns-resolve 'com.blockether.vis.tui.screen 'remaining-message-count)
+            layout {:eff-scroll 0 :offsets [0 5 12 20]}]
+        (expect (= 2 (remaining layout 5)))
+        (expect (= 1 (remaining (assoc layout :eff-scroll 8) 5)))
+        (expect (= 0 (remaining (assoc layout :eff-scroll 15) 5)))
+        (expect (= 3 (remaining (assoc layout :offsets [0 5 12 20 24]) 5)))))
+  (it "paints the live count with the same jump action, but hides it in FOLLOW"
+      (let [paint (deref #'screen/paint-jump-bottom!)
+            buttons (atom [])
+            layout {:eff-scroll 0 :offsets [0 5 12 20]}]
+        (with-redefs [components/button! (fn [_ _ _ label action]
+                                            (swap! buttons conj [label action]))]
+          (paint nil 80 25 20 layout 5 {:scroll (scroll/parked 0)})
+          (paint nil 80 25 20 (assoc layout :eff-scroll 8) 5
+                 {:scroll (scroll/parked 8)})
+          (paint nil 80 25 20 layout 5 {:scroll scroll/follow}))
+        (expect (= [[" ↓ 2 messages (C-x j) " :jump-bottom]
+                    [" ↓ 1 message (C-x j) " :jump-bottom]]
+                   @buttons)))))
 (defdescribe team-refresh-frame-test
              (it
                "forces one full frame, then restores fast paths without changing the debug override"

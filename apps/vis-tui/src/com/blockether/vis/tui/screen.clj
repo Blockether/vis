@@ -2429,31 +2429,46 @@
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
 
-(defn- paint-jump-bottom!
-  "Floating \"jump to latest\" affordance. Painted ONLY while the user has
-   scrolled UP off the live bottom (`scroll/scrolled-up?`), bottom-right of the
-   messages viewport
-   just above the echo area. Clicking it (the `:jump-bottom` click region) — or
-   pressing C-l / Ctrl+End — re-arms FOLLOW and eases to the newest content.
-   Hidden while following. Reuses `components/button!`
-   so its look / hover / click region can't drift from the other TUI chips.
+(defn- remaining-message-count
+  "Count bubbles with any rows still below the viewport's lower edge. The
+   virtual layout's offsets include estimated heights for off-screen bubbles."
+  [layout inner-h]
+  (let [offsets
+        (:offsets layout)
 
-   Gated on `scroll/jump-chip-visible?` — the user must be PARKED above the
-   live bottom (`scrolled-up?`) AND the bottom must actually sit off-screen
-   below (`bottom-hidden?`). Either alone misfires: `bottom-hidden?` flashes
-   the chip during plain FOLLOW easing while a turn streams (the eased `:pos`
-   trails the growing bottom every frame); `scrolled-up?` pops it in an
-   empty/short session where a PageUp parked `:at` offset 0."
-  [g cols messages-bottom max-scroll db]
+        end
+        (+ (long (:eff-scroll layout)) (long inner-h))
+
+        n
+        (count offsets)]
+
+    (loop [low
+           1
+
+           high
+           n]
+
+      (if (< low high)
+        (let [mid (quot (+ low high) 2)]
+          (if (<= (long (nth offsets mid)) end) (recur (inc mid) high) (recur low mid)))
+        (- n low)))))
+
+(defn- paint-jump-bottom!
+  "Floating jump-to-bottom chip with the number of messages below the fold.
+   Only a reader parked above the live bottom sees it; clicking re-arms FOLLOW.
+   Reuses `components/button!` for matching paint and click geometry."
+  [g cols messages-bottom max-scroll layout inner-h db]
   (when (scroll/jump-chip-visible? (:scroll db) max-scroll)
-    (let [label
-          " ↓ latest (C-x j) "
+    (let [remaining
+          (remaining-message-count layout inner-h)
+
+          label
+          (str " ↓ " remaining (if (= remaining 1) " message" " messages") " (C-x j) ")
 
           w
           (p/display-width label)
 
-          ;; Horizontally CENTERED, floating just above the echo area — the
-          ;; chat-app convention (a centered pill), not tucked in a corner.
+          ;; Horizontally centered just above the echo area.
           col
           (max 0 (quot (- (long cols) w) 2))
 
@@ -3416,10 +3431,14 @@
       ;; to exactly where it sat in the input box.
       (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
         (when-not (overlay-locked? db) (frame/set-cursor! screen (TerminalPosition. sx sy))))
-      ;; "↓ latest" jump-to-bottom chip — only when the user PARKED above the
-      ;; live bottom AND content actually sits below (jump-chip-visible?): a
-      ;; FOLLOW ease trailing a growing stream must not flash it.
-      (paint-jump-bottom! g cols messages-bottom (max 0 (- total-h (long inner-h))) db)
+      ;; The jump chip follows parked intent, not transient FOLLOW easing.
+      (paint-jump-bottom! g
+                          cols
+                          messages-bottom
+                          (max 0 (- total-h (long inner-h)))
+                          layout
+                          inner-h
+                          db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
@@ -4320,9 +4339,14 @@
       (let [row (long (:row (:bounds r)))]
         (when (or (< row messages-top) (>= row messages-bottom))
           (.register interactions/hit-map r))))
-    ;; Jump-to-bottom chip is scroll-dependent and registers its own click
-    ;; region — repaint it every scroll frame, BEFORE commit.
-    (paint-jump-bottom! g cols messages-bottom (max 0 (- (long (:total-h layout)) inner-h)) db)
+    ;; Recompute both the count and click region on every scroll-only frame.
+    (paint-jump-bottom! g
+                        cols
+                        messages-bottom
+                        (max 0 (- (long (:total-h layout)) inner-h))
+                        layout
+                        inner-h
+                        db)
     (.commitFrame interactions/hit-map)
     ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)

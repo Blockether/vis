@@ -208,7 +208,7 @@ function handoverStory(nudge: boolean): Story {
       await expect(worst).toBeLessThan(2);
       await expect(
         [...canvasElement.querySelectorAll('button')].some((button) =>
-          /Latest/.test(button.textContent ?? ''),
+          /\d+ messages?/.test(button.textContent ?? ''),
         ),
       ).toBe(false);
     },

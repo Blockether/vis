@@ -121,6 +121,7 @@ import {
   heightSettler,
   isAtBottom,
   isCorrectionEcho,
+  messagesBelow,
   readerRetreatedFrom,
   shouldOfferLatest,
 } from '../lib/reading-position';
@@ -728,6 +729,7 @@ export function SessionScreen({
   // In-flight snapshots must not undo a newer live pause or resume.
   const queuePausedRevisionRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
+  const [remainingMessages, setRemainingMessages] = useState(0);
   // The transcript row that TOOK OVER from the running-turn bubble this visit. It mounts
   // holding pixels the reader is already looking at, so it mounts WHOLE — see
   // `IterationTrace`'s `whole` in `ChatContent`.
@@ -970,6 +972,7 @@ export function SessionScreen({
   // to survive until that data arrives.
   const resumePinRef = useRef(false);
   const showJumpRef = useRef(false);
+  const remainingMessagesRef = useRef(0);
   const runningTurnRef = useRef<RunningTurn | null>(runningTurnSeed?.turn ?? null);
   // Journal cursor of the newest event already folded into the running-turn bubble. The
   // hub replays a still-streaming turn from its `turn.started` on every
@@ -1194,6 +1197,8 @@ export function SessionScreen({
       initialScrollPendingRef.current = !fresh;
       showJumpRef.current = false;
       setShowJump(false);
+      remainingMessagesRef.current = 0;
+      setRemainingMessages(0);
     }
     setHandedOverRowId('');
     setRouterOpen(false);
@@ -1364,11 +1369,16 @@ export function SessionScreen({
     };
   }, [client, sid]);
 
-  // "↓ Latest" is a MEASUREMENT of the scroller, never a memory of the last
-  // gesture: the offer stands only while there is something below the fold AND
-  // nothing is already carrying the reader there.
+  // Keep the existing offer behavior, but measure the number of message bubbles
+  // below the viewport whenever scroll, growth, or layout changes its geometry.
   const syncJump = useCallback(() => {
-    const offer = shouldOfferLatest(scrollRef.current, followingRef.current);
+    const viewport = scrollRef.current;
+    const offer = shouldOfferLatest(viewport, followingRef.current);
+    const remaining = offer && viewport ? messagesBelow(viewport, transcriptRef.current) : 0;
+    if (remainingMessagesRef.current !== remaining) {
+      remainingMessagesRef.current = remaining;
+      setRemainingMessages(remaining);
+    }
     if (showJumpRef.current === offer) return;
     showJumpRef.current = offer;
     setShowJump(offer);
@@ -4867,6 +4877,7 @@ export function SessionScreen({
               completion list occupies the same strip. */}
             {showJump && !fileMatches.length && !slashMatches.length && (
               <JumpToLatestButton
+                remaining={remainingMessages}
                 className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
                 onClick={() => scrollToEnd('smooth')}
               />
