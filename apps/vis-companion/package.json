@@ -1,6 +1,6 @@
 {
   "name": "vis-companion",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "private": true,
   "description": "Universal (web / Android / iOS) companion for the vis gateway — React + Tailwind + Capacitor.",
   "type": "module",
