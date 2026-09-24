@@ -6120,29 +6120,34 @@
   "ONE band INSTANCE in the LIVE SESSION frame, opened around `body`.
 
    `anchor` is `state/band-anchor`: `:content-top` is the first row the band may
-   touch and `:prompt-h` the live height of the prompt it sits above, so the
-   band always lands ABOVE the input box and under the header. The frame is
-   snapshotted before the band paints and put back on the way out — the
-   transcript underneath is never repainted from scratch and never blanked.
+   touch, `:prompt-h` the live height of the prompt it sits above, and
+   `:chat-left` the start of the chat pane. The band is clipped to that pane,
+   leaving a docked project rail untouched. The frame is snapshotted before the
+   band paints and put back on the way out — the transcript underneath is never
+   repainted from scratch and never blanked.
 
    `body` is called with `[g region]`, the same two handles every other host of
    `embed-transient!` composes. This is the only place the session screen turns
    an anchor into a band region: a second one is how two bands drift apart."
-  [^TerminalScreen screen {:keys [content-top prompt-h]} body]
+  [^TerminalScreen screen {:keys [content-top prompt-h chat-left]} body]
   (let [size
         (modal-size! screen)
 
+        left
+        (min (max 0 (long (or chat-left 0))) (max 0 (dec (.getColumns size))))
+
+        cols
+        (- (.getColumns size) left)
+
         g
-        (frame/surface-graphics screen (.getColumns size) (.getRows size))
+        (binding [frame/*column-offset* left]
+          (frame/surface-graphics screen cols (.getRows size)))
 
         restore!
         (frame-restorer screen)
 
         region
-        (assoc (tr/band-region (.getColumns size)
-                               (.getRows size)
-                               (or content-top 1)
-                               (or prompt-h tr/prompt-rows))
+        (assoc (tr/band-region cols (.getRows size) (or content-top 1) (or prompt-h tr/prompt-rows))
           :restore! restore!)]
 
     ;; The band owns the keyboard while it is up, so it owns the CURSOR: left
@@ -6151,7 +6156,8 @@
     ;; there. Anything inside the band that reads typed text (`band-questions`)
     ;; places it again for itself.
     (.setCursorPosition screen nil)
-    (try (body g region)
+    (try (binding [frame/*column-offset* left]
+           (body g region))
          (finally (when restore! (restore!))
                   (.setCursorPosition screen nil)
                   (frame/refresh! screen)))))

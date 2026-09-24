@@ -29,21 +29,21 @@
 (defonce app-db (atom nil))
 
 (defn band-anchor
-  "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h}`, read off the
-   layout the renderer published for the live frame.
+  "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h :chat-left}`,
+   read off the layout the renderer published for the live frame.
 
    Every band on the session screen is anchored the SAME way: it may not climb
-   over the header (`[:layout :messages-top]`) and it sits ABOVE the prompt box
-   at its LIVE height (`[:layout :input-h]`, which grows with what is typed).
-   Spelling that pair out at each call site is how one band ended up glued to a
-   three-row prompt while the box under it had grown to five, so the anchor is
-   read HERE and handed to the dialog band renderer as one value.
+   over the header (`[:layout :messages-top]`), it sits ABOVE the prompt box
+   at its LIVE height (`[:layout :input-h]`), and it stays in the chat pane to
+   the right of the project rail (`[:layout :chat-left]`).
+   Read that geometry HERE and hand it to the dialog band renderer as one value.
 
    0-arity reads the live db; the 1-arity is pure and is what tests use."
   ([] (band-anchor @app-db))
   ([db]
    {:content-top (or (get-in db [:layout :messages-top]) 1)
-    :prompt-h (or (get-in db [:layout :input-h]) tr/prompt-rows)}))
+    :prompt-h (or (get-in db [:layout :input-h]) tr/prompt-rows)
+    :chat-left (or (get-in db [:layout :chat-left]) 0)}))
 
 (defonce ^:private event-registry (atom {}))
 

@@ -5,6 +5,7 @@
    virtual terminal."
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
+            [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.terminals :as term]
@@ -814,6 +815,33 @@
                               (.getCharacter (dlg/prefix-band! screen
                                                                {:content-top 1 :prompt-h 3}
                                                                leader-spec)))))))
+
+;; Regression: the C-x band must use the chat pane, not cover the project rail.
+(defdescribe
+  band-project-sidebar-test
+  (it "keeps the docked project rail intact while the C-x hydra is visible"
+      (let [rail
+            (apply str (repeat 40 "S"))
+
+            capture
+            (cap/capture! {:cols 120
+                           :rows 30
+                           :keys [\d]
+                           :paint! (fn [{:keys [screen g]}]
+                                     (doseq [row (range 30)]
+                                       (p/put-str! g 0 row rail))
+                                     (dlg/prefix-band! screen
+                                                       {:content-top 1 :prompt-h 3 :chat-left 40}
+                                                       leader-spec))})
+
+            shown
+            (str/split-lines (cap/frame-text capture 0))]
+
+        (expect (nil? (:error capture)))
+        (expect (= \d (.getCharacter (:ret capture))))
+        (expect (every? #(= rail (subs % 0 40)) shown))
+        (expect (some #(str/includes? (subs % 40) "C-x — vis commands") shown))
+        (expect (every? #(= rail (subs % 0 40)) (str/split-lines (cap/frame-text capture)))))))
 
 ;; Regression, issue #C-x band width: the band washed its paper across the WHOLE
 ;; terminal width, so its background ran past both of its own rules to the screen

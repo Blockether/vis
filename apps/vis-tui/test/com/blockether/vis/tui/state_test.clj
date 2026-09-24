@@ -5637,31 +5637,31 @@
       (expect (nil? (get-in @state/app-db [:tab-locals :tab-b :human-input])))))
 
 ;;; ── Where a MAIN-SCREEN transient sits ───────────────────────────────────────
-;; Every band on the session screen is anchored by ONE value read here, instead
-;; of three call sites each re-spelling `[:layout :messages-top]` and
-;; `[:layout :input-h]` — a band anchored to a stale prompt height paints over
-;; the input box the human is typing into.
+;; Every band on the session screen uses the same live layout. A stale prompt
+;; height paints over the input box, and a missing chat offset paints over the
+;; docked project rail.
 
-(defdescribe band-anchor-test
-             (it "reads the live layout: under the header, above the prompt at its LIVE height"
-                 (expect (= {:content-top 6 :prompt-h 7}
-                            (state/band-anchor {:layout {:messages-top 6 :input-h 7}}))))
-             (it "falls back to the resting prompt box when the frame has not published a layout"
-                 (expect (= {:content-top 1 :prompt-h tr/prompt-rows} (state/band-anchor {}))))
-             (it "keeps the band ABOVE the prompt however tall the prompt grew"
-                 (let [rows
-                       40
+(defdescribe
+  band-anchor-test
+  (it "reads the live layout: under the header, above the prompt and beside the rail"
+      (expect (= {:content-top 6 :prompt-h 7 :chat-left 40}
+                 (state/band-anchor {:layout {:messages-top 6 :input-h 7 :chat-left 40}}))))
+  (it "falls back to the resting prompt box when the frame has not published a layout"
+      (expect (= {:content-top 1 :prompt-h tr/prompt-rows :chat-left 0} (state/band-anchor {}))))
+  (it "keeps the band ABOVE the prompt however tall the prompt grew"
+      (let [rows
+            40
 
-                       {:keys [content-top prompt-h]}
-                       (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
+            {:keys [content-top prompt-h]}
+            (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
 
-                       {:keys [hint-row min-row]}
-                       (tr/band-region 80 rows content-top prompt-h)]
+            {:keys [hint-row min-row]}
+            (tr/band-region 80 rows content-top prompt-h)]
 
-                   ;; the band's LAST row (its hint bar) still sits above the input box
-                   (expect (< (long hint-row) (- rows (long prompt-h))))
-                   ;; and it never climbs over the header
-                   (expect (= 4 min-row)))))
+        ;; the band's LAST row (its hint bar) still sits above the input box
+        (expect (< (long hint-row) (- rows (long prompt-h))))
+        ;; and it never climbs over the header
+        (expect (= 4 min-row)))))
 
 ;; Reported over the settings screen: the `speech` FEATURE TOGGLE was the wrong shape.
 ;; A machine-wide on/off cannot answer the only question a human asks - should THIS
