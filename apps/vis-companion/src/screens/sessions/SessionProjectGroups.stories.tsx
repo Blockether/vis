@@ -482,6 +482,45 @@ export const GroupDragAndDrop: Story = {
     await expect(carried.at(-1)!.picture.rail).not.toBe('none');
   },
 };
+
+// Keep a batch selected when the pointer takes hold of one of its rows. A plain click
+// during that gesture must not turn the next native drag into a single-row move.
+export const DragSelectedSessions: Story = {
+  ...Groups,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const wallet = await page.findByRole('button', { name: 'Collapse Wallet work' });
+    const row = (sid: string) =>
+      canvasElement.querySelector<HTMLButtonElement>(`[data-row-surface][data-session-id="${sid}"]`)!;
+    const pointer = userEvent.setup();
+    await pointer.click(row(GROUPED[0].id));
+    await pointer.keyboard('{Shift>}');
+    await pointer.click(row(GROUPED[3].id));
+    await pointer.keyboard('{/Shift}');
+    for (const session of GROUPED) await expect(row(session.id)).toHaveAttribute('aria-pressed', 'true');
+
+    await userEvent.click(row(GROUPED[2].id));
+    for (const session of GROUPED) await expect(row(session.id)).toHaveAttribute('aria-pressed', 'true');
+
+    const payloads: string[] = [];
+    const watchDrag = (event: DragEvent) => {
+      if ((event.target as HTMLElement).closest('[data-session-row]')) {
+        payloads.push(event.dataTransfer?.getData('application/vnd.vis.sessions+json') ?? '');
+      }
+    };
+    canvasElement.ownerDocument.addEventListener('dragstart', watchDrag);
+    try {
+      await dragOnto(row(GROUPED[3].id).closest('[draggable="true"]') as HTMLElement, wallet.parentElement!);
+    } finally {
+      canvasElement.ownerDocument.removeEventListener('dragstart', watchDrag);
+    }
+    await expect(payloads).toContain(JSON.stringify(GROUPED.map((session) => session.id)));
+    await waitFor(() =>
+      expect(wallet.closest('div')!.parentElement!.querySelectorAll('[data-session-id]')).toHaveLength(4),
+    );
+  },
+};
+
 // THE BAND'S OWN ⋮ CARRIES THE VERBS — one mark each, and nothing that only repeats the
 // name the reader pressed. The palette waits a step behind a row that names the verb.
 export const GroupVerbs: Story = {

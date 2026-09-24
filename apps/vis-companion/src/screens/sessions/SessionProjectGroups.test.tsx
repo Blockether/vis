@@ -768,6 +768,33 @@ describe('ProjectGroup groups', () => {
     for (const session of ROWS) expect(surface(session.id)).not.toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('keeps the batch selected when pressing a selected row to begin dragging', async () => {
+    finePointer();
+    const { open, user } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    const picked = surface(ROWS[2].id);
+    fireEvent.pointerDown(picked, { button: 0, pointerType: 'mouse' });
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(picked, { detail: 1 });
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'true');
+    expect(open).toHaveBeenCalledTimes(1);
+    const carrier = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[2].id), { dataTransfer: carrier });
+    expect(carrier.getData('application/vnd.vis.sessions+json')).toBe(JSON.stringify(ROWS.map((row) => row.id)));
+    fireEvent.click(picked, { detail: 2 });
+    expect(open).toHaveBeenCalledTimes(2);
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    picked.focus();
+    await user.keyboard('{Enter}');
+    expect(open).toHaveBeenCalledTimes(4);
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('keeps a touch-style Shift-click as a normal open, not a multi-selection', async () => {
     const { open } = mount();
     await band('Wallet work');

@@ -1113,6 +1113,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
     if (!event.shiftKey) {
       anchor.current = { id, scope: selectionScope };
+      // A pointer click on a selected row can precede a drag. Keep the whole batch
+      // instead of opening the row; keyboard activation and double-click still open it.
+      if (selectedIds.length > 1 && selectedSet.has(id) && event.detail === 1) return true;
       setSelection(null);
       return false;
     }
