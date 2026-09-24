@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.27] - 2026-09-24
+
+### Added
+- Ask typed `choice`, `score` and `noul` decision questions with action probabilities
+  through the gateway or Python SDK. Select pinned Laya or your own uploaded model
+  by reference or an explicit alias.
+- Download the pinned FP32 model, full training checkpoint and offline CPython 3.12
+  training wheels with `vis-agent decisions models download --training`. The
+  `assets-pack` release retains the existing speech assets.
+- Fine-tune, evaluate, export and stream-upload decision models from the Python
+  SDK, then activate an alias to use them through the gateway.
+
+### Fixed
+- Accept model uploads in the native gateway and return a client error for
+  invalid archives instead of closing the upload connection.
+
 ## [v0.2.26] - 2026-09-23
 
 ### Added
