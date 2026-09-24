@@ -93,19 +93,19 @@
 
     {"headline" (if running? "Running command" "Command finished")
      "summary" (or command "")
-     "content" (vec (concat (when (seq command)
-                              [{"type" "heading" "text" "Command"}
-                               {"type" "code" "language" "bash" "text" command}])
-                            (mapcat (fn [[key title]]
-                                      (when-let [text (not-empty (field value key))]
-                                        [{"type" "heading" "text" title}
-                                         {"type" "code" "text" text}]))
-                                    [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"]
-                                     ["stderr" "Stderr"]])
-                            [{"type" (if running? "text" "markdown")
-                              "text" (cond (some? exit) (str "**Exit code:** " exit)
-                                           running? "Running"
-                                           :else "**Exit code:** unavailable")}]))}))
+     "content"
+     (vec (concat
+            (when (seq command)
+              [{"type" "heading" "text" "Command"}
+               {"type" "code" "language" "bash" "text" command}])
+            (mapcat (fn [[key title]]
+                      (when-let [text (not-empty (field value key))]
+                        [{"type" "heading" "text" title} {"type" "code" "text" text}]))
+                    [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"] ["stderr" "Stderr"]])
+            (when (or (some? exit) (not running?))
+              [{"type" "markdown"
+                "text"
+                (if (some? exit) (str "**Exit code:** " exit) "**Exit code:** unavailable")}])))}))
 
 (defn- shell-overlap
   "Length of the suffix of `left` that is a prefix of `right`, in linear time."

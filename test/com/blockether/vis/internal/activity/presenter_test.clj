@@ -296,11 +296,26 @@
         (expect (some #(= "a\nb" (get % "text")) blocks))
         (expect (some #(= {"type" "markdown" "text" "**Exit code:** 1"} %) blocks))
         (expect (not (re-find #"handle-123|/private/log|internal" (pr-str view))))))
-  (it "never invents a successful exit for a running command"
-      (let [view (presenter/result-presentation {:operation :shell}
-                                                {:command "sleep 10" :exit nil :status "running"})]
-        (expect (= {"type" "text" "text" "Running"} (last (get view "content"))))
-        (expect (not (re-find #"Exit code: 0" (pr-str view))))))
+  (it "shows a running shell command and output without repeating its status"
+      (let [value
+            {:command "npm run storybook" :exit nil :status "running"}
+
+            command
+            [{"type" "heading" "text" "Command"}
+             {"type" "code" "language" "bash" "text" "npm run storybook"}]
+
+            running
+            (presenter/result-presentation {:operation :shell} value)
+
+            with-output
+            (presenter/result-presentation {:operation :_shell-logs}
+                                           (assoc value :out "Server ready"))]
+
+        (expect (= "Running command" (get running "headline")))
+        (expect (= command (get running "content")))
+        (expect (= (into command
+                         [{"type" "heading" "text" "Output"} {"type" "code" "text" "Server ready"}])
+                   (get with-output "content")))))
   (it "labels an unavailable exit beside its bold label"
       (let [view (presenter/result-presentation {:operation :_shell-wait}
                                                 {:command "sleep 10" :exit nil :status "exited"})]
