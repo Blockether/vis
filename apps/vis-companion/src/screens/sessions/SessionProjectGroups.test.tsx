@@ -777,6 +777,104 @@ describe('ProjectGroup groups', () => {
     expect(surface(ROWS[2].id)).not.toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('toggles individual rows with Command on Apple, then shifts from the last toggled row', async () => {
+    finePointer();
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    const { open } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    fireEvent.click(surface(ROWS[1].id), { metaKey: true });
+    expect(ROWS.map((row) => surface(row.id).getAttribute('aria-pressed'))).toEqual([
+      'true', 'false', 'true', 'true',
+    ]);
+    fireEvent.click(surface(ROWS[1].id), { metaKey: true });
+    fireEvent.click(surface(ROWS[3].id), { metaKey: true });
+    expect(ROWS.map((row) => surface(row.id).getAttribute('aria-pressed'))).toEqual([
+      'true', 'true', 'true', 'false',
+    ]);
+    fireEvent.click(surface(ROWS[1].id), { shiftKey: true });
+    expect(ROWS.map((row) => surface(row.id).getAttribute('aria-pressed'))).toEqual([
+      'false', 'true', 'true', 'true',
+    ]);
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps Mac Control-click for the row context menu without opening or changing selection', async () => {
+    finePointer();
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    const { open } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id), { metaKey: true });
+    fireEvent.click(surface(ROWS[1].id), { ctrlKey: true });
+    expect(open).not.toHaveBeenCalled();
+    expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[1].id)).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.contextMenu(surface(ROWS[1].id), { ctrlKey: true, clientX: 50, clientY: 50 });
+    expect(await screen.findByRole('dialog', { name: `${ROWS[1].title} actions` })).toBeInTheDocument();
+  });
+
+  it.each(['Win32', 'Linux x86_64'])(
+    'toggles with Control on %s, including a disconnected drag set, but not Command',
+    async (platform) => {
+      finePointer();
+      vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue(platform);
+      const { client, open } = mount();
+      const wallet = await band('Wallet work');
+      fireEvent.click(surface(ROWS[0].id), { ctrlKey: true });
+      fireEvent.click(surface(ROWS[2].id), { ctrlKey: true });
+      fireEvent.click(surface(ROWS[3].id), { ctrlKey: true });
+      fireEvent.click(surface(ROWS[2].id), { ctrlKey: true });
+      const carrier = dragCarrier();
+      fireEvent.dragStart(strip(document.body, ROWS[3].id), { dataTransfer: carrier });
+      expect(carrier.getData('application/vnd.vis.sessions+json')).toBe(
+        JSON.stringify([ROWS[0].id, ROWS[3].id]),
+      );
+      expect(carrier.setDragImage.mock.calls[0][0]).toHaveTextContent('2 sessions');
+      fireEvent.drop(wallet, { dataTransfer: carrier });
+      await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(1));
+      expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[3].id, WALLET);
+      expect(open).not.toHaveBeenCalled();
+      fireEvent.click(surface(ROWS[1].id), { metaKey: true });
+      expect(open).toHaveBeenCalledTimes(1);
+      for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
+    },
+  );
+
+  it('drops a Control selection when the visible Groups page changes', async () => {
+    finePointer();
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
+    const { user } = mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
+    await band('Band 00');
+    fireEvent.click(surface(ROWS[0].id), { ctrlKey: true });
+    fireEvent.click(surface(ROWS[2].id), { ctrlKey: true });
+    const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    const steps = within(groups).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
+    });
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(surface(ROWS[3].id), { ctrlKey: true });
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    const carrier = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[3].id), { dataTransfer: carrier });
+    expect(carrier.getData('application/vnd.vis.sessions+json')).toBe('');
+  });
+
+  it('opens a row instead of selecting on a touch-only device even with a modifier', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    const { open } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id), { metaKey: true });
+    fireEvent.click(surface(ROWS[1].id), { ctrlKey: true });
+    expect(open).toHaveBeenCalledTimes(2);
+    for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('clears a range when its group folds and never selects hidden rows', async () => {
     finePointer();
     const { user } = mount();

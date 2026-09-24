@@ -66,6 +66,7 @@ import {
   type SessionMatch,
 } from '../../lib/gateway';
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
+import { isIosAppOnMac } from '../../lib/host';
 import { holdOrder, type OrderEpoch } from '../../lib/order-epoch';
 import { compactProjectPath } from '../../lib/path';
 import { hasHardwarePointer } from '../../lib/pointer';
@@ -1080,7 +1081,27 @@ export const ProjectGroup = memo(function ProjectGroup({
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedIds.length]);
   const onSelectionClick = (id: string, event: MouseEvent<HTMLButtonElement>): boolean => {
-    if (!event.shiftKey || !hasHardwarePointer()) {
+    if (!hasHardwarePointer()) {
+      anchor.current = { id, scope: selectionScope };
+      setSelection(null);
+      return false;
+    }
+    // On Apple hardware Command selects; Control is the row's context-menu gesture.
+    const isApple = isIosAppOnMac() || /Mac|iP(ad|hone|od)/.test(navigator.platform || navigator.userAgent);
+    if (isApple && event.ctrlKey) return true;
+    if ((isApple ? event.metaKey : event.ctrlKey) && !event.shiftKey) {
+      event.preventDefault();
+      anchor.current = { id, scope: selectionScope };
+      setSelection((held) => {
+        const next = new Set(held?.scope === selectionScope ? held.ids : []);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        const ids = visibleIds.filter((sid) => next.has(sid));
+        return ids.length ? { scope: selectionScope, ids } : null;
+      });
+      return true;
+    }
+    if (!event.shiftKey) {
       anchor.current = { id, scope: selectionScope };
       setSelection(null);
       return false;
