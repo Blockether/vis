@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -125,6 +125,7 @@ function mount(
   rows: Session[] = ROWS,
 ) {
   const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
+  const open = vi.fn();
   // The rows this MACHINE is holding — its own window of the fleet. A poll that lands
   // hands the project a new one (`hold`), which is how a row arrives carrying an answer
   // it did not have a moment ago.
@@ -146,7 +147,7 @@ function mount(
         openRow: null,
         actions: {
           commands: {
-            open: vi.fn(),
+            open,
             rename: vi.fn(async () => {}),
             requestDelete: vi.fn(),
             toggleStar: vi.fn(),
@@ -176,6 +177,7 @@ function mount(
   return {
     client,
     creation: started,
+    open,
     user: userEvent.setup(),
     /** The next poll landed: this machine now holds these rows. */
     hold: (held: Session[]) => view.rerender(project(held)),
@@ -196,10 +198,32 @@ function strip(scope: HTMLElement, sid: string): HTMLElement {
   return slab.closest('[draggable="true"]') as HTMLElement;
 }
 
+const surface = (sid: string) => document.querySelector(`[data-session-id="${sid}"]`) as HTMLElement;
+
+function finePointer() {
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches: query === '(pointer: fine)',
+  }));
+}
+
+function dragCarrier() {
+  const values = new Map<string, string>();
+  return {
+    setData: vi.fn((type: string, value: string) => values.set(type, value)),
+    getData: vi.fn((type: string) => values.get(type) ?? ''),
+    setDragImage: vi.fn(),
+    effectAllowed: '',
+    dropEffect: '',
+  };
+}
+
 describe('ProjectGroup groups', () => {
   // A fold is REMEMBERED (`lib/project-fold`), so one test's shut band must not
   // arrive shut in the next one.
   beforeEach(() => window.localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
 
   it('nests a group band under the project header, with its colour and filed rows', async () => {
     mount();
@@ -716,6 +740,134 @@ describe('ProjectGroup groups', () => {
     expect(within(row).queryByText('Ungroup')).toBeNull();
     await user.click(within(row).getByText('Move to...'));
     expect(within(sheet(`Groups in ${ROOT}`)).getByText('Notes')).toBeInTheDocument();
+  });
+
+  it('selects a visible range across groups on Shift-click without opening another session', async () => {
+    finePointer();
+    const { open } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    expect(open).toHaveBeenCalledTimes(1);
+    for (const session of ROWS) {
+      expect(surface(session.id)).toHaveAttribute('aria-pressed', 'true');
+      expect(strip(document.body, session.id)).toHaveClass('bg-accent/15');
+    }
+    fireEvent.click(surface(ROWS[1].id), { shiftKey: true });
+    expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[1].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(surface(ROWS[2].id));
+    expect(open).toHaveBeenCalledTimes(2);
+    for (const session of ROWS) expect(surface(session.id)).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    for (const session of ROWS) expect(surface(session.id)).not.toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps a touch-style Shift-click as a normal open, not a multi-selection', async () => {
+    const { open } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[2].id), { shiftKey: true });
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(surface(ROWS[2].id)).not.toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('clears a range when its group folds and never selects hidden rows', async () => {
+    finePointer();
+    const { user } = mount();
+    const wallet = await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
+    expect(surface(ROWS[0].id)).toBeNull();
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    await user.click(within(wallet).getByRole('button', { name: 'Expand Wallet work' }));
+    for (const session of ROWS) expect(surface(session.id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('drags a selected range as a counted batch and files only rows outside the target group', async () => {
+    finePointer();
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    const carrier = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[3].id), { dataTransfer: carrier });
+    expect(carrier.setData).toHaveBeenCalledWith(
+      'application/vnd.vis.sessions+json', JSON.stringify(ROWS.map((row) => row.id)),
+    );
+    expect(carrier.getData('text/plain')).toBe(ROWS[3].id);
+    const picture = carrier.setDragImage.mock.calls[0][0] as HTMLElement;
+    expect(picture).toHaveTextContent('4 sessions');
+    expect(picture).toHaveTextContent(ROWS[3].title!);
+    expect(picture).not.toHaveTextContent(ROWS[0].title!);
+    fireEvent.drop(wallet, { dataTransfer: carrier });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(2));
+    expect(client.assignSessionGroup).toHaveBeenNthCalledWith(1, ROWS[2].id, WALLET);
+    expect(client.assignSessionGroup).toHaveBeenNthCalledWith(2, ROWS[3].id, WALLET);
+    await waitFor(() => expect(wallet.querySelectorAll('[data-session-row]')).toHaveLength(4));
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('ungroups a selected batch but drags an unselected row alone', async () => {
+    finePointer();
+    const { client } = mount();
+    await band('Wallet work');
+    fireEvent.click(surface(ROWS[0].id));
+    fireEvent.click(surface(ROWS[1].id), { shiftKey: true });
+    const single = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[2].id), { dataTransfer: single });
+    expect(single.setData).not.toHaveBeenCalledWith('application/vnd.vis.sessions+json', expect.anything());
+    const sessions = screen.getByText('Sessions').parentElement!.parentElement as HTMLElement;
+    const batch = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[1].id), { dataTransfer: batch });
+    fireEvent.drop(sessions, { dataTransfer: batch });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(2));
+    expect(client.assignSessionGroup).toHaveBeenNthCalledWith(1, ROWS[0].id, null);
+    expect(client.assignSessionGroup).toHaveBeenNthCalledWith(2, ROWS[1].id, null);
+  });
+
+  it('reports partial failures and leaves unsuccessful sessions selected for retry', async () => {
+    finePointer();
+    const client = machine({
+      assignSessionGroup: vi.fn(async (sid: string, gid: string | null) => {
+        if (sid === ROWS[3].id) throw new Error('unreachable');
+        return { ...ROWS.find((row) => row.id === sid)!, group_id: gid };
+      }),
+    });
+    mount(client);
+    const wallet = await band('Wallet work');
+    fireEvent.click(surface(ROWS[2].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    const batch = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[2].id), { dataTransfer: batch });
+    fireEvent.drop(wallet, { dataTransfer: batch });
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 of 2 sessions could not be moved');
+    expect(client.assignSessionGroup).toHaveBeenCalledTimes(2);
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('ignores foreign batches and malformed drag data', async () => {
+    const { client } = mount();
+    const wallet = await band('Wallet work');
+    const foreign = dragCarrier();
+    foreign.setData('application/vnd.vis.sessions+json', JSON.stringify(['another-project']));
+    foreign.setData('text/plain', ROWS[2].id);
+    fireEvent.drop(wallet, { dataTransfer: foreign });
+    const invalid = dragCarrier();
+    invalid.setData('application/vnd.vis.sessions+json', '{broken');
+    invalid.setData('text/plain', ROWS[2].id);
+    fireEvent.drop(wallet, { dataTransfer: invalid });
+    expect(client.assignSessionGroup).not.toHaveBeenCalled();
   });
 
   it('files a session dropped onto a group band', async () => {

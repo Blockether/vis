@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 import type { Element, Root, Text } from 'hast';
@@ -46,7 +47,7 @@ import {
   timeLabel,
 } from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
-import { useSessionLift } from '../lib/session-drag';
+import { SESSION_DRAG_MIME, useSessionLift } from '../lib/session-drag';
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -142,15 +143,19 @@ export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> 
 function SessionRowSurface({
   isEditing,
   isCurrent,
+  isSelected,
   sessionId,
   onOpen,
+  onSelectionClick,
   children,
 }: {
   isEditing: boolean;
   /** This session is the one standing open in the pane beside the list. */
   isCurrent: boolean;
+  isSelected: boolean;
   sessionId: string;
   onOpen: () => void;
+  onSelectionClick?: (event: MouseEvent<HTMLButtonElement>) => boolean;
   children: ReactNode;
 }) {
   const layout =
@@ -180,6 +185,7 @@ function SessionRowSurface({
     <button
       type="button"
       aria-current={isCurrent ? 'page' : undefined}
+      aria-pressed={onSelectionClick ? isSelected : undefined}
       className={`${layout} data-pressed:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none`}
       data-session-id={sessionId}
       data-row-surface=""
@@ -188,7 +194,9 @@ function SessionRowSurface({
         if (event.button !== 0) return;
         setIsPressed(true);
       }}
-      onClick={onOpen}
+      onClick={(event) => {
+        if (!onSelectionClick?.(event)) onOpen();
+      }}
     >
       {children}
     </button>
@@ -203,7 +211,7 @@ function SessionRowSurface({
  * it.) A picture the row hands over is the picture the browser uses, so the row hands it
  * an opaque copy of ITSELF: one card, the row's own size, held where the pointer took it.
  */
-function carryOneRow(row: HTMLElement, event: DragEvent<HTMLElement>): void {
+function carryOneRow(row: HTMLElement, event: DragEvent<HTMLElement>, count = 1): void {
   // Older web views - and the suite's own carriers - have no picture to set.
   if (typeof event.dataTransfer.setDragImage !== 'function') return;
   const box = row.getBoundingClientRect();
@@ -223,6 +231,12 @@ function carryOneRow(row: HTMLElement, event: DragEvent<HTMLElement>): void {
   // a container of its own the copy loses the second line and its group rail stops short
   // of the card's own end (reported from the desktop app).
   picture.className = `${picture.className} @container pointer-events-none overflow-hidden bg-panel ring-1 ring-edge ring-inset`;
+  if (count > 1) {
+    const badge = document.createElement('span');
+    badge.className = 'absolute right-2 top-1 border border-accent bg-panel px-2 font-mono text-meta font-bold text-accent-ink';
+    badge.textContent = `${count} sessions`;
+    picture.append(badge);
+  }
   picture.style.position = 'fixed';
   picture.style.top = `${box.top}px`;
   picture.style.left = `${box.left}px`;
@@ -246,6 +260,9 @@ export const SessionRow = memo(function SessionRow({
   commands,
   deletion,
   isOpen = false,
+  isSelected = false,
+  onSelectionClick,
+  dragIds,
   isDraggable,
 }: {
   session: Session;
@@ -268,6 +285,11 @@ export const SessionRow = memo(function SessionRow({
    * group's colour and would read as two marks on one filed row.
    */
   isOpen?: boolean;
+  /** Only project lists support Shift-click selection; other rows still open normally. */
+  isSelected?: boolean;
+  onSelectionClick?: (event: MouseEvent<HTMLButtonElement>) => boolean;
+  /** The current project's selected rows, in their displayed order. */
+  dragIds?: readonly string[];
   /**
    * Let a reader DRAG this row onto something that takes it — a group's band. The row
    * carries its own session id; lists that have nowhere to drop it leave this off.
@@ -464,13 +486,15 @@ export const SessionRow = memo(function SessionRow({
       onDragStart={
         isDraggable
           ? (event) => {
+              const ids = isSelected && dragIds?.length ? dragIds : [session.id];
               event.dataTransfer.setData('text/plain', session.id);
+              if (ids.length > 1) event.dataTransfer.setData(SESSION_DRAG_MIME, JSON.stringify(ids));
               event.dataTransfer.effectAllowed = 'move';
-              if (rowRef.current) carryOneRow(rowRef.current, event);
+              if (rowRef.current) carryOneRow(rowRef.current, event, ids.length);
             }
           : undefined
       }
-      className={`${isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
+      className={`${isSelected ? 'bg-accent/15' : isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
@@ -487,6 +511,7 @@ export const SessionRow = memo(function SessionRow({
         <SwipeActions
           label={title}
           isCurrent={isOpen}
+          isSelected={isSelected}
           actions={
             renameDraft !== null
               ? []
@@ -544,8 +569,10 @@ export const SessionRow = memo(function SessionRow({
             <SessionRowSurface
               isEditing={renameDraft !== null}
               isCurrent={isOpen}
+              isSelected={isSelected}
               sessionId={session.id}
               onOpen={() => void commands.open(conn, session.id)}
+              onSelectionClick={onSelectionClick}
             >
               {/* Narrow lists stack metadata under the title. The container, not the
                   viewport, selects the full-width table so desktop sidebars stay readable.

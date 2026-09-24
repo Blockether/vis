@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent,
   type ReactNode,
   type Ref,
 } from 'react';
@@ -67,6 +68,7 @@ import {
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { holdOrder, type OrderEpoch } from '../../lib/order-epoch';
 import { compactProjectPath } from '../../lib/path';
+import { hasHardwarePointer } from '../../lib/pointer';
 import {
   groupFoldKey,
   projectFoldKey,
@@ -74,7 +76,7 @@ import {
   readProjectFold,
   writeProjectFold,
 } from '../../lib/project-fold';
-import { useSessionDropTarget } from '../../lib/session-drag';
+import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag';
 import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
@@ -175,17 +177,29 @@ function NameForm({
   );
 }
 
-/**
- * A PLACE THAT TAKES A DRAGGED ROW. It lights while the pointer is over it, so the
- * reader sees where the session lands before letting go. A group's whole area files the
- * row it takes; the ungrouped sessions area takes one back OUT of its group.
- */
-function useSessionDrop(onDropSession?: (sid: string) => void) {
+/** Read a desktop batch, or the single id that existing mouse and touch drags carry. */
+function droppedIds(event: DragEvent<HTMLElement>): string[] {
+  const single = event.dataTransfer.getData('text/plain');
+  const batch = event.dataTransfer.getData(SESSION_DRAG_MIME);
+  // Legacy test carriers answer the same id for every format, unlike DataTransfer.
+  if (!batch || batch === single) return single ? [single] : [];
+  try {
+    const ids: unknown = JSON.parse(batch);
+    return Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === 'string' && id)
+      ? ids
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A place that takes a dragged row from a browser pointer or the touch carrier. */
+function useSessionDrop(onDropSession?: (sids: string[]) => void) {
   const [isOver, setIsOver] = useState(false);
   // A finger raises no drag events at all, so the touch carry (`lib/session-drag`)
   // reports the same hover and hands over the same session id: one place, and either
   // hand files a row into it.
-  const carried = useSessionDropTarget(onDropSession);
+  const carried = useSessionDropTarget(onDropSession ? (sid) => onDropSession([sid]) : undefined);
   return {
     isOver: (isOver || carried.isOver) && Boolean(onDropSession),
     dropProps: {
@@ -205,8 +219,8 @@ function useSessionDrop(onDropSession?: (sid: string) => void) {
         if (!onDropSession) return;
         event.preventDefault();
         setIsOver(false);
-        const sid = event.dataTransfer.getData('text/plain');
-        if (sid) onDropSession(sid);
+        const ids = droppedIds(event);
+        if (ids.length > 0) onDropSession(ids);
       },
     },
   };
@@ -219,7 +233,7 @@ function SessionDropArea({
   minHeight,
   children,
 }: {
-  onDropSession?: (sid: string) => void;
+  onDropSession?: (sids: string[]) => void;
   areaRef?: Ref<HTMLDivElement>;
   minHeight?: number;
   children: ReactNode;
@@ -1034,6 +1048,54 @@ export const ProjectGroup = memo(function ProjectGroup({
     writeProjectFold(groupFoldKey(machineKey(conn), root, gid), open);
     setGroupFolds((held) => ({ ...held, [gid]: open }));
   };
+  // A range belongs to what this project actually paints, not to rows on another page
+  // or a folded shelf. Keep its anchor even though the first plain click opens a session.
+  const listed = searching ? painted : filed.loose;
+  const visibleIds = searching
+    ? listed.map((session) => session.id)
+    : [
+        ...bands.flatMap((band) =>
+          isGroupOpen(band.id) ? (filed.byGroup.get(band.id) ?? NO_ROWS).map((row) => row.id) : [],
+        ),
+        ...listed.map((session) => session.id),
+      ];
+  const selectionScope = JSON.stringify([
+    page, groupPage, pageSize, needle, archived, groupArchived, isShowing, groupFolds,
+  ]);
+  const anchor = useRef<{ id: string; scope: string } | null>(null);
+  const [selection, setSelection] = useState<{ scope: string; ids: string[] } | null>(null);
+  const visibleSet = new Set(visibleIds);
+  const selectedIds = selection?.scope === selectionScope
+    ? selection.ids.filter((id) => visibleSet.has(id))
+    : [];
+  const selectedSet = new Set(selectedIds);
+  useEffect(() => {
+    if (selectedIds.length === 0) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setSelection(null);
+      anchor.current = null;
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedIds.length]);
+  const onSelectionClick = (id: string, event: MouseEvent<HTMLButtonElement>): boolean => {
+    if (!event.shiftKey || !hasHardwarePointer()) {
+      anchor.current = { id, scope: selectionScope };
+      setSelection(null);
+      return false;
+    }
+    event.preventDefault();
+    const start = anchor.current?.scope === selectionScope
+      ? visibleIds.indexOf(anchor.current.id)
+      : -1;
+    const end = visibleIds.indexOf(id);
+    if (end < 0) return true;
+    const from = start < 0 ? end : start;
+    if (start < 0) anchor.current = { id, scope: selectionScope };
+    setSelection({ scope: selectionScope, ids: visibleIds.slice(Math.min(from, end), Math.max(from, end) + 1) });
+    return true;
+  };
   // ONE SHEET, wherever it was opened from: the project's ⋮ lists its groups, a band's
   // own ⋮ opens that group's verbs, and naming a group is a STEP inside it. A step is
   // left the way it was entered (`MenuBack`), never out to blank paper.
@@ -1104,10 +1166,44 @@ export const ProjectGroup = memo(function ProjectGroup({
   // One session's row, wherever it stands: inside a group's area, or under the
   // project itself with everything nobody filed. A drop onto either area runs the
   // same filing verb as the row's `Move to...` action.
-  const dropSession = (sid: string, gid: string | null) => {
-    const found = painted.find((one) => one.id === sid);
-    if (!found || (found.group_id ?? null) === gid) return;
-    fileSession(found, gid, 'close');
+  const [dropFailure, setDropFailure] = useState<string | null>(null);
+  const dropping = useRef(false);
+  const dropSessions = async (ids: string[], gid: string | null) => {
+    if (dropping.current) return;
+    const known = new Map(painted.map((session) => [session.id, session]));
+    // A project takes its own visible sessions, never foreign ids or rows from a stale page.
+    if (ids.some((id) => !known.has(id))) return;
+    const unique = [...new Set(ids)];
+    const moving = unique
+      .map((id) => known.get(id)!)
+      .filter((session) => (session.group_id ?? null) !== gid);
+    if (moving.length === 0) return;
+    dropping.current = true;
+    setDropFailure(null);
+    const completed = new Set(unique.filter((id) => (known.get(id)!.group_id ?? null) === gid));
+    let failed = 0;
+    try {
+      for (const session of moving) {
+        try {
+          await assignGroup(session, gid);
+          completed.add(session.id);
+        } catch {
+          failed += 1;
+        }
+      }
+      if (completed.size > 0) {
+        setSelection((held) => {
+          if (!held || held.scope !== selectionScope) return held;
+          const remaining = held.ids.filter((id) => !completed.has(id));
+          return remaining.length > 0 ? { ...held, ids: remaining } : null;
+        });
+      }
+      if (completed.size > unique.length - moving.length) setGroupsRead((read) => read + 1);
+      if (failed > 0)
+        setDropFailure(`${failed} of ${moving.length} sessions could not be moved. Try again.`);
+    } finally {
+      dropping.current = false;
+    }
   };
   // Every row in these bands can be filed, so the list's own verbs carry one more: the
   // sheet opens under the strip's button, on the session that strip belongs to.
@@ -1165,6 +1261,9 @@ export const ProjectGroup = memo(function ProjectGroup({
         commands={soleGroup ? soleGroupCommands : rowCommands}
         deletion={deletion}
         isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
+        isSelected={selectedSet.has(session.id)}
+        onSelectionClick={(event) => onSelectionClick(session.id, event)}
+        dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
         isDraggable={session.group_id ? !isGroupRevealing : !isSessionRevealing}
       />
     );
@@ -1343,7 +1442,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // The project paints two sets: groups and loose sessions. Each keeps its own
   // actions on its own header, even when empty. A query shows one session set.
   const hasGroups = bands.length > 0;
-  const listed = searching ? painted : filed.loose;
+  // `listed` was computed above so selection and the rendered list share one order.
   // Each archive answers for its own set, including when the other set has rows.
   const emptyGroups =
     isGroupRevealing &&
@@ -1384,6 +1483,11 @@ export const ProjectGroup = memo(function ProjectGroup({
             {liveFailure}
           </p>
         )}
+        {dropFailure && (
+          <p role="alert" className="border-b border-edge px-4 py-3 font-mono text-meta text-danger">
+            {dropFailure}
+          </p>
+        )}
         {/* Rows own their internal dividers; the wrapper closes the final session. */}
         {paintsSets && (
           <div
@@ -1419,7 +1523,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   return (
                     <SessionDropArea
                       key={band.id}
-                      onDropSession={isGroupRevealing ? undefined : (sid) => dropSession(sid, band.id)}
+                      onDropSession={isGroupRevealing ? undefined : (ids) => void dropSessions(ids, band.id)}
                     >
                       <GroupBand
                         name={band.name}
@@ -1442,7 +1546,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   : undefined
               }
               onDropSession={
-                hasGroups && !isSessionRevealing ? (sid) => dropSession(sid, null) : undefined
+                hasGroups && !isSessionRevealing ? (ids) => void dropSessions(ids, null) : undefined
               }
             >
               {/* A band files into itself; this area takes a session back out. */}

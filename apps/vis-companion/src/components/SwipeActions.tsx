@@ -231,6 +231,7 @@ export function SwipeActions({
   actions,
   children,
   isCurrent = false,
+  isSelected = false,
   label,
   trailing,
 }: {
@@ -243,6 +244,8 @@ export function SwipeActions({
    * covered exactly where a finger reads the row.
    */
   isCurrent?: boolean;
+  /** The selected range must cover the whole row, including the touch panel and actions. */
+  isSelected?: boolean;
   label?: string;
   /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
   trailing?: ReactNode;
@@ -336,7 +339,7 @@ export function SwipeActions({
   if (actions.length === 0) {
     if (!trailing) return <>{children}</>;
     return (
-      <div className={`grid grid-cols-[minmax(0,1fr)_auto] ${ROW_PRESS_PAPER}`}>
+      <div className={`grid grid-cols-[minmax(0,1fr)_auto] ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}>
         {children}
         {trailing}
       </div>
@@ -375,13 +378,13 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${ROW_PRESS_PAPER}`}
+      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
           Desktop ends the row with its menu trigger and stands the permanent controls
           one slot inside it, the two cells every header in the list uses. */}
       <div
-        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isCurrent ? 'bg-standing' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isSelected ? 'bg-accent/15' : isCurrent ? 'bg-standing' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

@@ -34,6 +34,9 @@ export interface LiftPoint {
  */
 export const DROP_TARGET_ATTRIBUTE = 'data-session-drop';
 
+/** HTML drag payload for the sessions selected with Shift; touch carries one id separately. */
+export const SESSION_DRAG_MIME = 'application/vnd.vis.sessions+json';
+
 /** The mark a place wears while it is offering to take a carried session. */
 export interface DropTargetProps {
   readonly 'data-session-drop'?: string;
