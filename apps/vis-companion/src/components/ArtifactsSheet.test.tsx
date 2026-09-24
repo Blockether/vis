@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ArtifactsSheet, previewBlocks, previewLines } from './ArtifactsSheet';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionArtifact } from '../lib/artifacts';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import { dismissTopLayer } from '../lib/edge-back';
 
 /** The classes of the button whose tag carries `mark` — attribute order is React's. */
@@ -593,6 +594,37 @@ describe('an opened artifact', () => {
     );
 
     expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeVisible();
+  });
+
+  it('follows a named diff from an opened document inside the artifact sheet', async () => {
+    const diffId = '7f477ec2-2c01-49bc-88eb-d0d7186179cf';
+    const directClient = {
+      attachmentUrl: async () => 'blob:report',
+      attachmentBlob: async () =>
+        new Blob(['# Report\n\n[Review diff](DIFF-ungroup-hover-hint.json)']),
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient;
+    const open = vi.fn();
+    render(
+      <ArtifactLinkContext.Provider
+        value={{ byName: new Map([['DIFF-ungroup-hover-hint.json', diffId]]), open }}
+      >
+        <ArtifactsSheet
+          client={directClient}
+          sid="s1"
+          artifacts={[note]}
+          initialArtifact={note}
+          onClose={() => {}}
+        />
+      </ArtifactLinkContext.Provider>,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review diff' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(diffId);
+    expect(screen.queryByRole('dialog', { name: note.name })).toBeNull();
+    expect(
+      screen.getByRole('region', { name: 'Artifacts produced by the model' }),
+    ).toBeInTheDocument();
   });
 
   // Reported with the back stroke, and the sheet has the same shape: Android's back is one

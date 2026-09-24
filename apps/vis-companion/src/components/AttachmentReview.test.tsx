@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import { MarkdownArtifact, type DocumentChrome } from './MarkdownArtifact';
 import { DocOverlay } from './DocArtifact';
 import { DiffArtifact } from './DiffArtifact';
@@ -106,6 +107,40 @@ describe('attachment review capability', () => {
     );
     expect(host.querySelectorAll('button')).toHaveLength(0);
     expect(host.textContent).toContain('Session search');
+  });
+  // Reported from an IMPLEMENTATION record: the relative diff link opened an app URL.
+  it('opens a linked diff without navigating the application', async () => {
+    const opened = vi.fn();
+    const closed = vi.fn();
+    const diffId = '8e3a587d-232c-497d-a290-7d16cfcf0e02';
+    const { host } = await mount(
+      <ArtifactLinkContext.Provider
+        value={{ byName: new Map([['DIFF-ungroup-hover-hint.json', diffId]]), open: opened }}
+      >
+        <DocOverlay
+          name="IMPLEMENTATION-ungroup-hover-hint.md"
+          mime="text/markdown"
+          url={`# Report
+
+[Review diff](DIFF-ungroup-hover-hint.json) · [Missing](missing.json) · [Website](https://example.com)`}
+          failed={false}
+          annotate={{ client: client(), sid: 's', iterationId: 'i' }}
+          onClose={closed}
+        />
+      </ArtifactLinkContext.Provider>,
+    );
+    expect(host.querySelector('a[href="DIFF-ungroup-hover-hint.json"]')).toBeNull();
+    expect(host.querySelector('a[href="missing.json"]')).toBeNull();
+    expect(host.querySelector('a[href="https://example.com"]')?.getAttribute('target')).toBe(
+      '_blank',
+    );
+    const diff = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Review diff',
+    );
+    expect(diff).toBeInTheDocument();
+    await act(async () => diff!.click());
+    expect(closed).toHaveBeenCalledOnce();
+    expect(opened).toHaveBeenCalledExactlyOnceWith(diffId);
   });
   it('uses the selected cut capability rather than the latest document capability', async () => {
     const gateway = client();

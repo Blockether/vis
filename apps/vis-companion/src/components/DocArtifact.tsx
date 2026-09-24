@@ -1,7 +1,8 @@
-import { memo, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { memo, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { GatewayClient } from '../lib/gateway';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import {
   attachmentBytes,
   docKindLabel,
@@ -276,6 +277,13 @@ export const DocOverlay = memo(function DocOverlay({
   onPick?: (at: number) => void;
   onClose: () => void;
 }) {
+  const artifactLinks = useContext(ArtifactLinkContext);
+  const openAttachment = artifactLinks
+    ? (attachmentId: string) => {
+        onClose();
+        artifactLinks.open(attachmentId);
+      }
+    : undefined;
   // THE HISTORY OF A NAME BELONGS TO THE BAND, NOT TO THE TRANSCRIPT.
   //
   // A revised document is ONE row in the step (`collapseAttachmentVersions`), so
@@ -385,6 +393,7 @@ export const DocOverlay = memo(function DocOverlay({
         commentable={canComment}
         plain={!isMarkdownMedia(mime, name)}
         chrome={chrome}
+        onOpenAttachment={openAttachment}
       />
     );
   }

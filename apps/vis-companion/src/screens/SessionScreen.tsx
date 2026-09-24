@@ -43,6 +43,7 @@ import {
   mergeArtifacts,
 } from '../lib/artifacts';
 import type { SessionArtifact } from '../lib/artifacts';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { Banner, ComposerButton, LoadMore, Spinner } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon } from '../components/icons';
@@ -809,6 +810,18 @@ export function SessionScreen({
     setLinkedAttachmentId(attachmentId);
     setArtifactsOpen(true);
   }, []);
+  // Keep the provider stable while the byte-free index fills in; a link reads
+  // the latest name map when pressed rather than remounting the transcript.
+  const artifactLinks = useMemo(
+    () => ({ byName: new Map<string, string>(), open: openLinkedArtifact }),
+    [openLinkedArtifact],
+  );
+  useLayoutEffect(() => {
+    artifactLinks.byName.clear();
+    for (const artifact of artifacts) {
+      if (artifact.attachmentId) artifactLinks.byName.set(artifact.name, artifact.attachmentId);
+    }
+  }, [artifacts, artifactLinks]);
   const closeArtifacts = useCallback(() => {
     setArtifactsOpen(false);
     setLinkedAttachmentId(null);
@@ -5178,7 +5191,9 @@ export function SessionScreen({
   return (
     <ActivityHistoryContext.Provider value={activityHistorySource}>
       <OpenPathContext.Provider value={openPath}>
-        {screen}
+        <ArtifactLinkContext.Provider value={artifactLinks}>
+          {screen}
+        </ArtifactLinkContext.Provider>
         {previewed ? (
           <FilePreview
             client={client}

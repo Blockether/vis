@@ -3,6 +3,7 @@ import {
   isValidElement,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useId,
@@ -14,6 +15,7 @@ import {
   type ReactNode,
 } from 'react';
 import Prism from '../lib/prism-core';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';
@@ -523,6 +525,11 @@ function markdownUrlTransform(url: string): string {
   return attachmentIdFromHref(url) ? url : defaultUrlTransform(url);
 }
 
+/** Relative links are local names, not routes in the Companion web application. */
+function isLocalHref(href: string): boolean {
+  return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(href);
+}
+
 export const Markdown = memo(function Markdown({
   children,
   compact = false,
@@ -542,6 +549,7 @@ export const Markdown = memo(function Markdown({
 }) {
   // Tool and activity prose stays on the same compact scale as its tables and code.
   // Only transcript messages use the full-size reading column.
+  const artifactLinks = useContext(ArtifactLinkContext);
   const runningText = nested ? 'text-meta text-left' : PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
@@ -561,27 +569,29 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={hardBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         components={{
           a: ({ children: label, href, title }) => {
-            const attachmentId = attachmentIdFromHref(href ?? '');
+            const local = href && isLocalHref(href);
+            const attachmentId =
+              attachmentIdFromHref(href ?? '') ||
+              (local ? artifactLinks?.byName.get(href) : undefined);
             if (attachmentId) {
-              if (!onOpenAttachment) {
-                return <span className={MARKDOWN_LINK}>{label}</span>;
-              }
-              // An artifact opens a surface INSIDE the app, so this is a button wearing the ink
-              // of a link. As an anchor it was dead in the desktop window: that window reads
-              // every anchor click through a capture listener of its own, hands the scheme it
-              // does not know to the shell, which refuses it, and stops the event before React.
+              const open = onOpenAttachment ?? artifactLinks?.open;
+              if (!open) return <span className={MARKDOWN_LINK}>{label}</span>;
+              // Keep relative artifact links in the reader instead of navigating to an app URL.
               return (
                 <button
                   type="button"
                   title={title}
                   className={`${MARKDOWN_LINK} inline text-left`}
-                  onClick={() => onOpenAttachment(attachmentId)}
+                  onPointerDown={local ? (event) => event.stopPropagation() : undefined}
+                  onPointerUp={local ? (event) => event.stopPropagation() : undefined}
+                  onClick={() => open(attachmentId)}
                 >
                   {label}
                 </button>
               );
             }
-            if (!href) return <span>{label}</span>;
+            // Unknown local targets cannot be loaded as routes in this application.
+            if (!href || local) return <span>{label}</span>;
             return (
               <a
                 href={href}

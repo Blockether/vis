@@ -25,7 +25,7 @@
  * shrinks a hit box, so an iPad keeps 44px targets at desktop width.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ARTIFACT_FILTERS,
@@ -40,6 +40,7 @@ import {
   type SessionArtifact,
 } from '../lib/artifacts';
 import { useAttachImage } from '../lib/attach-image';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import { editedFilename } from '../lib/image-file';
 import type { GatewayClient } from '../lib/gateway';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
@@ -816,6 +817,13 @@ function ArtifactDetail({
   artifact: SessionArtifact;
   onClose: () => void;
 }) {
+  const artifactLinks = useContext(ArtifactLinkContext);
+  const openAttachment = artifactLinks
+    ? (attachmentId: string) => {
+        onClose();
+        artifactLinks.open(attachmentId);
+      }
+    : undefined;
   const attach = useAttachImage();
   const { url, blob, failed } = useArtifactSource(client, sid, artifact, true);
 
@@ -953,6 +961,7 @@ function ArtifactDetail({
         version={artifact.version}
         commentable={artifact.commentable === true}
         plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
+        onOpenAttachment={openAttachment}
         // The note's own verb stands in this overlay's band, one cell from the
         // ✕, and the band reports the version it saved as.
         chrome={({ actions, note, body }) => (

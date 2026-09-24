@@ -125,6 +125,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   plain,
   commentable = false,
   chrome,
+  onOpenAttachment,
 }: {
   client: GatewayClient;
   sid: string;
@@ -139,6 +140,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   plain?: boolean;
   /** The band and the frame this document is read inside. */
   chrome: DocumentChrome;
+  onOpenAttachment?: (attachmentId: string) => void;
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -214,7 +216,11 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
       note: '',
       body: (
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-panel px-3 py-3 text-body text-foreground sm:px-4">
-          {plain ? <PlainText text={loaded} /> : <Markdown>{loaded}</Markdown>}
+          {plain ? (
+            <PlainText text={loaded} />
+          ) : (
+            <Markdown onOpenAttachment={onOpenAttachment}>{loaded}</Markdown>
+          )}
         </div>
       ),
     });
@@ -226,6 +232,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
       onSave={save}
       plain={plain}
       chrome={chrome}
+      onOpenAttachment={onOpenAttachment}
       draftKey={annotationDraftKey(
         client.base,
         sid,
@@ -347,6 +354,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   onSave,
   plain,
   chrome,
+  onOpenAttachment,
   draftKey,
   planning,
   review,
@@ -359,6 +367,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   plain?: boolean;
   /** The band and the frame this document is read inside. */
   chrome: DocumentChrome;
+  onOpenAttachment?: (attachmentId: string) => void;
   /**
    * WHICH document this is, for the device's own draft store
    * (`lib/annotation-drafts`). Without it the annotator keeps its remarks in
@@ -654,7 +663,11 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         onContextMenu={(event) => event.preventDefault()}
         className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto overscroll-contain bg-panel px-3 py-3 font-sans text-body [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
       >
-        {plain ? <PlainText text={body} diff={!!review} /> : <Markdown>{body}</Markdown>}
+        {plain ? (
+          <PlainText text={body} diff={!!review} />
+        ) : (
+          <Markdown onOpenAttachment={onOpenAttachment}>{body}</Markdown>
+        )}
       </div>
 
       {quote !== null ? (
