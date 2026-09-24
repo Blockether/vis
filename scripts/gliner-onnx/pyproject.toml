@@ -1,0 +1,20 @@
+[project]
+name = "vis-gliner-onnx"
+version = "0.0.0"
+description = "Offline GLiNER2.5 decision-classification ONNX export validation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gliner2[train]==2.0.0",
+    "torch==2.14.0",
+    "transformers==4.57.6",
+    "onnx==1.23.0",
+    "onnxruntime==1.30.0",
+    "pytest>=9,<10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "-raP --disable-warnings"
+testpaths = ["."]
