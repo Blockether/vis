@@ -2782,23 +2782,22 @@
                                       :session-id (:session-id meta)
                                       :node-id (:node-id meta)
                                       :collapsed? (:collapsed? meta)}))))
-                    ;; ── Result (error) - neutral code-block bg ──
+                    ;; ── Failed Result details sit on regular transcript paper ──
                     (str/starts-with? line err-result-marker)
-                    (do
-                      (p/set-colors! g t/code-error-result-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y fill-iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg)
-                      (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
-                      (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) (long y))
-                              click-width (long (or (:click-width meta) iw))]
+                    (do (p/set-colors! g t/code-error-result-fg t/terminal-bg)
+                        (p/fill-rect! g fbx y fill-iw 1)
+                        (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/terminal-bg)
+                        (paint-turn-stamp! g x y (subs line 1) t/terminal-bg)
+                        (when (= :toggle-details (:kind meta))
+                          (let [abs-row (+ (long viewport-top) (long y))
+                                click-width (long (or (:click-width meta) iw))]
 
-                          (.register interactions/hit-map
-                                     {:bounds {:row abs-row :col x :width click-width}
-                                      :kind :toggle-details
-                                      :session-id (:session-id meta)
-                                      :node-id (:node-id meta)
-                                      :collapsed? (:collapsed? meta)}))))
+                            (.register interactions/hit-map
+                                       {:bounds {:row abs-row :col x :width click-width}
+                                        :kind :toggle-details
+                                        :session-id (:session-id meta)
+                                        :node-id (:node-id meta)
+                                        :collapsed? (:collapsed? meta)}))))
                     ;; ── Code block padding (running / neutral) ──
                     ;; These rows are usually blank top/bottom band edges,
                     ;; but the per-form footer deliberately rides the same

@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.iteration :as iteration]
             [com.blockether.vis.contract.activity :as activity-contract]
             [clojure.data.json :as json]
@@ -1557,6 +1558,66 @@
                    (expect (seq err-lines))
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
                    (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
+
+(defdescribe
+  failed-form-error-paper-test
+  (it
+    "paints failed details on the regular transcript background in every dark theme"
+    (try
+      (doseq [id
+              (shared-theme/available-theme-ids)
+
+              :when (= :dark (:mode (shared-theme/theme id)))
+              expanded?
+              [false true]]
+
+        (t/apply-theme! (keyword id))
+        (let [entries
+              (format-iteration-entry-entries
+                (iteration/canonicalize {:forms [{:code "print(missing)"
+                                                  :error {:message "MISSING_VALUE"}}]})
+                72
+                1
+                {:session-id "s"
+                 :session-turn-id "t"
+                 :detail-expansions (if expanded? {:vis.channel-tui/expand-all-details? true} {})})
+
+              captured
+              (cap/capture! {:cols 80
+                             :rows 15
+                             :paint!
+                             (fn [{:keys [g]}]
+                               (render/draw-chat-bubble! g
+                                                         {:role :assistant
+                                                          :prewrapped-lines (mapv :line entries)
+                                                          :line-meta (mapv :meta entries)}
+                                                         0 0
+                                                         76 {:viewport-top 0 :viewport-h 15}))})
+
+              frame
+              (last (:frames captured))
+
+              lines
+              (str/split-lines (cap/frame-text captured))
+
+              row-for
+              (fn [needle]
+                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
+
+              failed-row
+              (row-for "Failed")
+
+              detail-row
+              (row-for "MISSING_VALUE")]
+
+          (expect (nil? (:error captured)))
+          (expect (some? failed-row))
+          (expect (= expanded? (some? detail-row)))
+          (doseq [row (remove nil? [failed-row detail-row])]
+            (expect (= (get-in (shared-theme/theme id) [:palette :terminal-bg])
+                       (get-in frame [row 20 :bg]))
+                    (str id " row " row " expanded? " expanded?)))))
+      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defmacro ^:private with-raw-code-on
   [& body]
