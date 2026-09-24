@@ -879,7 +879,7 @@ describe('ProjectGroup groups', () => {
     for (const row of ROWS) expect(surface(row.id)).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('clears a range when its group folds and never selects hidden rows', async () => {
+  it('keeps visible selection when a group folds, without restoring hidden rows', async () => {
     finePointer();
     const { user } = mount();
     const wallet = await band('Wallet work');
@@ -887,12 +887,30 @@ describe('ProjectGroup groups', () => {
     fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
     await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
     expect(surface(ROWS[0].id)).toBeNull();
-    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'true');
     expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
-    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
     await user.click(within(wallet).getByRole('button', { name: 'Expand Wallet work' }));
-    for (const session of ROWS) expect(surface(session.id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[1].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps a loose selection while clicking an unrelated group header', async () => {
+    finePointer();
+    const { user, open } = mount();
+    const wallet = await band('Wallet work');
+    fireEvent.click(surface(ROWS[2].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(wallet).getByRole('button', { name: 'Expand Wallet work' }));
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(open).toHaveBeenCalledTimes(1);
   });
 
   it('drags a selected range with every row visible and files only rows outside the target group', async () => {
@@ -916,7 +934,10 @@ describe('ProjectGroup groups', () => {
     expect(client.assignSessionGroup).toHaveBeenNthCalledWith(1, ROWS[2].id, WALLET);
     expect(client.assignSessionGroup).toHaveBeenNthCalledWith(2, ROWS[3].id, WALLET);
     await waitFor(() => expect(wallet.querySelectorAll('[data-session-row]')).toHaveLength(4));
-    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
+    for (const item of ROWS) expect(surface(item.id)).toHaveAttribute('aria-pressed', 'true');
+    const next = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[0].id), { dataTransfer: next });
+    expect(next.getData('application/vnd.vis.sessions+json')).toBe(JSON.stringify(ROWS.map((row) => row.id)));
   });
 
   it('ungroups a selected batch but drags an unselected row alone', async () => {
@@ -935,6 +956,26 @@ describe('ProjectGroup groups', () => {
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(2));
     expect(client.assignSessionGroup).toHaveBeenNthCalledWith(1, ROWS[0].id, null);
     expect(client.assignSessionGroup).toHaveBeenNthCalledWith(2, ROWS[1].id, null);
+    await waitFor(() => expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'true'));
+    expect(surface(ROWS[1].id)).toHaveAttribute('aria-pressed', 'true');
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('does not restore moved selection when the target group is closed', async () => {
+    finePointer();
+    const { user, client } = mount();
+    const wallet = await band('Wallet work');
+    fireEvent.click(surface(ROWS[2].id));
+    fireEvent.click(surface(ROWS[3].id), { shiftKey: true });
+    await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
+    const batch = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[3].id), { dataTransfer: batch });
+    fireEvent.drop(wallet, { dataTransfer: batch });
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(surface(ROWS[3].id)).toBeNull());
+    await user.click(within(wallet).getByRole('button', { name: 'Expand Wallet work' }));
+    expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
+    expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('reports partial failures and leaves unsuccessful sessions selected for retry', async () => {

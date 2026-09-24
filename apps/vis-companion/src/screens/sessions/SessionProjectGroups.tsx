@@ -1046,6 +1046,17 @@ export const ProjectGroup = memo(function ProjectGroup({
   const isGroupOpen = (gid: string) =>
     groupFolds[gid] ?? readProjectFold(groupFoldKey(machineKey(conn), root, gid)) ?? true;
   const foldGroup = (gid: string, open: boolean) => {
+    if (!open) {
+      // Folding hides only this band's rows; a selection in another band stays put.
+      const hidden = new Set((filed.byGroup.get(gid) ?? NO_ROWS).map((row) => row.id));
+      setSelection((held) => {
+        if (!held || held.scope !== selectionScope) return held;
+        const remaining = held.ids.filter((id) => !hidden.has(id));
+        if (remaining.length === held.ids.length) return held;
+        return remaining.length > 0 ? { ...held, ids: remaining } : null;
+      });
+      if (anchor.current && hidden.has(anchor.current.id)) anchor.current = null;
+    }
     writeProjectFold(groupFoldKey(machineKey(conn), root, gid), open);
     setGroupFolds((held) => ({ ...held, [gid]: open }));
   };
@@ -1061,13 +1072,12 @@ export const ProjectGroup = memo(function ProjectGroup({
         ...listed.map((session) => session.id),
       ];
   const selectionScope = JSON.stringify([
-    page, groupPage, pageSize, needle, archived, groupArchived, isShowing, groupFolds,
+    page, groupPage, pageSize, needle, archived, groupArchived, isShowing,
   ]);
   const anchor = useRef<{ id: string; scope: string } | null>(null);
   const [selection, setSelection] = useState<{ scope: string; ids: string[] } | null>(null);
-  const visibleSet = new Set(visibleIds);
   const selectedIds = selection?.scope === selectionScope
-    ? selection.ids.filter((id) => visibleSet.has(id))
+    ? visibleIds.filter((id) => selection.ids.includes(id))
     : [];
   const selectedSet = new Set(selectedIds);
   useEffect(() => {
@@ -1212,7 +1222,10 @@ export const ProjectGroup = memo(function ProjectGroup({
           failed += 1;
         }
       }
-      if (completed.size > 0) {
+      // Keep a successful visible move selected. A partial failure keeps only the
+      // failed rows for retry; a closed destination cannot display moved rows.
+      const targetOpen = gid === null || (readProjectFold(groupFoldKey(machineKey(conn), root, gid)) ?? true);
+      if (completed.size > 0 && (failed > 0 || !targetOpen)) {
         setSelection((held) => {
           if (!held || held.scope !== selectionScope) return held;
           const remaining = held.ids.filter((id) => !completed.has(id));
