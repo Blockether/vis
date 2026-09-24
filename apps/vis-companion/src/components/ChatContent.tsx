@@ -1220,7 +1220,7 @@ const ToolCard = memo(function ToolCard({
   const resultShown = interrupted || resultOpen;
   if (embedded)
     return (
-      <div data-code-result className="min-w-0 bg-result pb-1 text-meta text-code-result">
+      <div data-code-result className="min-w-0 bg-code pb-1 text-meta text-code-result">
         {interrupted ? (
           <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
         ) : (
@@ -1350,7 +1350,7 @@ const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm
         .map((card, index) => (
           <ToolCard key={index} form={card} embedded />
         ))}
-      <div data-code-result className="min-w-0 bg-result pb-1 text-meta text-code-result">
+      <div data-code-result className="min-w-0 bg-code pb-1 text-meta text-code-result">
         <Disclosure
           isOpen={open}
           tone="execution"

@@ -1295,6 +1295,29 @@ describe('Activity follows the combined Python source', () => {
       iterations: [{ id: 'iteration-1', position: 41, forms }],
     }) as unknown as TranscriptTurn;
 
+  // Regression, user screenshot: the nested RESULT header made a dark stripe
+  // between the CODE and ACTIVITY bands in dark themes.
+  it('keeps a collapsed and expanded result on the same surface as code and Activity', () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: 'run()', stdout: 'first line\nsecond line', activity: runningActivity },
+        ])}
+      />,
+    );
+    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
+    const code = painted.container.querySelector('[data-execution-code]');
+    const result = painted.container.querySelector('[data-code-result]');
+    const activity = painted.container.querySelector('[data-execution-group]');
+    expect(code).toHaveClass('bg-code');
+    expect(activity).toHaveClass('bg-code');
+    expect(result).toHaveClass('bg-code');
+    expect(result).not.toHaveClass('bg-result');
+    fireEvent.click(painted.getByRole('button', { name: 'Expand result' }));
+    expect(result).toHaveClass('bg-code');
+    expect(painted.getByText('first line')).toBeVisible();
+  });
+
   it('groups adjacent calls without dropping either result', () => {
     const painted = render(
       <AssistantMessage
@@ -1418,6 +1441,23 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
     expect(painted.getByText(/SECOND_FAILURE/)).toBeVisible();
     expect(painted.getByText(/THIRD_FAILURE/)).toBeVisible();
+  });
+
+  it('keeps grouped failure details on the code surface', () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: 'first()', error: { message: 'FIRST_FAILURE' } },
+          { source: 'second()', error: { message: 'SECOND_FAILURE' } },
+        ])}
+      />,
+    );
+    const result = painted.container.querySelector('[data-code-result]');
+    expect(result).toHaveClass('bg-code');
+    expect(result).not.toHaveClass('bg-result');
+    fireEvent.click(painted.getByRole('button', { name: 'Expand all error details' }));
+    expect(result).toHaveClass('bg-code');
+    expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
   });
 
   it('keeps mixed outcomes independently collapsible', () => {
