@@ -1092,9 +1092,9 @@
                                :else 2)
                          (long (p/display-width status)))
                       row-left (+ left
-                                  (if child? 2 0)
-                                  (if (#{:project-group :project-session} kind) 2 0)
-                                  (if (:nested? entry) 2 0))
+                                  (if child? 1 0)
+                                  (if (#{:project-group :project-session} kind) 1 0)
+                                  (if (:nested? entry) 1 0))
                       name-width (max 0 (- status-col row-left 1))]]
 
           (binding [t/dialog-bg (row-bg entry active? focused?)]
@@ -1105,7 +1105,7 @@
                            t/dialog-bg)
             (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
             (p/styled g
-                      (if (or active? focused?) [p/BOLD] [])
+                      (if (or (#{:project-select :project-set} kind) active? focused?) [p/BOLD] [])
                       (p/put-str! g
                                   (inc row-left)
                                   row
@@ -1120,7 +1120,7 @@
                                                         "! "
 
                                                         :project-group
-                                                        (if (:folded? entry) "▸ " "◆ ")
+                                                        (if (:folded? entry) "▸ " "▾ ")
 
                                                         :project-session
                                                         "  "

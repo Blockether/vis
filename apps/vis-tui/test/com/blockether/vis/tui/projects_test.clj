@@ -1886,18 +1886,49 @@
         loose-row
         (row-of #(= "loose-id" (get-in % [:session "id"])))
 
+        companion-row
+        (row-of #(= "b" (get-in % [:project "id"])))
+
         column
         (fn [row text]
           (str/index-of (nth lines row) text))]
 
     (is (nil? (:error capture)))
-    (is (= (+ 2 (column project-row "Vis")) (column groups-row "Groups")))
-    (is (= (+ 2 (column groups-row "Groups")) (column group-row "Release apps")))
-    (is (= (+ 2 (column group-row "Release apps")) (column grouped-row "Grouped session")))
-    (is (= (+ 2 (column project-row "Vis")) (column sessions-row "Sessions")))
-    (is (= (+ 2 (column sessions-row "Sessions")) (column loose-row "Loose session")))
+    (is (= (inc (column project-row "Vis")) (column groups-row "Groups")))
+    (is (= (inc (column groups-row "Groups")) (column group-row "Release apps")))
+    (is (= (inc (column group-row "Release apps")) (column grouped-row "Grouped session")))
+    (is (= (inc (column project-row "Vis")) (column sessions-row "Sessions")))
+    (is (= (inc (column sessions-row "Sessions")) (column loose-row "Loose session")))
     (is (= (column grouped-row "Grouped session") (column (inc grouped-row) "group-id")))
-    (is (= (column loose-row "Loose session") (column (inc loose-row) "loose-id")))))
+    (is (= (column loose-row "Loose session") (column (inc loose-row) "loose-id")))
+    (is (str/includes? (nth lines group-row) "▾ Release apps"))
+    (doseq [[row label] [[1 "Projects"] [project-row "Vis"] [companion-row "Companion"]
+                         [groups-row "Groups"] [sessions-row "Sessions"]]]
+      (is (true? (get-in capture [:frames 0 row (column row label) :bold]))))))
+
+(deftest folded-group-uses-project-disclosure-icon-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :group-folds "a"] #{"g1"})
+            (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
+
+        capture
+        (cap/capture! {:cols 120
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 120 24))})
+
+        row
+        (->> (.current projects/hit-map)
+             (filter #(= :project-group (:kind %)))
+             first
+             :bounds
+             :row)]
+
+    (is (nil? (:error capture)))
+    (is (str/includes? (nth (str/split-lines (cap/frame-text capture)) row) "▸ Release apps"))))
 
 (deftest project-rail-focus-highlights-instead-of-leading-dot-test
   (let [db
