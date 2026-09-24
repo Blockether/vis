@@ -222,7 +222,7 @@ function SessionDropArea({
   onDropSession?: (sid: string) => void;
   areaRef?: Ref<HTMLDivElement>;
   minHeight?: number;
-  children: (isOver: boolean) => ReactNode;
+  children: ReactNode;
 }) {
   const { isOver, dropProps } = useSessionDrop(onDropSession);
   return (
@@ -232,7 +232,7 @@ function SessionDropArea({
       className={isOver ? 'bg-white/10' : undefined}
       {...dropProps}
     >
-      {children(isOver)}
+      {children}
     </div>
   );
 }
@@ -248,7 +248,6 @@ function SetHeader({
   navigation,
   action,
   isArchived = false,
-  isOver = false,
 }: {
   label: 'Groups' | 'Sessions';
   /**
@@ -262,8 +261,6 @@ function SetHeader({
   action?: ReactNode;
   /** Whether this set shows its archived entries instead of active ones. */
   isArchived?: boolean;
-  /** Whether the ungrouped set is offering to take a carried row. */
-  isOver?: boolean;
 }) {
   return (
     <div
@@ -275,9 +272,6 @@ function SetHeader({
         {label}
       </span>
       {isArchived && <span className="font-mono text-meta text-white">Archived</span>}
-      {/* The verb of THIS drop, said while the row hovers: a lit bar alone reads as
-          "file it here", and what actually happens is the session leaving its group. */}
-      {isOver && <span className="font-mono text-meta text-white">Drop to ungroup</span>}
       {/* The set menu follows its own page controls on the trailing edge. */}
       {(action || navigation) && (
         <span className={`ml-auto ${HEADER_TRAIL}`}>
@@ -1427,18 +1421,14 @@ export const ProjectGroup = memo(function ProjectGroup({
                       key={band.id}
                       onDropSession={isGroupRevealing ? undefined : (sid) => dropSession(sid, band.id)}
                     >
-                      {() => (
-                        <>
-                          <GroupBand
-                            name={band.name}
-                            color={band.color}
-                            isOpen={isBandOpen}
-                            onToggle={() => foldGroup(band.id, !isBandOpen)}
-                            onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
-                          />
-                          {isBandOpen && held.map(row)}
-                        </>
-                      )}
+                      <GroupBand
+                        name={band.name}
+                        color={band.color}
+                        isOpen={isBandOpen}
+                        onToggle={() => foldGroup(band.id, !isBandOpen)}
+                        onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                      />
+                      {isBandOpen && held.map(row)}
                     </SessionDropArea>
                   );
                 })}
@@ -1455,33 +1445,28 @@ export const ProjectGroup = memo(function ProjectGroup({
                 hasGroups && !isSessionRevealing ? (sid) => dropSession(sid, null) : undefined
               }
             >
-              {(isOver) => (
-                <>
-                  {/* A band files into itself; this area takes a session back out. */}
-                  <SetHeader
-                    label="Sessions"
-                    isArchived={isSessionRevealing}
-                    navigation={pager}
-                    action={
-                      <IconButton
-                        label={`Actions for sessions in ${root}`}
-                        variant="quiet"
-                        aria-haspopup="dialog"
-                        aria-expanded={menu?.step.kind === 'sessions'}
-                        onClick={(event) => openMenu(event.currentTarget, { kind: 'sessions' })}
-                      >
-                        <DotsIcon className="size-3.5" />
-                      </IconButton>
-                    }
-                    isOver={isOver}
-                  />
-                  {listed.map(row)}
-                  {emptySessions && (
-                    <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
-                      No archived sessions in this project.
-                    </p>
-                  )}
-                </>
+              {/* A band files into itself; this area takes a session back out. */}
+              <SetHeader
+                label="Sessions"
+                isArchived={isSessionRevealing}
+                navigation={pager}
+                action={
+                  <IconButton
+                    label={`Actions for sessions in ${root}`}
+                    variant="quiet"
+                    aria-haspopup="dialog"
+                    aria-expanded={menu?.step.kind === 'sessions'}
+                    onClick={(event) => openMenu(event.currentTarget, { kind: 'sessions' })}
+                  >
+                    <DotsIcon className="size-3.5" />
+                  </IconButton>
+                }
+              />
+              {listed.map(row)}
+              {emptySessions && (
+                <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
+                  No archived sessions in this project.
+                </p>
               )}
             </SessionDropArea>
           </div>

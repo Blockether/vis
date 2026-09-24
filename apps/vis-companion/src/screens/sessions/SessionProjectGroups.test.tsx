@@ -761,7 +761,8 @@ describe('ProjectGroup groups', () => {
     const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
     fireEvent.dragOver(row, { dataTransfer });
     expect(sessions).toHaveClass('bg-white/10');
-    expect(within(sessions).getByText('Drop to ungroup')).toBeInTheDocument();
+    // Hovering a loose row highlights the drop area without adding a banner beside Sessions.
+    expect(within(sessions).queryByText('Drop to ungroup')).toBeNull();
     fireEvent.drop(row, { dataTransfer });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[0].id, null));
     await waitFor(() =>
@@ -819,7 +820,7 @@ describe('ProjectGroup groups', () => {
     const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
     const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
     fireEvent.dragOver(sessions, { dataTransfer });
-    expect(within(sessions).getByText('Drop to ungroup')).toBeInTheDocument();
+    expect(within(sessions).queryByText('Drop to ungroup')).toBeNull();
     fireEvent.drop(sessions, { dataTransfer });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(ROWS[0].id, null));
     await waitFor(() =>
