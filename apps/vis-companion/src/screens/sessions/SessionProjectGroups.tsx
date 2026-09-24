@@ -279,14 +279,10 @@ function SetHeader({
 }) {
   return (
     <div
-      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-y border-edge-strong py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 mouse:min-h-10 ${label === 'Groups' ? 'bg-set-groups' : 'bg-set-sessions'}`}
+      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-y border-edge py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 mouse:min-h-8 mouse:py-0 ${label === 'Groups' ? 'bg-set-groups' : 'bg-set-sessions'}`}
     >
-      <span
-        className={`font-mono text-ui font-bold tracking-[0.08em] uppercase ${label === 'Groups' ? 'text-accent-ink' : 'text-white'}`}
-      >
-        {label}
-      </span>
-      {isArchived && <span className="font-mono text-meta text-white">Archived</span>}
+      <span className="font-mono text-ui font-medium text-dialog-hint">{label}</span>
+      {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
       {/* The set menu follows its own page controls on the trailing edge. */}
       {(action || navigation) && (
         <span className={`ml-auto ${HEADER_TRAIL}`}>
@@ -310,17 +306,23 @@ function GroupBand({
   name,
   color,
   isOpen,
+  isFirst,
+  hasVisibleRows,
   onToggle,
   onActions,
 }: {
   name: string;
   color: string | null;
   isOpen: boolean;
+  isFirst: boolean;
+  hasVisibleRows: boolean;
   onToggle: () => void;
   onActions: (anchor: HTMLElement) => void;
 }) {
+  // The set header supplies the first top edge. A group with visible rows closes
+  // its own heading; otherwise the next group or set supplies that boundary.
   return (
-    <div className="flex items-stretch border-t border-edge">
+    <div className={`flex items-stretch border-edge bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}>
       {/* The band and its rows share one coloured edge, so a group reads as a place
           rather than as a caption. That rail is the ONLY place this colour is painted
           in the list: a dot beside the name repeated what the edge already says. */}
@@ -330,12 +332,13 @@ function GroupBand({
         aria-expanded={isOpen}
         aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name}`}
         onClick={onToggle}
-        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-4 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+        className="flex min-w-0 flex-1 items-center gap-0 py-1.5 pl-3 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
       >
+        {/* The child fold sits beside the leading rail; its name lines up with the project title. */}
         <span className={LIST_MARK}>
-          <ChevronIcon open={isOpen} className="size-3 text-dialog-hint" />
+          <ChevronIcon open={isOpen} className="size-3 -translate-x-1.5 text-dialog-hint" />
         </span>
-        <span className="min-w-0 truncate font-mono text-ui font-bold text-white">{name}</span>
+        <span className="min-w-0 truncate font-mono text-body font-medium text-white">{name}</span>
       </button>
       <HeaderActions align="center">
         <IconButton
@@ -1290,6 +1293,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       <SessionRow
         key={session.id}
         session={session}
+        paper="set-sessions"
         group={groupById.get(typeof session.group_id === 'string' ? session.group_id : '') ?? null}
         draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
         conn={conn}
@@ -1494,11 +1498,10 @@ export const ProjectGroup = memo(function ProjectGroup({
       {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
       <section
-        // A compact gap and the incoming header rule separate projects, not individual rows.
+        // Adjacent projects meet at the next header rule, without empty page between them.
         aria-label={`${project} sessions`}
         data-machine={machineKey(conn)}
         data-project-root={root}
-        className="[&+&]:pt-2"
       >
         <SectionHeader isExpanded={isShowing}>
           <ProjectCrumb
@@ -1529,7 +1532,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         {paintsSets && (
           <div
             ref={rowsRef}
-            className={`border-b ${needle ? 'border-dialog-hint' : 'border-edge'}`}
+            className={`border-b bg-set-sessions ${needle ? 'border-dialog-hint' : 'border-edge'}`}
           >
             {!searching && (
               <div>
@@ -1550,11 +1553,11 @@ export const ProjectGroup = memo(function ProjectGroup({
                   }
                 />
                 {emptyGroups && (
-                  <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
+                  <p className="bg-set-groups px-4 py-3 font-mono text-meta text-dialog-hint">
                     No archived groups in this project.
                   </p>
                 )}
-                {bands.map((band) => {
+                {bands.map((band, index) => {
                   const held = filed.byGroup.get(band.id) ?? NO_ROWS;
                   const isBandOpen = isGroupOpen(band.id);
                   return (
@@ -1566,6 +1569,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                         name={band.name}
                         color={band.color}
                         isOpen={isBandOpen}
+                        isFirst={index === 0}
+                        hasVisibleRows={isBandOpen && held.length > 0}
                         onToggle={() => foldGroup(band.id, !isBandOpen)}
                         onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
                       />

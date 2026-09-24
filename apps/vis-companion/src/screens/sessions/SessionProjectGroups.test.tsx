@@ -233,11 +233,18 @@ describe('ProjectGroup groups', () => {
     // every row filed under it (BLO-167): band rail + one per filed row, nothing else.
     // A dot beside the name said the same thing a second time, so it is gone.
     expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(3);
-    expect(
-      (await screen.findByRole('button', { name: 'Collapse Wallet work' })).querySelector(
-        '[class*="bg-group-"]',
-      ),
-    ).toBeNull();
+    const groupButton = await screen.findByRole('button', { name: 'Collapse Wallet work' });
+    expect(groupButton.querySelector('[class*="bg-group-"]')).toBeNull();
+    expect(groupButton).toHaveClass('pl-3', 'gap-0');
+    const groupHeader = groupButton.parentElement!;
+    expect(groupHeader).not.toHaveClass('border-t');
+    expect(groupHeader).toHaveClass('border-b', 'border-edge');
+    // The group fold shares the project mark's column without moving either name.
+    const groupChevron = groupButton.querySelector('svg.lucide-chevron-right');
+    expect(groupChevron).toHaveClass('-translate-x-1.5');
+    expect(within(groupButton).getByText('Wallet work')).toHaveClass(
+      'font-mono', 'text-body', 'font-medium', 'text-white',
+    );
     expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     )).toEqual([ROWS[0].id, ROWS[1].id]);
@@ -295,16 +302,30 @@ describe('ProjectGroup groups', () => {
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
     expect(within(groupsHeader).queryByText('1 group')).toBeNull();
-    // Each headline is RULED on both edges, so the set it names reads as a strip over its
-    // own rows instead of as the first of them.
-    expect(groupsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-groups');
-    expect(within(groupsHeader).getByText('Groups')).toHaveClass('text-ui', 'text-accent-ink');
+    // Set captions share the same type scale as the project qualifier without
+    // competing with the group name.
+    expect(groupsHeader).toHaveClass('border-y', 'border-edge', 'bg-set-groups');
+    expect(groupsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
+    expect(within(groupsHeader).getByText('Groups')).toHaveClass(
+      'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
+    );
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
     // The project still owns its total; each set keeps only its own heading and actions.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
     expect(within(sessionsHeader).queryByText('2 sessions')).toBeNull();
-    expect(sessionsHeader).toHaveClass('border-y', 'border-edge-strong', 'bg-set-sessions');
-    expect(within(sessionsHeader).getByText('Sessions')).toHaveClass('text-ui', 'text-white');
+    expect(sessionsHeader).toHaveClass('border-y', 'border-edge', 'bg-set-sessions');
+    const sessionPaper = groupsHeader.parentElement!.parentElement!;
+    expect(sessionPaper).toHaveClass('bg-set-sessions');
+    expect(sessionPaper).toContainElement(wallet.querySelector(`[data-session-id="${ROWS[0].id}"]`));
+    expect(sessionPaper).toContainElement(list.querySelector(`[data-session-id="${LOOSE.id}"]`));
+    for (const id of [ROWS[0].id, LOOSE.id]) {
+      const row = list.querySelector(`[data-session-id="${id}"]`)!;
+      expect(row.closest('[data-swipe-track]')?.firstElementChild).toHaveClass('bg-set-sessions');
+    }
+    expect(sessionsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
+    expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
+      'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
+    );
     const projectHeader = within(list).getByText(STORY_NEWER_PROJECT.name).closest('header')!;
     expect(within(projectHeader).getByText('4 sessions')).toBeInTheDocument();
 
@@ -517,15 +538,16 @@ describe('ProjectGroup groups', () => {
     expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
   });
 
-  // Only the project showing its sets gets the accented band; folding must return it
-  // to the same neutral surface used by unopened projects.
-  it('accents the expanded project and returns the neutral band when folded', async () => {
+  // The open project's chevron and (in non-light themes) surface identify the state.
+  // Neither state paints an ornamental rail over the project boundary.
+  it('folds a project without a decorative leading rail', async () => {
     const { user } = mount();
     const disclosure = await screen.findByRole('button', {
       name: `Collapse ${STORY_NEWER_PROJECT.name}`,
     });
     const header = disclosure.closest('header')!;
-    expect(header).toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+    expect(header).toHaveClass('bg-project-header-active');
+    expect(header.className).not.toContain('before:');
     expect(header).not.toHaveClass('bg-project-header');
     expect(header).toHaveClass('sticky', 'top-0', 'mouse:focus-within:bg-hover');
     expect(header.className).toContain('var(--color-project-header-active)');
@@ -533,11 +555,13 @@ describe('ProjectGroup groups', () => {
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute('aria-expanded', 'false');
     expect(header).toHaveClass('bg-project-header');
-    expect(header).not.toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+    expect(header).not.toHaveClass('bg-project-header-active');
+    expect(header.className).not.toContain('before:');
     expect(header.className).toContain('var(--color-project-header)');
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(header).toHaveClass('bg-project-header-active', 'before:bg-accent-ink');
+    expect(header).toHaveClass('bg-project-header-active');
+    expect(header.className).not.toContain('before:');
   });
 
   // The project total remains a quiet caption when the bands stop repeating counts.
@@ -558,6 +582,8 @@ describe('ProjectGroup groups', () => {
     const wallet = await band('Wallet work');
     await user.click(within(wallet).getByRole('button', { name: 'Collapse Wallet work' }));
     expect(wallet.querySelector(`[data-session-id="${ROWS[0].id}"]`)).toBeNull();
+    expect(within(wallet).getByRole('button', { name: 'Expand Wallet work' }).parentElement)
+      .not.toHaveClass('border-b');
     // The project stays open: only the band it was folded in lost its rows.
     const list = wallet.closest('[data-project-root]') as HTMLElement;
     expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
@@ -1168,6 +1194,13 @@ describe('ProjectGroup groups', () => {
     mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
 
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    const emptyFirst = (await screen.findByRole('button', { name: 'Collapse Band 00' })).parentElement!;
+    const emptyNext = (await screen.findByRole('button', { name: 'Collapse Band 01' })).parentElement!;
+    // Empty bands get a single edge from the set header or the next band, never two.
+    expect(emptyFirst).not.toHaveClass('border-t');
+    expect(emptyFirst).not.toHaveClass('border-b');
+    expect(emptyNext).toHaveClass('border-t');
+    expect(emptyNext).not.toHaveClass('border-b');
     // Removing the visible tally does not change the underlying number of group pages.
     expect(within(groups).queryByText('24 groups')).toBeNull();
     const steps = within(groups).getByRole('navigation', {
@@ -1233,6 +1266,9 @@ describe('ProjectGroup groups', () => {
         ROOT, expect.any(AbortSignal), 'only', BANDS,
       ),
     );
+    expect(within((await screen.findByText('Groups')).parentElement!).getByText('Archived')).toHaveClass(
+      'font-mono', 'text-ui', 'text-white',
+    );
     expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument();
   });
 
@@ -1249,6 +1285,9 @@ describe('ProjectGroup groups', () => {
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
     await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('Show archived sessions'));
     await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    expect(within((await screen.findByText('Sessions')).parentElement!).getByText('Archived')).toHaveClass(
+      'font-mono', 'text-ui', 'text-white',
+    );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT, expect.any(AbortSignal), 'exclude', { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
     );

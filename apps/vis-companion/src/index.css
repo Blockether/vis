@@ -232,14 +232,8 @@
   --color-footer-error: var(--footer-error);
   --color-cancelled: var(--cancelled-bg);
   --color-cancelled-foreground: var(--cancelled-fg);
-  /* DEPTH, as paper. The sessions list is machine -> project -> session, and the two
-     header bands were told apart by `--surface` against `--panel2` — which is the
-     SAME VALUE in both bundled palettes (#faf3eb light, #161820 dark), so that step
-     has never once rendered. A gateway may or may not give the two tokens different
-     values, so depth cannot be a token: it is DERIVED, by mixing the page's own ink
-     into its own paper. That flips direction on its own — a light theme darkens, a
-     dark theme lightens — so every gateway palette gets the same three legible steps
-     with nothing to override and no per-theme fork. */
+  /* Other palettes derive machine and project depth by mixing their own ink into paper.
+     Default light gives the machine switcher a flatter surface below. */
   --color-level-machine: var(--level-machine, color-mix(in oklab, var(--fg) 9%, var(--surface)));
   --color-level-project: var(--level-project, color-mix(in oklab, var(--fg) 4%, var(--surface)));
   /* THE ROW YOU ARE STANDING IN: the session the pane beside the list is showing.
@@ -249,8 +243,8 @@
      to be able to wear it. */
   --color-standing: color-mix(in oklab, var(--primary) 14%, var(--surface));
   /* Both set surfaces stay opaque when their headers stick over scrolling rows. */
-  --color-set-groups: color-mix(in oklab, var(--primary) 8%, var(--surface));
-  --color-set-sessions: color-mix(in oklab, var(--fg) 6%, var(--surface));
+  --color-set-groups: var(--set-groups, color-mix(in oklab, var(--primary) 8%, var(--surface)));
+  --color-set-sessions: var(--set-sessions, color-mix(in oklab, var(--fg) 6%, var(--surface)));
   --color-project-live: color-mix(in oklab, var(--ok) 50%, var(--fg));
   /* THE PAGE UNDER THE SHEETS, derived the same way and for the same reason. A desk
      window stands one sheet per project, and a sheet is only an object while the
@@ -271,8 +265,21 @@
 /* Project headers are used again as the ground of their own focus/hover tint, so
    these tokens remain CSS variables rather than inline Tailwind substitutions. */
 @theme {
-  --color-project-header: color-mix(in oklab, var(--fg) 14%, var(--surface));
-  --color-project-header-active: color-mix(in oklab, var(--warning) 25%, var(--surface));
+  --color-project-header: var(--project-header, color-mix(in oklab, var(--fg) 14%, var(--surface)));
+  --color-project-header-active: var(--project-header-active, color-mix(in oklab, var(--warning) 25%, var(--surface)));
+  --color-project-header-border: var(--project-header-border, var(--fg));
+}
+
+/* Light project headers stay on paper; Groups carry a faint accent wash, and
+   Sessions carry a slightly deeper neutral wash. Other themes keep their depth. */
+:root:not([data-theme]),
+[data-theme='blockether-light'] {
+  --level-machine: var(--surface);
+  --set-groups: color-mix(in oklab, var(--primary) 5%, var(--surface));
+  --set-sessions: color-mix(in oklab, var(--fg) 3%, var(--surface));
+  --project-header: var(--surface);
+  --project-header-active: var(--surface);
+  --project-header-border: var(--line2);
 }
 
 /* Stable categorical hues still used by artifact chips (`src/components/ArtifactsSheet.tsx`).

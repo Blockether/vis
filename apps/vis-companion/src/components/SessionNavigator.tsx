@@ -24,7 +24,7 @@ const HEADER_TYPE = 'text-title';
  * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-white [--dialog-hint:var(--footer-strong)]';
+  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-project-header-border [--dialog-hint:var(--footer-strong)]';
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
@@ -93,9 +93,9 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 /**
  * One heading, standing in the band that carries the boundary (`HEADER_BAND`).
  *
- * Its border remains the same in every fold state. Expanded projects get a theme-derived
- * warm surface and a leading accent edge; collapsed projects and loading placeholders stay
- * neutral. Every session is in a project, so the list has ONE kind of section.
+ * Its border remains the same in every fold state. In light mode, the chevron alone
+ * shows which projects are open; other themes also tint an expanded header. Every
+ * session is in a project, so the list has ONE kind of section.
  *
  * A SECTION'S OWN CONTROLS OWN ITS TRAILING EDGE, AND A PAGER IS NOT ONE OF THEM.
  * Reported over the project header while the pager stood on that edge: a paged project
@@ -116,7 +116,7 @@ export function SectionHeader({
     <header
       className={`${HEADER_BAND} sticky top-0 flex ${
         isExpanded
-          ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))] before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-accent-ink before:content-[""]'
+          ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))]'
           : 'bg-project-header [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))]'
       } mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
@@ -328,7 +328,7 @@ export function ProjectCrumb({
 }) {
   return (
     <span
-      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 pl-4"
+      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0 pl-4"
     >
       {disclosure && (
         <button
@@ -339,9 +339,10 @@ export function ProjectCrumb({
           className="col-span-2 col-start-1 row-span-2 row-start-1 -ml-4 self-stretch focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
         />
       )}
+      {/* The mark belongs in the left gutter; the reserved slot still aligns project and machine names. */}
       <span className={`pointer-events-none col-start-1 row-span-2 row-start-1 ${LIST_MARK}`}>
         {disclosure && (
-          <ChevronIcon open={disclosure.isOpen} className="size-3.5 text-dialog-hint" />
+          <ChevronIcon open={disclosure.isOpen} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
         )}
       </span>
       <span

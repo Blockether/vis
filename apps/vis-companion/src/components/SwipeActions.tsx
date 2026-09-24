@@ -233,6 +233,7 @@ export function SwipeActions({
   isCurrent = false,
   isSelected = false,
   label,
+  paper = 'panel',
   trailing,
 }: {
   actions: SwipeAction[];
@@ -247,6 +248,8 @@ export function SwipeActions({
   /** The selected range must cover the whole row, including the touch panel and actions. */
   isSelected?: boolean;
   label?: string;
+  /** Opaque touch-row paper; selected and standing rows keep their own states. */
+  paper?: 'panel' | 'set-sessions';
   /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
   trailing?: ReactNode;
 }) {
@@ -384,7 +387,7 @@ export function SwipeActions({
           Desktop ends the row with its menu trigger and stands the permanent controls
           one slot inside it, the two cells every header in the list uses. */}
       <div
-        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isSelected ? 'bg-accent/15' : isCurrent ? 'bg-standing' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isSelected ? 'bg-accent/15' : isCurrent ? 'bg-standing' : paper === 'set-sessions' ? 'bg-set-sessions' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

@@ -272,6 +272,7 @@ export const SessionRow = memo(function SessionRow({
   onSelectionClick,
   dragIds,
   isDraggable,
+  paper = 'panel',
 }: {
   session: Session;
   /**
@@ -303,6 +304,8 @@ export const SessionRow = memo(function SessionRow({
    * carries its own session id; lists that have nowhere to drop it leave this off.
    */
   isDraggable?: boolean;
+  /** Project sessions use their set's paper; other lists keep their panel paper. */
+  paper?: 'panel' | 'set-sessions';
 }) {
   const timestamp = session.modified_at ?? session.created_at;
   // DIRTY: this device is holding composer content nobody has sent — words, a
@@ -517,6 +520,7 @@ export const SessionRow = memo(function SessionRow({
         />
       ) : (
         <SwipeActions
+          paper={paper}
           label={title}
           isCurrent={isOpen}
           isSelected={isSelected}
