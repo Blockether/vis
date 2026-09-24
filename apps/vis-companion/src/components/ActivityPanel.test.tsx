@@ -92,6 +92,32 @@ it('shows one finished command when wait supersedes spawn status and output', ()
   expect(screen.queryByText('Running command')).toBeNull();
 });
 
+// A collapsed operation group reports live work in its tally, not in an extra line.
+it('keeps a running shell command behind its closed group', () => {
+  const activity = activityProjection();
+  const command = 'cd apps/vis-companion && node scripts/storybook-contrast.mjs';
+  activity.rows = ['npm test', 'npm run build', command].map((summary, index) => ({
+    ...activity.rows[0],
+    id: `shell-${index}`,
+    sequence: index + 1,
+    operation: 'shell',
+    presenter: 'shell' as const,
+    state: index === 2 ? ('running' as const) : ('succeeded' as const),
+    summary,
+    argument_key: undefined,
+    presentation: undefined,
+    children: undefined,
+  }));
+  activity.state = 'running';
+  activity.counts = { running: 1, succeeded: 2, failed: 0, cancelled: 0 };
+  paintActivity({ activity });
+  const group = screen.getByRole('button', { name: /Shell ×3/ });
+  expect(group.textContent).toContain('1 running');
+  expect(screen.queryByText(/storybook-contrast\.mjs/)).toBeNull();
+  fireEvent.click(group);
+  expect(screen.getByText(command)).toBeVisible();
+});
+
 it('does not render technical resource IDs as expandable files', () => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
   activity.rows = [activity.rows[4]];
@@ -1199,8 +1225,10 @@ describe('what the axis does while the work is still moving', () => {
     const { rerender } = render(<ActivityPanel activity={activity} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(document.querySelector('[data-activity-row="0:live-4"]')).toBeNull();
-    expect(screen.getByText(/search-6 · running/)).toBeVisible();
+    expect(screen.getByRole('button', { name: /Search ×7/ }).textContent).toContain('1 running');
+    expect(screen.queryByText(/search-6 · running/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
+    expect(document.querySelector('[data-activity-row="0:live-6"]')).not.toBeNull();
     const step = screen.getByRole('button', { name: /Searched.*search-4/ });
     fireEvent.click(step);
     expect(screen.getByText('result-4')).toBeVisible();

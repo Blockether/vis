@@ -1171,14 +1171,7 @@ function ActivityGroup({
       {facts}
     </span>
   );
-  // A CLOSED GROUP PRINTS NO FAILURE. Its head already counts them — `3 failed` — and
-  // the machine's own words wait in the step that produced them, read once, by a reader
-  // who opened the group to read them. Printing them out here spells the same failure a
-  // second time, at someone who closed the group to stop reading it. What survives the
-  // close is work still in flight: a running step has nowhere else to say so while it is
-  // still true, and repeated calls of one shape say it once between them.
-  const inflight = group.rows.filter((row) => row.state === 'running');
-  const previews = repeated ? inflight.slice(0, 1) : inflight;
+  // Even live steps stay folded: the group's tally already reports running work.
   return (
     <li
       className="min-w-0"
@@ -1197,12 +1190,6 @@ function ActivityGroup({
           <span className="min-w-0 break-words font-semibold">{title}</span>
         </Disclosure>
       )}
-      {!expanded &&
-        previews.map((row) => (
-          <p key={row.id} className="min-w-0 break-words pb-1 pl-3 text-meta text-dialog-hint">
-            {activityStepObject(row) || row.presentation?.headline || row.operation} · {row.state}
-          </p>
-        ))}
       {expanded && (
         <ol
           className={singleton ? 'min-w-0' : 'min-w-0 pl-3'}
