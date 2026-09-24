@@ -1130,6 +1130,11 @@
                    bg [theme/terminal-bg theme/input-field-bg]]
 
              (is (>= (#'theme-test/contrast-ratio fg bg) 4.5) (str id " sidebar text")))
+           (let [highlight (theme/mix-color theme/terminal-bg theme/header-active-tab-bg 0.14)]
+             (doseq [[label fg] [[:text theme/dialog-fg] [:hint theme/dialog-hint-key]
+                                 [:warning theme/warning-fg]]]
+               (is (>= (#'theme-test/contrast-ratio fg highlight) 4.5)
+                   (str id " focused project row " label))))
            (is (>= (#'theme-test/contrast-ratio theme/dialog-hint theme/terminal-bg) 4.5)
                (str id " sidebar hints and borders"))
            (let [[fg bg] (theme/chip-tint :warning)]
@@ -1712,36 +1717,51 @@
       (is (= :tab-1 (:active-tab-id @state/app-db))
           "Deleting an unopened row does not change focus"))))
 
-(deftest set-add-buttons-open-their-own-creators-test
+(deftest set-creation-shortcuts-and-session-button-test
   (let [db
         (-> (fixture-db)
             (assoc-in [:project-sidebar :expanded] #{"a"})
             (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
 
         entries
-        (projects/sidebar-entries db)]
+        (projects/sidebar-entries db)
+
+        group-entry
+        (first (filter #(= :groups (:set %)) entries))
+
+        session-entry
+        (first (filter #(= :sessions (:set %)) entries))]
 
     (cap/capture! {:cols 120
                    :rows 24
                    :paint! (fn [{:keys [screen]}]
                              (projects/paint! (.newTextGraphics screen) db 120 24))})
-    (doseq [[set-name kind choice] [["Groups" :project-group-add :new]
-                                    ["Sessions" :project-session-add :new-session]]]
-      (let [entry (first (filter #(= set-name (:label %)) entries))
-            hit (first (filter #(= kind (:kind %)) (.current projects/hit-map)))
-            expected [:menu (assoc entry :initial-action choice)]]
+    (let [hits
+          (.current projects/hit-map)
 
-        (is (some? hit))
-        (when hit
-          (let [{:keys [col row]} (:bounds hit)
-                click
-                (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))]
+          session-hit
+          (first (filter #(= :project-session-add (:kind %)) hits))]
 
-            (is (= expected (projects/key-action db click)))))
-        (is (= expected
-               (projects/key-action (assoc-in db [:project-sidebar :index] (:index entry))
-                                    (cap/key-stroke \+))))))
-    (is (some #(= :project-set-menu (:kind %)) (.current projects/hit-map)))))
+      (is (not-any? #(= :project-group-add (:kind %)) hits))
+      (is (not-any? #(and (= :project-set-menu (:kind %)) (= :groups (:set %))) hits))
+      (is (some? session-hit))
+      (when session-hit
+        (let [{:keys [col row]}
+              (:bounds session-hit)
+
+              click
+              (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))]
+
+          (is (= [:menu (assoc session-entry :initial-action :new-session)]
+                 (projects/key-action db click)))))
+      (is (some #(and (= :project-set-menu (:kind %)) (= :sessions (:set %))) hits)))
+    (doseq [[entry choice] [[group-entry :new] [session-entry :new-session]]]
+      (is (= [:menu (assoc entry :initial-action choice)]
+             (projects/key-action (assoc-in db [:project-sidebar :index] (:index entry))
+                                  (cap/key-stroke \+)))))
+    (is (= [:menu group-entry]
+           (projects/key-action (assoc-in db [:project-sidebar :index] (:index group-entry))
+                                (cap/key-stroke \g))))))
 
 (deftest set-buttons-use-web-bands-and-direct-actions-test
   (let [db
@@ -1810,6 +1830,66 @@
        (fn [gid root]
          (swap! calls conj [:session gid root]))))
     (is (= [[:group "a"] [:session nil "/work/vis"]] @calls))))
+
+(deftest project-rail-focus-highlights-instead-of-leading-dot-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
+
+        entries
+        (projects/sidebar-entries db)
+
+        indices
+        (mapv :index
+              (filter #(#{:project-select :project-group :project-session} (:kind %)) entries))
+
+        highlight
+        (#'theme-test/rgb-tuple
+         (theme/mix-color theme/terminal-bg theme/header-active-tab-bg 0.14))]
+
+    (doseq [index indices]
+      (let [selected (assoc-in db [:project-sidebar :index] index)
+            capture (cap/capture! {:cols 120
+                                   :rows 24
+                                   :paint!
+                                   (fn [{:keys [screen]}]
+                                     (projects/paint! (.newTextGraphics screen) selected 120 24))})
+            hit (first (filter #(= index (:index %)) (.current projects/hit-map)))
+            row (get-in hit [:bounds :row])
+            height (get-in hit [:bounds :height])
+            lines (str/split-lines (cap/frame-text capture))]
+
+        (is (nil? (:error capture)))
+        (is (not (str/includes? (nth lines row) "•")))
+        (is (every? #(= highlight (get-in capture [:frames 0 % 1 :bg])) (range row (+ row height))))
+        (when (= :project-group (:kind hit))
+          (is (= (#'theme-test/rgb-tuple theme/dialog-fg) (get-in capture [:frames 0 row 6 :fg])))
+          (is (= (#'theme-test/rgb-tuple (theme/group-ink "violet"))
+                 (get-in capture [:frames 0 row 1 :fg]))))))
+    (let [db
+          (assoc-in (fixture-db) [:project-sidebar :focused?] false)
+
+          capture
+          (cap/capture! {:cols 120
+                         :rows 24
+                         :paint! (fn [{:keys [screen]}]
+                                   (projects/paint! (.newTextGraphics screen) db 120 24))})
+
+          lines
+          (str/split-lines (cap/frame-text capture))
+
+          palette
+          (fn [ink fraction]
+            (#'theme-test/rgb-tuple (theme/mix-color theme/terminal-bg ink fraction)))]
+
+      (is (str/includes? (nth lines 4) "Vis"))
+      (is (not (str/includes? (nth lines 4) "● Vis")))
+      (is (not (str/includes? (nth lines 4) "▸ Vis")))
+      (is (= (palette theme/header-active-tab-bg 0.10) (get-in capture [:frames 0 4 1 :bg])))
+      (is (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 5 1 :bg]))))))
 
 (deftest saved-session-grid-separates-title-and-status-test
   (let [db

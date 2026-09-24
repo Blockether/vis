@@ -592,10 +592,11 @@
       visible)))
 
 (defn- row-bg
-  "Mirror the web's project, set and open-session surfaces using the shared palette."
-  [{:keys [kind set]} active?]
-  (cond (and active? (= :project-session kind))
-        (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
+  "Mirror the web's project, set and open-session surfaces; highlight the focused row."
+  [{:keys [kind set]} active? focused?]
+  (cond focused? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
+        (and active? (= :project-session kind))
+        (t/mix-color t/terminal-bg t/header-active-tab-bg 0.10)
         (= :project-set kind) (case set
                                 :groups
                                 (t/mix-color t/terminal-bg t/header-active-tab-bg 0.08)
@@ -604,7 +605,9 @@
                                 (t/mix-color t/terminal-bg t/text-fg 0.06)
 
                                 t/terminal-bg)
-        (= :project-select kind) (t/mix-color t/terminal-bg t/text-fg 0.04)
+        (= :project-select kind) (if active?
+                                   (t/mix-color t/terminal-bg t/header-active-tab-bg 0.10)
+                                   (t/mix-color t/terminal-bg t/text-fg 0.04))
         active? t/input-field-bg
         :else t/terminal-bg))
 
@@ -1070,56 +1073,56 @@
                                 (= (str (get project "id")) (:active-project-id db))
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
+                      focused? (and (:focused? sidebar) (= index (:index sidebar)))
                       status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
-                      status-col
-                      (- (+ left width)
-                         (cond (= :project-session kind) (if (>= width 48) 21 7)
-                               (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
-                               :else 2)
-                         (long (p/display-width status)))
+                      status-col (- (+ left width)
+                                    (cond (= :project-session kind) (if (>= width 48) 21 7)
+                                          (and (= :project-set kind) (= :sessions (:set entry))) 10
+                                          :else 2)
+                                    (long (p/display-width status)))
                       row-left (+ left (if child? 2 0))
                       name-width (max 0 (- status-col row-left 1))]]
 
-          (binding [t/dialog-bg (row-bg entry active?)]
+          (binding [t/dialog-bg (row-bg entry active? focused?)]
             (p/set-colors! g
-                           (if (= :project-group kind) (t/group-ink (:color entry)) t/dialog-fg)
+                           (if (and (= :project-group kind) (not focused?))
+                             (t/group-ink (:color entry))
+                             t/dialog-fg)
                            t/dialog-bg)
             (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
             (p/styled g
-                      (if active? [p/BOLD] [])
-                      (dlg/draw-selectable-row! g
-                                                row-left
-                                                row
-                                                name-width
-                                                (and (:focused? sidebar) (= index (:index sidebar)))
-                                                (str (case kind
-                                                       :project-select
-                                                       (if (:expanded? entry)
-                                                         "▾ "
-                                                         (if (contains? sidebar :pages)
-                                                           "▸ "
-                                                           (dlg/choice-mark true active?)))
+                      (if (or active? focused?) [p/BOLD] [])
+                      (p/put-str! g
+                                  (inc row-left)
+                                  row
+                                  (dlg/ellipsize (str " "
+                                                      (case kind
+                                                        :project-select
+                                                        (if (contains? sidebar :pages)
+                                                          (if (:expanded? entry) "▾ " "▸ ")
+                                                          "  ")
 
-                                                       :project-input
-                                                       "! "
+                                                        :project-input
+                                                        "! "
 
-                                                       :project-group
-                                                       (if (:folded? entry) "▸ " "◆ ")
+                                                        :project-group
+                                                        (if (:folded? entry) "▸ " "◆ ")
 
-                                                       :project-session
-                                                       (if (:selected? entry) "☑ " "◻ ")
+                                                        :project-session
+                                                        (if (:selected? entry) "☑ " "◻ ")
 
-                                                       :project-set
-                                                       "  "
+                                                        :project-set
+                                                        "  "
 
-                                                       (:project-page :project-group-page)
-                                                       "  "
+                                                        (:project-page :project-group-page)
+                                                        "  "
 
-                                                       :project-state
-                                                       "  "
+                                                        :project-state
+                                                        "  "
 
-                                                       "● ")
-                                                     label)))
+                                                        "● ")
+                                                      label)
+                                                 (max 0 (- name-width 2)))))
             (if alert?
               (components/button!
                 g
@@ -1129,7 +1132,8 @@
                 kind
                 {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}})
               (do (p/set-colors! g
-                                 (cond (= :project-group kind) (t/group-ink (:color entry))
+                                 (cond (and (= :project-group kind) (not focused?))
+                                       (t/group-ink (:color entry))
                                        (or (pos? (long (or (:needs-input entry) 0)))
                                            (pos? (long (or (:unread entry) 0))))
                                        t/warning-fg
@@ -1147,15 +1151,14 @@
             (assoc entry
               :bounds
               {:col (inc left) :row row :width (max 0 (- width 2)) :height (row-height entry)}))
-          (when (and (= :project-set kind) (#{:groups :sessions} (:set entry)))
+          (when (and (= :project-set kind) (= :sessions (:set entry)))
             (let [pid (str (get project "id"))]
-              (components/button!
-                g
-                (- (+ left width) 9)
-                row
-                " + "
-                (if (= :groups (:set entry)) :project-group-add :project-session-add)
-                {:extra {:project-id pid}})
+              (components/button! g
+                                  (- (+ left width) 9)
+                                  row
+                                  " + "
+                                  :project-session-add
+                                  {:extra {:project-id pid}})
               (components/button! g
                                   (- (+ left width) 5)
                                   row
@@ -1240,7 +1243,7 @@
                  :project-session :project-selection :project-details :project-set :project-page
                  :project-group-page :project-state :project-add :project-hide :project-suggest
                  :project-new-folder :project-search :project-search-field :project-updates
-                 :project-group-add :project-session-add :project-set-menu}
+                 :project-session-add :project-set-menu}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
                   (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
@@ -1266,20 +1269,14 @@
                                      :project-state :project-updates)
                     (:action hit)
 
-                    (:project-group-add :project-session-add)
+                    :project-session-add
                     (when-let [entry (some #(when (and (= :project-set (:kind %))
                                                        (= (:project-id hit)
                                                           (str (get-in % [:project "id"])))
-                                                       (= (:set %)
-                                                          (if (= :project-group-add (:kind hit))
-                                                            :groups
-                                                            :sessions)))
+                                                       (= :sessions (:set %)))
                                               %)
                                            (sidebar-entries db))]
-                      [:menu
-                       (assoc entry
-                         :initial-action
-                         (if (= :project-group-add (:kind hit)) :new :new-session))])
+                      [:menu (assoc entry :initial-action :new-session)])
 
                     :project-set-menu
                     (when-let [entry (some #(when (and (= :project-set (:kind %))
