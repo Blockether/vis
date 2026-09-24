@@ -1182,7 +1182,7 @@
                                   {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (components/button! g
-                                (- (+ left width) 6)
+                                (- (+ left width) 5)
                                 row
                                 " ⋮ "
                                 :project-details

@@ -1774,7 +1774,7 @@
            (projects/key-action (assoc-in db [:project-sidebar :index] (:index group-entry))
                                 (cap/key-stroke \g))))))
 
-(deftest sidebar-overflow-buttons-use-vertical-ellipsis-test
+(deftest sidebar-overflow-buttons-align-and-use-vertical-ellipsis-test
   (let [db
         (-> (fixture-db)
             (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -1796,6 +1796,8 @@
 
     (is (nil? (:error capture)))
     (is (= 3 (count buttons)))
+    (is (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
+        "Group, Sessions, and saved-session menus share a right-aligned column")
     (doseq [{:keys [bounds]}
             buttons
 
