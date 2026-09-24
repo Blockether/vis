@@ -435,6 +435,50 @@ test('live discovery includes only approved listings and shares the cached catal
   expect(missing.status).toBe(404);
   expect(missing.headers.get('x-robots-tag')).toBe('noindex');
 });
+
+test('API details accept repository slugs without confusing monorepo projects', async () => {
+  const base = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'))[0];
+  const items = [
+    { ...base, repository: 'Blockether/vis-lang-python' },
+    {
+      ...base,
+      id: 'b'.repeat(24),
+      repository: 'Blockether/vis-lang-python',
+      subdirectory: 'plugins/Greeting & tools',
+    },
+    {
+      ...base,
+      id: 'c'.repeat(24),
+      repository: 'Blockether/vis-lang-python',
+      subdirectory: 'plugins/greeting & tools',
+    },
+  ];
+  for (const item of items)
+    await fixture.db
+      .prepare('INSERT INTO extensions VALUES (?, ?, ?)')
+      .bind(item.id, JSON.stringify(item), item.added_at)
+      .run();
+  const paths = [
+    '/api/extensions/Blockether/vis-lang-python',
+    '/api/extensions/blockether/vis-lang-python/plugins/Greeting%20%26%20tools',
+    '/api/extensions/Blockether/vis-lang-python/plugins/greeting%20%26%20tools',
+  ];
+  for (const [index, path] of paths.entries()) {
+    const response = await fixture.runtime.dispatchFetch('https://center.example.com' + path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('max-age=60');
+    expect((await response.json()).id).toBe(items[index].id);
+  }
+  for (const path of [
+    '/api/extensions/Blockether/vis-lang-python/plugins/missing',
+    '/api/extensions/Blockether/unknown',
+  ]) {
+    const response = await fixture.runtime.dispatchFetch('https://center.example.com' + path);
+    expect(response.status).toBe(404);
+    expect(response.headers.get('x-robots-tag')).toBe('noindex');
+  }
+});
+
 test('extension links use readable repository slugs, including distinct project folders', async () => {
   const base = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'))[0];
   const items = [
@@ -531,6 +575,28 @@ test('published hash links redirect to the repository slug and preserve the sele
   );
   expect(api.status).toBe(200);
   expect((await api.json()).id).toBe(id);
+  const slugAPI = '/api/extensions/Example/Extensions/plugins/greeting';
+  for (const method of ['GET', 'HEAD']) {
+    const selected = await fixture.runtime.dispatchFetch(
+      'https://center.example.com' + slugAPI + '?version=1.0.0',
+      { method },
+    );
+    expect(selected.status).toBe(200);
+    if (method === 'HEAD') expect(await selected.text()).toBe('');
+    else
+      expect(await selected.json()).toMatchObject({
+        id,
+        version: '1.0.0',
+        latest_version: '1.0.0',
+      });
+  }
+  expect(
+    (
+      await fixture.runtime.dispatchFetch(
+        'https://center.example.com' + slugAPI + '?version=9.9.9',
+      )
+    ).status,
+  ).toBe(404);
 });
 
 test('every approved extension has a crawlable, server-rendered detail page', async () => {

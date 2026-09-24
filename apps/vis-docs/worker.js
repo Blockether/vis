@@ -153,20 +153,30 @@ async function handle(request, env, ctx) {
     }
     if (path === '/api/extensions')
       return reply(await catalog(env, url.origin, ctx), 200, false, 'public, max-age=60');
-    if (/^\/api\/extensions\/[0-9a-f]{24}$/.test(path)) {
-      const item = await detail(
-        env,
-        url.origin,
-        path.split('/').at(-1),
-        url.searchParams.get('version'),
-        ctx,
-      );
+    const id = path.match(/^\/api\/extensions\/([0-9a-f]{24})$/);
+    const community = path.match(/^\/api\/extensions\/([0-9a-f]{24})\/community$/);
+    if (community) return reply(await readCommunity(request, env, community[1]));
+    const slug = path.match(/^\/api\/extensions\/([^/]+)\/([^/]+)(\/.+)?$/);
+    if (id || slug) {
+      let extensionId = id?.[1];
+      if (slug) {
+        const canonical =
+          '/extensions/' +
+          slug[1].toLowerCase() +
+          '/' +
+          slug[2].toLowerCase() +
+          (slug[3] || '');
+        extensionId = (await catalog(env, url.origin, ctx)).extensions.find(
+          (item) => extensionPath(item) === canonical,
+        )?.id;
+      }
+      const item = extensionId
+        ? await detail(env, url.origin, extensionId, url.searchParams.get('version'), ctx)
+        : null;
       return item
         ? reply(item, 200, false, 'public, max-age=60')
         : reply({ error: 'Repository or approved version not listed.' }, 404);
     }
-    const community = path.match(/^\/api\/extensions\/([0-9a-f]{24})\/community$/);
-    if (community) return reply(await readCommunity(request, env, community[1]));
     if (path.startsWith('/api/')) return reply({ error: 'Not found.' }, 404);
     return env.ASSETS.fetch(request);
   }

@@ -201,9 +201,13 @@ previous snapshot and delay retries; refresh latency also depends on catalog siz
 List responses may keep their previous snapshot for another 60 seconds. License and
 source dates remain snapshots from release inspection.
 
-`GET /api/extensions/ID` returns the default version, `latest_version` and approved
-`releases` summaries. `?version=1.2.0` returns the full metadata for that approved
-version; pending, rejected and unknown versions return 404. The detail page supports
+`GET /api/extensions/ID` and `GET /api/extensions/owner/repository[/folder]`
+return the default version, `latest_version` and approved `releases` summaries.
+For example, `/api/extensions/Blockether/vis-lang-python` looks up that listed
+repository. Owner and repository names are case-insensitive; project folders
+retain their case and each folder segment must be URL-encoded. Add
+`?version=1.2.0` to either URL for full metadata on that approved version;
+pending, rejected and unknown versions return 404. The detail page supports
 version deep links, release notes and commit links. Choose **Project** (the default)
 or **Global** to copy a version-pinned, multiline shell command with an explicit scope.
 Commands use the shared syntax colors and copy as plain text, including shell line
