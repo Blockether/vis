@@ -1,0 +1,21 @@
+{
+  "lang": "python",
+  "prompt": "/goal Reconcile the large data/reconcile-left.csv and data/reconcile-right.csv files by invoice, summing amounts over all parts of each invoice first. Skip the CSV header if you parse rows without csv.DictReader; column names are not amounts. Return JSON with left_only and right_only invoice counts, mismatched_shared (shared invoices with different summed amount), and net_delta (sum of right minus left over shared invoices). Keep each tool stdout under 1100 characters; do not dump rows or files. Once you have verified all values, call update_goal with the active goal id/version, status complete, and reason set to exactly json.dumps(the_answer_object, sort_keys=True). That reason is the final JSON answer. Do not print the full goal result: it includes the entire objective and can breach the compact-output budget; if you print confirmation, print only the returned status. Do not edit any files.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "left_only": 150,
+    "right_only": 150,
+    "mismatched_shared": 133,
+    "net_delta": 931
+  },
+  "max_form_output_chars": 1100,
+  "max_total_output_chars": 2200,
+  "want_requested_route": true,
+  "fixture_generator": "generate.py",
+  "timeout_s": 600,
+  "files_from": "large-csv-groups",
+  "want_goal_complete": true,
+  "want_cache_read": true,
+  "want_cache_metrics": true
+}

@@ -1,0 +1,13 @@
+{
+  "lang": "python",
+  "prompt": "To obtain the ledger, make your first python_execution call `case = \"ledger\"; exec((project_root_path / \"emit.py\").read_text())`. From that result, find the sum of amounts for settled rows belonging to account beta and the number of its reversed rows. Return only a JSON object with beta_settled_net and beta_reversed_count. No code fence, prose, or explanation; the final answer must be that single JSON object. Do not inspect emit.py separately or rerun it. Keep follow-up printed results short.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "beta_settled_net": 12729,
+    "beta_reversed_count": 119
+  },
+  "want_requested_route": true,
+  "files_from": "stdout-lookup-middle",
+  "timeout_s": 600
+}

@@ -1,0 +1,15 @@
+{
+  "lang": "python",
+  "prompt": "To obtain the ticket dataset, make your first python_execution call `case = \"lookup\"; exec((project_root_path / \"emit.py\").read_text())`. From that result, identify ticket 03101 and return a JSON object with its ticket, team, state and four-character checksum. Do not inspect emit.py separately or rerun it. Keep follow-up printed results short. Respond ONLY with the JSON object using keys ticket, team, state and checksum, no prose or code fence.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "ticket": "03101",
+    "team": "team0",
+    "state": "open",
+    "checksum": "0569"
+  },
+  "want_requested_route": true,
+  "files_from": "stdout-lookup-middle",
+  "timeout_s": 600
+}

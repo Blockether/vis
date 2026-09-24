@@ -1,0 +1,28 @@
+{
+  "lang": "python",
+  "prompt": "First, in one python_execution block print the large source result by running: `case = \"incident\"; exec(Path(project_root_path / \"emit.py\").read_text())`. Do not inspect emit.py or compute an answer before this first result. Once each result has appeared, recover the exact saved stdout of each original call using its clipping hint (original scope AND tool-call ID). Do not rerun the emitter or reuse its original rows. In a later Python block for EACH output print `LEN: <character count>`, `SHA256: <UTF-8 digest>`, and the requested target data row verbatim (not the clipping hint); use the recovered stdout to compute the answer. Print only concise evidence, not the full output again. Print the line containing evt:03150. Correlate all events for request critical-72 across the full output. Return first_failed_component, failed_attempts (a list of integer attempt numbers, in chronological order), final_status and final_attempt. Ignore unrelated retries. Respond ONLY with a JSON object, no prose or code fence.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "first_failed_component": "store",
+    "failed_attempts": [
+      1,
+      2
+    ],
+    "final_status": "delivered",
+    "final_attempt": 3
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": {
+    "min_chars": 120000,
+    "head": "INCIDENT-HEAD",
+    "middle": "evt:03150|req=critical-72|component=store|status=error|attempt=1",
+    "tail": "INCIDENT-TAIL",
+    "goal_status": null
+  },
+  "want_requested_route": true,
+  "timeout_s": 600,
+  "files_from": "stdout-lookup-middle"
+}

@@ -1,0 +1,25 @@
+{
+  "lang": "python",
+  "prompt": "First, in one python_execution block print the large source result by running: `case = \"unicode\"; exec(Path(project_root_path / \"emit.py\").read_text())`. Do not inspect emit.py or compute an answer before this first result. Once each result has appeared, recover the exact saved stdout of each original call using its clipping hint (original scope AND tool-call ID). Do not rerun the emitter or reuse its original rows. In a later Python block for EACH output print `LEN: <character count>`, `SHA256: <UTF-8 digest>`, and the requested target data row verbatim (not the clipping hint); use the recovered stdout to compute the answer. Print only concise evidence, not the full output again. Print the line containing 記録02701. Find row 記録02701 and return its label and numeric metric. Parse the metric field with int() and return metric as a JSON number, never a string. Also return the full saved stdout UTF-8 byte length and count rows whose label is 🙂. Use JSON keys label, metric, utf8_bytes, emoji_rows. Print LEN/SHA/ROW evidence only in the Python tool stdout, not in your final reply. The final assistant message must contain only that JSON object, without a proof, explanation, or code fence.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "label": "étoile",
+    "metric": 1030,
+    "utf8_bytes": 201176,
+    "emoji_rows": 1350
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": {
+    "min_chars": 120000,
+    "head": "UNICODE-HEAD",
+    "middle": "記録02701|label=étoile|metric=1030",
+    "tail": "UNICODE-TAIL",
+    "goal_status": null
+  },
+  "want_requested_route": true,
+  "timeout_s": 600,
+  "files_from": "stdout-lookup-middle"
+}

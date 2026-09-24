@@ -28,7 +28,9 @@ e2e/
 - **want_tools** — extension tools that must finish successfully, such as `patch`.
 - **want_forms** — legacy substring checks on sandbox source; not execution evidence.
 - **want_answer_json** — the exact final JSON value, with no extra facts or keys.
-  A single JSON code fence is accepted. Duplicate object keys are rejected.
+  A single JSON code fence is accepted, as is the engine’s `Goal complete: `
+  wrapper when `want_goal_complete` is set. Integral float and integer JSON numbers
+  compare equal; booleans, extra facts and duplicate object keys are rejected.
 - **want_json_files** — `{path: [row, ...]}` exact JSONL evidence, including row order.
   Discovery fixtures write private invocation journals inside registered methods;
   the model cannot satisfy these checks just by printing a receipt.
@@ -64,17 +66,61 @@ e2e/
 - **want_goal_complete** — require the persisted gateway goal to be complete after
   the scenario, not just a model claim or a tool-call attempt.
 - **want_stdout_recovery** — require an oversized raw stdout, then a later
-  `read_session()` block that selects its original scope and tool-call ID while a
-  goal is active. Check the recovered UTF-8 SHA-256 digest, length and middle
-  against the raw output. Use `min_chars`, `head`, `middle` and `tail` to identify
-  the original. The model-facing result is clipped; the saved raw output is not.
+  `read_session()` block that selects its original scope and tool-call ID. Check
+  a later proof block (which may be the same block as the read) against the raw
+  stdout’s UTF-8 SHA-256 digest, length and middle.
+  Use `min_chars`, `head`, `middle` and `tail` to identify the original. A list
+  requires distinct, correctly selected read-backs for every output. By default
+  the read-back must report `GOAL_STATUS: active`; set `goal_status: null` for
+  tasks without a goal. The model-facing result is clipped; the saved raw output
+  is not. This is a trace guard, not a proof of arbitrary data-flow semantics.
 - **files_from** — reuse a sibling scenario's input files without copying its source.
   The known-contract case reuses the original fixture with a supplied unchanged
   contract. It tests recovered-contract reuse, not cross-turn memory retention.
+- **fixture_generator** — a checked-in Python script basename at the fixture root,
+  run once during seeding with the workspace path as its argument. It writes
+  deterministic large inputs into the temporary workspace before the fixture
+  git commit; the script itself is not copied. Combine with `files_from` to
+  share generated inputs without tracking bulky data.
 
 - **workspace_filesystem** — `{id: fixture-relative directory}` registrations.
   Setup writes absolute paths and allowed ids to `vis.yml`; omit a fixture copy
   of that file.
+
+## Large-output agent behavior
+
+Twelve `stdout-*` and `large-*` scenarios complement `stdout-goal-cache`.
+Six first print 145k–377k characters and require the agent to recover the exact
+saved output before it answers: middle lookup, whole-ledger reduction, JSONL
+filtering, multilingual text, two independent results, and incident correlation.
+Two more reuse the lookup and ledger data but do not tell the agent how to recover
+a clipped result; compare their traces for natural recovery behavior. Four start
+from generated files larger than the display preview and require compact local
+processing: grouped CSV, a cross-file join, malformed JSONL, and a two-ledger
+reconciliation with a persisted goal and cache checks. All have exact JSON answer
+oracles; the six guided recovery cases also verify the original scope, tool-call
+ID, length, SHA-256 and middle data. The compact cases bound peak and total
+printed characters.
+
+Open generated files from `project_root_path / "data"`, not the Python process’s
+current directory. The stdout caps include goal-completion output: printing the
+full `update_goal` result can exceed them because it repeats the goal objective.
+Print only the completion status if you need confirmation.
+
+Run named cases with the command below; each model call incurs provider costs.
+The generator scripts are deterministic and run inside temporary fixture
+workspaces. Read `results.json` and the per-case traces under `VIS_E2E_TRACES`
+for failures, not just the command's exit status. Passing cases demonstrate
+those tasks and routes, not universal reliability across models or prompts.
+
+```sh
+VIS_E2E_TRACES=/tmp/vis_large_stdout VIS_PROVIDER=zai-coding-plan \
+VIS_MODELS=glm-5.3-flash,glm-5.3 VIS_E2E_WORKERS=2 python3 e2e/run.py \
+  stdout-goal-cache stdout-lookup-middle stdout-ledger-reduce stdout-jsonl-filter \
+  stdout-unicode stdout-dual-source stdout-incident-join stdout-natural-lookup \
+  stdout-natural-ledger large-csv-groups large-crossfile-join \
+  large-jsonl-integrity large-two-ledgers
+```
 
 ## Run
 

@@ -1,0 +1,24 @@
+{
+  "lang": "python",
+  "prompt": "First, in one python_execution block print the large source result by running: `case = \"lookup\"; exec(Path(project_root_path / \"emit.py\").read_text())`. Do not inspect emit.py or compute an answer before this first result. Once each result has appeared, recover the exact saved stdout of each original call using its clipping hint (original scope AND tool-call ID). Do not rerun the emitter or reuse its original rows. In a later Python block for EACH output print `LEN: <character count>`, `SHA256: <UTF-8 digest>`, and the requested target data row verbatim (not the clipping hint); use the recovered stdout to compute the answer. Print only concise evidence, not the full output again. Print the line containing ticket:03101. The ticket:<id> prefix is not a key=value field; parse it separately from the remaining fields. Find ticket 03101 and return exactly the JSON keys ticket, team, state and checksum (ticket and checksum stay strings; checksum has four characters). Respond ONLY with a JSON object, no prose or code fence.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "ticket": "03101",
+    "team": "team0",
+    "state": "open",
+    "checksum": "0569"
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": {
+    "min_chars": 120000,
+    "head": "LOOKUP-HEAD",
+    "middle": "ticket:03101|team=team0|state=open|checksum=0569",
+    "tail": "LOOKUP-TAIL",
+    "goal_status": null
+  },
+  "want_requested_route": true,
+  "timeout_s": 600
+}

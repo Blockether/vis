@@ -272,9 +272,28 @@ def exact_json(text):
 
 def structured_failures(sc, work, answer, activities):
     """Check exact fixture truth, not numbers or JSON fragments embedded in prose."""
+
+    def same_json_value(actual, expected):
+        if type(actual) in (int, float) and type(expected) in (int, float):
+            return actual == expected
+        if type(actual) is not type(expected):
+            return False
+        if isinstance(actual, dict):
+            return actual.keys() == expected.keys() and all(
+                same_json_value(actual[key], expected[key]) for key in actual
+            )
+        if isinstance(actual, list):
+            return len(actual) == len(expected) and all(
+                same_json_value(left, right)
+                for left, right in zip(actual, expected, strict=True)
+            )
+        return actual == expected
+
     failures = []
     if "want_answer_json" in sc:
         text = answer.strip()
+        if sc.get("want_goal_complete") and text.startswith("Goal complete: "):
+            text = text.removeprefix("Goal complete: ")
         if text.startswith("```json\n") and text.endswith("\n```"):
             text = text[8:-4]
         try:
@@ -282,9 +301,7 @@ def structured_failures(sc, work, answer, activities):
         except ValueError:
             failures.append("answer is not a single JSON value")
         else:
-            if json.dumps(actual, sort_keys=True) != json.dumps(
-                sc["want_answer_json"], sort_keys=True
-            ):
+            if not same_json_value(actual, sc["want_answer_json"]):
                 failures.append(
                     "answer JSON does not match the requested facts exactly"
                 )
@@ -795,49 +812,73 @@ def fetch_session_goal(env, session_id, gateway_port):
 
 
 def stdout_recovery_failures(form_outputs, form_events, expected):
-    """Require exact saved stdout, recovered by its original scope and tool-call id."""
-    minimum = expected["min_chars"]
-    head, middle, tail = (expected[key] for key in ("head", "middle", "tail"))
-    originals = [
-        item
-        for item in form_outputs
-        if len(item["stdout"]) >= minimum
-        and item["stdout"].startswith(head)
-        and middle in item["stdout"]
-        and item["stdout"].rstrip().endswith(tail)
-    ]
-    if not originals:
-        return ["no oversized raw stdout with the expected head, middle and tail"]
-    first = originals[0]
-    scope = first["scope"].split("/f", 1)[0]
-    call_id = first.get("tool_call_id")
-    if not scope or not call_id:
-        return ["oversized stdout has no recoverable scope and tool-call id"]
-    digest = hashlib.sha256(first["stdout"].encode("utf-8")).hexdigest()
-    readers = {
-        event["scope"]
-        for event in form_events
-        if isinstance(event["iteration"], int)
-        and event["iteration"] > first["iteration"]
-        and "read_session()" in event["code"]
-        and ("['stdout']" in event["code"] or '["stdout"]' in event["code"])
-        and "svar_tool_call_id" in event["code"]
-        and any(f"{q}{scope}{q}" in event["code"] for q in ('"', "'"))
-        and any(f"{q}{call_id}{q}" in event["code"] for q in ('"', "'"))
-    }
-    if not any(
-        item["scope"] in readers
-        and item["iteration"] > first["iteration"]
-        and f"LEN: {len(first['stdout'])}" in item["stdout"]
-        and f"SHA256: {digest}" in item["stdout"]
-        and middle in item["stdout"]
-        and "GOAL_STATUS: active" in item["stdout"]
-        for item in form_outputs
-    ):
-        return [
-            "no later read_session() block verified the exact stdout while the goal was active"
+    """Require each saved stdout by its own scope and tool-call id."""
+    cases = expected if isinstance(expected, list) else [expected]
+    seen = set()
+    failures = []
+    for case in cases:
+        minimum = case["min_chars"]
+        head, middle, tail = (case[key] for key in ("head", "middle", "tail"))
+        label = f"{head!r}: " if len(cases) > 1 else ""
+        originals = [
+            item
+            for item in form_outputs
+            if len(item["stdout"]) >= minimum
+            and item["stdout"].startswith(head)
+            and middle in item["stdout"]
+            and item["stdout"].rstrip().endswith(tail)
         ]
-    return []
+        if not originals:
+            failures.append(
+                label
+                + "no oversized raw stdout with the expected head, middle and tail"
+            )
+            continue
+        first = next(
+            (
+                item
+                for item in originals
+                if (item["scope"], item.get("tool_call_id")) not in seen
+            ),
+            None,
+        )
+        if first is None:
+            failures.append(label + "no distinct oversized stdout for this expectation")
+            continue
+        scope = first["scope"].split("/f", 1)[0]
+        call_id = first.get("tool_call_id")
+        if not scope or not call_id:
+            failures.append(
+                label + "oversized stdout has no recoverable scope and tool-call id"
+            )
+            continue
+        seen.add((first["scope"], call_id))
+        digest = hashlib.sha256(first["stdout"].encode("utf-8")).hexdigest()
+        readers = {
+            event["iteration"]
+            for event in form_events
+            if isinstance(event["iteration"], int)
+            and event["iteration"] > first["iteration"]
+            and "read_session()" in event["code"]
+            and ("['stdout']" in event["code"] or '["stdout"]' in event["code"])
+            and "svar_tool_call_id" in event["code"]
+            and any(f"{q}{scope}{q}" in event["code"] for q in ('"', "'"))
+            and any(f"{q}{call_id}{q}" in event["code"] for q in ('"', "'"))
+        }
+        goal_status = case.get("goal_status", "active")
+        if not any(
+            any(item["iteration"] >= iteration for iteration in readers)
+            and item["iteration"] > first["iteration"]
+            and f"LEN: {len(first['stdout'])}" in item["stdout"]
+            and f"SHA256: {digest}" in item["stdout"]
+            and middle in item["stdout"]
+            and (goal_status is None or f"GOAL_STATUS: {goal_status}" in item["stdout"])
+            for item in form_outputs
+        ):
+            failures.append(
+                label + "no later read_session() block verified the exact stdout"
+            )
+    return failures
 
 
 def decode_usage_body(body):
@@ -931,6 +972,17 @@ def seed_files(sc, work):
             dst = os.path.join(work, os.path.relpath(src, fdir))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
+    if generator := sc.get("fixture_generator"):
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+\.py", generator):
+            raise ValueError("fixture_generator must be a script basename")
+        subprocess.run(
+            [sys.executable, os.path.join(fixture_dir, generator), work],
+            cwd=work,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
     if registrations := sc.get("workspace_filesystem"):
         entries = [
             {"id": name, "path": os.path.realpath(os.path.join(work, relative))}

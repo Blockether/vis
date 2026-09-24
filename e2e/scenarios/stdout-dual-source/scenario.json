@@ -1,0 +1,33 @@
+{
+  "lang": "python",
+  "prompt": "First, in one python_execution block print the large source result by running: `case = \"alpha\"; exec(Path(project_root_path / \"emit.py\").read_text())`. In your SECOND python_execution block, print beta in the same way: `case = \"beta\"; exec(Path(project_root_path / \"emit.py\").read_text())`. Do not combine the two emits into one block. Do not inspect emit.py or compute an answer before this first result. Once each result has appeared, recover the exact saved stdout of each original call using its clipping hint (original scope AND tool-call ID). Do not rerun the emitter or reuse its original rows. In a later Python block for EACH output print `LEN: <character count>`, `SHA256: <UTF-8 digest>`, and the requested target data row verbatim (not the clipping hint); use the recovered stdout to compute the answer. Print only concise evidence, not the full output again. For alpha print the line containing A02700 and for beta the line containing B02650. Read both generated outputs. Return the four-character value for A03450 from alpha, the four-character weight for B02150 from beta, and their numeric sum. Use JSON keys alpha_value, beta_weight, sum. Respond ONLY with a JSON object, no prose or code fence.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "alpha_value": "0863",
+    "beta_weight": "0561",
+    "sum": 1424
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": [
+    {
+      "min_chars": 120000,
+      "head": "ALPHA-HEAD",
+      "middle": "A02700|key=k052|value=1004",
+      "tail": "ALPHA-TAIL",
+      "goal_status": null
+    },
+    {
+      "min_chars": 120000,
+      "head": "BETA-HEAD",
+      "middle": "B02650|key=k002|weight=0465",
+      "tail": "BETA-TAIL",
+      "goal_status": null
+    }
+  ],
+  "want_requested_route": true,
+  "timeout_s": 600,
+  "files_from": "stdout-lookup-middle"
+}

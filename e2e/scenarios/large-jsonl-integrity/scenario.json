@@ -1,0 +1,18 @@
+{
+  "lang": "python",
+  "prompt": "Audit all physical lines of data/audit.jsonl. Count lines with invalid JSON, find the 1-based line number of the first invalid line, count valid rows with status error, and count distinct record IDs among those error rows. Return JSON keys invalid_lines, first_invalid_line, error_events, unique_error_records. Do not print raw rows or the file; keep each tool stdout under 700 characters. Return only the JSON object.",
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "invalid_lines": 12,
+    "first_invalid_line": 2797,
+    "error_events": 415,
+    "unique_error_records": 412
+  },
+  "max_form_output_chars": 700,
+  "max_total_output_chars": 1600,
+  "want_requested_route": true,
+  "fixture_generator": "generate.py",
+  "timeout_s": 600,
+  "files_from": "large-csv-groups"
+}
