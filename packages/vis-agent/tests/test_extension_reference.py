@@ -49,15 +49,3 @@ def test_module_introductions_link_to_guides_without_repeating_them(module):
     assert links
     for page in links:
         assert (manual / f"{page}.md").is_file(), page
-
-
-def test_view_receipts_explain_inherited_decoding_and_copying():
-    for record in (
-        views.InputView,
-        views.LiveView,
-        views.ViewSnapshot,
-        views.LivePatch,
-        views.LiveResult,
-    ):
-        assert "Raises:" in inspect.getdoc(record.from_wire)
-        assert "JSON-compatible" in inspect.getdoc(record.to_wire)

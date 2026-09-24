@@ -251,22 +251,33 @@ describe('the app bar', () => {
   // Regression, user report ("just search icon that triggers full page search"): the
   // open field was the bar's whole middle at every width — the widest object on a
   // 390px phone, permanently, for a question that is asked in bursts.
-  it('opens search as a page, not a box parked on the bar', async () => {
+  it('opens search as a focused page and clears its query on close', async () => {
     const view = await mount();
     await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
     const field = await screen.findByRole('searchbox', {
       name: 'Search sessions on every machine',
     });
     expect(field.getAttribute('placeholder')).toBe('Search all machines…');
+    expect(field).toHaveFocus();
     // The page IS the search: the mark that opened it has given the bar up.
     expect(screen.queryByRole('button', { name: 'Search all machines' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Close search' })).toBeVisible();
     // Nothing scopes it: the fleet list is still the answer underneath.
     expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
+    await userEvent.type(field, 'needle');
+    expect(field).toHaveValue('needle');
+    await userEvent.keyboard('{Escape}');
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible(),
     );
+    // Opening by keyboard is the same page, with a fresh query and the caret ready.
+    await userEvent.keyboard('/');
+    const reopened = await screen.findByRole('searchbox', {
+      name: 'Search sessions on every machine',
+    });
+    expect(reopened).toHaveFocus();
+    expect(reopened).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
     view.unmount();
     view.restore();
   });
