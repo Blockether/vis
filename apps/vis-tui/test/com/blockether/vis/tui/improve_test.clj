@@ -202,6 +202,34 @@
                        :com.blockether.vis.tui.dialogs/done))
         (is (= 2 (:selected (press component open-row (KeyStroke. KeyType/ArrowDown)))))))))
 
+(deftest improve-browser-pages-over-project-headings-test
+  (let [many-records
+        (improve/records (mapv (fn [idx]
+                                 {"id" idx "project_id" "p1" "title" (str "Issue " idx)})
+                               (range 50)))
+
+        component
+        (improve/browser-modal-component many-records {"p1" "Editor"} nil {:mode :human})
+
+        geom
+        ((:measure component) (:init component) 96 24)
+
+        step
+        (fn [state key]
+          ((:reconcile component) ((:on-key component) state (KeyStroke. key) geom) geom))
+
+        start
+        ((:reconcile component) (:init component) geom)
+
+        down
+        (step start KeyType/PageDown)
+
+        back
+        (step down KeyType/PageUp)]
+
+    (is (<= (dec (:list-h geom)) (:selected down)))
+    (is (= 0 (:selected back)))))
+
 (deftest improve-settings-component-gates-model-calls-test
   (testing "provider, model, schedule and review exist in Automatic only"
     (is (= [:mode :mode :mode] (mapv :kind (improve/settings-rows {:mode :human}))))
@@ -675,6 +703,30 @@
       (is (= "x" (improve/editor-text after)))))
   (testing "^S the human actually presses still saves the whole analysis"
     (is (= "note" (:text (done (improve/editor-key (improve/editor-state "note") (ctrl \s))))))))
+
+(deftest improve-editor-pages-by-viewport-test
+  (let [component
+        (improve/analysis-editor-component "Analysis" (str/join "\n" (map str (range 50))))
+
+        geom
+        ((:measure component) (:init component) 96 24)
+
+        start
+        ((:reconcile component) (:init component) geom)
+
+        page!
+        (fn [state key]
+          ((:reconcile component) ((:on-key component) state (KeyStroke. key) geom) geom))
+
+        up
+        (page! start KeyType/PageUp)
+
+        back
+        (page! up KeyType/PageDown)]
+
+    (is (= (- 49 (:list-h geom)) (:crow up)))
+    (is (= 49 (:crow back)))
+    (is (= 0 (:crow (nth (iterate #(page! % KeyType/PageUp) start) 50))))))
 
 (deftest improve-editor-places-the-caret-by-display-width-test
   (testing "a wide glyph before the caret takes TWO cells, not one char"

@@ -238,6 +238,30 @@
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
           :else start)))
 
+(defn page-selected-index
+  "Move a selection by painted rows, skipping non-selectable headings."
+  [display selected list-h direction selectable?]
+  (let [indices
+        (vec (keep-indexed (fn [idx row]
+                             (when (selectable? row) idx))
+                           display))
+
+        current
+        (long (or (nth indices selected nil) 0))
+
+        target
+        (+ current (* (long direction) (long list-h)))]
+
+    (if (pos? (long direction))
+      (or (first (keep-indexed (fn [idx visual]
+                                 (when (>= (long visual) target) idx))
+                               indices))
+          (max 0 (dec (count indices))))
+      (or (last (keep-indexed (fn [idx visual]
+                                (when (<= (long visual) target) idx))
+                              indices))
+          0))))
+
 (defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 
 (defn- key-character [key] (when (instance? KeyStroke key) (.getCharacter ^KeyStroke key)))
@@ -1851,7 +1875,7 @@
            (draw-hint-bar! g left hint-row inner-w footer)
            cursor)))
      :on-key
-     (fn [{:keys [selected query] :as state} key {:keys [total filtered]}]
+     (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
          (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
            (assoc state :selected (clampf (+ (long selected) (long wheel))))
@@ -1859,6 +1883,8 @@
              KeyType/Escape {::done nil}
              KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
              KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
+             KeyType/PageUp (assoc state :selected (clampf (- (long selected) (long list-h))))
+             KeyType/PageDown (assoc state :selected (clampf (+ (long selected) (long list-h))))
              KeyType/Enter {::done (when (pos? (long total)) (nth filtered selected))}
              KeyType/Backspace (if filter?
                                  (assoc state
@@ -1988,6 +2014,12 @@
                                   (recur))
               KeyType/ArrowDown (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total))))
                                     (recur))
+              KeyType/PageUp
+              (do (swap! selected #(p/clamp (- (long %) (long content-h)) 0 (max 0 (dec total))))
+                  (recur))
+              KeyType/PageDown
+              (do (swap! selected #(p/clamp (+ (long %) (long content-h)) 0 (max 0 (dec total))))
+                  (recur))
               KeyType/Enter (mapv #(nth items %) (sort @checked))
               KeyType/Character
               (let [c (lower-key-character key)]
@@ -3688,6 +3720,27 @@
             (and (pos? delta) (= idx (dec n))) selected
             :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
 
+(defn- settings-page-selection
+  "Move by painted settings lines, skipping headings and wrapped descriptions."
+  [rows entries selected visible-h direction]
+  (let [selectable?
+        (fn [{:keys [row-idx part]}]
+          (and (= part :option) (settings-selectable? (nth rows row-idx))))
+
+        options
+        (filterv selectable? entries)
+
+        selected-idx
+        (or (first (keep-indexed (fn [idx entry]
+                                   (when (= selected (:row-idx entry)) idx))
+                                 options))
+            0)
+
+        page-idx
+        (page-selected-index entries selected-idx visible-h direction selectable?)]
+
+    (or (:row-idx (nth options page-idx nil)) selected)))
+
 (defn- settings-selection-for-window
   "The row the cursor must take when a scrollbar drag scrolls the settings list to
    paint row `start`. That window is SELECTION-DRIVEN - every paint recomputes
@@ -4636,6 +4689,12 @@
                                             (recur))
                         KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
                                               (recur))
+                        KeyType/PageUp (do (swap! selected
+                                             #(settings-page-selection rows entries % visible-h -1))
+                                           (recur))
+                        KeyType/PageDown
+                        (do (swap! selected #(settings-page-selection rows entries % visible-h 1))
+                            (recur))
                         ;; Backspace edits the live search query.
                         KeyType/Backspace (do (when (seq @query)
                                                 (swap! query #(subs % 0 (dec (count %))))
@@ -4998,6 +5057,10 @@
                                     (recur))
                 KeyType/ArrowDown
                 (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
+                KeyType/PageUp
+                (do (swap! selected #(p/clamp (- (long %) body-h) 0 (max 0 (dec total)))) (recur))
+                KeyType/PageDown
+                (do (swap! selected #(p/clamp (+ (long %) body-h) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (when (pos? total) (select-keys (nth items @selected) [:action :id]))
                 KeyType/Character (let [raw-c (key-character key)
                                         c (lower-character raw-c)]
@@ -6082,6 +6145,12 @@
                         {:action :reorder :id id :dir :down}
                         (recur))
                       (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                    KeyType/PageUp
+                    (do (swap! selected #(p/clamp (- (long %) page-rows) 0 (max 0 (dec total))))
+                        (recur))
+                    KeyType/PageDown
+                    (do (swap! selected #(p/clamp (+ (long %) page-rows) 0 (max 0 (dec total))))
+                        (recur))
                     KeyType/Enter (if (pos? total) (:target (nth visible-rows @selected)) (recur))
                     KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
                                           (reset-list! true)
@@ -6485,6 +6554,9 @@
               KeyType/Escape nil
               KeyType/ArrowUp (do (swap! scroll #(max 0 (dec (long %)))) (recur))
               KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc (long %)))) (recur))
+              KeyType/PageUp (do (swap! scroll #(max 0 (- (long %) (long content-h)))) (recur))
+              KeyType/PageDown (do (swap! scroll #(min max-scroll (+ (long %) (long content-h))))
+                                   (recur))
               KeyType/Character (recur)
               (recur))))))))
 
@@ -6637,5 +6709,8 @@
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! scroll #(max 0 (dec (long %)))) (recur))
                 KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc (long %)))) (recur))
+                KeyType/PageUp (do (swap! scroll #(max 0 (- (long %) (long content-h)))) (recur))
+                KeyType/PageDown (do (swap! scroll #(min max-scroll (+ (long %) (long content-h))))
+                                     (recur))
                 KeyType/Character (recur)
                 (recur)))))))))

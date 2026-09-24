@@ -225,6 +225,37 @@
 
                    (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
+(defdescribe select-modal-paging-test
+             (it "PageDown and PageUp move a viewport and stop at list boundaries"
+                 (let [items
+                       (mapv #(hash-map :label (str "Item " %) :id %) (range 50))
+
+                       {:keys [init measure reconcile on-key]}
+                       (dlg/select-modal-component "Items" items {:filter? true :height :content})
+
+                       geom
+                       (measure init 80 30)
+
+                       step
+                       (fn [state key]
+                         (on-key state key geom))
+
+                       start
+                       (reconcile init geom)
+
+                       down
+                       (step start (ks KeyType/PageDown))
+
+                       up
+                       (step down (ks KeyType/PageUp))
+
+                       end
+                       (nth (iterate #(step % (ks KeyType/PageDown)) start) 50)]
+
+                   (expect (= (:list-h geom) (:selected down)))
+                   (expect (= 0 (:selected up)))
+                   (expect (= 49 (:selected end))))))
+
 (defdescribe session-dialog-wheel-test
              (it "session picker coalesces wheel floods and moves selection"
                  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
@@ -240,6 +271,39 @@
                         (.addInput terminal (KeyStroke. KeyType/Enter))
                         (expect (= {:action :switch :id "5"}
                                    (dlg/session-picker-dialog! screen sessions nil)))
+                        (finally (.stopScreen screen))))))
+
+(defdescribe session-picker-paging-test
+             (it "session picker pages through rows and back to the beginning"
+                 (doseq [[keys expected] [[[KeyType/PageDown KeyType/Enter] :later]
+                                          [[KeyType/PageDown KeyType/PageUp KeyType/Enter] :first]]]
+                   (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                         (term/virtual-screen)
+                         sessions
+                         (mapv (fn [idx]
+                                 {"id" (str idx) "title" (str "Session " idx) "turn_count" idx})
+                               (range 50))]
+
+                     (try (doseq [key keys]
+                            (.addInput terminal (ks key)))
+                          (let [id (:id (dlg/session-picker-dialog! screen sessions nil))]
+                            (expect (if (= expected :first) (= "0" id) (< 1 (parse-long id)))))
+                          (finally (.stopScreen screen)))))))
+
+(defdescribe multi-select-dialog-paging-test
+             (it "pages across options before toggling one"
+                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                       (term/virtual-screen)
+
+                       items
+                       (mapv #(str "Option " %) (range 50))]
+
+                   (try (doseq [key [KeyType/PageDown KeyType/Character KeyType/Enter]]
+                          (.addInput terminal
+                                     (if (= key KeyType/Character) (char-key \space) (ks key))))
+                        (let [selected (dlg/multi-select-dialog! screen "Options" items)]
+                          (expect (= 1 (count selected)))
+                          (expect (not= "Option 0" (first selected))))
                         (finally (.stopScreen screen))))))
 
 (defdescribe reusable-table-test
@@ -1496,6 +1560,36 @@
                            (try (dlg/navigator-dialog! screen opts)
                                 (finally (.stopScreen screen))))}))
 
+(defdescribe navigator-dialog-paging-test
+             (it "pages through session search results and back to the first match"
+                 (let [sessions
+                       (mapv (fn [idx]
+                               {"id" (str idx) "title" (str "Match " idx) "turn_count" 1})
+                             (range 50))
+
+                       run!
+                       (fn [keys]
+                         (let [paints (atom 0)]
+                           (capture-navigator! {:sessions sessions}
+                                               (fn [^DefaultVirtualTerminal terminal]
+                                                 (when (= 1 (swap! paints inc))
+                                                   (doseq [key keys]
+                                                     (.addInput terminal (cap/key-stroke key))))))))
+
+                       first-id
+                       (:id (:ret (run! [\M :enter])))
+
+                       later
+                       (run! [\M :page-down :enter])
+
+                       back
+                       (run! [\M :page-down :page-up :enter])]
+
+                   (expect (nil? (:error later)))
+                   (expect (nil? (:error back)))
+                   (expect (not= first-id (:id (:ret later))))
+                   (expect (= first-id (:id (:ret back)))))))
+
 (defdescribe
   navigator-page-responsiveness-test
   ;; Regression #206: paging ran on the input thread, before the next frame.
@@ -2687,6 +2781,35 @@
             (expect (str/starts-with? top "line-166")))
           (finally (.stopScreen screen))))))
 
+(defn- viewer-top-line
+  [viewer keys]
+  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+    (try (doseq [key (conj (vec keys) KeyType/Escape)]
+           (.addInput terminal (ks key)))
+         (viewer screen)
+         (or (some->> (term/painted-rows terminal)
+                      (map :text)
+                      (keep #(second (re-find #"(?:line|Paragraph)-(\d+)" %)))
+                      first
+                      parse-long)
+             -1)
+         (finally (.stopScreen screen)))))
+
+(defdescribe viewer-dialog-paging-test
+             (it "pages through plain text and Markdown and returns to the first line"
+                 (let [text
+                       (str/join "\n" (map #(format "line-%03d" %) (range 100)))
+
+                       markdown
+                       (str/join "\n\n" (map #(format "Paragraph-%03d" %) (range 100)))]
+
+                   (doseq [viewer [(fn [screen]
+                                     (dlg/text-viewer-dialog! screen "Text" text))
+                                   (fn [screen]
+                                     (dlg/markdown-viewer-dialog! screen "Markdown" markdown))]]
+                     (expect (< 1 (viewer-top-line viewer [KeyType/PageDown])))
+                     (expect (= 0 (viewer-top-line viewer [KeyType/PageDown KeyType/PageUp])))))))
+
 ;; Regression (user report): scrolling upward from Providers closed Settings when
 ;; opposing wheel events canceled and the modal reader returned nil between inputs.
 (defdescribe
@@ -2732,6 +2855,59 @@
                #(dlg/settings-dialog! screen {:show-thinking false} {:focus-section "Providers"}))))
         (expect (= 3 @reads))
         (finally (.stopScreen screen))))))
+
+(defdescribe
+  settings-dialog-paging-test
+  (it "pages over settings and returns to the first option"
+      (let [rows
+            (vec (cons {:type :section :label "Terminal UI"}
+                       (for [idx (range 50)]
+                         {:type :toggle
+                          :key (keyword (str "option-" idx))
+                          :label (str "Option " idx)})))
+
+            run!
+            (fn [keys]
+              (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (term/virtual-screen)]
+                (try (doseq [key (concat keys [KeyType/Enter KeyType/Escape])]
+                       (.addInput terminal (ks key)))
+                     (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                                      #'dlg/settings-rows (constantly rows)}
+                       #(dlg/settings-dialog! screen {}))
+                     (finally (.stopScreen screen)))))
+
+            later
+            (run! [KeyType/PageDown])
+
+            back
+            (run! [KeyType/PageDown KeyType/PageUp])]
+
+        (expect (= 1 (count (filter true? (vals later)))))
+        (expect (some #(true? (get later (keyword (str "option-" %)))) (range 2 50)))
+        (expect (not (true? (:option-0 later))))
+        (expect (= true (:option-0 back)))))
+  (it "counts wrapped description lines as part of a settings page"
+      (let [rows
+            [{:type :section :label "General"}
+             {:type :toggle
+              :key :first
+              :label "First"
+              :description (str/join " " (repeat 16 "description"))}
+             {:type :toggle :key :second :label "Second"}
+             {:type :toggle :key :third :label "Third"}]
+
+            entries
+            ((var-get #'dlg/settings-render-entries) rows 12)
+
+            page!
+            (var-get #'dlg/settings-page-selection)
+
+            down
+            (page! rows entries 1 4 1)]
+
+        (expect (= 2 down))
+        (expect (= 1 (page! rows entries down 4 -1))))))
 
 ;; Regression (user report): pressing a scrollbar scrolled nothing. Settings painted
 ;; one whose press/drag moved `scroll` alone - and the very next paint recomputes

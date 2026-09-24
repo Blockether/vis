@@ -478,46 +478,52 @@
                            layout
                            scroll
                            (selected-display-index display selected)))
-     :on-key (fn [{:keys [selected] :as state} ^KeyStroke key _]
-               (let [clamp-selected
-                     #(p/clamp % 0 (max 0 (dec total)))
+     :on-key
+     (fn [{:keys [selected] :as state} ^KeyStroke key {:keys [list-h]}]
+       (let [clamp-selected
+             #(p/clamp % 0 (max 0 (dec total)))
 
-                     row
-                     (:record (nth issues selected nil))]
+             row
+             (:record (nth issues selected nil))]
 
-                 (condp = (.getKeyType key)
-                   KeyType/Escape {::dlg/done nil}
-                   KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
-                   KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
-                   KeyType/Home (assoc state :selected 0)
-                   KeyType/End (assoc state :selected (max 0 (dec total)))
-                   KeyType/Enter {::dlg/done (when row {:action :read :row row})}
-                   KeyType/Character (let [c (Character/toLowerCase ^char (.getCharacter key))]
-                                       (case c
-                                         \e
-                                         (if row {::dlg/done {:action :edit :row row}} state)
+         (condp = (.getKeyType key)
+           KeyType/Escape {::dlg/done nil}
+           KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
+           KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
+           KeyType/PageUp
+           (assoc state
+             :selected (dlg/page-selected-index display selected list-h -1 #(= :issue (:kind %))))
+           KeyType/PageDown
+           (assoc state
+             :selected (dlg/page-selected-index display selected list-h 1 #(= :issue (:kind %))))
+           KeyType/Home (assoc state :selected 0)
+           KeyType/End (assoc state :selected (max 0 (dec total)))
+           KeyType/Enter {::dlg/done (when row {:action :read :row row})}
+           KeyType/Character
+           (let [c (Character/toLowerCase ^char (.getCharacter key))]
+             (case c
+               \e
+               (if row {::dlg/done {:action :edit :row row}} state)
 
-                                         \g
-                                         (if row {::dlg/done {:action :group :row row}} state)
+               \g
+               (if row {::dlg/done {:action :group :row row}} state)
 
-                                         \c
-                                         (if (and row (= :open (:status row)))
-                                           {::dlg/done {:action :close :row row}}
-                                           state)
+               \c
+               (if (and row (= :open (:status row))) {::dlg/done {:action :close :row row}} state)
 
-                                         \r
-                                         (if (and row (= :closed (:status row)))
-                                           {::dlg/done {:action :reopen :row row}}
-                                           state)
+               \r
+               (if (and row (= :closed (:status row)))
+                 {::dlg/done {:action :reopen :row row}}
+                 state)
 
-                                         \n
-                                         {::dlg/done {:action :new :row row}}
+               \n
+               {::dlg/done {:action :new :row row}}
 
-                                         \s
-                                         {::dlg/done {:action :settings}}
+               \s
+               {::dlg/done {:action :settings}}
 
-                                         state))
-                   state)))}))
+               state))
+           state)))}))
 
 (defn settings-rows
   "Rows of the Improve mode chooser: the three modes, then — for Automatic only —
@@ -554,7 +560,7 @@
                   (reconcile-list state display total list-h))
      :paint (fn [g {:keys [selected scroll]} layout]
               (paint-list! g display "Improve mode" layout scroll selected))
-     :on-key (fn [{:keys [selected] :as state} ^KeyStroke key _]
+     :on-key (fn [{:keys [selected] :as state} ^KeyStroke key {:keys [list-h]}]
                (let [clamp-selected
                      #(p/clamp % 0 (max 0 (dec total)))
 
@@ -565,6 +571,10 @@
                    KeyType/Escape {::dlg/done nil}
                    KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
                    KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
+                   KeyType/PageUp (assoc state
+                                    :selected (clamp-selected (- (long selected) (long list-h))))
+                   KeyType/PageDown (assoc state
+                                      :selected (clamp-selected (+ (long selected) (long list-h))))
                    KeyType/Home (assoc state :selected 0)
                    KeyType/End (assoc state :selected (max 0 (dec total)))
                    KeyType/Enter {::dlg/done (case (:kind row)
@@ -770,8 +780,13 @@
    :reconcile reconcile-editor
    :paint (fn [g state geom]
             (paint-editor! g title state geom))
-   :on-key (fn [state ^KeyStroke key _]
-             (editor-key state key))})
+   :on-key (fn [state ^KeyStroke key {:keys [list-h]}]
+             (if (:pasting? state)
+               (editor-key state key)
+               (condp = (.getKeyType key)
+                 KeyType/PageUp (nth (iterate input/move-up state) (long list-h))
+                 KeyType/PageDown (nth (iterate input/move-down state) (long list-h))
+                 (editor-key state key))))})
 
 (defn fetch-register!
   "Read the WHOLE register through the facade, one paged window at a time.

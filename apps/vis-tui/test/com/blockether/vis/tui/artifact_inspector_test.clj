@@ -122,6 +122,46 @@
                               (:action (:com.blockether.vis.tui.dialogs/done remove-result))))
                    (expect (nil? (:com.blockether.vis.tui.dialogs/done protected-result))))))
 
+(defdescribe
+  artifact-inspector-paging
+  (it
+    "pages across attachment headings while keeping a selectable row focused"
+    (let [attachments
+          (mapv (fn [idx]
+                  {"filename" (str "note-" idx ".txt") "version" 1})
+                (range 50))
+
+          component
+          (inspector/inspector-modal-component [] attachments nil)
+
+          measure
+          (:measure component)
+
+          reconcile
+          (:reconcile component)
+
+          on-key
+          (:on-key component)
+
+          geom
+          (measure (:init component) 96 24)
+
+          step
+          (fn [state key]
+            (reconcile (on-key state (KeyStroke. key) geom) geom))
+
+          start
+          (reconcile (:init component) geom)
+
+          down
+          (step start KeyType/PageDown)
+
+          up
+          (step down KeyType/PageUp)]
+
+      (expect (<= (dec (:list-h geom)) (:selected down)))
+      (expect (= 0 (:selected up))))))
+
 (defdescribe artifact-inspector-gateway
              (it "loads the whole-session index through the facade"
                  (let [asked (atom nil)]

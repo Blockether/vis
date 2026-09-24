@@ -230,38 +230,42 @@
                                                           (row-label item)))))
                 (dlg/draw-hint-bar! g left hint-row inner-w footer)
                 nil))
-     :on-key (fn [{:keys [selected] :as state} ^KeyStroke key _]
-               (let [clamp-selected
-                     #(p/clamp % 0 (max 0 (dec (long total))))
+     :on-key
+     (fn [{:keys [selected] :as state} ^KeyStroke key {:keys [list-h]}]
+       (let [clamp-selected
+             #(p/clamp % 0 (max 0 (dec (long total))))
 
-                     selected-row
-                     (nth rows selected nil)]
+             selected-row
+             (nth rows selected nil)]
 
-                 (condp = (.getKeyType key)
-                   KeyType/Escape {::dlg/done nil}
-                   KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
-                   KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
-                   KeyType/Home (assoc state :selected 0)
-                   KeyType/End (assoc state :selected (max 0 (dec (long total))))
-                   KeyType/Enter
-                   {::dlg/done
-                    (when selected-row
-                      {:action
-                       (if (and (= :produced (:source selected-row))
-                                (or (= diff/media-type (:media-type selected-row))
-                                    (#{"text/markdown" "text/plain"} (:media-type selected-row))
-                                    (re-find #"(?i)\.(md|txt|log)$" (:filename selected-row))))
-                         :annotate
-                         :open)
-                       :row selected-row})}
-                   KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
-                                       {::dlg/done {:action :open :row selected-row}}
-                                       state)
-                   KeyType/Delete {::dlg/done (when (= :staged (:source selected-row))
-                                                {:action :remove :row selected-row})}
-                   KeyType/Backspace {::dlg/done (when (= :staged (:source selected-row))
-                                                   {:action :remove :row selected-row})}
-                   state)))}))
+         (condp = (.getKeyType key)
+           KeyType/Escape {::dlg/done nil}
+           KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
+           KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
+           KeyType/PageUp (assoc state
+                            :selected (dlg/page-selected-index display selected list-h -1 :source))
+           KeyType/PageDown (assoc state
+                              :selected (dlg/page-selected-index display selected list-h 1 :source))
+           KeyType/Home (assoc state :selected 0)
+           KeyType/End (assoc state :selected (max 0 (dec (long total))))
+           KeyType/Enter
+           {::dlg/done (when selected-row
+                         {:action
+                          (if (and (= :produced (:source selected-row))
+                                   (or (= diff/media-type (:media-type selected-row))
+                                       (#{"text/markdown" "text/plain"} (:media-type selected-row))
+                                       (re-find #"(?i)\.(md|txt|log)$" (:filename selected-row))))
+                            :annotate
+                            :open)
+                          :row selected-row})}
+           KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
+                               {::dlg/done {:action :open :row selected-row}}
+                               state)
+           KeyType/Delete {::dlg/done (when (= :staged (:source selected-row))
+                                        {:action :remove :row selected-row})}
+           KeyType/Backspace {::dlg/done (when (= :staged (:source selected-row))
+                                           {:action :remove :row selected-row})}
+           state)))}))
 
 (defn show!
   "Open the inspector and return its selected action, or nil on close."
