@@ -320,31 +320,7 @@
            (finally (fs/delete-tree dir))))))
 
 (defdescribe
-  activity-backpressure-test
-  ;; Regression #212: a durable store must not move an unbounded history into its dispatch queue.
-  (it "backs off producers rather than dropping events or accumulating an unbounded queue"
-      (let [[dispatch! shutdown!]
-            (#'lp/serial-activity-dispatcher)
-
-            entered
-            (promise)
-
-            release
-            (promise)
-
-            crossed-bound
-            (promise)]
-
-        (dispatch! (fn []
-                     (deliver entered true)
-                     @release))
-        (let [producer (future (dotimes [n 256]
-                                 (dispatch! (fn []
-                                              nil))
-                                 (when (= n 64) (deliver crossed-bound true))))]
-          (try (expect (deref entered 2000 false))
-               (expect (nil? (deref crossed-bound 500 nil)))
-               (finally (deliver release true) (deref producer 5000 nil) (shutdown!))))))
+  activity-write-failure-test
   (it "reports a durable write failure instead of returning a successful incomplete receipt"
       (let [store
             (h/store)

@@ -3465,47 +3465,6 @@
               (expect (= "true" (:stdout result)))
               (expect (nil? (:error result)))))))))
 
-(defdescribe activity-dispatch-order-test
-             ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before
-             ;; publishing stale S1, while a slow listener blocked the tool callback itself.
-             (it
-               "publishes snapshots FIFO without blocking their callback threads"
-               (let [[dispatch! shutdown!]
-                     (#'lp/serial-activity-dispatcher)
-
-                     release-first
-                     (promise)
-
-                     entered-first
-                     (promise)
-
-                     snapshots
-                     (atom [])
-
-                     ;; `dispatch!` answers the Future the settler waits on, so the
-                     ;; drain is deref-ing what was submitted rather than a third
-                     ;; function the dispatcher no longer hands out.
-                     submitted
-                     (atom [])
-
-                     submit
-                     (fn [n]
-                       (swap! submitted conj
-                         (dispatch! (fn []
-                                      (when (= 1 n) (deliver entered-first true) @release-first)
-                                      (swap! snapshots conj n)))))]
-
-                 (try (submit 1)
-                      @entered-first
-                      (let [started (System/nanoTime)]
-                        (submit 2)
-                        (submit 3)
-                        (expect (< (/ (- (System/nanoTime) started) 1e6) 100.0)))
-                      (deliver release-first true)
-                      (run! deref @submitted)
-                      (expect (= [1 2 3] @snapshots))
-                      (finally (shutdown!))))))
-
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
              ;; synthesized `env* (assoc environment)` (a 1-arg assoc) before execute-code, so

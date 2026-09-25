@@ -10,7 +10,7 @@
     [com.blockether.svar.internal.llm :as svar-llm]
     [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.svar.internal.util :as svar-util]
-    [com.blockether.vis.internal.activity.core :as activity]
+    [com.blockether.vis.internal.activity.block :as activity-block]
     [com.blockether.vis.internal.activity.event :as activity-event]
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.attachment.linked-reports :as linked-reports]
@@ -59,8 +59,7 @@
     [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [taoensso.nippy :as nippy]
-    [taoensso.telemere :as tel])
-  (:import [java.util.concurrent ExecutionException ExecutorService Future ThreadFactory]))
+    [taoensso.telemere :as tel]))
 
 ;; Single-iteration runner
 
@@ -954,50 +953,21 @@
                 (fn [printed]
                   (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
-(def ^:private activity-coalesce-ms
-  "Floor between two live Activity publications from one block.
+(defn- activity-store
+  "Durable Activity history for a block that belongs to a saved conversation."
+  [env]
+  (let [db
+        (:db-info env)
 
-   A running snapshot is a convenience, not the record: it rides the bus as a
-   TRANSIENT frame a full queue may drop, and every publication also costs a line
-   of the turn's journal, which is truncated whole once it passes its file cap. The
-   settled replacement is durable and also persists on the form, so a tool storm
-   coalesces here instead of spending the turn's replay budget on pictures nobody reads."
-  120)
+        sid
+        (:session-id env)]
 
-(defn- serial-activity-dispatcher
-  "Run Activity lifecycle transitions FIFO off the tool-callback threads.
-
-   Returns `[dispatch! shutdown!]`. `dispatch!` captures the caller's dynamic
-   bindings and answers a Future; optional delay-ms schedules a trailing flush
-   on the same serial worker. At most 64 immediate transitions can be pending;
-   producers wait without dropping admitted events. Shutdown discards delayed flushes."
-  []
-  (let [factory
-        (reify
-          ThreadFactory
-            (newThread [_ runnable]
-              (doto (Thread. ^Runnable runnable "vis-activity-dispatch") (.setDaemon true))))
-
-        executor
-        (doto (java.util.concurrent.ScheduledThreadPoolExecutor. 1 ^ThreadFactory factory)
-          (.setExecuteExistingDelayedTasksAfterShutdownPolicy false))
-
-        pending
-        (java.util.concurrent.Semaphore. 64)
-
-        dispatch!
-        (fn [f & [delay-ms]]
-          (let [^java.util.concurrent.Callable task
-                (bound-fn [] (try (f) (finally (when-not delay-ms (.release pending)))))]
-            (if delay-ms
-              (.schedule executor task (long delay-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
-              (do (.acquireUninterruptibly pending)
-                  (try (.submit ^ExecutorService executor task)
-                       (catch java.util.concurrent.RejectedExecutionException error
-                         (.release pending)
-                         (throw error)))))))]
-
-    [dispatch! #(.shutdown ^ExecutorService executor)]))
+    (when (and db sid)
+      (let [history-id (str (random-uuid))]
+        {:history-id history-id
+         :apply! #(persistance/db-activity-apply! db sid history-id %)
+         :settle! #(persistance/db-activity-settle! db history-id %1 %2)
+         :page #(persistance/db-activity-page db sid history-id {})}))))
 
 (defn- run-python-code
   "Run an agent code block through the embedded Python sandbox. Wraps the
@@ -1008,59 +978,10 @@
   (let [thrown
         (atom nil)
 
-        activity-history-id
-        (when (and (:db-info env) (:session-id env)) (str (random-uuid)))
-
-        activity-collector
-        (when-not activity-history-id (activity-event/collector))
-
-        activity-context
-        (activity-event/context)
-
-        [dispatch-activity! shutdown-activity!]
-        (serial-activity-dispatcher)
-
-        ;; Durable invocations are separate from the bounded page carried by the form.
-        activity-state
-        (atom activity/empty-state)
-
-        activity-error
-        (atom nil)
-
-        ;; `:open` until the settler freezes the picture. A tool callback that lands
-        ;; after that is dropped rather than allowed to edit a snapshot already
-        ;; handed to the wire and the database.
-        activity-phase
-        (atom :open)
-
-        activity-published-at
-        (atom 0)
-
-        activity-flush-pending?
-        (atom false)
-
-        present-activity
-        (fn [state]
-          (if activity-history-id
-            (persistance/db-activity-page (:db-info env) (:session-id env) activity-history-id {})
-            (activity/presentation state)))
-
-        publish-activity!
-        (fn publish! [state]
-          (when-let [emit! (:activity/on-snapshot env)]
-            (when (activity/detected? state)
-              (let [now (long (util/now-ms))
-                    delay-ms (- (long activity-coalesce-ms) (- now (long @activity-published-at)))]
-
-                (if (pos? delay-ms)
-                  (when (compare-and-set! activity-flush-pending? false true)
-                    (dispatch-activity! (fn []
-                                          (reset! activity-flush-pending? false)
-                                          (when (= :open @activity-phase)
-                                            (publish! @activity-state)))
-                                        delay-ms))
-                  (do (reset! activity-published-at now)
-                      (try (emit! (present-activity state)) (catch Throwable _ nil))))))))
+        activity-block
+        (activity-block/start! {:store (activity-store env)
+                                :on-snapshot (:activity/on-snapshot env)
+                                :on-event tool-event-fn})
 
         cancel-token
         (:cancel-token env)
@@ -1096,26 +1017,6 @@
                                        (not (str/blank? (str (:base64 a)))))
                               (mpl-capture/queue-reinspection! a)
                               a)))}))
-
-        record-tool-event
-        (fn [event]
-          (try (dispatch-activity!
-                 (fn []
-                   (when (= :open @activity-phase)
-                     (let [state (if activity-history-id
-                                   (try (reset! activity-state (persistance/db-activity-apply!
-                                                                 (:db-info env)
-                                                                 (:session-id env)
-                                                                 activity-history-id
-                                                                 event))
-                                        (catch Throwable error
-                                          (compare-and-set! activity-error nil error)
-                                          @activity-state))
-                                   (do (activity-event/accept! activity-collector event)
-                                       (swap! activity-state activity/reduce-event event)))]
-                       (when (activity-event/visible-event? event) (publish-activity! state))))
-                   (when tool-event-fn (tool-event-fn event))))
-               (catch java.util.concurrent.RejectedExecutionException _ nil)))
 
         reinspection-sink
         (atom [])
@@ -1178,13 +1079,13 @@
                           eval-hold
 
                           extension/*tool-event-sink*
-                          record-tool-event
+                          (partial activity-block/record! activity-block)
 
                           extension/*tool-event-context*
-                          activity-context
+                          (:context activity-block)
 
                           extension/*activity-history-id*
-                          activity-history-id
+                          (:history-id activity-block)
 
                           mpl-capture/*attachment-reader*
                           attachment-reader
@@ -1227,65 +1128,6 @@
                                      ;; that interrupt is retired before the Java
                                      ;; interrupt can strand its GIL.
                                      (interrupt-block! python-context exec-future env))))
-
-        settle-activity!
-        (fn [envelope]
-          (let [outcome
-                (cond (or (:timeout? envelope)
-                          (= :vis/interrupted (get-in envelope [:error :type])))
-                      :cancelled
-                      (:error envelope) :failed
-                      :else :cancelled)
-
-                summary
-                (cond (:timeout? envelope) "Evaluation timed out"
-                      (:error envelope) (or (:message (:error envelope)) "Evaluation failed")
-                      :else "Evaluation activity")
-
-                ;; FIFO behind every transition already submitted: the settler sees
-                ;; the last state the reducer reached, then closes the gate.
-                final
-                (try (.get ^Future
-                           (dispatch-activity!
-                             (fn []
-                               (reset! activity-phase :settled)
-                               (when activity-history-id
-                                 (persistance/db-activity-settle! (:db-info env)
-                                                                  activity-history-id
-                                                                  outcome
-                                                                  summary))
-                               (swap! activity-state activity/settle-running outcome summary))))
-                     (catch ExecutionException e
-                       (compare-and-set! activity-error nil (.getCause e))
-                       (tel/log! {:level :warn
-                                  :id ::activity-settlement-failed
-                                  :error (.getCause e)
-                                  :msg "Activity settlement failed"})
-                       @activity-state))
-
-                projection
-                (when (activity/detected? final)
-                  (try (present-activity final)
-                       (catch Throwable e
-                         (compare-and-set! activity-error nil e)
-                         (tel/log! {:level :warn
-                                    :id ::activity-read-failed
-                                    :error e
-                                    :msg "Activity history could not be read"})
-                         nil)))]
-
-            (shutdown-activity!)
-            ;; The first page rides the form; further pages stay durable and load on demand.
-            ;; Activity never enters stdout or model context.
-            (cond-> envelope
-              (and @activity-error (nil? (:error envelope)))
-              (assoc :error
-                {:type :activity/persistence
-                 :message
-                 "Activity history could not be saved or read. Check storage before retrying."})
-
-              projection
-              (assoc :activity projection))))
 
         timeout-sentinel
         (Object.)
@@ -1334,7 +1176,7 @@
               (assoc :stdout out))
 
             activity-envelope
-            (settle-activity! envelope)
+            (activity-block/settle! activity-block envelope)
 
             swept
             (sweep-abandoned! {:reason :timeout
@@ -1363,7 +1205,7 @@
               (assoc :stdout out))
 
             activity-envelope
-            (settle-activity! recovered-result)
+            (activity-block/settle! activity-block recovered-result)
 
             swept
             (when (:error recovered-result)
