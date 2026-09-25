@@ -883,15 +883,36 @@
                               {:phase :form-start :iteration 1 :position 0 :code "import hashlib"})]
         (expect (= "block.started" type))
         (expect (= 1 (:iteration payload)))
-        (expect (= 0 (:form_index payload)))))
+        (expect (= 0 (:form-index payload)))))
   (it "block.output carries one canonical stdout payload"
       (let [[type _ payload]
             (#'state/chunk->event
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
-        (expect (= {:form_index 0 :code "print(42)" :stdout "42" :silent false}
+        (expect (= {:form-index 0 :code "print(42)" :stdout "42" :silent false}
                    (dissoc payload :iteration)))
         (expect (= 3 (:iteration payload)))))
+  (it "ships kebab payload keys as the canonical snake_case wire keys"
+      (let [[_ _ started]
+            (#'state/chunk->event
+             {:phase :form-start :iteration 1 :position 0 :code "x" :svar/tool-call-id "call_1"})
+
+            [_ _ output]
+            (#'state/chunk->event
+             {:phase :form-result
+              :iteration 1
+              :position 0
+              :code "x"
+              :envelope {:started-at-ms 10 :finished-at-ms 25}})
+
+            [_ _ delta]
+            (#'state/chunk->event
+             {:phase :content :iteration 1 :stream-block-id "t1:prose:1" :stream-delta "hi"})]
+
+        (expect (= {"form_index" 0 "tool_call_id" "call_1"}
+                   (select-keys (wire/canonical started) ["form_index" "tool_call_id"])))
+        (expect (= 15 (get (wire/canonical output) "duration_ms")))
+        (expect (= "t1:prose:1" (get (wire/canonical delta) "block_id")))))
   ;; One form body, one ceiling. The wire carries stdout once and clips that fact at
   ;; the same boundary used for model context and both human channels.
   (it "block.output clips stdout at the form-body ceiling"
@@ -938,7 +959,7 @@
 
         (expect (= "block.activity" type))
         (expect (false? store?))
-        (expect (= {:form_index 2 :iteration 3 :activity snapshot} payload))))
+        (expect (= {:form-index 2 :iteration 3 :activity snapshot} payload))))
   (it "ships the settled Activity as durable block.activity and never on block.output"
       (let [snapshot
             {:state :succeeded
@@ -956,7 +977,7 @@
 
         (expect (= "block.activity" type))
         (expect store?)
-        (expect (= {:form_index 2 :iteration 3 :activity snapshot} activity-payload))
+        (expect (= {:form-index 2 :iteration 3 :activity snapshot} activity-payload))
         (expect output-store?)
         (expect (not (contains? output-payload :activity)))))
   (it "reasoning streams as a replayable typed block delta"
@@ -969,7 +990,7 @@
         (expect (= "content.block.delta" type))
         (expect store?)
         (expect (= 2 (:iteration payload)))
-        (expect (= "t1:reasoning:2" (:block_id payload)))
+        (expect (= "t1:reasoning:2" (:block-id payload)))
         (expect (= "text" (:field payload)))
         (expect (= "hmm" (:text payload)))
         (expect (= "hmm" (:cumulative payload)))))
@@ -993,12 +1014,12 @@
         (expect (= "block.preview" type))
         (expect store?)
         (expect (= 1 (:iteration payload)))
-        (expect (= 0 (:form_index payload)))
+        (expect (= 0 (:form-index payload)))
         (expect (= "print(4" (:code payload)))
         ;; The preview names no tool: there is exactly one, and a
         ;; card's identity is the printed result's own `op`.
         (expect (nil? (:tool_name payload)))
-        (expect (= "call_1" (:tool_call_id payload))))))
+        (expect (= "call_1" (:tool-call-id payload))))))
 
 (defdescribe
   iteration-attachment-descriptor-wire-test

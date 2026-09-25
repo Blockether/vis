@@ -1751,151 +1751,147 @@
   [{:keys [phase position activity iteration settled?]}]
   (when (and (= phase :form-activity) (map? activity))
     ["block.activity" (boolean settled?)
-     (cond-> {:form_index position :activity activity}
+     (cond-> {:form-index position :activity activity}
        (some? iteration)
        (assoc :iteration iteration))]))
+
+(defn- form-start-payload
+  "Carry the display fields the block already has while it RUNS - its formatted
+   source and pending headline - so the live bubble paints the same card it keeps
+   once the block lands."
+  [{:keys [position code] :as chunk}]
+  (merge (form/->display (form/with-display chunk))
+         (cond-> {:form-index position :code code}
+           (:svar/tool-call-id chunk)
+           (assoc :tool-call-id (:svar/tool-call-id chunk)))))
+
+(defn- form-result-payload
+  "Canonical facts and authored metadata only. Presentation is derived by each
+   channel; no rendered copy rides beside `:stdout`."
+  [{:keys [position code error silent? envelope] :as chunk}]
+  (let [stdout
+        (form/clip-to-wire (:stdout chunk) chunk)
+
+        duration-ms
+        (let [{:keys [started-at-ms finished-at-ms]} envelope]
+          (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+            (max 0 (- (long finished-at-ms) (long started-at-ms)))))]
+
+    (merge (form/->display chunk)
+           (cond-> {:form-index position :code code :silent (boolean silent?)}
+             stdout
+             (assoc :stdout stdout)
+
+             (some? error)
+             (assoc :error (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+
+             (some? duration-ms)
+             (assoc :duration-ms duration-ms)))))
+
+(defn- block-delta-payload
+  "Live model text appended to its canonical block. `:text` is the INCREMENT since
+   the last emit; `:cumulative` is the bounded full text for replace-style
+   consumers (web ticker, TUI live bands)."
+  [{:keys [stream-delta stream-block-id]} field cumulative]
+  {:block-id stream-block-id
+   :field field
+   :text (or stream-delta "")
+   :cumulative (bounded-str cumulative STREAM_CUMULATIVE_LIMIT)})
+
+(defn- reasoning-delta-payload
+  "Live thinking, on its OWN block so a client paints it as the thinking trace -
+   distinct from prose."
+  [chunk]
+  (block-delta-payload chunk "text" (util/normalize-thinking-text (delta-text chunk))))
+
+(defn- prose-delta-payload
+  "Live provider Markdown appended to the canonical prose block."
+  [chunk]
+  (block-delta-payload chunk "markdown" (str (delta-text chunk))))
+
+(defn- iteration-final-payload
+  "The iteration's complete reasoning and assistant prose - the canonical,
+   PERSISTED final text - plus descriptors of the artifacts it produced."
+  [{:keys [done? thinking assistant-prose iteration-id attachment-count]}]
+  (cond-> {:done (boolean done?) :thinking (util/settled-thinking-text thinking)}
+    (some-> assistant-prose
+            str
+            str/trim
+            not-empty)
+    (assoc :assistant-prose (str/trim (str assistant-prose)))
+
+    (and iteration-id (pos? (long (or attachment-count 0))))
+    (assoc :attachments (live-attachment-descriptors iteration-id))))
+
+(defn- iteration-error-payload
+  "Carry the SAME canonical provider-error map the final settled turn bubble paints
+   the styled CARD from (`provider-error-info` -> `:vis/provider-error-data`)."
+  [{:keys [error thinking]}]
+  (cond-> {:error (when (some? error) (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+           :thinking (util/settled-thinking-text thinking)}
+    (map? error)
+    (assoc :error-data (select-keys error [:type :message :status :cause-class]))
+
+    (some? error)
+    (assoc :provider-error-data (provider-error/provider-error-info error))))
+
+(defn- provider-retry-payload
+  "Structured retry metadata: the attempt, its budget and delay, and the provider
+   event that caused it."
+  [{:keys [attempt max-retries delay-ms error event]}]
+  (cond-> {:attempt attempt :max-retries max-retries :delay-ms delay-ms}
+    (map? error)
+    (assoc :error (select-keys error [:type :message :status :cause-class]))
+
+    (map? event)
+    (assoc :event
+      (select-keys event
+                   [:event/type :reason :provider :model :from-provider :from-model :attempt
+                    :delay-ms :status :error]))))
+
+(defn- unknown-chunk-payload
+  "Bounded dump of a chunk whose phase has no dedicated wire event."
+  [chunk]
+  {:detail (bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})
+
+(def ^:private chunk-events
+  "Durable wire event per iteration-chunk phase: its `:type` and `:payload` builder.
+   Payload keys are kebab-case; `append-event!` canonicalizes them onto the wire. A
+   phase absent here ships as `chunk.<phase>` with [[unknown-chunk-payload]]."
+  {:tool-preview {:type "block.preview" :payload form-start-payload}
+   :form-start {:type "block.started" :payload form-start-payload}
+   :form-result {:type "block.output" :payload form-result-payload}
+   :reasoning {:type "content.block.delta" :payload reasoning-delta-payload}
+   :content {:type "content.block.delta" :payload prose-delta-payload}
+   :assistant-prose {:type "content.block.delta" :payload prose-delta-payload}
+   :iteration-final {:type "iteration.completed" :payload iteration-final-payload}
+   :iteration-error {:type "iteration.error" :payload iteration-error-payload}
+   :provider-retry-reset {:type "provider.retry" :payload provider-retry-payload}})
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple. Model text phases
-   (reasoning/content/prose) stream LIVE \u2014 the caller coalesces them to sentence
-   granularity \u2014 as TRANSIENT (`store? false`) `reasoning.delta` / `content.delta`
-   frames; the iteration boundary still ships the complete text on
-   `iteration.completed`, which is what persists."
-  [{:keys [phase position code error silent? done? iteration thinking assistant-prose iteration-id
-           attachment-count stream-delta stream-block-id]
-    :as chunk}]
+   (reasoning/content/prose) stream LIVE - the caller coalesces them to sentence
+   granularity - as replayable `content.block.delta` frames; the iteration
+   boundary still ships the complete text on `iteration.completed`, which is what
+   persists."
+  [{:keys [phase iteration] :as chunk}]
   ;; Every streaming chunk carries its iteration POSITION under `:iteration`.
   ;; It MUST ride the wire event, or `make-progress-tracker` silently DROPS the
   ;; chunk (it skips chunks with no iteration) — which is how `block.started` /
   ;; `block.output` once lost their forms.
-  (or
-    (progress-chunk->event chunk)
-    (form-activity-chunk->event chunk)
-    (let [payload
-          (case phase
-            (:tool-preview :form-start)
-            (merge
-              ;; Carry the display fields the block already has while it RUNS — its
-              ;; formatted source and pending headline — so the live bubble paints
-              ;; the same card it keeps once the block lands.
-              (form/->display (form/with-display chunk))
-              (cond-> {:form_index position :code code}
-                (:svar/tool-call-id chunk)
-                (assoc :tool_call_id (:svar/tool-call-id chunk))))
-
-            :form-result
-            (let [stdout (form/clip-to-wire (:stdout chunk) chunk)
-                  duration-ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                                (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                  (max 0 (- (long finished-at-ms) (long started-at-ms)))))]
-
-              (merge
-                ;; Canonical facts and authored metadata only. Presentation is derived by
-                ;; each channel; no rendered copy rides beside `:stdout`.
-                (form/->display chunk)
-                (cond-> {:form_index position :code code :silent (boolean silent?)}
-                  stdout
-                  (assoc :stdout stdout)
-
-                  (some? error)
-                  (assoc :error (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-
-                  (some? duration-ms)
-                  (assoc :duration_ms duration-ms))))
-
-            ;; Live thinking, on its OWN wire event so a client paints it as the
-            ;; thinking trace — distinct from prose. `:text` is the INCREMENT
-            ;; since the last emit; `:cumulative` is the bounded full text for
-            ;; replace-style consumers (web ticker, TUI live bands).
-            :reasoning
-            {:block_id stream-block-id
-             :field "text"
-             :text (or stream-delta "")
-             :cumulative (bounded-str (util/normalize-thinking-text (delta-text chunk))
-                                      STREAM_CUMULATIVE_LIMIT)}
-
-            ;; Live provider Markdown appends to the canonical prose block.
-            :content
-            {:block_id stream-block-id
-             :field "markdown"
-             :text (or stream-delta "")
-             :cumulative (bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
-
-            :assistant-prose
-            {:block_id stream-block-id
-             :field "markdown"
-             :text (or stream-delta "")
-             :cumulative (bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
-
-            ;; The iteration's complete reasoning + complete assistant prose ride
-            ;; the boundary event too — the canonical, PERSISTED final text.
-            :iteration-final
-            (cond-> {:done (boolean done?) :thinking (util/settled-thinking-text thinking)}
-              (some-> assistant-prose
-                      str
-                      str/trim
-                      not-empty)
-              (assoc :assistant-prose (str/trim (str assistant-prose)))
-
-              (and iteration-id (pos? (long (or attachment-count 0))))
-              (assoc :attachments (live-attachment-descriptors iteration-id)))
-
-            :iteration-error
-            ;; Carry the SAME canonical provider-error map the final settled turn
-            ;; bubble paints the styled CARD from (`provider-error-info` →
-            ;; `:vis/provider-error-data`).
-            (cond-> {:error (when (some? error)
-                              (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                     :thinking (util/settled-thinking-text thinking)}
-              (map? error)
-              (assoc :error-data (select-keys error [:type :message :status :cause-class]))
-
-              (some? error)
-              (assoc :provider-error-data (provider-error/provider-error-info error)))
-
-            (if (= phase :provider-retry-reset)
-              (cond-> {:attempt (:attempt chunk)
-                       :max-retries (:max-retries chunk)
-                       :delay-ms (:delay-ms chunk)}
-                (map? (:error chunk))
-                (assoc :error (select-keys (:error chunk) [:type :message :status :cause-class]))
-
-                (map? (:event chunk))
-                (assoc :event
-                  (select-keys (:event chunk)
-                               [:event/type :reason :provider :model :from-provider :from-model
-                                :attempt :delay-ms :status :error])))
-              {:detail (bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
-      [(case phase
-         :tool-preview
-         "block.preview"
-
-         :form-start
-         "block.started"
-
-         :form-result
-         "block.output"
-
-         (:reasoning :content :assistant-prose)
-         "content.block.delta"
-
-         :iteration-final
-         "iteration.completed"
-
-         :iteration-error
-         "iteration.error"
-
-         :provider-retry-reset
-         "provider.retry"
-
-         (str "chunk." (name phase)))
-       ;; Block deltas are replayable: reconnect applies the same ordered event
-       ;; sequence instead of reconstructing text from renderer state.
-       true
-       (cond-> payload
-         (some? iteration)
-         (assoc :iteration iteration))])))
+  (or (progress-chunk->event chunk)
+      (form-activity-chunk->event chunk)
+      (let [{:keys [type payload]} (get chunk-events
+                                        phase
+                                        {:type (str "chunk." (name phase))
+                                         :payload unknown-chunk-payload})]
+        ;; Block deltas are replayable: reconnect applies the same ordered event
+        ;; sequence instead of reconstructing text from renderer state.
+        [type true
+         (cond-> (payload chunk)
+           (some? iteration)
+           (assoc :iteration iteration))])))
 
 (defn context-snapshot
   "The read-only ctx mirror the model sees as its bound `session`
