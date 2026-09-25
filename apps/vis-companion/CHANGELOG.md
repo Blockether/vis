@@ -2,6 +2,19 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (6758) — 2026-09-25
+<!-- commit: daf66450985ace63416f2a232d4cc04e64b302a2 -->
+
+- Restore session list fork action
+- Show minus for expanded machine pairing
+- Align settings row menus with header actions
+- Align session chrome and pager chevrons
+- Keep group pages and sessions in sync
+- Edit group names and moves inline
+- Clarify group and session headings
+- Show forked sessions in groups automatically
+- Record companion build 6748
+
 ## 0.2.29 (6748) — 2026-09-25
 <!-- commit: 24eaea52ca8697cd8144e16e0aca44fca831822e -->
 
