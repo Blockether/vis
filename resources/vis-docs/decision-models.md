@@ -256,6 +256,7 @@ pin incompatible Transformers versions; the gateway never substitutes one
 interpreter or model family for the other. Set `VIS_DECISION_TRAINING_DATA_ROOT`
 to a directory of approved JSONL/JSON files on the gateway. Download the pinned
 checkpoint for the selected model explicitly with `--training` before starting.
+
 The API accepts **filenames in that directory**, not laptop paths or raw uploads.
 Each dataset is limited to 16 MiB; configuration and policy files to 16 KiB.
 One training job runs at a time, for up to two hours by default. Other decision
@@ -281,6 +282,7 @@ launches an isolated offline CPU worker, saves a private checkpoint and validate
 a new FP32 inference version. To continue from it, pass the completed or failed
 `job_id` as `source_job_id` **with the same model_id**; do not delete that job
 first. Cross-family resumes fail rather than falling back to another checkpoint.
+
 Training does not activate an alias. Review the held-out metrics and use
 `activate_model` separately. A quality failure, interruption or cancellation
 leaves existing versions and aliases unchanged. Metrics on a small sample do
