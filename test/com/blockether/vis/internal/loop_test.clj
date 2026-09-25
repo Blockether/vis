@@ -1921,7 +1921,144 @@
                (expect (= refreshed-router
                           {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}}
                                        {:id :anthropic}]})))
-             (finally (lp/dispose-environment! environment))))))
+             (finally (lp/dispose-environment! environment)))))
+  (it
+    "keeps a session whose kickoff fails on its previous environment"
+    (let [initial-router
+          {:providers [{:id :anthropic}]}
+
+          refreshed-router
+          {:providers [{:id :anthropic :model "next"}]}
+
+          failing-env
+          (lp/create-environment initial-router {:db :memory})
+
+          moving-env
+          (lp/create-environment initial-router {:db :memory})
+
+          failing-id
+          (:session-id failing-env)
+
+          moving-id
+          (:session-id moving-env)
+
+          local-cache
+          (atom {failing-id {:environment failing-env} moving-id {:environment moving-env}})
+
+          kickoff
+          @#'lp/kickoff-session-providers]
+
+      (try (let [error (try (with-redefs-fn {#'lp/cache local-cache
+                                             #'lp/kickoff-session-providers
+                                             (fn [environment]
+                                               (if (= failing-id (:session-id environment))
+                                                 (throw (ex-info "hook failed" {}))
+                                                 (kickoff environment)))}
+                              #(lp/refresh-cached-routers! refreshed-router))
+                            nil
+                            (catch clojure.lang.ExceptionInfo e e))]
+             (expect (= :vis/provider-kickoff-failed (:type (ex-data error))))
+             (expect (= [failing-id] (:session-ids (ex-data error))))
+             (expect (= {failing-id "hook failed"} (:errors (ex-data error))))
+             (expect (= "hook failed" (ex-message (ex-cause error))))
+             (expect (identical? failing-env (get-in @local-cache [failing-id :environment])))
+             (expect (= refreshed-router (get-in @local-cache [moving-id :environment :router]))))
+           (finally (lp/dispose-environment! failing-env) (lp/dispose-environment! moving-env)))))
+  (it
+    "runs each kickoff once when the cache changes while hooks run"
+    (let [initial-router
+          {:providers [{:id :anthropic}]}
+
+          refreshed-router
+          {:providers [{:id :anthropic :model "next"}]}
+
+          first-env
+          (lp/create-environment initial-router {:db :memory})
+
+          second-env
+          (lp/create-environment initial-router {:db :memory})
+
+          local-cache
+          (atom {(:session-id first-env) {:environment first-env}
+                 (:session-id second-env) {:environment second-env}})
+
+          concurrent-write?
+          (atom true)
+
+          kicked
+          (atom [])
+
+          kickoff
+          @#'lp/kickoff-session-providers]
+
+      (try (with-redefs-fn {#'lp/cache local-cache
+                            #'lp/kickoff-session-providers
+                            (fn [environment]
+                              (swap! kicked conj (:session-id environment))
+                              (when (compare-and-set! concurrent-write? true false)
+                                (swap! local-cache assoc ::unrelated {:environment ::unrelated}))
+                              (kickoff environment))}
+             #(lp/refresh-cached-routers! refreshed-router))
+           (expect (= {(:session-id first-env) 1 (:session-id second-env) 1} (frequencies @kicked)))
+           (expect (= {:environment ::unrelated} (get @local-cache ::unrelated)))
+           (expect (= [refreshed-router refreshed-router]
+                      (mapv #(get-in @local-cache [(:session-id %) :environment :router])
+                            [first-env second-env])))
+           (finally (lp/dispose-environment! first-env) (lp/dispose-environment! second-env)))))
+  (it
+    "kicks off a replaced environment again and leaves an evicted session evicted"
+    (let [initial-router
+          {:providers [{:id :anthropic}]}
+
+          refreshed-router
+          {:providers [{:id :anthropic :model "next"}]}
+
+          replaced-env
+          (lp/create-environment initial-router {:db :memory})
+
+          evicted-env
+          (lp/create-environment initial-router {:db :memory})
+
+          fresh-env
+          (lp/create-environment initial-router {:db :memory})
+
+          replaced-id
+          (:session-id replaced-env)
+
+          evicted-id
+          (:session-id evicted-env)
+
+          local-cache
+          (atom {replaced-id {:environment replaced-env} evicted-id {:environment evicted-env}})
+
+          concurrent-write?
+          (atom true)
+
+          kicked
+          (atom [])
+
+          kickoff
+          @#'lp/kickoff-session-providers]
+
+      (try (with-redefs-fn {#'lp/cache local-cache
+                            #'lp/kickoff-session-providers
+                            (fn [environment]
+                              (swap! kicked conj (:session-id environment))
+                              (when (compare-and-set! concurrent-write? true false)
+                                (swap! local-cache #(-> %
+                                                        (assoc-in [replaced-id :environment]
+                                                                  fresh-env)
+                                                        (dissoc evicted-id))))
+                              (kickoff environment))}
+             #(lp/refresh-cached-routers! refreshed-router))
+           (expect (= {replaced-id 1 evicted-id 1 (:session-id fresh-env) 1} (frequencies @kicked)))
+           (expect (not (contains? @local-cache evicted-id)))
+           (expect (= (:session-id fresh-env)
+                      (get-in @local-cache [replaced-id :environment :session-id])))
+           (expect (= refreshed-router (get-in @local-cache [replaced-id :environment :router])))
+           (finally (lp/dispose-environment! replaced-env)
+                    (lp/dispose-environment! evicted-env)
+                    (lp/dispose-environment! fresh-env))))))
 
 (defdescribe
   codex-stateful-session-test

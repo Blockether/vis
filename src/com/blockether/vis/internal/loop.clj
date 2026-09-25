@@ -12739,6 +12739,31 @@
                              (mark-policy-reload!))
                            (sync-cached-extension-symbols!))))
 
+(defn- kickoff-cached-sessions
+  "Run provider kickoff for each cached entry against `router`, outside any cache
+   swap: extension hooks have side effects, and a contended `swap!` would repeat
+   them. Answers `{:refreshed {id [environment refreshed]} :failures {id throwable}}`."
+  [router entries]
+  (reduce-kv (fn [acc id {:keys [environment]}]
+               (try (assoc-in acc
+                      [:refreshed id]
+                      [environment (kickoff-session-providers (assoc environment :router router))])
+                    (catch Throwable t (assoc-in acc [:failures id] t))))
+             {:refreshed {} :failures {}}
+             entries))
+
+(defn- seat-refreshed-environments
+  "Pure cache merge: seat each refreshed environment only where the cache still
+   holds the environment it was computed from, so an evicted session stays evicted
+   and a concurrently replaced one is not overwritten."
+  [m refreshed]
+  (reduce-kv (fn [acc id [environment refreshed-environment]]
+               (if (identical? environment (get-in acc [id :environment]))
+                 (assoc-in acc [id :environment] refreshed-environment)
+                 acc))
+             m
+             refreshed))
+
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
 
@@ -12752,18 +12777,47 @@
 
    Provider kickoff hooks run against each session before its new snapshot is
    seated, covering providers added or reconfigured while that session is live.
-   A failed kickoff aborts the reseat instead of installing incomplete metadata.
+   They run outside the cache swap, once per environment: a session replaced
+   while its kickoff ran is kicked off again on its new environment, and an
+   evicted one is dropped. A session whose kickoff fails keeps its previous
+   environment while every other session moves; the failures are then thrown as
+   one ex-info naming the affected session ids, with the first failure as cause.
    Call this immediately after `rebuild-router!` so the next `send!` on any cached
    session picks up the new router."
   [router]
   (when router
-    (swap! cache (fn [m]
-                   (reduce-kv (fn [acc id {:keys [environment] :as entry}]
-                                (let [refreshed-environment (kickoff-session-providers
-                                                              (assoc environment :router router))]
-                                  (assoc acc id (assoc entry :environment refreshed-environment))))
-                              {}
-                              m))))
+    (loop [entries
+           @cache
+
+           failures
+           {}]
+
+      (let [{:keys [refreshed] :as kicked}
+            (kickoff-cached-sessions router entries)
+
+            failures
+            (merge failures (:failures kicked))
+
+            seated
+            (swap! cache seat-refreshed-environments refreshed)
+
+            replaced
+            (into {}
+                  (keep (fn [[id [_ refreshed-environment]]]
+                          (when-let [entry (get seated id)]
+                            (when-not (identical? refreshed-environment (:environment entry))
+                              [id entry]))))
+                  refreshed)]
+
+        (cond (seq replaced) (recur replaced failures)
+              (seq failures) (throw (ex-info
+                                      (str "Provider kickoff failed for " (count failures)
+                                           " cached session(s), which keep their previous router: "
+                                           (str/join ", " (keys failures)))
+                                      {:type :vis/provider-kickoff-failed
+                                       :session-ids (vec (keys failures))
+                                       :errors (update-vals failures #(or (ex-message %) (str %)))}
+                                      (val (first failures))))))))
   nil)
 
 (defn reload-router!
