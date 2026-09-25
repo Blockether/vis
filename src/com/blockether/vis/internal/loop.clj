@@ -44,6 +44,7 @@
     [com.blockether.vis.internal.session.agents :as agents]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+    [com.blockether.vis.internal.provider.auth-health :as auth-health]
     [com.blockether.vis.internal.provider.error :as perr]
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -6173,8 +6174,6 @@
          (catch Throwable _ svar-provider))
     svar-provider))
 
-(declare auth-refresh-allowed?)
-
 (defn- boot-refresh-provider-token!
   "Build-time sibling of `try-refresh-provider-token!`.
 
@@ -6192,7 +6191,9 @@
         (:provider/refresh-token-fn provider)]
 
     (boolean
-      (when (and f (= :auth (:category (perr/svar-classification t))) (auth-refresh-allowed? pid))
+      (when (and f
+                 (= :auth (:category (perr/svar-classification t)))
+                 (auth-health/refresh-allowed? pid))
         (let [rejected (config/baked-token pid)]
           (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
                (provider-limits/auth-changed! pid)
@@ -6213,12 +6214,12 @@
 
    Svar decides whether the failure is authentication. This function only
    invalidates a short-lived command credential so a subsequent build request
-   can carry a new token; `auth-refresh-allowed?` bounds that mutation."
+   can carry a new token; `auth-health/refresh-allowed?` bounds that mutation."
   [p ^Throwable t]
   (let [pid (:id p)]
     (boolean (when (and (:api-key-command p)
                         (= :auth (:category (perr/svar-classification t)))
-                        (auth-refresh-allowed? pid))
+                        (auth-health/refresh-allowed? pid))
                (config/invalidate-credential-command! pid)
                (tel/log!
                  {:level :warn :id ::boot-credential-command-refreshed :data {:provider pid}}
@@ -6552,16 +6553,6 @@
 ;; the provider's own auth error (which already says "re-authenticate") instead
 ;; of the daemon flapping forever and starving every other gateway call.
 
-(def ^:private AUTH_REFRESH_WINDOW_MS
-  "Rolling window (ms) for the forced-OAuth-refresh circuit breaker."
-  60000)
-
-(def ^:private AUTH_REFRESH_WINDOW_MAX
-  "Max forced OAuth refreshes for one provider inside `AUTH_REFRESH_WINDOW_MS`
-   before the breaker trips. Legitimate rotation refreshes at most a handful of
-   times a minute; more than this is a flap, not real rotation."
-  6)
-
 (def ^:private AUTH_PROPAGATION_BACKOFF_MS
   "Base backoff (ms) before retrying the SAME just-refreshed token after a
    post-refresh auth 401. A freshly-minted OAuth token is briefly not-yet-valid
@@ -6569,140 +6560,10 @@
    re-minting — which only spawns another not-yet-valid token (the 401 storm)."
   1200)
 
-(def ^:private AUTH_PROPAGATION_WINDOW_MS
-  "How long (ms) after a FORCED OAuth refresh a subsequent auth 401 reads as
-   PROPAGATION LAG (retry the same freshly-minted token with backoff) rather
-   than a dead credential (re-mint). Comfortably exceeds the full post-refresh
-   backoff sequence (`MAX_AUTH_REFRESH_RETRIES` retries of
-   `auth-propagation-backoff-ms`, ~11s) so the whole settling burst stays
-   classified as lag; the marker is cleared on the first accepted request so it
-   never lingers into a later genuine rotation."
-  30000)
-
 (defn- auth-propagation-backoff-ms
   "Backoff (ms) for the Nth (0-based) post-refresh propagation retry, capped 5s."
   [attempt]
   (long (min 5000 (* (long AUTH_PROPAGATION_BACKOFF_MS) (inc (long attempt))))))
-
-(defonce ^:private auth-refresh-events
-  ;; provider-id -> vector of epoch-ms timestamps of recent forced refreshes.
-  (atom {}))
-
-(defonce ^:private auth-last-refreshed
-  ;; provider-id -> {:at <epoch-ms of the last FORCED refresh>}. A recency
-  ;; marker: a fresh auth 401 within AUTH_PROPAGATION_WINDOW_MS of it reads as
-  ;; PROPAGATION LAG (back off, retry the SAME token), not a dead credential.
-  ;; Cleared on the first accepted request by `note-provider-request-ok!`.
-  (atom {}))
-
-(def ^:private AUTH_COOLDOWN_MS
-  "BASE window (ms) a provider stays EXCLUDED from routing after its credentials were
-   rejected and the turn had to rescue itself on another provider.
-
-   The rescue route itself is per-ITERATION state, so without a process-wide
-   cooldown the very next iteration re-probes the dead credential: every single
-   iteration then pays a 401 round-trip, a fallback log line and a visible
-   progress chunk until the user re-authenticates."
-  300000)
-
-(def ^:private AUTH_COOLDOWN_MAX_MS
-  "Ceiling for the escalating auth cooldown, and how long a lapsed strike record is
-   kept before the streak is forgotten. A credential nobody has repaired for hours
-   must not buy a fresh 401 + refresh + fallback dance every five minutes for the
-   rest of the day (issue #154)."
-  3600000)
-
-(defn- auth-cooldown-window-ms
-  "Window (ms) for the Nth UNBROKEN credential rejection: the base window doubled per
-   strike, capped at [[AUTH_COOLDOWN_MAX_MS]]. One accepted request clears the streak
-   (`note-provider-request-ok!`), so a re-authenticated provider never serves an
-   escalated window — only a provider that keeps rejecting is probed ever less often."
-  ^long [strikes]
-  (let [n (max 0 (dec (long (or strikes 1))))]
-    (min (long AUTH_COOLDOWN_MAX_MS) (bit-shift-left (long AUTH_COOLDOWN_MS) (min 8 n)))))
-
-(defonce ^:private provider-auth-cooldown
-  ;; provider-id -> {:until <epoch-ms>, :since <epoch-ms>, :hits <long>, :strikes <long>}.
-  ;; Opened by `note-provider-auth-cooldown!` when auth recovery is exhausted and the
-  ;; turn falls back to another provider; closed by `note-provider-request-ok!` as soon
-  ;; as the provider accepts a request again (fresh login / rotated key). `:hits` counts
-  ;; the fallbacks inside the CURRENT window, `:strikes` the unbroken rejections across
-  ;; windows — the escalation reads the latter, so a lapsed window that fails again does
-  ;; not restart at the base window.
-  (atom {}))
-
-(defn- note-provider-auth-cooldown!
-  "Open (or extend) the auth cooldown for `pid` after a fallback. Returns true only
-   for the FIRST trip of a cooldown window so the caller can log the escape once at
-   :warn and keep the repeats at :debug."
-  [pid]
-  (boolean
-    (when pid
-      (let [now
-            (util/now-ms)
-
-            after
-            (swap! provider-auth-cooldown (fn [m]
-                                            (let [prev
-                                                  (get m pid)
-
-                                                  live?
-                                                  (and prev (> (long (:until prev)) now))
-
-                                                  strikes
-                                                  (inc (long (or (:strikes prev) 0)))]
-
-                                              (assoc m
-                                                pid
-                                                {:until (+ now (auth-cooldown-window-ms strikes))
-                                                 :since (if prev (:since prev) now)
-                                                 :strikes strikes
-                                                 :hits (if live? (inc (long (:hits prev))) 1)}))))]
-
-        (= 1 (long (:hits (get after pid))))))))
-
-(defn- clear-provider-auth-cooldown!
-  "Close the auth cooldown for `pid`; called once the provider accepts a request.
-   Drops the strike streak with it, so a repaired credential starts from the base
-   window again. Returns true when a cooldown was actually cleared."
-  [pid]
-  (boolean (when (and pid (contains? @provider-auth-cooldown pid))
-             (swap! provider-auth-cooldown dissoc pid)
-             true)))
-
-(defn- auth-cooled-providers
-  "Set of providers whose credentials are still inside their auth cooldown. Prunes
-   records whose window lapsed more than [[AUTH_COOLDOWN_MAX_MS]] ago on the way, so
-   the map cannot grow without bound while a recent streak still outlives its own
-   window and keeps the escalation honest."
-  []
-  (let [now
-        (util/now-ms)
-
-        live
-        (swap! provider-auth-cooldown (fn [m]
-                                        (into {}
-                                              (filter (fn [[_ v]]
-                                                        (> (+ (long (:until v))
-                                                              (long AUTH_COOLDOWN_MAX_MS))
-                                                           now)))
-                                              m)))]
-
-    (set (keep (fn [[k v]]
-                 (when (> (long (:until v)) now) k))
-               live))))
-
-(defn auth-cooldown-metrics
-  "Observability snapshot of the per-provider auth cooldown: the BASE window, the
-   ceiling it escalates to, and the providers still excluded — each with the epoch-ms
-   the exclusion lifts, how many fallbacks landed inside the window and how many
-   unbroken strikes set its length."
-  []
-  (let [cooled (auth-cooled-providers)]
-    {:cooldown-ms AUTH_COOLDOWN_MS
-     :cooldown-max-ms AUTH_COOLDOWN_MAX_MS
-     :cooled-providers cooled
-     :cooldowns (select-keys @provider-auth-cooldown cooled)}))
 
 (defn- apply-auth-cooldown-routing
   "Seed an iteration's routing with the providers still serving an auth cooldown so
@@ -6725,7 +6586,7 @@
         (or routing {})
 
         cooled
-        (auth-cooled-providers)
+        (auth-health/cooled)
 
         pinned
         (or (:provider current) (:force-provider current))]
@@ -6741,72 +6602,6 @@
         (or (nil? (:on-transient-error current))
             (= :fallback-model-in-the-same-provider (:on-transient-error current)))
         (assoc :on-transient-error :hybrid)))))
-
-(defn- auth-refresh-allowed?
-  "Circuit breaker for forced OAuth refreshes. Atomically prunes timestamps older
-   than the rolling window for `pid`, records this attempt ONLY when it is
-   GRANTED, and returns true while the provider is still under the per-window
-   budget. When it returns false the breaker is OPEN: the caller must NOT refresh
-   and must recover without touching the token endpoint, so the user
-   re-authenticates once instead of the daemon flapping it.
-
-   Recording only GRANTED refreshes is what lets the breaker CLOSE again. An
-   earlier version stamped every call, denials included, so a fleet of tabs still
-   retrying inside the window kept re-arming the breaker they had just tripped:
-   the window never drained and the process stayed in permanent auth fallback
-   until restart, even once the on-file token was healthy again."
-  [pid]
-  (let [now
-        (util/now-ms)
-
-        cutoff
-        (- now (long AUTH_REFRESH_WINDOW_MS))
-
-        live
-        (fn [ts]
-          (filterv #(> (long %) cutoff) (or ts [])))
-
-        [before after]
-        (swap-vals! auth-refresh-events
-                    update
-                    pid
-                    (fn [ts]
-                      (let [kept (live ts)]
-                        (cond-> kept
-                          (< (long (count kept)) (long AUTH_REFRESH_WINDOW_MAX))
-                          (conj now)))))]
-
-    (> (long (count (get after pid))) (long (count (live (get before pid)))))))
-
-(defn auth-refresh-metrics
-  "Observability snapshot of the OAuth-refresh circuit breaker. Returns the
-   rolling window, the trip threshold, the per-provider count of forced
-   refreshes still inside the window, and the set of providers at the refresh
-   limit (breaker OPEN). Surfaced by the gateway `/metrics` endpoint so an
-   auth-refresh flap is visible at a glance instead of needing a `vis.log`
-   grep."
-  []
-  (let [cutoff
-        (- (util/now-ms) (long AUTH_REFRESH_WINDOW_MS))
-
-        in-window
-        (into {}
-              (for [[pid ts]
-                    @auth-refresh-events
-
-                    :let [n
-                          (long (count (filter #(> (long %) cutoff) ts)))]
-                    :when (pos? n)]
-
-                [pid n]))]
-
-    {:window-ms AUTH_REFRESH_WINDOW_MS
-     :max-per-window AUTH_REFRESH_WINDOW_MAX
-     :refreshes-in-window in-window
-     :breaker-open (into #{}
-                         (keep (fn [[pid n]]
-                                 (when (>= (long n) (long AUTH_REFRESH_WINDOW_MAX)) pid)))
-                         in-window)}))
 
 (defn- auth-error-shaped?
   "True exactly when Svar's canonical failure verdict is authentication.
@@ -6850,16 +6645,13 @@
         (assoc :on-transient-error :hybrid)))))
 
 (defn- refresh-just-failed?
-  "True when we FORCED an OAuth refresh for this provider very recently (within
-   [[AUTH_PROPAGATION_WINDOW_MS]]) and the credential is STILL auth-failing.
+  "True when we FORCED an OAuth refresh for this provider very recently (inside the
+   [[auth-health/propagation-lag?]] window) and the credential is STILL auth-failing.
    Signals propagation lag (back off and retry the request-bound hydrated token)
    rather than a genuinely dead credential. The recency marker is provider-wide
    and is cleared by [[note-provider-request-ok!]] after accepted I/O."
   [^Throwable e resolved-model]
-  (let [pid (:provider resolved-model)]
-    (and (auth-error-shaped? e)
-         (boolean (when-let [{:keys [at]} (get @auth-last-refreshed pid)]
-                    (< (- (util/now-ms) (long at)) (long AUTH_PROPAGATION_WINDOW_MS)))))))
+  (and (auth-error-shaped? e) (auth-health/propagation-lag? (:provider resolved-model))))
 
 (defn- note-provider-request-ok!
   "Clear the just-refreshed propagation marker AND any auth cooldown for the provider
@@ -6867,7 +6659,7 @@
    window scoped to the post-refresh settling burst, so a real credential rotation
    later is treated as a fresh 401 (re-mint), never misread as propagation lag, and
    lets a re-authenticated provider re-enter routing immediately instead of waiting
-   out [[AUTH_COOLDOWN_MS]].
+   out [[auth-health/AUTH_COOLDOWN_MS]].
 
    `iteration-result`'s `:llm-provider` is the provider that actually SERVED the
    request; `resolved-model` is only Vis' pre-call guess — `resolve-effective-model`
@@ -6879,8 +6671,7 @@
                    (cond (keyword? served) served
                          (string? served) (keyword served)
                          :else (:provider resolved-model)))]
-    (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))
-    (clear-provider-auth-cooldown! pid)))
+    (auth-health/note-ok! pid)))
 
 (defn- auth-provider-key
   "Provider id as a keyword, or nil when there is none. Picks arrive as strings from
@@ -6984,7 +6775,7 @@
     ;; Cooled providers first: on a healthy turn the set is empty and the session's
     ;; pick is never read, so the common path costs one atom deref, not a DB read per
     ;; iteration.
-    (when-let [cooled (and db sid (not-empty (auth-cooled-providers)))]
+    (when-let [cooled (and db sid (not-empty (auth-health/cooled)))]
       (when-let [move
                  (auth-rescue-pick-move (session-model/model-of db sid) iteration-result cooled)]
         (session-model/set-model! db
@@ -6993,19 +6784,14 @@
                                   (:model (:to move))
                                   :authentication-fallback)
         (session-model/record-switch! db sid (:from move) (:to move) :authentication-fallback)
-        (tel/log!
-          {:level :warn
-           :id ::auth-rescue-pick-moved
-           :data
-           {:session-id (str sid) :from (:from move) :to (:to move) :cooldown-ms AUTH_COOLDOWN_MS}}
-          "Session model repointed: the pinned provider's credentials were rejected")
+        (tel/log! {:level :warn
+                   :id ::auth-rescue-pick-moved
+                   :data {:session-id (str sid)
+                          :from (:from move)
+                          :to (:to move)
+                          :cooldown-ms auth-health/AUTH_COOLDOWN_MS}}
+                  "Session model repointed: the pinned provider's credentials were rejected")
         move))))
-
-(defn- managed-provider-auth?
-  [provider]
-  (boolean (and (:provider/is-managed provider)
-                (:provider/auth-fn provider)
-                (:provider/get-token-fn provider))))
 
 (defn- auth-refreshable-error?
   "True when Svar classified `e` as authentication and Vis can produce a new
@@ -7018,97 +6804,8 @@
     (boolean (and (= :auth (:category (perr/svar-classification e)))
                   (or (some-> (registry/provider-by-id pid)
                               :provider/refresh-token-fn)
-                      (managed-provider-auth? (registry/provider-by-id pid))
+                      (auth-health/managed? (registry/provider-by-id pid))
                       (config/command-backed? pid))))))
-
-(defonce ^:private managed-auth-flights
-  ;; provider-id -> promise carrying one first-use authentication result. The map only
-  ;; contains live attempts; the leader removes its own promise after delivery.
-  (atom {}))
-
-(defn- usable-token-envelope?
-  [envelope rejected]
-  (and (util/non-blank-string? (:token envelope)) (not= rejected (:token envelope))))
-
-(defn- managed-auth-failure
-  [pid message cause]
-  (ex-info (str "Authentication for " (name pid) " " message)
-           {:type :provider/authentication-failed :provider pid}
-           cause))
-
-(defn- run-managed-auth-flight!
-  "Run at most one interactive authentication for `pid`; concurrent turns await the
-   same result. Re-read storage inside the flight to adopt a peer credential, but
-   never accept the token rejected by the request that triggered recovery."
-  [pid provider rejected]
-  (let [candidate
-        (promise)
-
-        [_ flights]
-        (swap-vals! managed-auth-flights
-                    (fn [current]
-                      (if (contains? current pid) current (assoc current pid candidate))))
-
-        flight
-        (get flights pid)
-
-        leader?
-        (identical? candidate flight)]
-
-    (when leader?
-      (let [get-token-fn
-            (:provider/get-token-fn provider)
-
-            auth-fn
-            (:provider/auth-fn provider)
-
-            outcome
-            (try (let [before
-                       (try (get-token-fn) (catch Throwable _ nil))
-
-                       envelope
-                       (if (usable-token-envelope? before rejected)
-                         before
-                         (do (auth-fn (constantly nil)) (get-token-fn)))]
-
-                   (if (usable-token-envelope? envelope rejected)
-                     (do (provider-limits/auth-changed! pid) {:value envelope})
-                     {:error (managed-auth-failure
-                               pid
-                               "was cancelled or did not produce a usable credential."
-                               nil)}))
-                 (catch Throwable t
-                   {:error (if (= :provider/authentication-failed (:type (ex-data t)))
-                             t
-                             (managed-auth-failure
-                               pid
-                               (str "failed: " (or (ex-message t) "unknown authentication error"))
-                               t))}))]
-
-        (deliver candidate outcome)
-        (swap! managed-auth-flights (fn [current]
-                                      (if (identical? candidate (get current pid))
-                                        (dissoc current pid)
-                                        current)))))
-    (let [{:keys [value error]} @flight]
-      (if error (throw error) value))))
-
-(defn- ensure-managed-provider-auth!
-  "Resolve `pid` immediately before a real provider request. A managed provider with
-   an auth function authenticates only when its token lookup has no usable credential;
-   startup, status probes, and picker rendering never call this function."
-  [pid]
-  (let [provider
-        (registry/provider-by-id pid)
-
-        get-token-fn
-        (:provider/get-token-fn provider)]
-
-    (when (managed-provider-auth? provider)
-      (let [envelope (try (get-token-fn) (catch Throwable _ nil))]
-        (if (usable-token-envelope? envelope nil)
-          envelope
-          (run-managed-auth-flight! pid provider nil))))))
 
 (defn- hydrate-model-metadata
   "Select learned or fallback model facts for this attempt's account, preserving order."
@@ -7247,7 +6944,7 @@
            #(with-session-llm-headers (hydrate-router-credentials %)
                                       (:session-llm-headers environment))))
   ([environment provider-id]
-   (ensure-managed-provider-auth! provider-id)
+   (auth-health/ensure-authenticated! provider-id)
    (hydrate-environment-router environment)))
 
 (defn- router-provider-token
@@ -7291,15 +6988,15 @@
              (catch Throwable _ nil))
 
         managed-auth?
-        (managed-provider-auth? provider)
+        (auth-health/managed? provider)
 
         refreshed?
         (cond (and (not f) (config/command-backed? pid))
-              (if (auth-refresh-allowed? pid)
+              (if (auth-health/refresh-allowed? pid)
                 (do (config/invalidate-credential-command! pid)
                     ;; Mark the attempt like an OAuth refresh so a SECOND 401 takes
                     ;; the propagation backoff instead of re-forking the helper.
-                    (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                    (auth-health/note-refreshed! pid)
                     (tel/log!
                       {:level :warn :id ::credential-command-refreshed :data {:provider pid}}
                       (str "Auth 401 for " pid
@@ -7309,8 +7006,8 @@
                 (do (tel/log! {:level :error
                                :id ::auth-refresh-circuit-open
                                :data {:provider pid
-                                      :window-ms AUTH_REFRESH_WINDOW_MS
-                                      :max AUTH_REFRESH_WINDOW_MAX}}
+                                      :window-ms auth-health/AUTH_REFRESH_WINDOW_MS
+                                      :max auth-health/AUTH_REFRESH_WINDOW_MAX}}
                               (str "Auth 401 — credential-command refresh circuit OPEN for "
                                    pid
                                    "; NOT re-running the helper — surfacing provider error"))
@@ -7325,15 +7022,16 @@
                                  pid
                                  " used a stale request credential; adopting the peer token"))
                   true)
-              (not (auth-refresh-allowed? pid))
+              (not (auth-health/refresh-allowed? pid))
               (do (tel/log! {:level :error
                              :id ::auth-refresh-circuit-open
                              :data {:provider pid
-                                    :window-ms AUTH_REFRESH_WINDOW_MS
-                                    :max AUTH_REFRESH_WINDOW_MAX}}
+                                    :window-ms auth-health/AUTH_REFRESH_WINDOW_MS
+                                    :max auth-health/AUTH_REFRESH_WINDOW_MAX}}
                             (str "Auth 401 — OAuth refresh circuit OPEN for " pid
-                                 " (" AUTH_REFRESH_WINDOW_MAX
-                                 " refreshes in " (quot (long AUTH_REFRESH_WINDOW_MS) 1000)
+                                 " (" auth-health/AUTH_REFRESH_WINDOW_MAX
+                                 " refreshes in " (quot (long auth-health/AUTH_REFRESH_WINDOW_MS)
+                                                        1000)
                                  "s); NOT refreshing — surfacing provider error,"
                                  " re-authenticate this provider"))
                   false)
@@ -7341,7 +7039,7 @@
                       ;; Pass exactly what this attempt sent. Older/third-party hooks
                       ;; may still expose only a zero-arity implementation.
                       (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-                      (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                      (auth-health/note-refreshed! pid)
                       (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
                                 (str "Auth 401 — force-refreshed OAuth token for "
                                      pid
@@ -7358,15 +7056,15 @@
 
     (boolean (or (and refreshed?
                       (or (not managed-auth?)
-                          (usable-token-envelope? (try (get-token-fn) (catch Throwable _ nil))
-                                                  rejected))
+                          (auth-health/usable-token? (try (get-token-fn) (catch Throwable _ nil))
+                                                     rejected))
                       (do (provider-limits/auth-changed! pid) true))
                  (when managed-auth?
                    ;; A failed refresh does not revoke the extension's interactive login contract.
                    ;; The rejected nonblank token is not a usable credential (issue #204).
-                   (swap! auth-last-refreshed dissoc pid)
-                   (run-managed-auth-flight! pid provider rejected)
-                   (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                   (auth-health/forget-refresh! pid)
+                   (auth-health/reauthenticate! pid provider rejected)
+                   (auth-health/note-refreshed! pid)
                    true)))))
 
 (defn ask-code!
@@ -9272,8 +8970,8 @@
                                       ;; Persist the release ACROSS iterations. Without the
                                       ;; cooldown the next iteration rebuilds routing from
                                       ;; scratch and re-sends to the dead provider.
-                                      first-trip? (note-provider-auth-cooldown! (:provider
-                                                                                  resolved-model))
+                                      first-trip? (auth-health/note-failure! (:provider
+                                                                               resolved-model))
                                       chunk (provider-retry-progress-chunk
                                               (inc (long iteration))
                                               e
@@ -9293,7 +8991,7 @@
                                              :id ::auth-provider-fallback
                                              :data {:iteration iteration
                                                     :provider (:provider resolved-model)
-                                                    :cooldown-ms AUTH_COOLDOWN_MS
+                                                    :cooldown-ms auth-health/AUTH_COOLDOWN_MS
                                                     :status (:status (ex-data e))}}
                                             "Provider auth recovery exhausted; falling back")
                                   {::retry-auth-fallback fallback-routing})

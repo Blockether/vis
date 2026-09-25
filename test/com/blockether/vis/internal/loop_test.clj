@@ -31,6 +31,7 @@
     [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.internal.view.core :as hi]
     [com.blockether.vis.internal.channel.events :as ce]
+    [com.blockether.vis.internal.provider.auth-health :as auth-health]
     [com.blockether.vis.internal.provider.error :as perr]
     [com.blockether.vis.internal.config.core :as config]
     [com.blockether.vis.internal.extension.registry :as registry]
@@ -7543,7 +7544,7 @@
                    (expect (str/includes? (:description tool) fact))))))
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
-(def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
+(def ^:private auth-last-refreshed (deref #'auth-health/last-refreshed))
 
 (def ^:private refresh-just-failed? (deref #'lp/refresh-just-failed?))
 
@@ -7553,7 +7554,7 @@
 
 (def ^:private auth-propagation-backoff-ms (deref #'lp/auth-propagation-backoff-ms))
 
-(def ^:private AUTH_PROPAGATION_WINDOW_MS (deref #'lp/AUTH_PROPAGATION_WINDOW_MS))
+(def ^:private AUTH_PROPAGATION_WINDOW_MS (deref #'auth-health/AUTH_PROPAGATION_WINDOW_MS))
 
 (defn- auth-401
   []
@@ -7628,10 +7629,10 @@
    dead provider: 20 401s and 19 fallbacks in a quarter of an hour (issue #82)."
   (it "keeps a released provider excluded on the NEXT iteration and re-admits it on success"
       (let [cooldown
-            @#'lp/provider-auth-cooldown
+            @#'auth-health/cooldowns
 
             note!
-            @#'lp/note-provider-auth-cooldown!
+            auth-health/note-failure!
 
             request-ok!
             @#'lp/note-provider-request-ok!
@@ -7659,7 +7660,7 @@
   (it
     "expires with the window and releases even an explicitly pinned provider"
     (let [cooldown
-          @#'lp/provider-auth-cooldown
+          @#'auth-health/cooldowns
 
           apply-cooldown
           @#'lp/apply-auth-cooldown-routing
@@ -7693,10 +7694,10 @@
                    (apply-cooldown {:provider :openai})))
         (finally (reset! cooldown {})))))
   (it "reports the cooldown for observability"
-      (let [cooldown @#'lp/provider-auth-cooldown]
+      (let [cooldown @#'auth-health/cooldowns]
         (try (reset! cooldown {})
-             (@#'lp/note-provider-auth-cooldown! :rbi-genai)
-             (let [metrics (lp/auth-cooldown-metrics)]
+             (auth-health/note-failure! :rbi-genai)
+             (let [metrics (auth-health/cooldown-metrics)]
                (expect (= #{:rbi-genai} (:cooled-providers metrics)))
                (expect (= 300000 (:cooldown-ms metrics)))
                (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai))))
@@ -7720,10 +7721,10 @@
   "The logged cooldown must be ENFORCED: a dead credential is neither re-probed nor
    re-minted until the window elapses or the provider itself accepts a request."
   (let [cooldown
-        @#'lp/provider-auth-cooldown
+        @#'auth-health/cooldowns
 
         note!
-        @#'lp/note-provider-auth-cooldown!
+        auth-health/note-failure!
 
         request-ok!
         @#'lp/note-provider-request-ok!
@@ -7754,11 +7755,11 @@
              ;; `resolved-model` is the pre-call guess (router head, i.e. the pin); only
              ;; the iteration result knows which provider actually answered.
              (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :openai})
-             (expect (= #{:rbi-genai} (:cooled-providers (lp/auth-cooldown-metrics))))
+             (expect (= #{:rbi-genai} (:cooled-providers (auth-health/cooldown-metrics))))
              (expect (= released (apply-cooldown {:provider :rbi-genai :model "gpt-5"})))
              ;; The provider that DID answer is re-admitted at once.
              (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
-             (expect (= #{} (:cooled-providers (lp/auth-cooldown-metrics))))
+             (expect (= #{} (:cooled-providers (auth-health/cooldown-metrics))))
              (finally (reset! cooldown {}))))))
 
 (defdescribe
@@ -7816,10 +7817,10 @@
                                         {}
                                         resolved))))
     (it "arms the cooldown so the NEXT iteration skips the dead credential"
-        (let [cooldown @#'lp/provider-auth-cooldown]
+        (let [cooldown @#'auth-health/cooldowns]
           (try (reset! cooldown {})
                (expect (some? (fallback-routing wrapper {} resolved)))
-               (expect (= true (@#'lp/note-provider-auth-cooldown! (:provider resolved))))
+               (expect (= true (auth-health/note-failure! (:provider resolved))))
                (expect (= {:on-auth-error :fallback-provider
                            :exclude-providers #{:rbi-genai}
                            :on-transient-error :hybrid}
@@ -7838,19 +7839,19 @@
    that actually answered, the surfaces are told why, and the dead credential is probed
    ever less often instead of on a fixed five-minute loop."
   (let [cooldown
-        @#'lp/provider-auth-cooldown
+        @#'auth-health/cooldowns
 
         note!
-        @#'lp/note-provider-auth-cooldown!
+        auth-health/note-failure!
 
         request-ok!
         @#'lp/note-provider-request-ok!
 
         window
-        @#'lp/auth-cooldown-window-ms
+        @#'auth-health/cooldown-window-ms
 
         cooled
-        @#'lp/auth-cooled-providers
+        auth-health/cooled
 
         move
         @#'lp/auth-rescue-pick-move
@@ -8003,10 +8004,10 @@
   "`provider_fallback` is the human's call. Every automatic route off the session's pick
    asks it first, and an untouched install still rescues exactly as before."
   (let [cooldown
-        @#'lp/provider-auth-cooldown
+        @#'auth-health/cooldowns
 
         note!
-        @#'lp/note-provider-auth-cooldown!
+        auth-health/note-failure!
 
         cooldown-routing
         @#'lp/apply-auth-cooldown-routing
@@ -8431,23 +8432,23 @@
         (expect (= 5000 (auth-propagation-backoff-ms 10))))))
 
 ;; ── request-bound OAuth credentials + forced-refresh circuit breaker ──────
-(def ^:private auth-refresh-events (deref #'lp/auth-refresh-events))
+(def ^:private auth-refresh-events (deref #'auth-health/refresh-events))
 
-(def ^:private auth-refresh-allowed? (deref #'lp/auth-refresh-allowed?))
+(def ^:private auth-refresh-allowed? auth-health/refresh-allowed?)
 
 (def ^:private hydrate-router-credentials (deref #'lp/hydrate-router-credentials))
 
 (def ^:private try-refresh-provider-token! (deref #'lp/try-refresh-provider-token!))
 
-(def ^:private managed-auth-flights (deref #'lp/managed-auth-flights))
+(def ^:private managed-auth-flights (deref #'auth-health/auth-flights))
 
-(def ^:private ensure-managed-provider-auth! (deref #'lp/ensure-managed-provider-auth!))
+(def ^:private ensure-managed-provider-auth! auth-health/ensure-authenticated!)
 
 (def ^:private hydrate-environment-router (deref #'lp/hydrate-environment-router))
 
-(def ^:private AUTH_REFRESH_WINDOW_MS (deref #'lp/AUTH_REFRESH_WINDOW_MS))
+(def ^:private AUTH_REFRESH_WINDOW_MS auth-health/AUTH_REFRESH_WINDOW_MS)
 
-(def ^:private AUTH_REFRESH_WINDOW_MAX (deref #'lp/AUTH_REFRESH_WINDOW_MAX))
+(def ^:private AUTH_REFRESH_WINDOW_MAX auth-health/AUTH_REFRESH_WINDOW_MAX)
 
 ;; Regression, issue #165: concurrent first requests to an automatically bound
 ;; managed provider could not invoke its declared interactive authentication at all.
@@ -8541,7 +8542,7 @@
   (it "grants exactly the per-window budget, reports open, then denies without recording"
       (reset! auth-refresh-events {})
       (expect (every? true? (repeatedly AUTH_REFRESH_WINDOW_MAX #(auth-refresh-allowed? :ap))))
-      (expect (= #{:ap} (:breaker-open (lp/auth-refresh-metrics))))
+      (expect (= #{:ap} (:breaker-open (auth-health/refresh-metrics))))
       (dotimes [_ 25]
         (expect (false? (auth-refresh-allowed? :ap))))
       (expect (= (long AUTH_REFRESH_WINDOW_MAX) (long (count (get @auth-refresh-events :ap))))))
@@ -8891,7 +8892,7 @@
            (finally (lp/dispose-environment! environment)
                     (reset! auth-refresh-events {})
                     (reset! auth-last-refreshed {})
-                    (reset! @#'lp/provider-auth-cooldown {}))))))
+                    (reset! @#'auth-health/cooldowns {}))))))
 
 (def ^:private env-cache (deref #'lp/cache))
 

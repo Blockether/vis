@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.provider.auth-limits-test
   (:require [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.provider.limits :as limits]
             [com.blockether.vis.internal.provider.auth :as auth]
@@ -33,7 +34,7 @@
                            limits/auth-change-listeners (atom #{#(swap! notifications conj %)})]
 
                (is (= :unauthenticated (:status (limits/provider-limits :auth-limits-test))))
-               (try (#'lp/ensure-managed-provider-auth! :auth-limits-test)
+               (try (auth-health/ensure-authenticated! :auth-limits-test)
                     (catch clojure.lang.ExceptionInfo _ nil))
                (is (= (if (= :ok outcome) :ok :unauthenticated)
                       (:status (limits/provider-limits :auth-limits-test))))
@@ -75,8 +76,8 @@
                                  (throw (ex-info "Disconnected view" {})))})]
 
            (is (= "old" (get-in (limits/provider-limits :auth-limits-test) [:dynamic :note])))
-           (with-redefs-fn {#'lp/auth-refresh-allowed? (constantly true)
-                            #'lp/auth-last-refreshed (atom {})}
+           (with-redefs-fn {#'auth-health/refresh-allowed? (constantly true)
+                            #'auth-health/last-refreshed (atom {})}
              #(is (true? (#'lp/try-refresh-provider-token!
                           {:providers [{:id :auth-limits-test :api-key "old"}]}
                           {:provider :auth-limits-test}))))

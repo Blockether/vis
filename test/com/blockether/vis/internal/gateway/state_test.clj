@@ -4049,7 +4049,7 @@
       (let [snapshot (state/metrics-snapshot)]
         (doseq [k [:turns-executing :turns-waiting :turn-concurrency-limit :replay-events-retained
                    :jvm-heap-used-bytes :process-rss-bytes :jvm-gc-count-total :jvm-thread-count
-                   :env-cache-size]]
+                   :env-cache-size :auth-refresh]]
           (expect (contains? snapshot k))))))
 
 (defdescribe

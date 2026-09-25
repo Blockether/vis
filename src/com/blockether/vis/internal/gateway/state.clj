@@ -41,6 +41,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.error :as provider-error]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.gateway.resources :as resources]
@@ -6624,7 +6625,7 @@
             :turn-concurrency-limit @MAX_CONCURRENT_TURNS
             :turns-queued (reduce + 0 (map count-queued entries))
             :replay-events-retained (reduce + 0 (map #(count (:events %)) entries))
-            :auth-refresh (lp/auth-refresh-metrics)})))
+            :auth-refresh (auth-health/refresh-metrics)})))
 
 (defn warm-db!
   "Force the persistence backend + shared connection on the CALLER's
