@@ -127,15 +127,15 @@ runs your sessions and works with your files.
 ### Get the desktop app
 
 Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.2.26/vis-companion-0.2.26-linux-arm64.AppImage). You can also browse all packages
+For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.2.29/vis-companion-0.2.29-linux-arm64.AppImage). You can also browse all packages
 on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
 
 <div class="store-links" aria-label="Download the desktop app">
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.2.26/vis-companion-0.2.26-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.2.29/vis-companion-0.2.29-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.2.26/vis-companion-0.2.26-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.2.29/vis-companion-0.2.29-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.2.26/vis-companion-0.2.26-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.2.29/vis-companion-0.2.29-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
 </div>
 
 Install the package, open Vis, then follow the [connection steps below](#connecting-the-companion-app).

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.29] - 2026-09-25
+
+The v0.2.27 and v0.2.28 tags were not published. This release includes the
+Laya decision features described under v0.2.27.
+
+### Added
+- Choose the pinned GLiNER2.5 base or GLiNER2.5-Decide model alongside Laya for
+  typed questions through the same gateway and Python SDK. Model scores are
+  diagnostic; they do not authorize autonomous actions.
+- Download each complete FP32 model and training checkpoint with the built-in CLI.
+  The `assets-pack` release includes offline CPython 3.12 training dependencies
+  for macOS ARM64 and Linux x86-64 without changing the speech assets.
+- Fine-tune, evaluate, export and publish either GLiNER model from the full
+  Python SDK, or start an isolated offline training job on the gateway. Choose
+  models and install training dependencies explicitly; inference does not fetch
+  weights, download wheels or activate a trained version automatically.
+
+### Fixed
+- Reject incomplete model assets and cross-family training resumes instead of
+  substituting another checkpoint or changing an active alias.
+
 ## [v0.2.27] - 2026-09-24
 
 ### Added
