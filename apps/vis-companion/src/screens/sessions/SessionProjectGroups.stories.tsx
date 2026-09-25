@@ -377,15 +377,16 @@ export const Groups: Story = {
     const groupMarkLeft = groupChevron.getBoundingClientRect().left;
     const groupHeader = wallet.parentElement!;
     const groupRule = getComputedStyle(groupHeader);
-    // Compact pointer-driven set headers without shrinking the control or touch header.
+    // The phone band fits a 44px pager target plus borders; pointer bands stay shorter.
     const isMouse = matchMedia('(width >= 40rem) and (pointer: fine)').matches;
+    const isPhone = matchMedia('(width < 40rem)').matches;
     for (const [header, label] of [[groupsHeader, 'groups'], [sessionsHeader, 'sessions']] as const) {
       const bounds = header.getBoundingClientRect();
       const action = within(header).getByRole('button', {
         name: `Actions for ${label} in ${fixture.root}`,
       });
       const target = action.getBoundingClientRect();
-      await expect(bounds.height).toBe(isMouse ? 32 : 56);
+      await expect(bounds.height).toBe(isMouse ? 32 : isPhone ? 46 : 56);
       await expect(target.height).toBe(isMouse ? 28 : 32);
       const verticalOffset = target.top - bounds.top - (bounds.bottom - target.bottom);
       await expect(Math.abs(verticalOffset)).toBeLessThanOrEqual(1);
@@ -682,6 +683,11 @@ export const PagingBelowGroups: Story = {
       set.getBoundingClientRect().height,
     );
     const pager = within(set).getByRole('navigation');
+    const isPhone = matchMedia('(width < 40rem)').matches;
+    await expect(set.getBoundingClientRect().height).toBe(isPhone ? 46 : 32);
+    await expect(
+      within(pager).getByRole('textbox').closest('label')!.getBoundingClientRect().height,
+    ).toBe(isPhone ? 44 : 24);
     const next = within(pager).getByRole('button', { name: 'Next page' });
     const previous = within(pager).getByRole('button', { name: 'Previous page' });
     // Start higher, still reading groups; then repeat with Sessions near the top.

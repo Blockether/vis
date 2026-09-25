@@ -306,6 +306,8 @@ describe('ProjectGroup groups', () => {
     // competing with the group name.
     expect(groupsHeader).toHaveClass('border-y', 'border-edge', 'bg-set-groups');
     expect(groupsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
+    // Phone set headings fit the pager's 44px touch target plus their border rules.
+    expect(groupsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
     expect(within(groupsHeader).getByText('Groups')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
     );
@@ -323,6 +325,7 @@ describe('ProjectGroup groups', () => {
       expect(row.closest('[data-swipe-track]')?.firstElementChild).toHaveClass('bg-set-sessions');
     }
     expect(sessionsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
+    expect(sessionsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
     expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
     );
