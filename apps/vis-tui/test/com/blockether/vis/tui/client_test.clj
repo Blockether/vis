@@ -546,3 +546,25 @@
       (is (= [["POST" "/v1/fs/actions/mkdir" {:path "/work" :name "new"}]
               ["DELETE" "/v1/projects/a?is_recursive=true"]]
              @requests)))))
+
+;; Regression: speech and voice refusals answered a bare `{"error": "..."}` body that only
+;; the speech readers understood; they now carry the gateway's canonical error envelope.
+(deftest speech-refusals-surface-the-canonical-error-message
+  (with-redefs [client/request!
+                (fn [method path _opts]
+                  (is (= [:post "/v1/voice/model?engine=parakeet"] [method path]))
+                  {:status 501
+                   :body (str "{\"error\":{\"type\":\"engine-unavailable\","
+                              "\"message\":\"no transcription engine is registered\"}}")})]
+    (let [failure (try (client/prepare-speech-model! :transcribe {:engine-id "parakeet"})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+      (is (= "no transcription engine is registered" (ex-message failure)))
+      (is (= 501 (:http-status (ex-data failure))))))
+  (testing "a refusal without the canonical message still names its HTTP status"
+    (with-redefs [client/request! (fn [& _]
+                                    {:status 502 :body "{\"error\":\"legacy\"}"})]
+      (is (= "gateway HTTP 502"
+             (try (client/prepare-speech-model! :synthesize {:engine-id "pocket"})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e (ex-message e))))))))

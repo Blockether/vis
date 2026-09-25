@@ -1850,7 +1850,8 @@
   [response]
   (let [body (wire/parse-json (response-text (:body response)))]
     (when-not (< (long (:status response)) 400)
-      (throw (ex-info (or (get body "error") (str "gateway HTTP " (:status response)))
+      (throw (ex-info (or (get-in body ["error" "message"])
+                          (str "gateway HTTP " (:status response)))
                       {:http-status (:status response) :body body})))
     body))
 

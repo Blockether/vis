@@ -1326,8 +1326,9 @@
                                      body (wire/parse-json (:body response))]
 
                                  (is (= 425 (:status response)))
-                                 (is (= "downloading" (get body "status")))
-                                 (is (= 42 (get body "progress")))))))))))
+                                 (is (= "engine-not-ready" (get-in body ["error" "type"])))
+                                 (is (= "downloading" (get-in body ["error" "model" "status"])))
+                                 (is (= 42 (get-in body ["error" "model" "progress"])))))))))))
 
 (defn- spoken-wav
   "The bytes a fake synthesis engine writes: a RIFF/WAVE header and then the line itself,
@@ -1645,7 +1646,7 @@
                                (merge {:request-method :post :path-params {:sid sid}}
                                       (json-body {:text "hello"})))]
                 (is (= 501 (:status response)))
-                (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                (is (str/includes? (get-in (wire/parse-json (:body response)) ["error" "message"])
                                    "speech synthesis"))))))
         (with-only-speech-engine!
           (speaking-engine)
@@ -1669,19 +1670,20 @@
                                wire/parse-json
                                (get-in ["features" "speech" "is_enabled"]))))))))
         (testing "an engine that is still preparing answers 425 with its own state"
-          (with-only-speech-engine! {:id :downloading
-                                     :synthesize (constantly "/tmp/vis-never-written.wav")
-                                     :model-state (constantly {:state :downloading :progress 42})}
-                                    (fn []
-                                      (let [response ((rv 'speech-handler)
-                                                       (merge {:request-method :post
-                                                               :path-params {:sid sid}}
-                                                              (json-body {:text "hello"})))
-                                            body (wire/parse-json (:body response))]
+          (with-only-speech-engine!
+            {:id :downloading
+             :synthesize (constantly "/tmp/vis-never-written.wav")
+             :model-state (constantly {:state :downloading :progress 42})}
+            (fn []
+              (let [response ((rv 'speech-handler)
+                               (merge {:request-method :post :path-params {:sid sid}}
+                                      (json-body {:text "hello"})))
+                    body (wire/parse-json (:body response))]
 
-                                        (is (= 425 (:status response)))
-                                        (is (= "downloading" (get body "status")))
-                                        (is (= 42 (get body "progress")))))))))))
+                (is (= 425 (:status response)))
+                (is (= "engine-not-ready" (get-in body ["error" "type"])))
+                (is (= "downloading" (get-in body ["error" "model" "status"])))
+                (is (= 42 (get-in body ["error" "model" "progress"])))))))))))
 
 ;; Regression: the global slash endpoint resolved project skills against the gateway
 ;; process cwd, so nested-project sessions neither saw their own skills nor their children.
@@ -4414,7 +4416,9 @@
                             :query-params {"name" "My Own"}
                             :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
             (is (= 409 (:status response)))
-            (is (str/includes? (get (wire/parse-json (:body response)) "error")
+            (is (= "voice-import-unsupported"
+                   (get-in (wire/parse-json (:body response)) ["error" "type"])))
+            (is (str/includes? (get-in (wire/parse-json (:body response)) ["error" "message"])
                                "cannot learn a voice"))))))))
 
 (deftest speech-tts-refusals-are-client-errors
@@ -4426,7 +4430,66 @@
         (wire/parse-json (:body response))]
 
     (is (= 400 (:status response)))
-    (is (= "clip-not-wav" (get body "reason")))))
+    (is (= "invalid-voice-clip" (get-in body ["error" "type"])))
+    (is (= "clip-not-wav" (get-in body ["error" "reason"])))))
+
+;; Every speech and voice refusal answers the gateway's one error envelope, so a client
+;; branches on `error.type` and shows `error.message` instead of parsing a second shape.
+(deftest speech-refusals-answer-the-canonical-error-envelope
+  (let [sid
+        (str (random-uuid))
+
+        refusal
+        (fn [response]
+          (let [error (get (wire/parse-json (:body response)) "error")]
+            [(:status response) (get error "type") (string? (get error "message"))]))]
+
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (speech/reset-jobs!)
+        (with-only-engine! nil
+                           (fn []
+                             (is (= [501 "engine-unavailable" true]
+                                    (refusal ((rv 'voice-handler)
+                                               {:path-params {:sid sid} :body (wav-body)}))))))
+        (with-only-engine!
+          {:id :fake-engine :transcribe (constantly "hi") :model-state (constantly {:state :ready})}
+          (fn []
+            (is (= [400 "unknown-engine" true]
+                   (refusal ((rv 'voice-handler)
+                              {:path-params {:sid sid}
+                               :query-params {"engine" "whisper-server"}
+                               :body (wav-body)}))))
+            (is (= [400 "invalid-audio" true]
+                   (refusal ((rv 'voice-handler)
+                              {:path-params {:sid sid}
+                               :body (java.io.ByteArrayInputStream. (byte-array 64))}))))
+            (doseq [handler ['voice-job-handler 'voice-job-events-handler
+                             'speech-job-audio-handler]]
+              (is (= [404 "job-not-found" true]
+                     (refusal ((rv handler)
+                                {:request-method :get :path-params {:sid sid :job-id "vj_nope"}})))
+                  (str handler)))))
+        (with-only-speech-engine!
+          (assoc (speaking-engine) :forget-voice (constantly false))
+          (fn []
+            (let [say (fn [text]
+                        ((rv 'speech-handler)
+                          (merge {:request-method :post :path-params {:sid sid}}
+                                 (json-body {:text text}))))]
+              (is (= [400 "invalid-request" true] (refusal (say "   "))))
+              (is (= [413 "text-too-long" true] (refusal (say (apply str (repeat 21000 "x")))))))
+            (is (= [404 "voice-not-found" true]
+                   (refusal ((rv 'speech-voice-handler)
+                              {:request-method :delete :path-params {:voice-id "nobody"}}))))))
+        (is (= [500 "synthesis-failed" true]
+               (refusal ((rv 'speech-failure-response) (ex-info "engine crashed" {})))))
+        (is (= [500 "voice-import-failed" true]
+               (refusal ((rv 'voice-import-failure) (ex-info "disk full" {})))))))
+    (with-redefs [state/soul (constantly nil)]
+      (is (= [404 "session-not-found" true]
+             (refusal ((rv 'speech-job-handler)
+                        {:request-method :get :path-params {:sid sid :job-id "sj_nope"}})))))))
 
 (deftest decisions-route-requires-an-explicit-model
   (let [app
@@ -5000,7 +5063,8 @@
                 (doseq [[handler request] refusals]
                   (let [response ((rv handler) request)]
                     (is (= 501 (:status response)) (str handler))
-                    (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                    (is (str/includes? (get-in (wire/parse-json (:body response))
+                                               ["error" "message"])
                                        "engine is available")
                         (str handler))))))))))))
 

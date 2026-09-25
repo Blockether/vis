@@ -145,7 +145,7 @@ describe('gateway request diagnostics', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response('{"error":"unavailable"}', {
+          new Response('{"error":{"type":"unavailable","message":"the gateway is unavailable"}}', {
             status: 503,
             headers: { 'Content-Type': 'application/json' },
           }),

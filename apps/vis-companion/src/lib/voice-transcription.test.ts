@@ -292,13 +292,22 @@ describe('transcribeVoice', () => {
   it('refuses the recording when the engine is not ready yet', async () => {
     // 425 Too Early: the gateway never blocks a request thread on a download.
     upload.status = 425;
-    upload.body = { status: 'downloading', progress: 12 };
+    upload.body = {
+      error: {
+        type: 'engine-not-ready',
+        message: 'the transcription engine is not ready (downloading)',
+        model: { status: 'downloading', progress: 12 },
+      },
+    };
     gatewayStreams();
 
     const client = new GatewayClient(CONN);
     const failure = await client.transcribeVoice('s1', wav()).catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(GatewayError);
     expect((failure as InstanceType<typeof GatewayError>).status).toBe(425);
+    expect((failure as InstanceType<typeof GatewayError>).message).toBe(
+      'the transcription engine is not ready (downloading)',
+    );
     // Nothing was streamed: there is no job to watch.
     expect(calls).toEqual([]);
   });

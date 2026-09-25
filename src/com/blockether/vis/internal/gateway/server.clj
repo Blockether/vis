@@ -4197,12 +4197,10 @@
     (if-let [engine (try (speech/resolve-engine direction id) (catch Throwable _ nil))]
       (f engine)
       (if id
-        (json-response 400
-                       {:status "unavailable"
-                        :error (str "unknown " noun " engine: " (name id))
-                        :engines (mapv speech/public-engine (speech/engines direction))})
-        (json-response 501
-                       {:status "unavailable" :error (str "no " noun " engine is available")})))))
+        (error-response 400
+                        :unknown-engine (str "unknown " noun " engine: " (name id))
+                        :engines (mapv speech/public-engine (speech/engines direction)))
+        (error-response 501 :engine-unavailable (str "no " noun " engine is available"))))))
 
 (defn- unknown-speech-session?
   "Machine speech routes need no conversation. Session routes still reject unknown or malformed ids."
@@ -4216,7 +4214,7 @@
   [direction request f]
   (let [sid (path-sid request)]
     (if (unknown-speech-session? request)
-      (json-response 404 {:status "unavailable" :error "unknown session"})
+      (session-404 (get-in request [:path-params :sid]))
       (with-engine direction
                    request
                    (fn [engine]
@@ -4263,6 +4261,21 @@
 
     (:error st)
     (assoc :error (:error st))))
+
+(defn- engine-not-ready
+  "425 Too Early for an engine that is still preparing. The readiness rides as the
+   error's `model`, the same state `/voice/model` and `/speech/model` answer, and a
+   failed preparation's own sentence becomes the message."
+  [direction engine]
+  (let [model (speech-state->json (speech/readiness engine))]
+    (error-response 425
+                    :engine-not-ready (or (:error model)
+                                          (str "the "
+                                               (speech/direction-nouns direction)
+                                               " engine is not ready ("
+                                               (:status model)
+                                               ")"))
+                    :model model)))
 
 ;; --- Native push devices (APNs) ---
 
@@ -4889,7 +4902,7 @@
     request
     (fn [_sid engine]
       (if-not (speech/ready? engine)
-        (json-response 425 (speech-state->json (speech/readiness engine)))
+        (engine-not-ready :transcribe engine)
         (let [tmp (java.io.File/createTempFile "vis-speech" ".wav")]
           (try (with-open [in ^java.io.InputStream (:body request)
                            out (io/output-stream tmp)]
@@ -4897,7 +4910,7 @@
                  (io/copy in out))
                (if-not (wav-file? tmp)
                  (do (.delete tmp)
-                     (json-response 400 {:error "body must be a RIFF/WAVE audio file"}))
+                     (error-response 400 :invalid-audio "body must be a RIFF/WAVE audio file"))
                  ;; the temp file outlives this response on purpose: it is the
                  ;; job's input and is deleted by `:on-done`, whichever way the
                  ;; job ends.
@@ -4910,14 +4923,14 @@
                (catch Throwable t
                  (.delete tmp)
                  (tel/log! {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
-                 (json-response 400 {:error (speech/error-message t)}))))))))
+                 (error-response 400 :transcription-failed (speech/error-message t)))))))))
 
 (defn- speech-failure-response
   "The refusal a THROWN synthesis deserves: 500. The request was valid and the engine
    failed, which is the gateway's fact to report rather than the caller's to fix."
   [^Throwable t]
   (tel/log! {:level :error :id ::speech-synthesize-failed :data {:error (str t)}})
-  (json-response 500 {:error (speech/error-message t)}))
+  (error-response 500 :synthesis-failed (speech/error-message t)))
 
 (defn- file-bytes
   ^bytes [^java.io.File f]
@@ -4987,16 +5000,23 @@
               (assoc :voice-id voice-id))]
 
         (cond (str/blank? text)
-              (json-response 400 {:error "body must be JSON with a non-empty \"text\""})
+              (error-response 400 :invalid-request "body must be JSON with a non-empty \"text\"")
               (> (count text) (long speech-max-chars))
-              (json-response 413
-                             {:error (str "text is longer than " speech-max-chars " characters")})
-              (not (speech/ready? engine))
-              (json-response 425 (speech-state->json (speech/readiness engine)))
+              (error-response 413
+                              :text-too-long
+                              (str "text is longer than " speech-max-chars " characters"))
+              (not (speech/ready? engine)) (engine-not-ready :synthesize engine)
               :else (try (if (> (count text) (long speech-inline-max-chars))
                            (json-response 202 (speech/submit! :synthesize work))
                            (inline-speech-response work))
                          (catch Throwable t (speech-failure-response t))))))))
+
+(defn- job-404
+  "The refusal for a job id this direction's routes do not know."
+  [direction job-id]
+  (error-response 404
+                  :job-not-found (str "unknown " (speech/direction-nouns direction) " job")
+                  :job-id job-id))
 
 (defn- job-handler
   "GET    /v1/sessions/:sid/{voice,speech}/jobs/:job-id — where this piece of work is:
@@ -5018,20 +5038,17 @@
         (speech/job job-id)
 
         mine?
-        (= (name direction) (:direction job))
+        (= (name direction) (:direction job))]
 
-        unknown
-        {:error (str "unknown " (speech/direction-nouns direction) " job")}]
-
-    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
+    (cond (unknown-speech-session? request) (session-404 (get-in request [:path-params :sid]))
           ;; DELETE stays idempotent — an id nobody knows is already forgotten — but it
           ;; never reaches across into the other direction's job.
           (= :delete (:request-method request)) (if (and job (not mine?))
-                                                  (json-response 404 unknown)
+                                                  (job-404 direction job-id)
                                                   (do (speech/forget! job-id)
                                                       (json-response 200 {:is-forgotten true})))
           mine? (json-response 200 job)
-          :else (json-response 404 unknown))))
+          :else (job-404 direction job-id))))
 
 (defn- voice-job-handler [request] (job-handler :transcribe request))
 
@@ -5051,13 +5068,15 @@
         job
         (speech/job job-id)]
 
-    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
-          (not= "synthesize" (:direction job))
-          (json-response 404 {:error "unknown speech synthesis job"})
+    (cond (unknown-speech-session? request) (session-404 (get-in request [:path-params :sid]))
+          (not= "synthesize" (:direction job)) (job-404 :synthesize job-id)
           :else (let [^java.io.File f (some-> (speech/job-audio-path job-id)
                                               io/file)]
                   (if-not (and f (.isFile f))
-                    (json-response 425 job)
+                    (error-response 425
+                                    :audio-not-ready
+                                    (or (:error job) "the speech synthesis job has no audio yet")
+                                    :job job)
                     {:status 200
                      :headers {"Content-Type" (or (get-in job [:audio :media-type]) "audio/wav")
                                "Content-Length" (str (.length f))
@@ -5072,14 +5091,16 @@
    when the RECORDING is the problem and the caller can fix it, 500 only for neither."
   [^Throwable t]
   (let [kind (:type (ex-data t))]
-    (cond (= :vis/voice-import-unsupported kind)
-          (json-response 409 {:error (ex-message t) :engine (:engine (ex-data t))})
+    (cond (= :vis/voice-import-unsupported kind) (error-response 409
+                                                                 :voice-import-unsupported
+                                                                 (ex-message t)
+                                                                 :engine (:engine (ex-data t)))
           (= "speech-tts"
              (some-> kind
                      namespace))
-          (json-response 400 {:error (ex-message t) :reason (name kind)})
+          (error-response 400 :invalid-voice-clip (ex-message t) :reason (name kind))
           :else (do (tel/log! {:level :error :id ::voice-import-failed :data {:error (str t)}})
-                    (json-response 500 {:error (speech/error-message t)})))))
+                    (error-response 500 :voice-import-failed (speech/error-message t))))))
 
 (defn- speech-voices-handler
   "GET  /v1/speech/voices - every voice the speaking engine can use, plus whether it can
@@ -5125,7 +5146,7 @@
                (fn [engine]
                  (try (if (speech/forget-voice! engine (get-in request [:path-params :voice-id]))
                         (json-response 200 {:is-forgotten true})
-                        (json-response 404 {:error "no imported voice with that id"}))
+                        (error-response 404 :voice-not-found "no imported voice with that id"))
                       (catch Throwable t (voice-import-failure t))))))
 
 (defn- speech-voice-sample-handler
@@ -5141,26 +5162,27 @@
    `no-store` like the job audio next door: an imported voice re-imported under the
    same name is a DIFFERENT recording, and a week-old cached sample would be lying."
   [request]
-  (with-engine
-    :synthesize
-    request
-    (fn [engine]
-      (try (let [sample
-                 (speech/voice-sample! engine (get-in request [:path-params :voice-id]))
+  (with-engine :synthesize
+               request
+               (fn [engine]
+                 (try (let [sample
+                            (speech/voice-sample! engine (get-in request [:path-params :voice-id]))
 
-                 ^java.io.File f
-                 (some-> (:audio-path sample)
-                         io/file)]
+                            ^java.io.File f
+                            (some-> (:audio-path sample)
+                                    io/file)]
 
-             (if-not (and f (.isFile f))
-               (json-response 404 {:error "no sample for that voice"})
-               {:status 200
-                :headers {"Content-Type" (or (:media-type sample) "audio/wav")
-                          "Content-Length" (str (.length f))
-                          "Cache-Control" "no-store"}
-                :body f}))
-           (catch Throwable t
-             (json-response 502 {:error (or (ex-message t) "could not prepare a sample")}))))))
+                        (if-not (and f (.isFile f))
+                          (error-response 404 :sample-not-found "no sample for that voice")
+                          {:status 200
+                           :headers {"Content-Type" (or (:media-type sample) "audio/wav")
+                                     "Content-Length" (str (.length f))
+                                     "Cache-Control" "no-store"}
+                           :body f}))
+                      (catch Throwable t
+                        (error-response 502
+                                        :sample-failed
+                                        (or (ex-message t) "could not prepare a sample")))))))
 
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
@@ -5232,9 +5254,8 @@
         job
         (speech/job job-id)]
 
-    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
-          (not= (name direction) (:direction job))
-          (json-response 404 {:error (str "unknown " (speech/direction-nouns direction) " job")})
+    (cond (unknown-speech-session? request) (session-404 (get-in request [:path-params :sid]))
+          (not= (name direction) (:direction job)) (job-404 direction job-id)
           :else {:status 200
                  :headers sse-headers
                  :body (job-events-body (job-event-names direction) job-id)})))

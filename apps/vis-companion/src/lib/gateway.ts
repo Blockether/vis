@@ -419,11 +419,10 @@ async function readSseFrames(
   }
 }
 
-/** The gateway's own `{error}` sentence, or the bare status when it sent none. */
+/** The gateway's canonical `error.message`, or the bare status when it sent none. */
 function errorText(parsed: unknown, status: number): string {
-  const error = (parsed as { error?: string | { message?: string } })?.error;
-  const message = error instanceof Object ? error.message : (error as string | undefined);
-  return message || `HTTP ${status}`;
+  const message = (parsed as { error?: { message?: unknown } } | undefined)?.error?.message;
+  return typeof message === 'string' && message ? message : `HTTP ${status}`;
 }
 
 /** Add the engine selector every voice/speech endpoint shares. */
@@ -1200,16 +1199,7 @@ export class GatewayClient {
         }
       }
       if (!res.ok) {
-        // The gateway writes its refusal as a SENTENCE (`{error: "no speech transcription
-        // engine is available"}`); reading only `error.message` turned every one of
-        // them into "HTTP 501" on screen, which told the reader nothing they could act on.
-        const problem = parsed as {
-          error?: string | { message?: string };
-        };
-        const msg =
-          (typeof problem?.error === 'string' ? problem.error : problem?.error?.message) ??
-          `HTTP ${res.status}`;
-        const error = new GatewayError(res.status, msg, parsed);
+        const error = new GatewayError(res.status, errorText(parsed, res.status), parsed);
         // A refused protocol is not this call's problem, it is the whole
         // connection's: announce it so the app can re-read the verdict and show
         // the screen, rather than let one failed request explain it alone.
@@ -1698,18 +1688,14 @@ export class GatewayClient {
       );
       status = res.status;
       if (!res.ok) {
-        const body = await raceAbort(res.text(), attemptSignal).catch(() => '');
-        let message = `HTTP ${res.status}`;
+        const text = await raceAbort(res.text(), attemptSignal).catch(() => '');
+        let parsed: unknown;
         try {
-          const parsed = JSON.parse(body) as {
-            error?: string | { message?: string };
-          };
-          const named = typeof parsed.error === 'string' ? parsed.error : parsed.error?.message;
-          if (named) message = named;
+          parsed = text ? JSON.parse(text) : undefined;
         } catch {
-          if (body) message = body;
+          parsed = text;
         }
-        throw new GatewayError(res.status, message);
+        throw new GatewayError(res.status, errorText(parsed, res.status), parsed);
       }
       return await raceAbort(read(res), attemptSignal);
     } catch (cause) {

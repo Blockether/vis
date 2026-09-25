@@ -32,7 +32,9 @@ const initialPrefs: SpeechPrefs = {
 
 const ready = (engine: string): VoiceModelState => ({ status: 'ready', engine });
 const absent = (message: string, reasons?: string[]) =>
-  new GatewayError(501, message, reasons ? { error: message, reasons } : { error: message });
+  new GatewayError(501, message, {
+    error: { type: 'engine-unavailable', message, ...(reasons ? { reasons } : {}) },
+  });
 
 function machine(
   listen: VoiceModelState | Error = ready('parakeet-local'),

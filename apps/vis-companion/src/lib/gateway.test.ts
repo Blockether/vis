@@ -1421,10 +1421,15 @@ describe('GatewayClient speakText', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: 'no speech engine is registered' }), {
-          status: 501,
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify({
+            error: { type: 'engine-unavailable', message: 'no speech engine is registered' },
+          }),
+          {
+            status: 501,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
       ),
     );
     const mod = await import('./gateway');
@@ -1471,8 +1476,11 @@ describe('GatewayClient speech engines', () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            error: 'no speech transcription engine is registered - ' + reasons[0],
-            reasons,
+            error: {
+              type: 'engine-unavailable',
+              message: 'no speech transcription engine is registered - ' + reasons[0],
+              reasons,
+            },
           }),
           { status: 501 },
         ),
@@ -1483,6 +1491,7 @@ describe('GatewayClient speech engines', () => {
     await expect(new mod.GatewayClient(conn).voiceModel()).rejects.toMatchObject({
       status: 501,
       message: 'no speech transcription engine is registered - ' + reasons[0],
+      body: { error: { reasons } },
     });
   });
 });
@@ -1585,7 +1594,10 @@ describe('a gateway that stops serving this build', () => {
       vi
         .fn()
         .mockResolvedValue(
-          new Response(JSON.stringify({ error: 'no such session' }), { status: 404 }),
+          new Response(
+            JSON.stringify({ error: { type: 'session-not-found', message: 'no such session' } }),
+            { status: 404 },
+          ),
         ),
     );
     const mod = await import('./gateway');

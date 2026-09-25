@@ -903,7 +903,8 @@ export function SpeechEnginesPanel({
             state: null,
             absence: {
               error: cause.message,
-              reasons: (cause.body as VoiceEngineAbsence | undefined)?.reasons,
+              reasons: (cause.body as { error?: { reasons?: string[] } } | undefined)?.error
+                ?.reasons,
             },
             error: null,
           };
