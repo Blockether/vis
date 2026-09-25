@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (6748) — 2026-09-25
+<!-- commit: 24eaea52ca8697cd8144e16e0aca44fca831822e -->
+
+- Compact mobile set headers
+- V0.2.29
+- Record companion build 6741
+
 ## 0.2.28 (6741) — 2026-09-24
 <!-- commit: 8602f5a8257271d3fcd57c0357afe9f94a42d8bd -->
 
