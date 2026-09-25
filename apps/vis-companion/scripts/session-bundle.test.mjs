@@ -15,6 +15,14 @@ it('loads the production session bundle on a cold mobile launch', async () => {
     (entry) => entry.type === 'chunk' && entry.facadeModuleId?.endsWith('/SessionScreen.tsx'),
   );
   expect(sessionChunk).toBeDefined();
+  const chunksWith = (path) =>
+    output
+      .filter((entry) => entry.type === 'chunk' && entry.moduleIds.some((id) => id.includes(path)))
+      .map((chunk) => chunk.fileName);
+  // Justice ships inside the prose bundle, not as a separately loaded script.
+  const prose = chunksWith('/src/components/JustifiedProse.tsx');
+  expect(prose).toHaveLength(1);
+  expect(chunksWith('/@kitlangton/justice/')).toEqual(prose);
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });

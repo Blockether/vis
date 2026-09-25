@@ -11,13 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Prepared } from '@kitlangton/justice';
-
-// Load before prose can mount, not after native text has already painted. Justice
-// constructs a segmenter at module evaluation, so unsupported browsers skip it.
-const engine =
-  typeof Intl.Segmenter === 'function'
-    ? await import('@kitlangton/justice').catch(() => null)
-    : null;
+import { engine } from '../lib/justice';
 
 type InlineProps = { children?: ReactNode; node?: { tagName?: string } };
 type InlineContent = {
