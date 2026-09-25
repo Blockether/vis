@@ -6,6 +6,7 @@
    colours."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.dev.companion-themes :as companion-themes]
             [com.blockether.vis.internal.channel.theme :as theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
@@ -18,7 +19,47 @@
         "run `clojure -X:companion-themes`"))
   (testing "so is the catalog module"
     (is (= (companion-themes/catalog-module) (generated companion-themes/catalog-file-name))
+        "run `clojure -X:companion-themes`"))
+  (testing "and the session-group palette module"
+    (is (= (companion-themes/group-colors-module)
+           (generated companion-themes/group-colors-file-name))
         "run `clojure -X:companion-themes`")))
+
+(deftest session-group-colours-ship-from-the-backend
+  ;; The companion used to keep its own copy of these hues beside the gateway's tokens.
+  ;; Both halves now come from the backend, so a token cannot ship without a colour.
+  (testing "every token the gateway accepts has exactly one hue, and no hue is orphaned"
+    (is (= (set gateway-contract/session-group-colors) (set (keys theme/session-group-swatches))))
+    (is (every? theme/rgb? (vals theme/session-group-swatches)))
+    (is (apply distinct? (vals theme/session-group-swatches))))
+  (let [css
+        (companion-themes/stylesheet)
+
+        module
+        (companion-themes/group-colors-module)]
+
+    (testing "the stylesheet defines each hue once, shared by every theme"
+      (doseq [token gateway-contract/session-group-colors]
+        (is (= [(str "  --color-group-"
+                     token
+                     ": "
+                     (theme/rgb->css (get theme/session-group-swatches token))
+                     ";")]
+               (re-seq (re-pattern (str "(?m)^  --color-group-" token ": .*$")) css))
+            token)))
+    (testing "the module offers the contract's tokens in its order, with its default"
+      (is (str/includes? module
+                         (str "export const GROUP_COLORS = [\n"
+                              (str/join (map (fn [token]
+                                               (str "  '" token "',\n"))
+                                             gateway-contract/session-group-colors))
+                              "] as const;")))
+      (is (str/includes? module
+                         (str "export const DEFAULT_GROUP_COLOR: SessionGroupColor = '"
+                              gateway-contract/default-session-group-color
+                              "';")))
+      (doseq [token gateway-contract/session-group-colors]
+        (is (str/includes? module (str "  " token ": 'bg-group-" token "',\n")) token)))))
 
 (defn- contrast-ratio
   [foreground background]

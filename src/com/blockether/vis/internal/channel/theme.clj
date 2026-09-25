@@ -1338,3 +1338,19 @@
          ";color-scheme:"
          (name (:mode theme-map :light))
          "}")))
+
+(def session-group-swatches
+  "The hue each session-group palette token paints in a browser channel, as an RGB
+   triple. A group stores the TOKEN
+   (`com.blockether.vis.contract.gateway/session-group-colors`), so every paired app
+   fills it from this one table. A group keeps its colour when the theme changes,
+   so these hues belong to no palette above. `clojure -X:companion-themes` ships
+   them to the companion."
+  {"slate" [124 135 152]
+   "blue" [27 136 232]
+   "green" [16 156 86]
+   "amber" [186 116 2]
+   "red" [217 84 69]
+   "violet" [136 111 227]
+   "cyan" [17 150 170]
+   "pink" [205 83 149]})

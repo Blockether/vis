@@ -11,6 +11,7 @@ import {
 import { machineKey } from '../../lib/fleet';
 import { projectFoldKey, writeProjectFold } from '../../lib/project-fold';
 import { THEMES } from '../../lib/themes.generated';
+import generatedStylesheet from '../../lib/themes.generated.css?raw';
 import type { SessionGroup } from '../../lib/types';
 import { ProjectGroup } from './SessionProjectGroups';
 
@@ -337,6 +338,13 @@ const GROUPED_BANDS: SessionGroup[] = [
   },
 ];
 
+/** How the browser reports the hue the generated stylesheet gives a group token. */
+function groupHue(color: string): string {
+  const hex = new RegExp(`--color-group-${color}: #([0-9a-f]{6});`).exec(generatedStylesheet)![1];
+  const [red, green, blue] = [0, 2, 4].map((at) => Number.parseInt(hex.slice(at, at + 2), 16));
+  return `rgb(${red}, ${green}, ${blue})`;
+}
+
 /** Groups nest INSIDE the project: named bands first, then whatever nobody filed. */
 const GROUPED = [
   { ...fixture.rows[0], group_id: 'wallet' },
@@ -414,6 +422,15 @@ export const Groups: Story = {
     await expect(groupRule.borderBottomColor).toBe(getComputedStyle(groupsHeader).borderBottomColor);
     await expect(band.querySelector('[data-session-row]')!.getBoundingClientRect().top).toBe(
       groupHeader.getBoundingClientRect().bottom,
+    );
+    // Each band's rail wears the hue the backend gives its token (`theme.clj`, shipped in
+    // the generated stylesheet); the app keeps no palette of its own.
+    await expect(getComputedStyle(groupHeader.querySelector('.bg-group-blue')!).backgroundColor).toBe(
+      groupHue('blue'),
+    );
+    const receiptsHeader = page.getByRole('button', { name: /(Collapse|Expand) Receipts/ }).parentElement!;
+    await expect(getComputedStyle(receiptsHeader.querySelector('.bg-group-amber')!).backgroundColor).toBe(
+      groupHue('amber'),
     );
     const groupType = getComputedStyle(groupName);
     const projectType = getComputedStyle(projectName);

@@ -6,8 +6,9 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import '@fontsource-variable/jetbrains-mono/wght-italic.css';
 @import 'tailwindcss';
-/* Every theme, rendered from the Clojure palettes by `clojure -X:companion-themes`.
-   The gateway no longer serves colours; this file IS the app's theme catalog. */
+/* Every theme and the session-group hues, rendered from `theme.clj` by
+   `clojure -X:companion-themes`. The gateway serves no colours; this file IS the
+   app's colour catalog. */
 @import './lib/themes.generated.css';
 
 /* `sm:` answers "is there room"; `mouse:` answers "is there room AND a cursor".
@@ -312,20 +313,6 @@
    its theme-derived, opaque tint. Monochrome themes retain the contrast in value. */
 @theme {
   --color-machine-unread: color-mix(in oklab, var(--link-fg) 27%, var(--surface));
-}
-
-/* Session-group hues (see `src/lib/group-colors.ts`). The gateway keeps the palette
-   closed, so these eight names are the whole set. They do not come from the shipped
-   themes: a group's colour must not change when the palette does. */
-@theme {
-  --color-group-slate: #7c8798;
-  --color-group-blue: #1b88e8;
-  --color-group-green: #109c56;
-  --color-group-amber: #ba7402;
-  --color-group-red: #d95445;
-  --color-group-violet: #886fe3;
-  --color-group-cyan: #1196aa;
-  --color-group-pink: #cd5395;
 }
 
 /* Transcript entry motion — keyframes, NOT `@starting-style` + transition.

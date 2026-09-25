@@ -1,44 +1,25 @@
 /**
- * The eight hues a session group can wear, and the class that fills each one.
+ * The hues a session group can wear, and the class that fills each one.
  *
- * The palette is CLOSED and the gateway keeps it
- * (`com.blockether.vis.contract.gateway/session-group-colors`): a group carries a
- * TOKEN rather than a colour, so the TUI inks a terminal cell and this app fills a
- * theme colour from the same value. Anything else — a newer gateway, a hand-written
- * PATCH that got through — reads as `slate`, so a band always has a swatch instead
- * of a hole where one belongs.
- *
- * Class names are written out in full because Tailwind scans SOURCE TEXT: a
- * `bg-group-${color}` template would compile to no CSS at all.
+ * The palette is CLOSED and the backend owns all of it. The gateway contract
+ * (`com.blockether.vis.contract.gateway/session-group-colors`) names the tokens,
+ * `theme.clj` (`session-group-swatches`) gives each one its hue, and
+ * `clojure -X:companion-themes` ships both as `group-colors.generated.ts` and the
+ * `--color-group-*` block of `themes.generated.css`. A group carries a TOKEN rather
+ * than a colour, so the TUI inks a terminal cell and this app fills a swatch from
+ * the same value. Anything else — a newer gateway, a hand-written PATCH that got
+ * through — reads as the default, so a band always has a swatch instead of a hole
+ * where one belongs.
  */
 
-/** Every token a group may carry, in the order a picker offers them. */
-export const GROUP_COLORS = [
-  'slate',
-  'blue',
-  'green',
-  'amber',
-  'red',
-  'violet',
-  'cyan',
-  'pink',
-] as const;
+import {
+  DEFAULT_GROUP_COLOR,
+  GROUP_COLORS,
+  GROUP_SWATCHES,
+  type SessionGroupColor,
+} from './group-colors.generated';
 
-export type SessionGroupColor = (typeof GROUP_COLORS)[number];
-
-/** What a group with nothing said about its colour wears — the gateway's default too. */
-export const DEFAULT_GROUP_COLOR: SessionGroupColor = 'slate';
-
-const SWATCHES: Record<SessionGroupColor, string> = {
-  slate: 'bg-group-slate',
-  blue: 'bg-group-blue',
-  green: 'bg-group-green',
-  amber: 'bg-group-amber',
-  red: 'bg-group-red',
-  violet: 'bg-group-violet',
-  cyan: 'bg-group-cyan',
-  pink: 'bg-group-pink',
-};
+export { DEFAULT_GROUP_COLOR, GROUP_COLORS, type SessionGroupColor };
 
 /** Is this one of the palette's own tokens? */
 export function isGroupColor(value: unknown): value is SessionGroupColor {
@@ -52,5 +33,5 @@ export function groupColor(value: string | null | undefined): SessionGroupColor 
 
 /** The class that fills a group's swatch: its dot, and the rail beside its band. */
 export function groupSwatch(value: string | null | undefined): string {
-  return SWATCHES[groupColor(value)];
+  return GROUP_SWATCHES[groupColor(value)];
 }

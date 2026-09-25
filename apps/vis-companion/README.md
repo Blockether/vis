@@ -19,6 +19,10 @@ Native push notifications use the [notification relay](../vis-companion-relay/RE
 - **Themes** — uses CSS generated from the Clojure themes with
   `clojure -X:companion-themes` in `src/lib/themes.generated.{css,ts}`. Theme
   selection is local to the app.
+- **Group colours** — a session group stores a palette token on the gateway. The
+  same generator ships the tokens and their hues in
+  `src/lib/group-colors.generated.ts` and `src/lib/themes.generated.css`, so every
+  device paints a group the same way in every theme.
 - **Multiple gateways** — save several (home LAN, Tailscale, cloudflared) and
   switch between them.
 
