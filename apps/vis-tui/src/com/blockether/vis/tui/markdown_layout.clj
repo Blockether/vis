@@ -305,16 +305,71 @@
 
 (defn- prepared-prose
   "Cache bounded, immutable cell measurements across viewport widths, never styled runs."
-  ^ParagraphLayout$Prepared [^String text]
-  (locking prepared-prose-cache
-    (or (.get prepared-prose-cache text)
-        (let [prepared (ParagraphLayout/prepare text)]
-          (.put prepared-prose-cache text prepared)
-          (when (> (.size prepared-prose-cache) 64)
-            (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache)))))
-          prepared))))
+  ^ParagraphLayout$Prepared [^String text breaks]
+  (let [k [text breaks]]
+    (locking prepared-prose-cache
+      (or (.get prepared-prose-cache k)
+          (let [^ints offsets (int-array breaks)
+                prepared (ParagraphLayout/prepare text offsets)]
+
+            (.put prepared-prose-cache k prepared)
+            (when (> (.size prepared-prose-cache) 64)
+              (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache)))))
+            prepared)))))
 
 (def ^:private terminal-prose-options (ParagraphLayout$Options/terminal))
+
+(def ^:private code-breaks
+  "Inline code may wrap where a reader expects it to: after its spaces, after a path
+   separator, or before a dot inside a name. Each match ends at the break. Hyphens and
+   every other character stay joined; earlier rules win when a word has too many breaks."
+  [#"[^ \t\r\n\f][ \t\r\n\f]+(?=[^ \t\r\n\f])" #"[^/ \t\r\n\f]/(?=[^/ \t\r\n\f])"
+   #"[\p{L}\p{N}_)\]](?=\.[\p{L}_])"])
+
+(defn- match-ends
+  [re ^String s]
+  (let [^java.util.regex.Matcher m (re-matcher re s)]
+    (loop [out []]
+      (if (.find m) (recur (conj out (long (.end m)))) out))))
+
+(defn- code-break-offsets
+  "Offsets in `text` where literal code may end a line. Like source hyphens, code
+   breaks stay bounded: at most 16 in a word and 128 in the paragraph."
+  [ranges ^String text]
+  (let [by-rank
+        (juxt second first)
+
+        candidates
+        (sort (for [{:keys [start run]}
+                    ranges
+
+                    :when (contains? (:style run) :code)
+                    [rank re]
+                    (map-indexed vector code-breaks)
+
+                    end
+                    (match-ends re (:text run))]
+
+                [(+ (long start) (long end)) rank]))]
+
+    (loop [candidates
+           candidates
+
+           [word-end & word-ends]
+           (match-ends #"[^ \t\r\n\f]+" text)
+
+           chosen
+           []]
+
+      (if (and word-end (seq candidates))
+        (let [[inside more] (split-with #(< (long (first %)) (long word-end)) candidates)]
+          (recur more word-ends (into chosen (take 16 (sort-by by-rank inside)))))
+        (->> chosen
+             (sort-by by-rank)
+             (take 128)
+             (map first)
+             sort
+             vec)))))
 
 (defn- source-run-ranges
   [runs]
@@ -340,17 +395,32 @@
                       :text (subs (:text run) (- a (long run-start)) (- b (long run-start))))))))
         ranges))
 
+(defn- trim-code-break
+  "A line ending at a break inside code leaves the spaces before it between lines."
+  [runs]
+  (let [run (peek runs)]
+    (if (contains? (:style run) :code)
+      (let [text (str/trimr (:text run))]
+        (cond-> (pop runs)
+          (seq text)
+          (conj (assoc run :text text))))
+      runs)))
+
 (defn- prose-segment-lines
   [runs width initial cont]
   (let [text
         (apply str
           (map (fn [{:keys [text style]}]
                  ;; These one-cell, one-code-unit masks keep literal code
-                 ;; indivisible. Output is sliced from the ORIGINAL runs.
+                 ;; together between its explicit breaks. Output is sliced
+                 ;; from the ORIGINAL runs.
                  (if (contains? style :code)
                    (str/replace text #"[ -]" {" " "\u00a0" "-" "‑"})
                    text))
                runs))
+
+        ranges
+        (source-run-ranges runs)
 
         initial-width
         (- width (reduce + 0 (map run-width initial)))
@@ -366,7 +436,7 @@
                    ;; Layout must not normalize indentation or literal spacing.
                    (not (re-find #"^ | $|  |[\t\r\n\f]" text)))
           (let [prepared
-                (prepared-prose text)
+                (prepared-prose text (code-break-offsets ranges text))
 
                 widths
                 (double-array
@@ -375,21 +445,19 @@
                 layout
                 (ParagraphLayout/solve ^ParagraphLayout$Prepared prepared
                                        ^doubles widths
-                                       ^ParagraphLayout$Options terminal-prose-options)
-
-                ranges
-                (source-run-ranges runs)]
+                                       ^ParagraphLayout$Options terminal-prose-options)]
 
             (when (every? (fn [^ParagraphLayout$Line line]
                             (<= (.natural line) (.width line)))
                           (.lines layout))
               (mapv (fn [i ^ParagraphLayout$Line line]
-                      (cond-> {:runs (into (if (zero? i) initial cont)
-                                           (slice-source-runs ranges
-                                                              (.sourceStart line)
-                                                              (.sourceEnd line)))}
-                        (not (.last line))
-                        (merge {:wrap? true :optimized? true})))
+                      (let [runs (slice-source-runs ranges (.sourceStart line) (.sourceEnd line))]
+                        (cond-> {:runs (into (if (zero? i) initial cont)
+                                             (cond-> runs
+                                               (<= 0 (.endOffset line))
+                                               trim-code-break))}
+                          (not (.last line))
+                          (merge {:wrap? true :optimized? true}))))
                     (range)
                     (.lines layout)))))]
 
@@ -1853,6 +1921,12 @@
 
     (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
 
+(def ^:private max-gap
+  "Literal code never stretches, so a line of long code beside one or two words can only be
+   justified by opening holes between them. A line whose gaps would average wider than this
+   many columns keeps its natural spacing and ends ragged instead."
+  5)
+
 (defn justify-line-runs
   "Full-justify ONE soft-wrapped walker line's `runs` to `width` display columns
    by widening the inter-word whitespace INSIDE its text runs. The styled twin
@@ -1876,11 +1950,12 @@
    not ALREADY near-full (at `slack >= gap-count` every single gap would grow by
    at least a column, which is the river, not justification — lanterna itself
    has no such cap, that policy is ours), and whenever the justified text is not
-   word-for-word the text we sent.
+   word-for-word the text we sent. Inline code is literal: its spaces belong to a
+   word, never to a gap, so they keep their exact width.
 
    `full?` lifts that near-full cap for a line the paragraph optimizer broke:
    Justice stretches every such line flush to both margins, and user requests
-   render with that policy.
+   render with that policy, up to `max-gap` columns per gap on average.
 
    This is the ONE justifier in the TUI: `components` routes both its plain and
    its styled rows through it (a plain string is a single run), so no surface
@@ -1900,7 +1975,9 @@
          text
          (apply str
            (map (fn [r]
-                  (str (:text r)))
+                  (cond-> (str (:text r))
+                    (contains? (:style r) :code)
+                    (str/replace #"\s" "\u00a0")))
                 content))
 
          gaps
@@ -1913,10 +1990,11 @@
          (- width prefix-w (long (reduce + 0 (map run-width content))))
 
          stretched
-         (when (and (not-any? #(and (contains? (:style %) :code) (re-find #"\s" (:text %))) content)
-                    (pos? (count gaps))
+         (when (and (pos? (count gaps))
                     (pos? slack)
-                    (or full? (< slack (count gaps))))
+                    (if full?
+                      (<= slack (* (dec (long max-gap)) (count gaps)))
+                      (< slack (count gaps))))
            (p/justify-line text (- width prefix-w)))
 
          widened
@@ -1935,41 +2013,44 @@
          (vec
            (map-indexed
              (fn [^long i r]
-               (if (< i prefix-n)
-                 r
-                 (update r
-                         :text
-                         (fn [t]
-                           (let [t
-                                 (str t)
+               (cond (< i prefix-n) r
+                     (contains? (:style r) :code) (do (vreset! previous-ended-in-whitespace? false)
+                                                      r)
+                     :else (update r
+                                   :text
+                                   (fn [t]
+                                     (let [t
+                                           (str t)
 
-                                 first-match?
-                                 (volatile! true)
+                                           first-match?
+                                           (volatile! true)
 
-                                 starts-in-whitespace?
-                                 (boolean (re-find #"^\s" t))
+                                           starts-in-whitespace?
+                                           (boolean (re-find #"^\s" t))
 
-                                 continued-gap?
-                                 (and @previous-ended-in-whitespace? starts-in-whitespace?)
+                                           continued-gap?
+                                           (and @previous-ended-in-whitespace?
+                                                starts-in-whitespace?)
 
-                                 replaced
-                                 (str/replace t
-                                              #"\s+"
-                                              (fn [original]
-                                                (let [continuation? (and @first-match?
-                                                                         continued-gap?)]
-                                                  (vreset! first-match? false)
-                                                  (if continuation?
-                                                    ""
-                                                    (nth widened
-                                                         (long (vswap! idx
-                                                                       (fn [^long v]
-                                                                         (inc v))))
-                                                         original)))))]
+                                           replaced
+                                           (str/replace t
+                                                        #"\s+"
+                                                        (fn [original]
+                                                          (let [continuation? (and @first-match?
+                                                                                   continued-gap?)]
+                                                            (vreset! first-match? false)
+                                                            (if continuation?
+                                                              ""
+                                                              (nth widened
+                                                                   (long (vswap! idx
+                                                                                 (fn [^long v]
+                                                                                   (inc v))))
+                                                                   original)))))]
 
-                             (when (seq t)
-                               (vreset! previous-ended-in-whitespace? (boolean (re-find #"\s$" t))))
-                             replaced)))))
+                                       (when (seq t)
+                                         (vreset! previous-ended-in-whitespace?
+                                                  (boolean (re-find #"\s$" t))))
+                                       replaced)))))
              runs)))))))
 
 (defn ast->entries

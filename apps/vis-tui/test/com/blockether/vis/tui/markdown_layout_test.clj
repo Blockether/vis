@@ -502,8 +502,12 @@
             (vec (path-spans entries))]
 
         (expect (= 1 (count spans)))
-        (let [[body paths] (first spans)
-              {:keys [col width path]} (first paths)]
+        (let [[body paths]
+              (first spans)
+
+              {:keys [col width path]}
+              (first paths)]
+
           (expect (= "/w/src/core.clj" path))
           (expect (= "core.clj" (subs body col (+ (long col) (long width))))))))
   (it "a wrapped row presses on its FIRST physical line only"
@@ -511,7 +515,8 @@
             (layout/ast->entries [:ast
                                   [:table [:tr [:th "Name"] [:th "Note"]]
                                    [:tr [:td {:path "/w/src/core.clj"} "core.clj"]
-                                    [:td "a note long enough to wrap this row over several lines"]]]]
+                                    [:td
+                                     "a note long enough to wrap this row over several lines"]]]]
                                  26)
 
             spans
@@ -820,7 +825,8 @@
             result
             (layout/justify-line-runs runs 30)]
 
-        (expect (= "foo bar" (:text (second result))))))
+        ;; Only prose gaps widen; the space inside the code run is never a gap.
+        (expect (= ["Use  " "foo bar" "  with other words"] (mapv :text result)))))
   (it "uses restrained justification for ordinary TUI prose by default"
       (let [lines (plain-lines (layout/ast->entries [:ast [:p justice-prose]] 60 {:mode :channel}))]
         (expect (= 60 (p/display-width (first lines))))
@@ -845,6 +851,20 @@
                       24
                       {:mode :channel :full-justify? true}))]
         (expect (= "one two" (first lines))))))
+
+(def ^:private code-crowded-list
+  [:ast
+   [:ol
+    [:li "Run " [:c "npm run build --workspace apps/vis-companion"]
+     " from the repository root, then open " [:c "apps/vis-companion/dist/index.html"]
+     " in a browser to check the result."]
+    [:li "Check " [:c "git status --short"] " before staging, and never stage " [:c "PLAN.md"]
+     " or " [:c "dev/com/blockether/vis/dev/repro.clj"] " with the fix."]]
+   [:ul
+    [:li "The helper " [:c "com.blockether.vis.tui.markdown-layout/justify-line-runs"]
+     " widens gaps between words on every soft line of the paragraph."]
+    [:li "Use " [:c "clojure -M:test --namespace com.blockether.vis.tui.markdown-layout-test"]
+     " to run the tests, then read the counts it prints."]]])
 
 (defdescribe
   paragraph-optimizer-boundaries-test
@@ -887,15 +907,37 @@
         (expect (every? #(= "https://example.com" (:href %)) runs))
         (expect (= [{:col 0 :width 6 :url "https://example.com"}]
                    (get-in entries [1 :meta :links])))))
-  (it "leaves literal inline-code spacing and hyphens intact across wraps"
+  (it "wraps inline code at its own spaces but never at its hyphens"
       (let [lines
             (layout/ast->lines [:ast [:p "Use " [:c "foo bar-baz"] " with other words now"]] 14)
 
             code-runs
             (filter #(contains? (:style %) :code) (mapcat :runs lines))]
 
-        (expect (= ["foo bar-baz"] (mapv :text code-runs)))
+        (expect (= ["foo" "bar-baz"] (mapv :text code-runs)))
         (expect (every? #(<= (p/display-width %) 14) (texts lines)))))
+  (it "breaks long inline code after slashes and before dots"
+      (let [ast [:ast
+                 [:p "See " [:c "com.blockether.vis.tui.markdown-layout/justify-line-runs"]
+                  " for the rule."]]]
+        (expect (= [["See " "com.blockether.vis"] [".tui.markdown-layout/"]
+                    ["justify-line-runs" " for"] ["the rule."]]
+                   (mapv #(mapv :text (:runs %)) (layout/ast->lines ast 24))))))
+  (it "keeps lists crowded with inline code inside the width without wide holes"
+      ;; REGRESSION: unbreakable inline code pushed justified list items past the
+      ;; terminal edge, and the few prose gaps beside it stretched into holes.
+      (let [unwrapped (str/replace (str/join (plain-lines (layout/ast->entries code-crowded-list
+                                                                               400
+                                                                               {:mode :channel})))
+                                   #"\s"
+                                   "")]
+        (doseq [width (range 24 91)
+                opts [{:mode :channel} {:mode :channel :full-justify? true}]]
+
+          (let [lines (plain-lines (layout/ast->entries code-crowded-list width opts))]
+            (expect (every? #(<= (p/display-width %) width) lines))
+            (expect (not-any? #(re-find #"\S {6,}" %) lines))
+            (expect (= unwrapped (str/replace (str/join lines) #"\s" "")))))))
   (it "optimizes list and quote prose inside their fixed structural prefixes"
       (doseq [[ast prefix] [[[:ast [:ul [:li justice-prose]]] "- "]
                             [[:ast [:quote [:p justice-prose]]] "│ "]]]
@@ -938,7 +980,7 @@
             ^java.util.Map cache
             @#'layout/prepared-prose-cache]
 
-        (expect (identical? (prepare justice-prose) (prepare justice-prose)))
+        (expect (identical? (prepare justice-prose []) (prepare justice-prose [])))
         (doseq [i (range 100)]
-          (prepare (str "streamed paragraph " i)))
+          (prepare (str "streamed paragraph " i) []))
         (locking cache (expect (<= (.size cache) 64))))))
