@@ -495,6 +495,11 @@ describe('Justice prose', () => {
   });
 
   it('measures prose around inline code without reflowing every ordinary word', async () => {
+    const boxes: string[] = [];
+    measure.mockImplementation(function (this: HTMLElement) {
+      boxes.push(this.textContent ?? '');
+      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
+    });
     const text =
       'The plain words before and after inline code still need one shared layout when this transcript opens again.';
     const view = render(
@@ -506,7 +511,9 @@ describe('Justice prose', () => {
     await composed(prose);
     expect(prose.textContent).toBe(text);
     expect(prose.querySelector('code')).toHaveTextContent('inline code');
-    expect(measure.mock.calls.length).toBeLessThan(6);
+    // Besides the paragraph, only the space and the code box are laid out: the box whole,
+    // and on each side of its break.
+    expect(new Set(boxes)).toEqual(new Set([text, ' ', 'inline code', 'inline', 'code']));
   });
 
   it('retains styled partial words, explicit hyphens, graphemes and link actions', async () => {
@@ -529,18 +536,61 @@ describe('Justice prose', () => {
   });
 
   it('keeps oversized inline code native instead of changing its spaces or hyphens', async () => {
-    const code = 'git  status --short-with-a-long-identifier';
+    const code = 'git  status --short-with-a-long-identifier-name';
     const view = render(<Markdown>{`Read \`${code}\` without changing the command.`}</Markdown>);
     const prose = view.getByRole('paragraph');
     const original = prose.textContent;
     await waitFor(() => expect(measure).toHaveBeenCalled());
+    // The hyphenated option alone is wider than the column.
     expect(prose).not.toHaveAttribute('data-justice');
     expect(prose.textContent).toBe(original);
-    width = 640;
+    width = 720;
     resized();
     await composed(prose);
     expect(prose.querySelectorAll('code')).toHaveLength(1);
     expect(prose.querySelector('code')?.textContent).toBe(code);
+  });
+
+  it('breaks inline code only after spaces and slashes or before a dot', async () => {
+    const path = 'apps/vis-companion/src/components/well-known-name.tsx';
+    const text = `Open ${path} and run npm test -- --run --reporter dot before you commit.`;
+    const view = render(
+      <Markdown>
+        {`Open \`${path}\` and run \`npm test -- --run --reporter dot\` before you commit.`}
+      </Markdown>,
+    );
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    expect(prose.textContent).toBe(text);
+    expect([...prose.children].map((line) => line.textContent)).toEqual([
+      'Open apps/vis-companion/src/',
+      'components/well-known-name.tsx',
+      'and run npm test -- --run',
+      '--reporter dot before you',
+      'commit.',
+    ]);
+    // A space at a break stays between the lines, outside both code boxes.
+    for (const part of prose.querySelectorAll('code')) expect(part.textContent).not.toMatch(/^\s|\s$/);
+  });
+
+  it('leaves a line short at natural spacing rather than opening holes beside long code', async () => {
+    const view = render(
+      <Markdown>
+        {'Open `src/components/JustifiedProse.tsx` and read how every line is measured before you change it.'}
+      </Markdown>,
+    );
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    const lines = [...prose.children] as HTMLElement[];
+    expect(lines.map((line) => line.textContent)).toEqual([
+      'Open src/components/',
+      'JustifiedProse.tsx and read',
+      'how every line is measured',
+      'before you change it.',
+    ]);
+    // One gap beside the path would have to open ten glyphs wide.
+    expect(parseFloat(lines[0].style.wordSpacing)).toBe(0);
+    expect(parseFloat(lines[1].style.wordSpacing)).toBeGreaterThan(0);
   });
 
   it('keeps nested block structure and task controls native while optimizing child paragraphs', async () => {

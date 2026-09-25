@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import type { Prepared } from '@kitlangton/justice';
+import type { Prepared, WordFragments } from '@kitlangton/justice';
 import { engine } from '../lib/justice';
 
 type InlineProps = { children?: ReactNode; node?: { tagName?: string } };
@@ -20,9 +20,27 @@ type InlineContent = {
   measured: string;
   rich: boolean;
   code: boolean;
+  /** Ascending offsets inside inline code where a line may end. */
+  breaks: number[];
 };
 const INLINE_TAGS = new Set(['a', 'strong', 'em', 'del', 's', 'code', 'span', 'button']);
 const LITERAL_STYLE: CSSProperties = { whiteSpace: 'pre', wordSpacing: 0, letterSpacing: 0 };
+/**
+ * Inline code may wrap where a reader expects it to: after its spaces, after a path
+ * separator, or before a dot inside a name. Each match ends at the break. Hyphens and
+ * every other character stay joined; earlier rules win when a word has too many breaks.
+ */
+const CODE_BREAKS = [
+  /[^ \t\r\n\f][ \t\r\n\f]+(?=[^ \t\r\n\f])/g,
+  /[^/ \t\r\n\f]\/(?=[^/ \t\r\n\f])/g,
+  /[\p{L}\p{N}_)\]](?=\.[\p{L}_])/gu,
+];
+/**
+ * Literal code never stretches, so a line of long code beside one or two words can only
+ * be justified by opening holes between them. A line whose gaps would grow wider than
+ * this many natural spaces keeps its natural spacing and ends ragged instead.
+ */
+const MAX_GAP = 5;
 
 /** Only inline prose participates; block structure and hard breaks remain native. */
 function inlineContent(children: ReactNode): InlineContent | null {
@@ -30,12 +48,17 @@ function inlineContent(children: ReactNode): InlineContent | null {
   let measured = '';
   let rich = false;
   let code = false;
+  const candidates: [offset: number, rank: number][] = [];
   const visit = (value: ReactNode, literal = false): boolean =>
     Children.toArray(value).every((part) => {
       if (typeof part === 'string' || typeof part === 'number') {
         const source = String(part);
+        if (literal)
+          for (const [rank, pattern] of CODE_BREAKS.entries())
+            for (const match of source.matchAll(pattern))
+              candidates.push([text.length + match.index + match[0].length, rank]);
         text += source;
-        // Keep UTF-16 offsets identical while making code one indivisible token.
+        // Keep UTF-16 offsets identical while joining code between its chosen breaks.
         measured += literal
           ? source.replace(/[ \t\r\n\f]/g, '\u00a0').replace(/[-‐]/g, '‑')
           : source;
@@ -49,7 +72,7 @@ function inlineContent(children: ReactNode): InlineContent | null {
       return visit(part.props.children, literal || tag === 'code');
     });
   if (!visit(children)) return null;
-  const words = measured.match(/[^ \t\r\n\f]+/g) ?? [];
+  const words = [...measured.matchAll(/[^ \t\r\n\f]+/g)];
   if (
     !text ||
     text !== text.trim() ||
@@ -57,13 +80,31 @@ function inlineContent(children: ReactNode): InlineContent | null {
     /[\u00a0\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(text) ||
     words.length > 400 ||
     (measured.match(/[-‐]/g)?.length ?? 0) > 128 ||
-    words.some((word) => (word.match(/[-‐]/g)?.length ?? 0) > 16) ||
+    words.some(([word]) => (word.match(/[-‐]/g)?.length ?? 0) > 16) ||
     [...text.matchAll(/\p{Letter}/gu)].some(
       ([letter]) => !/[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}]/u.test(letter),
     )
   )
     return null;
-  return { children, text, measured, rich, code };
+  // Like source hyphens, code breaks stay bounded: at most 16 in a word and 128 in the
+  // paragraph. Every fragment between two breaks is measured.
+  const byRank = (a: readonly number[], b: readonly number[]) => a[1] - b[1] || a[0] - b[0];
+  const chosen: [offset: number, rank: number][] = [];
+  candidates.sort((a, b) => a[0] - b[0]);
+  let next = 0;
+  for (const word of words) {
+    const end = word.index + word[0].length;
+    const inside: [offset: number, rank: number][] = [];
+    for (; next < candidates.length && candidates[next][0] < end; next++)
+      inside.push(candidates[next]);
+    chosen.push(...inside.sort(byRank).slice(0, 16));
+  }
+  const breaks = chosen
+    .sort(byRank)
+    .slice(0, 128)
+    .map(([offset]) => offset)
+    .sort((a, b) => a - b);
+  return { children, text, measured, rich, code, breaks };
 }
 
 /** Slice the React-owned inline tree, retaining links, styles and event handlers. */
@@ -144,7 +185,6 @@ function prepareInline(
   if (!(prepared.space > 0)) throw new RangeError('Space width must be positive');
   prepared.endHangs.fill(0);
   prepared.startHangs.fill(0);
-  const cache = new Map<string, number>();
   // A Range reads ordinary styled tokens from one laid-out inline tree. Replacing
   // the probe for every word forces a full layout and style recalculation per token.
   probe.replaceChildren(...measuredSlice(source, 0, content.text.length));
@@ -167,7 +207,6 @@ function prepareInline(
   }
   if (offsets[offsets.length - 1] !== content.text.length)
     throw new RangeError('Inline source mismatch');
-  let boxProbe: HTMLElement | null = null;
   const locate = (index: number): readonly [Text, number] => {
     let low = 0;
     let high = leaves.length - 1;
@@ -178,47 +217,84 @@ function prepareInline(
     }
     return [leaves[low], index - offsets[low]];
   };
-  const measure = (start: number, end: number) => {
+  const widths = new Map<string, number>();
+  const boxes = new Map<string, HTMLElement>();
+  const request = (start: number, end: number) => {
     const key = `${start}:${end}`;
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    let width: number;
+    if (widths.has(key) || boxes.has(key)) return key;
     if (boxed.some((box) => start < box.end && end > box.start)) {
       // Keep the ranged tree untouched while preserving the full code/control box.
       // An out-of-flow child cannot affect its parent's inline measurement.
-      if (!boxProbe) {
-        boxProbe = probe.cloneNode(false) as HTMLElement;
-        probe.appendChild(boxProbe);
-      }
-      boxProbe.replaceChildren(...measuredSlice(source, start, end));
-      width = boxProbe.getBoundingClientRect().width;
+      const box = probe.cloneNode(false) as HTMLElement;
+      box.append(...measuredSlice(source, start, end));
+      boxes.set(key, box);
     } else {
       const [startNode, startOffset] = locate(start);
       const [endNode, endOffset] = locate(end);
       range.setStart(startNode, startOffset);
       range.setEnd(endNode, endOffset);
-      width = range.getBoundingClientRect().width;
+      widths.set(key, range.getBoundingClientRect().width);
     }
-    if (!Number.isFinite(width) || width < 0) throw new RangeError('Invalid inline width');
-    cache.set(key, width);
-    return width;
+    return key;
   };
   const words = [...content.measured.matchAll(/[^ \t\r\n\f]+/g)];
-  for (const [index, word] of words.entries()) {
-    prepared.widths[index + 1] =
-      prepared.widths[index] + measure(word.index, word.index + word[0].length);
-    const fragments = prepared.hyphenation?.[index];
-    if (!fragments) continue;
-    const { offsets, widths, hyphenWidths } = fragments;
-    for (let from = 0; from < offsets.length - 1; from++) {
-      for (let to = from + 1; to < offsets.length; to++) {
-        const at = from * offsets.length + to;
-        widths[at] = measure(word.index + offsets[from], word.index + offsets[to]);
-        // prepare() only supplies source-authored hyphens: no glyph is inserted.
-        hyphenWidths[at] = widths[at];
+  let next = 0;
+  const plans = words.map(
+    (word, index): { start: number; whole: string; bounds: number[]; keys: string[][] } => {
+      const start = word.index;
+      const end = start + word[0].length;
+      const whole = request(start, end);
+      const bounds = new Set(prepared.hyphenation?.[index]?.offsets);
+      for (; next < content.breaks.length && content.breaks[next] < end; next++)
+        bounds.add(content.breaks[next] - start);
+      if (!bounds.size) return { start, whole, bounds: [], keys: [] };
+      // A line ending at a break inside code leaves the spaces before it between lines.
+      const stop = (offset: number) => {
+        let bound = start + offset;
+        if (bound < end) while (content.measured[bound - 1] === '\u00a0') bound--;
+        return bound;
+      };
+      const sorted = [...bounds.add(0).add(end - start)].sort((a, b) => a - b);
+      const keys = sorted.map((from, i) =>
+        sorted.map((to, j) => (j > i ? request(start + from, stop(to)) : '')),
+      );
+      return { start, whole, bounds: sorted, keys };
+    },
+  );
+  // Lay every box out together: one layout pass instead of one per measured token.
+  probe.append(...boxes.values());
+  for (const [key, box] of boxes) widths.set(key, box.getBoundingClientRect().width);
+  const width = (key: string) => {
+    const value = widths.get(key) ?? Number.NaN;
+    if (!Number.isFinite(value) || value < 0) throw new RangeError('Invalid inline width');
+    return value;
+  };
+  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  const hyphenation = plans.map(({ start, whole, bounds, keys }, index) => {
+    prepared.widths[index + 1] = prepared.widths[index] + width(whole);
+    if (!bounds.length) return undefined;
+    const size = bounds.length;
+    const counts = bounds.map(
+      (bound) => [...graphemes.segment(content.measured.slice(start, start + bound))].length,
+    );
+    const fragments: WordFragments = {
+      offsets: bounds,
+      widths: new Float64Array(size * size),
+      hyphenWidths: new Float64Array(size * size),
+      characters: new Float64Array(size * size),
+      explicit: bounds.map((_, at) => at > 0 && at < size - 1),
+    };
+    for (let from = 0; from < size - 1; from++) {
+      for (let to = from + 1; to < size; to++) {
+        const at = from * size + to;
+        // Source hyphens and code breaks are literal: no glyph is inserted.
+        fragments.widths[at] = fragments.hyphenWidths[at] = width(keys[from][to]);
+        fragments.characters[at] = counts[to] - counts[from];
       }
     }
-  }
+    return fragments;
+  });
+  if (hyphenation.some(Boolean)) prepared.hyphenation = hyphenation;
   return prepared;
 }
 
@@ -417,18 +493,22 @@ export function JustifiedProse({
         setComposition(null);
         return;
       }
+      const loose = (MAX_GAP - 1) * prepared.space;
       const lines = layout.lines.map((line, index) => {
         const start = words[line.start].index + (line.startOffset ?? 0);
         const last = words[line.end - 1];
-        const end = last.index + (line.endOffset ?? last[0].length);
+        let end = last.index + (line.endOffset ?? last[0].length);
+        // A break after spaces inside code leaves them between the lines, outside the box.
+        if (line.endOffset !== undefined) while (content.measured[end - 1] === '\u00a0') end--;
         const next = layout.lines[index + 1];
         const nextStart = next ? words[next.start].index + (next.startOffset ?? 0) : text.length;
+        const ragged = line.wordSpacing > loose;
         return {
           start,
           end,
           separator: text.slice(end, nextStart),
-          wordSpacing: line.wordSpacing,
-          tracking: line.tracking,
+          wordSpacing: ragged ? 0 : line.wordSpacing,
+          tracking: ragged ? 0 : line.tracking,
         };
       });
       setComposition({

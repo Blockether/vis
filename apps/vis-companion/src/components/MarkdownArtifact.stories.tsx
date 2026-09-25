@@ -165,11 +165,16 @@ export const RichReadOnlyArtifact: Story = {
     });
     const link = canvas.getByRole('link', { name: 'the reference' });
     expect(link).toHaveAttribute('href', 'https://example.com');
-    expect(prose.querySelectorAll('code')).toHaveLength(1);
-    const code = prose.querySelector('code')!;
-    expect(code.textContent).toBe('git  status --short');
-    expect(getComputedStyle(code).wordSpacing).toBe('0px');
-    expect(parseFloat(getComputedStyle(code).letterSpacing) || 0).toBe(0);
+    const code = prose.querySelectorAll('code');
+    // Code may wrap after a space, which then stays between the lines, outside the boxes.
+    const literal = document.createRange();
+    literal.setStartBefore(code[0]);
+    literal.setEndAfter(code[code.length - 1]);
+    expect(literal.toString()).toBe('git  status --short');
+    for (const part of code) {
+      expect(getComputedStyle(part).wordSpacing).toBe('0px');
+      expect(parseFloat(getComputedStyle(part).letterSpacing) || 0).toBe(0);
+    }
     const range = document.createRange();
     range.selectNodeContents(prose);
     const selection = window.getSelection()!;
