@@ -11,7 +11,7 @@ import {
 } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
-import { parsePairing, parsePairingJson, parsePairingUrl } from '../lib/pairing';
+import { parsePairing, parsePairingUrl } from '../lib/pairing';
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -1248,7 +1248,7 @@ export function AddMachine({
 
   // A pairing link carries its own token; a typed address may skip the scheme,
   // so it is supplied instead of refused, and the token field stands beside it.
-  const link = parsePairingUrl(payload) ?? parsePairingJson(payload);
+  const link = parsePairingUrl(payload);
   const address = link ? null : normalizeGatewayUrl(payload);
   const asksToken = Boolean(address);
 

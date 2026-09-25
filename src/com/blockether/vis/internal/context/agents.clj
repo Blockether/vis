@@ -429,10 +429,3 @@
    business."
   []
   (:result (current)))
-
-(defn read-warnings
-  "Vec of warning maps for AGENTS.md / CLAUDE.md read failures.
-   Empty when no file is present at all (absence isn't a warning)
-   or when every present file read cleanly."
-  []
-  (or (:warnings (current)) []))

@@ -13,11 +13,6 @@
   [path]
   (Trust/managerForPem path))
 
-(defn ssl-context-for-pem
-  "Return the runtime-owned TLS context combining defaults and host PEM."
-  [path]
-  (Trust/contextForPem path))
-
 (defn install!
   "Install host trust once at startup, shared by HTTPS and pip. Never pass a session CA."
   ([] (install! (System/getenv "VIS_SYSTEM_CA_CERT")))

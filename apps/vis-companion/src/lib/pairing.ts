@@ -1,14 +1,10 @@
-// Parse the gateway pairing payloads produced by `vis-agent gateway pair`
-// (src/com/blockether/vis/internal/gateway/pairing.clj).
+// Parse the gateway pairing link produced by `vis-agent gateway pair`
+// (src/com/blockether/vis/internal/gateway/pairing.clj). The QR encodes:
 //
-// Two shapes are supported, matching the Clojure producers exactly:
+//   vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&alt=<urls>&token=<bearer>
 //
-//   1. URL form (the QR default):
-//        vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&token=<bearer>
-//
-//   2. JSON form (pairing-json):
-//        {"type":"vis-gateway-pairing","version":1,
-//         "url":"http://100.64.0.10:7890","hosts":[...],"token":"<bearer>"}
+// `alt` and `token` are optional: `alt` lists other candidate addresses and
+// `token` carries the gateway's bearer token.
 
 import type { GatewayConn } from './types';
 
@@ -37,45 +33,13 @@ export function parsePairingUrl(input: string): GatewayConn | null {
   return { url, token, label: hostLabel(url), ...(alts.length ? { alts } : {}) };
 }
 
-/** Parse the JSON pairing payload into a connection, or null. */
-export function parsePairingJson(input: string): GatewayConn | null {
-  try {
-    const obj = JSON.parse(input.trim());
-    if (obj && obj.type === 'vis-gateway-pairing' && typeof obj.url === 'string') {
-      const alts = Array.isArray(obj.hosts)
-        ? (obj.hosts as unknown[])
-            .filter((h): h is string => typeof h === 'string' && h.length > 0)
-            .map((h) => {
-              try {
-                const u = new URL(obj.url);
-                return `${u.protocol}//${h}${u.port ? `:${u.port}` : ''}`;
-              } catch {
-                return '';
-              }
-            })
-            .filter((u) => u && u !== obj.url)
-        : [];
-      return {
-        url: obj.url,
-        token: typeof obj.token === 'string' ? obj.token : undefined,
-        label: hostLabel(obj.url),
-        ...(alts.length ? { alts } : {}),
-      };
-    }
-  } catch {
-    /* not JSON */
-  }
-  return null;
-}
-
 /**
- * Best-effort parse of anything a scan or paste can yield: the vis:// URL, the
- * JSON payload, or a bare gateway URL (http://host:port).
+ * Best-effort parse of anything a scan or paste can yield: the vis:// URL or a
+ * bare gateway URL (http://host:port).
  */
 export function parsePairing(input: string): GatewayConn | null {
   return (
     parsePairingUrl(input) ??
-    parsePairingJson(input) ??
     (/^https?:\/\//i.test(input.trim())
       ? { url: input.trim(), label: hostLabel(input.trim()) }
       : null)

@@ -466,10 +466,6 @@
        (map-values? non-blank-string? non-blank-string? (:llm-headers x))
        (seq (:llm-headers x))))
 
-(defn iteration-start-hint?
-  [x]
-  (and (map? x) (non-blank-string? (:text x)) (optional-field? x :importance keyword?)))
-
 (defn answer-validation-reject?
   [x]
   (and (map? x)
@@ -2812,22 +2808,6 @@
   (doseq [ext (registered-extensions)]
     (register-fn! environment ext))
   environment)
-
-(defn- registered-extensions-for-source-ns
-  [ns-sym]
-  (vec (filter #(contains? (set (ext-source-nses %)) ns-sym) (registered-extensions))))
-
-(defn load-extension!
-  "Dynamically load extension namespace and return extensions it registered."
-  [ns-sym]
-  (require ns-sym)
-  (let [exts (registered-extensions-for-source-ns ns-sym)]
-    (if (seq exts)
-      exts
-      (throw (ex-info (str "Namespace '" ns-sym "' was loaded but did not call register-extension!")
-                      {:type :extension/no-registration
-                       :namespace ns-sym
-                       :registered (vec (keys @extension-registry))})))))
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values

@@ -335,7 +335,7 @@ Apple/Google review and notarization queues are external waits, not build time.
 src/
   lib/
     gateway.ts    REST + SSE client (bearer auth, fetch-stream SSE)
-    pairing.ts    parse vis:// links and the JSON pairing payload
+    pairing.ts    parse vis:// pairing links
     storage.ts    Capacitor Preferences (localStorage fallback) — saved gateways
     scan.ts       optional QR scanning
     deeplink.ts   vis:// app-open handler

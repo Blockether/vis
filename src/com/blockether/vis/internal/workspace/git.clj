@@ -351,12 +351,6 @@
     :git
     :none))
 
-(defn repo-name
-  "Human label for the repository containing `start` — its top-level dir name."
-  [^File start]
-  (some-> (repo-work-tree start)
-          .getName))
-
 ;; porcelain v2 status parsing
 ;; `git status --porcelain=v2 --branch -z` gives, NUL-separated:
 ;;   # branch.oid <sha|(initial)>
@@ -537,29 +531,6 @@
     {:modified (+ (long modified) (long changed))
      :created (+ (long added) (long untracked))
      :deleted (+ (long missing) (long removed))}))
-
-;; porcelain-like status entries + snapshot
-
-(defn file-dirty?
-  "True when `f` is a TRACKED file carrying UNCOMMITTED changes — modified in
-   the worktree, staged, deleted/missing, or conflicting. An UNTRACKED
-   (brand-new) file is NOT dirty (write is how you create one) and a clean
-   tracked file is fine. Repo-less / nil-safe → false."
-  [^File f]
-  (boolean (when (and f (.exists ^File f))
-             (let [cf
-                   (.getCanonicalFile ^File f)
-
-                   dir
-                   (.getParentFile ^java.io.File cf)
-
-                   {:keys [exit out]}
-                   (run-git dir ["status" "--porcelain" "-z" "--" (.getPath cf)])]
-
-               (and (= 0 exit)
-                    (some (fn [line]
-                            (and (seq line) (not (str/starts-with? line "??"))))
-                          (remove empty? (str/split (or out "") #"\u0000"))))))))
 
 ;; working-tree status (footer) + cache
 

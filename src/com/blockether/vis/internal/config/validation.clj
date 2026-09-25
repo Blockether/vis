@@ -41,14 +41,6 @@
 
 (defn valid? [config] (contract-config/config-valid? config))
 
-(defn providers-valid?
-  [providers]
-  (contract-config/definition-valid? "config" {"providers" providers}))
-
-(defn environment-valid?
-  [environment]
-  (contract-config/definition-valid? "environment" environment))
-
 (defn- pointer-segments
   [pointer]
   (if (str/blank? pointer)

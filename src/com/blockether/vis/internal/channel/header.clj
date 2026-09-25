@@ -115,11 +115,6 @@
 
 ;;; ── Workspace switcher sizing policy ───────────────────────────────────
 
-(def tab-entry-padding
-  "Inner padding (in display cells / spaces) reserved on each side of a
-   workspace label so the label never crashes into the cell border."
-  1)
-
 (def tab-entry-target-width
   "Natural width per workspace entry used to drive the visible-entry
    clamp. Wider → fewer workspaces fit before arrows appear; narrower →
@@ -161,18 +156,6 @@
         (if (< natural (long min-visible-tab-entries)) natural clamped)]
 
     (min (long workspace-n) (long cap))))
-
-;;; ── Glyphs ─────────────────────────────────────────────────────────────
-;;
-;; Unicode characters render fine in every channel we care about
-;; (Lanterna terminal); channels needing ASCII
-;; fallbacks can swap on their side.
-
-(def workspace-arrow-left "Glyph for the `previous workspace` overflow affordance." "«")
-
-(def workspace-arrow-right "Glyph for the `next workspace` overflow affordance." "»")
-
-(def workspace-ellipsis "Glyph appended when a workspace label has to be truncated." "…")
 
 ;;; ── Defaults ───────────────────────────────────────────────────────────
 

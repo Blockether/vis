@@ -9,7 +9,6 @@
   Tailscale fits naturally: if a 100.64.0.0/10 interface is present we prefer it
   over LAN addresses, otherwise we fall back to site-local IPv4 addresses."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (com.google.zxing BarcodeFormat EncodeHintType)
            (com.google.zxing.qrcode QRCodeWriter)
@@ -266,15 +265,6 @@
          (url-encode primary)
          (when (seq alts) (str "&alt=" (url-encode (str/join "," alts))))
          (when-not (str/blank? (str token)) (str "&token=" (url-encode token))))))
-
-(defn pairing-json
-  [{:keys [host port token require-token? advertise]}]
-  (let [url (or (advertised-url advertise port)
-                (str "http://" (or (first (candidate-hosts host)) host) ":" port))]
-    (wire/json-str
-      (cond-> {:type "vis-gateway-pairing" :version 1 :url url :hosts (candidate-hosts host)}
-        require-token?
-        (assoc :token token)))))
 
 (defn terminal-qr
   "Render `text` as a terminal QR code using Unicode half-blocks. Returns a string
