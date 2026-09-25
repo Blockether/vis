@@ -16,6 +16,7 @@ const onOpen = fn();
 const commands = {
   open: onOpen,
   rename: fn(async () => {}),
+  fork: fn(async () => {}),
   requestDelete: fn(),
   toggleStar: fn(),
 };

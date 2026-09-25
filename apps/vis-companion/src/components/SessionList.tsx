@@ -26,6 +26,7 @@ import { SwipeActions, type SwipeAction } from './SwipeActions';
 import {
   ArchiveIcon,
   FolderPlusIcon,
+  ForkIcon,
   PencilIcon,
   ProjectsIcon,
   StarIcon,
@@ -98,6 +99,8 @@ export type SessionRowCommands = {
   moveToGroup?: (session: Session, conn: GatewayConn) => void;
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
+  /** Copy the entire conversation and open the fork; absent in standalone rows. */
+  fork?: (session: Session, conn: GatewayConn) => Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
   /**
@@ -403,6 +406,25 @@ export const SessionRow = memo(function SessionRow({
       setRenameBusy(false);
     }
   }, [cancelRename, commands, conn, renameDraft, session]);
+
+  const [forkBusy, setForkBusy] = useState(false);
+  const [forkError, setForkError] = useState('');
+  const forkingRef = useRef(false);
+  const forkSession = useCallback(async () => {
+    if (!commands.fork || forkingRef.current) return;
+    forkingRef.current = true;
+    setForkBusy(true);
+    setForkError('');
+    try {
+      await commands.fork(session, conn);
+    } catch (cause) {
+      setForkError(cause instanceof Error ? cause.message : 'Session could not be forked.');
+    } finally {
+      forkingRef.current = false;
+      setForkBusy(false);
+    }
+  }, [commands, conn, session]);
+
   // The star is the GATEWAY's, and the row is holding the only copy of it there is:
   // `favorite_rank`, straight off this session. No device-side store can disagree
   // with it — which is what used to leave one screen starred and another plain.
@@ -538,6 +560,17 @@ export const SessionRow = memo(function SessionRow({
                     icon: <PencilIcon className="size-4" />,
                     onSelect: beginRename,
                   },
+                  ...(commands.fork
+                    ? [
+                        {
+                          key: 'fork',
+                          label: forkBusy ? 'Forking...' : 'Fork',
+                          name: `Fork ${title}`,
+                          icon: <ForkIcon className="size-4" />,
+                          onSelect: () => void forkSession(),
+                        },
+                      ]
+                    : []),
                   ...filing,
                   ...archiving,
                   {
@@ -724,9 +757,9 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </SwipeActions>
       )}
-      {(renameError || archiveError || deletion?.error) && (
+      {(renameError || forkError || archiveError || deletion?.error) && (
         <div className="px-3 pb-2">
-          <Banner kind="err">{renameError || archiveError || deletion?.error}</Banner>
+          <Banner kind="err">{renameError || forkError || archiveError || deletion?.error}</Banner>
         </div>
       )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to

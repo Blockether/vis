@@ -399,9 +399,9 @@ export function SessionsScreen({
     }>(),
   );
   const fleetRefreshQueued = useRef(false);
-  // The row action belongs to one session on one machine. Renaming needs an input
-  // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
-  // Forking is the transcript's verb — it is cut at a turn, on that turn.
+  // The row action belongs to one session on one machine. Renaming edits its title
+  // inline; deleting asks through `ConfirmRow` exactly where that session row stood.
+  // Forking from the row copies the whole conversation; a turn cuts it in the transcript.
   const [rowAction, setRowAction] = useState<SessionRowAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1435,6 +1435,17 @@ export function SessionsScreen({
     [load, onOpen],
   );
 
+  /** Copy the whole conversation and open the fork without waiting for the fleet read. */
+  const forkSession = useCallback(
+    async (session: Session, conn: GatewayConn) => {
+      const forked = await clientFor(conn).forkSession(session.id);
+      if (forked.id) setMinted((was) => [forked.id, ...was].slice(0, MINTED_KEEP));
+      if (forked.id) await onOpen(conn, forked.id, true);
+      void load();
+    },
+    [load, onOpen],
+  );
+
   // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
   // repo checked out on two machines is two projects and two deletes. A saved project is
   // one gateway request; a root-only group keeps the existing complete, best-effort walk.
@@ -1558,11 +1569,12 @@ export function SessionsScreen({
     () => ({
       open: onOpen,
       rename: renameSession,
+      fork: forkSession,
       archive: archiveSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, renameSession, archiveSession, startDelete, toggleStar],
+    [onOpen, renameSession, forkSession, archiveSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({
