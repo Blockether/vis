@@ -1924,7 +1924,31 @@
           (expect (= text
                      (str/replace (str/join " " (map #(subs % 1) (:prewrapped-lines window)))
                                   #"\s+"
-                                  " "))))))
+                                  " ")))))
+    (it "fully justifies optimized user prose, as Justice renders it"
+        (let [text
+              (str "A quiet paragraph can become much more comfortable when its lines share "
+                   "a reasonably even rhythm of spaces instead of alternating between very "
+                   "tight and very loose arrangements.")
+
+              visible
+              (fn [pm]
+                (into [] (comp (remove str/blank?) (map #(subs % 1))) (:prewrapped-lines pm)))
+
+              user-lines
+              (visible (project-message (user-msg text) 28 settings))
+
+              window-lines
+              (visible
+                (project-message (user-msg text) 28 settings {:window-start 0 :window-num 20}))
+
+              answer-lines
+              (visible (project-message (plain-assistant-msg text) 28 settings))]
+
+          (expect (every? #(= 24 (count %)) (butlast user-lines)))
+          (expect (= user-lines window-lines))
+          (expect (some #(< (count %) 24) (butlast answer-lines)))
+          (expect (= text (str/join " " (mapcat #(str/split % #" +") user-lines)))))))
   (describe "plain assistant messages run through markdown formatting"
             (it "produces a non-empty :text"
                 (let [pm (project-message (plain-assistant-msg "**bold**") bubble-w settings)]

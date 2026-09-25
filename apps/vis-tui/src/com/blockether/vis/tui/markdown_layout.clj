@@ -389,7 +389,7 @@
                                                               (.sourceStart line)
                                                               (.sourceEnd line)))}
                         (not (.last line))
-                        (assoc :wrap? true)))
+                        (merge {:wrap? true :optimized? true})))
                     (range)
                     (.lines layout)))))]
 
@@ -1878,94 +1878,99 @@
    has no such cap, that policy is ours), and whenever the justified text is not
    word-for-word the text we sent.
 
+   `full?` lifts that near-full cap for a line the paragraph optimizer broke:
+   Justice stretches every such line flush to both margins, and user requests
+   render with that policy.
+
    This is the ONE justifier in the TUI: `components` routes both its plain and
    its styled rows through it (a plain string is a single run), so no surface
    keeps a second copy of the gap arithmetic."
-  [runs ^long width]
-  (let [prefix-n
-        (count (take-while (fn [r]
-                             (or (contains? (:style r) :marker)
-                                 (contains? (:style r) :quote)
-                                 (str/blank? (str (:text r)))))
-                           runs))
+  ([runs ^long width] (justify-line-runs runs width false))
+  ([runs ^long width full?]
+   (let [prefix-n
+         (count (take-while (fn [r]
+                              (or (contains? (:style r) :marker)
+                                  (contains? (:style r) :quote)
+                                  (str/blank? (str (:text r)))))
+                            runs))
 
-        content
-        (drop prefix-n runs)
+         content
+         (drop prefix-n runs)
 
-        text
-        (apply str
-          (map (fn [r]
-                 (str (:text r)))
-               content))
+         text
+         (apply str
+           (map (fn [r]
+                  (str (:text r)))
+                content))
 
-        gaps
-        (vec (re-seq #"\s+" text))
+         gaps
+         (vec (re-seq #"\s+" text))
 
-        prefix-w
-        (long (reduce + 0 (map run-width (take prefix-n runs))))
+         prefix-w
+         (long (reduce + 0 (map run-width (take prefix-n runs))))
 
-        slack
-        (- width prefix-w (long (reduce + 0 (map run-width content))))
+         slack
+         (- width prefix-w (long (reduce + 0 (map run-width content))))
 
-        stretched
-        (when (and (not-any? #(and (contains? (:style %) :code) (re-find #"\s" (:text %))) content)
-                   (pos? (count gaps))
-                   (pos? slack)
-                   (< slack (count gaps)))
-          (p/justify-line text (- width prefix-w)))
+         stretched
+         (when (and (not-any? #(and (contains? (:style %) :code) (re-find #"\s" (:text %))) content)
+                    (pos? (count gaps))
+                    (pos? slack)
+                    (or full? (< slack (count gaps))))
+           (p/justify-line text (- width prefix-w)))
 
-        widened
-        (when stretched (vec (re-seq #"\s+" stretched)))]
+         widened
+         (when stretched (vec (re-seq #"\s+" stretched)))]
 
-    (if (or (nil? stretched)
-            (not= (count widened) (count gaps))
-            (not= (str/split text #"\s+") (str/split stretched #"\s+")))
-      runs
-      (let [idx
-            (volatile! -1)
+     (if (or (nil? stretched)
+             (not= (count widened) (count gaps))
+             (not= (str/split text #"\s+") (str/split stretched #"\s+")))
+       runs
+       (let [idx
+             (volatile! -1)
 
-            previous-ended-in-whitespace?
-            (volatile! false)]
+             previous-ended-in-whitespace?
+             (volatile! false)]
 
-        (vec
-          (map-indexed
-            (fn [^long i r]
-              (if (< i prefix-n)
-                r
-                (update r
-                        :text
-                        (fn [t]
-                          (let [t
-                                (str t)
+         (vec
+           (map-indexed
+             (fn [^long i r]
+               (if (< i prefix-n)
+                 r
+                 (update r
+                         :text
+                         (fn [t]
+                           (let [t
+                                 (str t)
 
-                                first-match?
-                                (volatile! true)
+                                 first-match?
+                                 (volatile! true)
 
-                                starts-in-whitespace?
-                                (boolean (re-find #"^\s" t))
+                                 starts-in-whitespace?
+                                 (boolean (re-find #"^\s" t))
 
-                                continued-gap?
-                                (and @previous-ended-in-whitespace? starts-in-whitespace?)
+                                 continued-gap?
+                                 (and @previous-ended-in-whitespace? starts-in-whitespace?)
 
-                                replaced
-                                (str/replace t
-                                             #"\s+"
-                                             (fn [original]
-                                               (let [continuation? (and @first-match?
-                                                                        continued-gap?)]
-                                                 (vreset! first-match? false)
-                                                 (if continuation?
-                                                   ""
-                                                   (nth widened
-                                                        (long (vswap! idx
-                                                                      (fn [^long v]
-                                                                        (inc v))))
-                                                        original)))))]
+                                 replaced
+                                 (str/replace t
+                                              #"\s+"
+                                              (fn [original]
+                                                (let [continuation? (and @first-match?
+                                                                         continued-gap?)]
+                                                  (vreset! first-match? false)
+                                                  (if continuation?
+                                                    ""
+                                                    (nth widened
+                                                         (long (vswap! idx
+                                                                       (fn [^long v]
+                                                                         (inc v))))
+                                                         original)))))]
 
-                            (when (seq t)
-                              (vreset! previous-ended-in-whitespace? (boolean (re-find #"\s$" t))))
-                            replaced)))))
-            runs))))))
+                             (when (seq t)
+                               (vreset! previous-ended-in-whitespace? (boolean (re-find #"\s$" t))))
+                             replaced)))))
+             runs)))))))
 
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
@@ -1983,6 +1988,10 @@
    `:justify?` defaults to true: near-full soft-wrapped prose lines gain restrained
    inter-word spacing. Set false to keep them ragged-right. Paragraph endings,
    explicit breaks, headings, tables and literal code are never stretched.
+
+   `:full-justify? true` stretches every soft line the paragraph optimizer broke
+   flush to both margins, the spacing Justice itself renders. Unoptimized
+   fallback lines keep the near-full rule.
 
    `:window-start` / `:window-num` render a visible slice through the same
    justification path as the full projection.
@@ -2009,13 +2018,16 @@
          justify?
          (not (false? (:justify? opts)))
 
+         full-justify?
+         (boolean (:full-justify? opts))
+
          ms
          (marker-set-for (:mode opts))]
 
-     (mapv (fn [{:keys [runs block-tag block-level meta wrap?]}]
+     (mapv (fn [{:keys [runs block-tag block-level meta wrap? optimized?]}]
              (let [runs
                    (if (and justify? wrap? (contains? #{:p :ul :ol :quote} block-tag))
-                     (justify-line-runs runs (long width))
+                     (justify-line-runs runs (long width) (boolean (and full-justify? optimized?)))
                      runs)
 
                    links

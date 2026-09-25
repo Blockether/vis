@@ -825,7 +825,26 @@
       (let [lines (plain-lines (layout/ast->entries [:ast [:p justice-prose]] 60 {:mode :channel}))]
         (expect (= 60 (p/display-width (first lines))))
         (expect (str/starts-with? (first lines) "A  quiet"))
-        (expect (not (str/includes? (last lines) "  "))))))
+        (expect (not (str/includes? (last lines) "  ")))))
+  (it "stretches optimized soft lines fully when asked, as Justice renders them"
+      (let [full
+            (plain-lines (layout/ast->entries [:ast [:p justice-prose]]
+                                              24
+                                              {:mode :channel :full-justify? true}))
+
+            restrained
+            (plain-lines (layout/ast->entries [:ast [:p justice-prose]] 24 {:mode :channel}))]
+
+        (expect (every? #(= 24 (p/display-width %)) (butlast full)))
+        (expect (some #(< (p/display-width %) 24) (butlast restrained)))
+        (expect (= (str/split justice-prose #" ") (mapcat #(str/split % #" +") full)))))
+  (it "keeps unoptimized fallback lines on the near-full rule under full justification"
+      (let [lines (plain-lines
+                    (layout/ast->entries
+                      [:ast [:p "one two https://example.com/a/very/long/path/that/cannot/fit end"]]
+                      24
+                      {:mode :channel :full-justify? true}))]
+        (expect (= "one two" (first lines))))))
 
 (defdescribe
   paragraph-optimizer-boundaries-test

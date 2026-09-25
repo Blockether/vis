@@ -793,7 +793,12 @@
               (not (str/includes? (str (:text message)) "````vis-table"))
               (not (str/includes? (str (:text message)) "````vis-doc"))
               (#{:assistant :user} (:role message))
-              (not (str/blank? (:text message))))]
+              (not (str/blank? (:text message))))
+
+         ;; User requests take Justice's own spacing, as in the companion app:
+         ;; every soft line the paragraph optimizer broke sits flush to both margins.
+         full-justify?
+         (= :user (:role message))]
 
      (cond (and (= :user (:role message)) (= :council (:request-kind message)))
            (let [{:keys [text lines line-meta]} (render/format-council-request-data
@@ -821,7 +826,8 @@
                                                 content-w
                                                 {:mode :answer
                                                  :window-start (long window-start)
-                                                 :window-num (long window-num)})
+                                                 :window-num (long window-num)
+                                                 :full-justify? full-justify?})
 
                            ;; Clickable block windows are excluded above; their line metadata
                            ;; remains inert here, as it was in the previous window adapter.
@@ -867,7 +873,8 @@
                                                          {:session-id session-id
                                                           :session-turn-id (turn-identity message)
                                                           :detail-expansions detail-expansions
-                                                          :section (:role message)})]
+                                                          :section (:role message)
+                                                          :full-justify? full-justify?})]
 
                                                    (-> message
                                                        (assoc :text text
