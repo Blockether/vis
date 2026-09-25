@@ -208,7 +208,8 @@ export const Favorites: Story = {
         track.getBoundingClientRect().right -
         disclosure.querySelector('svg')!.getBoundingClientRect().right;
       await expect(leftInset).toBe(16);
-      await expect(Math.abs(rightInset - leftInset)).toBeLessThanOrEqual(1);
+      // The row chevron moves 6px toward the edge on touch without shrinking its hit target.
+      await expect(Math.abs(rightInset - (leftInset - 6))).toBeLessThanOrEqual(1);
       await expect(favorite(row).nextElementSibling).toBe(status(row));
       await expect(favorite(row).getBoundingClientRect().right + 8).toBe(
         status(row).getBoundingClientRect().left,
@@ -220,7 +221,9 @@ export const Favorites: Story = {
     const star = favorite(rows[0]).querySelector('svg')!;
     await expect(star).toHaveClass('text-accent');
     await expect(star).not.toHaveClass('text-accent-ink');
-    await expect(win.getComputedStyle(star).fill).toBe(win.getComputedStyle(star).stroke);
+    // Filled yellow keeps a darker edge instead of using the fill as its outline.
+    await expect(star).toHaveClass('stroke-accent-edge');
+    await expect(win.getComputedStyle(star).fill).toBe(win.getComputedStyle(star).color);
     await expect(favorite(rows[1]).querySelector('svg')).toBeNull();
 
     const track = rows[0].closest<HTMLElement>('[data-swipe-track]')!;

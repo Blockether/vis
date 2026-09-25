@@ -8,6 +8,7 @@ import {
   MachineProjectsButton,
   MachineTab,
   Pager,
+  RowDisclosure,
   SectionHeader,
 } from './SessionNavigator';
 
@@ -212,6 +213,21 @@ describe('project pages', () => {
     expect(screen.getByRole('navigation')).toHaveClass('gap-2', 'mouse:gap-1');
   });
 
+  // A page step and a session's disclosure are the same chevron, not two scales.
+  it('draws both pager chevrons at the row disclosure size', () => {
+    render(
+      <>
+        <RowDisclosure isOpen={false} label="Show details" onClick={() => {}} />
+        <Pager page={2} pageCount={10} label="vis sessions" onPage={vi.fn()} />
+      </>,
+    );
+    const disclosure = screen.getByRole('button', { name: 'Show details' }).querySelector('svg');
+    expect(disclosure).toHaveClass('size-3.5');
+    for (const name of ['Previous page', 'Next page']) {
+      expect(screen.getByRole('button', { name }).querySelector('svg')).toHaveClass('size-3.5');
+    }
+  });
+
   it('keeps the same step controls while traversing a long history', () => {
     const onPage = vi.fn();
     const { rerender } = render(
@@ -340,5 +356,23 @@ describe('project pages', () => {
     // One shape for every section: the band never becomes a grid to make room for pages.
     expect(header.className).toContain('sticky top-0 flex');
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+  });
+
+  it('pulls row disclosures toward the menu without shifting header menus', () => {
+    render(
+      <>
+        <HeaderActions>
+          <RowDisclosure isOpen={false} label="Show details" onClick={() => {}} />
+        </HeaderActions>
+        <HeaderActions align="center">
+          <button type="button">Header menu</button>
+        </HeaderActions>
+      </>,
+    );
+    expect(screen.getByRole('button', { name: 'Show details' }).parentElement).toHaveClass('pr-0.5');
+    expect(screen.getByRole('button', { name: 'Header menu' }).parentElement).toHaveClass(
+      'pr-2',
+      'mouse:pr-2.5',
+    );
   });
 });

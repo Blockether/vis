@@ -70,20 +70,14 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
  */
 export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 
-/** Shared trailing controls keep their full hit targets, with roughly 16px to the icon. */
-// Account for the icon's inset within its 32px touch / 28px mouse target rather
-// than adding a second full gutter outside the button.
-//
-// THE STEP BETWEEN TWO SLOTS IS THE INSET THAT ENDS THE RAIL. A header keeps both of its
-// marks in this one cluster, so the gap is what separates them; a row keeps its disclosure
-// here and hands its `⋯` to the cell just outside, so this cluster's own right padding is
-// what separates THOSE two. The two numbers have to be one number, or a header's plus
-// stands a couple of pixels off the disclosure of every row beneath it.
-const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-2 mouse:gap-2.5 mouse:pr-2.5';
 /**
- * The same rail, centred through a header's band instead of stretched down a row: a
- * header's own trailing cluster, and the inset every mark down that column shares.
+ * A row's disclosure sits just inside its separate menu cell. A small end inset
+ * pulls the disclosure right and gives the pressable slab (including its status and
+ * timestamp) that width, without moving the menu or shrinking either hit target.
  */
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-0.5 mouse:gap-2.5';
+
+/** Header menus keep their established outside gutter and sit centered in the band. */
 export const HEADER_TRAIL =
   'flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:gap-2.5 mouse:pr-2.5';
 
@@ -404,7 +398,7 @@ export function Pager({
     >
       <ChevronIcon
         back={isBack}
-        className={`mx-auto size-3 ${isBack ? 'translate-x-1' : '-translate-x-1'} mouse:translate-x-0`}
+        className={`mx-auto size-3.5 ${isBack ? 'translate-x-1' : '-translate-x-1'} mouse:translate-x-0`}
       />
     </IconButton>
   );
