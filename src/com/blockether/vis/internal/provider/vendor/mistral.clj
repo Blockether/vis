@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.provider.vendor.mistral
   "Mistral.ai provider preset extension. API keys are configured by channels."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.extension :as ext]
             [com.blockether.svar.core :as svar]))
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension {:ext/name "provider-mistral"
+  (ext/register-extension!
+    (ext/extension {:ext/name "provider-mistral"
                     :ext/description "Mistral.ai API-key provider preset."
                     :ext/version "0.1.0"
                     :ext/author "Blockether"

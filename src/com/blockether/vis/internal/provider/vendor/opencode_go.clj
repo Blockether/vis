@@ -29,7 +29,8 @@
             [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.provider.key-store :as key-store])
   (:import [java.time Instant]
            [java.time.format DateTimeParseException]))
 
@@ -291,7 +292,7 @@
    from the live counters rather than assumed unmetered."
   [plan-tag]
   (fn []
-    (let [detected (vis/provider-key-detect BOOK plan-tag)]
+    (let [detected (key-store/detect-key BOOK plan-tag)]
       (if (nil? detected)
         {:provider-id PROVIDER_ID
          :status :unauthenticated
@@ -315,8 +316,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension
+  (ext/register-extension!
+    (ext/extension
       {:ext/name "provider-opencode-go"
        :ext/description
        "OpenCode Go subscription gateway — OpenAI chat + Anthropic Messages wires in one provider."
@@ -332,4 +333,4 @@
        ;; wire a model rides is this provider's own business and is stamped onto
        ;; the entry it produces.
        :ext/providers (mapv #(assoc % :provider/enrich-models-fn #'enrich-models)
-                            (vis/provider-key-entries BOOK make-limits-fn))})))
+                            (key-store/provider-entries BOOK make-limits-fn))})))

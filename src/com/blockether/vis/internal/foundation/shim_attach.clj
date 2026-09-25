@@ -24,7 +24,7 @@
    `:ext/sandbox-shims` entry autoloads `attach` into every sandbox."
   (:require [com.blockether.imaging :as imaging]
             [com.blockether.vis.internal.attachment.core :as attachments]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension.core :as extension]
             [charred.api :as json]
@@ -291,7 +291,7 @@
                              {:type ::not-an-image})))))))})
 
 (def vis-extension
-  (vis/extension
+  (ext/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
      (str "Sandbox `attach(source)` — a confined path, in-memory bytes, an image or a "
@@ -332,4 +332,4 @@
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 
-(defn register! [] (vis/register-extension! vis-extension))
+(defn register! [] (ext/register-extension! vis-extension))

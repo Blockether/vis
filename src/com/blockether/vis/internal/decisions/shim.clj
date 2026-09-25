@@ -2,7 +2,7 @@
   "A small first-party decision client for the Vis Python sandbox."
   (:require [charred.api :as json]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
@@ -114,7 +114,7 @@
                                                              extension/*current-environment*))))})
 
 (def vis-extension
-  (vis/extension
+  (ext/extension
     {:ext/name "decisions-shim"
      :ext/description "Small built-in Vis Python decision reads using the authenticated gateway."
      :ext/version "0.1.0"
@@ -136,4 +136,4 @@
        :shim/bindings bridge-bindings
        :shim/source "vis-shims/decisions.py"}]}))
 
-(defn register! [] (vis/register-extension! vis-extension))
+(defn register! [] (ext/register-extension! vis-extension))

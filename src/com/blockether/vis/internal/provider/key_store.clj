@@ -39,6 +39,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -124,12 +125,11 @@
    provider config instead of the provider auth file."
   [book plan-tag]
   (let [provider-id (:provider-id (plan-of book plan-tag))]
-    (try (when-let [current-config-fn (requiring-resolve 'com.blockether.vis.core/current-config)]
-           (some (fn [provider]
-                   (when (= provider-id (:id provider))
-                     (when-let [k (:api-key provider)]
-                       (when-not (str/blank? k) k))))
-                 (:providers (current-config-fn))))
+    (try (some (fn [provider]
+                 (when (= provider-id (:id provider))
+                   (when-let [k (:api-key provider)]
+                     (when-not (str/blank? k) k))))
+               (:providers (config/current-config)))
          (catch Throwable _ nil))))
 
 (defn- file-key

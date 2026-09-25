@@ -1,11 +1,13 @@
 (ns com.blockether.vis.core
   "vis - broad host facade.
 
-   This is the ONLY namespace extensions, channel adapters, embedded
-   callers, and tests should import. It deliberately re-exports host,
-   registry, runtime, persistence, prompt, diagnostic, and sandbox
-   helpers from `com.blockether.vis.internal.*`. The internal tree is
-   not stable; the names exposed here are the host contract.
+   This is the namespace channel adapters, embedded callers, and tests
+   import. It deliberately re-exports host, registry, runtime, persistence,
+   prompt, diagnostic, and sandbox helpers from `com.blockether.vis.internal.*`.
+   The internal tree is not stable; the names exposed here are the host
+   contract. The extension-authoring subset also lives on its own in
+   `com.blockether.vis.extension`, which engine namespaces require instead:
+   nothing under `com.blockether.vis.internal` requires this facade.
 
    Canonical runtime language:
      Session -> Turn -> Iteration -> Block.
@@ -41,6 +43,7 @@
   (:gen-class)
   (:require
     [charred.api :as json]
+    [com.blockether.vis.extension :as ext]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.internal.extension.capability :as capability]
@@ -52,8 +55,11 @@
     [com.blockether.vis.internal.error :as error]
     [com.blockether.vis.internal.extension.core :as extension]
     [com.blockether.vis.internal.extension.aggregate :as extension-aggregate]
+    [com.blockether.vis.internal.channel.events :as channel-events]
     [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
+    [com.blockether.vis.internal.foundation.environment.core :as environment]
+    [com.blockether.vis.internal.foundation.shell :as shell]
     [com.blockether.vis.internal.import :refer [import-vars]]
     [com.blockether.vis.internal.format :as fmt]
     [com.blockether.vis.internal.gateway.client :as gateway-client]
@@ -78,6 +84,7 @@
     [com.blockether.vis.internal.python.format :as pyfmt]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.python.test-runner :as python-test-runner]
+    [com.blockether.vis.internal.python.worker :as pyext]
     [com.blockether.vis.internal.provider.catalog :as catalog]
     [com.blockether.vis.internal.provider.key-store :as provider-key-store]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -90,6 +97,7 @@
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.view.core :as view]
     [com.blockether.vis.internal.workspace.core :as workspace]))
 
 ;; The one closed distribution manifest, read-only: an extension can ask whether
@@ -252,7 +260,7 @@
              [capability-forget-verdicts! capability/forget-verdicts!])
 
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
-(import-vars [register-toggle! toggles/register-toggle!]
+(import-vars [register-toggle! ext/register-toggle!]
              [register-toggles! toggles/register-toggles!]
              [registered-toggles toggles/registered-toggles]
              [toggle-spec toggles/toggle-spec]
@@ -609,18 +617,19 @@
 ;; Process-restart cleanup
 (import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
 
-;; Extension contract
+;; Extension contract. The authoring subset lives in `com.blockether.vis.extension`,
+;; which built-in extensions require instead of this facade.
 (defmacro extension
   "Build extension spec and stamp caller namespace for reload/source tracking."
   [spec]
-  `(extension/extension (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
+  `(ext/extension ~spec))
 
-(import-vars [symbol extension/symbol]
-             [value extension/value]
-             [render-prompt extension/render-prompt]
+(import-vars [symbol ext/symbol]
+             [value ext/value]
+             [render-prompt ext/render-prompt]
              [op-tag extension/op-tag]
              [op-presentation extension/op-presentation]
-             [register-extension! extension/register-extension!]
+             [register-extension! ext/register-extension!]
              [register-op-hook! extension/register-op-hook!]
              [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
              [registered-extensions extension/registered-extensions]
@@ -778,56 +787,30 @@
 
 (import-vars [assemble-initial-messages prompt/assemble-initial-messages])
 
-;; `foundation.environment.core` and `foundation.shell` build ON this facade, so
-;; these two resolve on first call instead of at load time.
-
-(defn environment-snapshot
-  "The cached workspace environment: `{:host :git :languages :monorepo :repositories}`."
-  []
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.environment.core/snapshot)))
-
-(defn kill-process-tree!
-  "Kill a process and every process it started."
-  [process]
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.shell/kill-tree!) process))
+(import-vars [environment-snapshot environment/snapshot]
+             [kill-process-tree! shell/kill-tree!]
+             [python-exec! pyext/exec!])
 
 (defn python-shared-key
   "The pooled Python worker key every shared sandbox call uses."
   []
-  @(requiring-resolve 'com.blockether.vis.internal.python.worker/shared-key))
-
-(defn python-exec!
-  "Evaluate `code` in the Python worker `k` for `session`."
-  [k session code]
-  ((requiring-resolve 'com.blockether.vis.internal.python.worker/exec!) k session code))
+  pyext/shared-key)
 
 ;; Channel event bus
-(def add-channel-event-listener!
-  (requiring-resolve 'com.blockether.vis.internal.channel.events/add-channel-event-listener!))
-
-(def remove-channel-event-listener!
-  (requiring-resolve 'com.blockether.vis.internal.channel.events/remove-channel-event-listener!))
-
-(def publish-channel-event!
-  (requiring-resolve 'com.blockether.vis.internal.channel.events/publish-channel-event!))
-
-(def channel-event-listeners
-  (requiring-resolve 'com.blockether.vis.internal.channel.events/channel-event-listeners))
+(import-vars [add-channel-event-listener! channel-events/add-channel-event-listener!]
+             [remove-channel-event-listener! channel-events/remove-channel-event-listener!]
+             [publish-channel-event! channel-events/publish-channel-event!]
+             [channel-event-listeners channel-events/channel-event-listeners])
 
 ;; Human input — the typed pause an extension uses to ask the operator
 ;;
 ;; `request-human-input!` BLOCKS the calling extension until an operator action,
 ;; timeout, or interruption settles it. Rendering is a channel concern: every
 ;; surface receives `:view/open` and answers through the same `view-action!` seam.
-(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.view.core/request!))
-
-(def view-action! (requiring-resolve 'com.blockether.vis.internal.view.core/action!))
-
-(def pending-human-input-request
-  (requiring-resolve 'com.blockether.vis.internal.view.core/pending-request))
-
-(def reveal-human-input-secret
-  (requiring-resolve 'com.blockether.vis.internal.view.core/reveal-secret))
+(import-vars [request-human-input! view/request!]
+             [view-action! view/action!]
+             [pending-human-input-request view/pending-request]
+             [reveal-human-input-secret view/reveal-secret])
 
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
@@ -835,15 +818,11 @@
 ;; interruption enter through `view-action!`, exactly like input submit/cancel.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
 ;; a picture nobody updates on the human's screen and no verdict for the model.
-(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/with-live!))
-
-(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/open-live!))
-
-(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/patch-live!))
-
-(def live-view (requiring-resolve 'com.blockether.vis.internal.view.core/live-view))
-
-(def live-views (requiring-resolve 'com.blockether.vis.internal.view.core/live-views))
+(import-vars [with-live-view! view/with-live!]
+             [open-live-view! view/open-live!]
+             [patch-live-view! view/patch-live!]
+             [live-view view/live-view]
+             [live-views view/live-views])
 
 ;; Binary entry point
 ;;

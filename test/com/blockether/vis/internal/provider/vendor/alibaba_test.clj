@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.provider.vendor.alibaba-test
   (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.key-store :as key-store]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -69,9 +71,9 @@
              ;; its two plans are wired to their OWN provider ids.
              (it "detects the TUI/config API key used by runtime model calls"
                  (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-                 (with-redefs-fn {#'vis/current-config (constantly {:providers
-                                                                    [{:id :alibaba-token-plan
-                                                                      :api-key "config-key"}]})}
+                 (with-redefs-fn {#'config/current-config (constantly {:providers
+                                                                       [{:id :alibaba-token-plan
+                                                                         :api-key "config-key"}]})}
                    (fn []
                      (expect (= {:api-key "config-key" :source :config}
                                 ((:provider/detect-fn (vis/provider-by-id :alibaba-token-plan)))))
@@ -85,7 +87,7 @@
   limits-test
   (it "reports :unsupported with a console note - no endpoint verifies the key"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :auth-file})}
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :auth-file})}
         (fn []
           (let [report (vis/provider-limits :alibaba-token-plan)]
             (expect (= :alibaba-token-plan (:provider-id report)))
@@ -94,7 +96,7 @@
             (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
   (it "reports :unauthenticated when the plan key is absent"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
+      (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :alibaba-coding-plan)))]
             (expect (= :alibaba-coding-plan (:provider-id report)))

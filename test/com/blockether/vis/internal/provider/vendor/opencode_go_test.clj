@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.provider.vendor.opencode-go-test
   (:require [babashka.http-client :as http]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.opencode-go :as opencode-go]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -141,8 +143,8 @@
                    (expect (= ["OPENCODE_API_KEY"] (get-in book [:plans :opencode-go :env-keys])))))
              (it "resolves the key + endpoint for the single provider"
                  (reload!)
-                 (with-redefs-fn {#'vis/current-config (constantly {:providers [{:id :opencode-go
-                                                                                 :api-key "k"}]})}
+                 (with-redefs-fn {#'config/current-config
+                                  (constantly {:providers [{:id :opencode-go :api-key "k"}]})}
                    (fn []
                      (let [token ((:provider/get-token-fn (vis/provider-by-id :opencode-go)))]
                        (expect (= {:token "k" :api-url "https://opencode.ai/zen/go/v1"} token)))))))
@@ -160,7 +162,7 @@
   limits-test
   (it "reports the live 5h / weekly / monthly windows when authenticated"
       (reload!)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :env-var})
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :env-var})
                        #'opencode-go/fetch-usage!
                        (constantly
                          {:usage
@@ -177,7 +179,7 @@
             (expect (= 63.0 (get-in report [:dynamic :limits 0 :remaining])))))))
   (it "reports :unauthenticated when the usage endpoint rejects the key"
       (reload!)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :env-var})
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :env-var})
                        #'opencode-go/fetch-usage!
                        (fn [_api-key]
                          (throw (ex-info "OpenCode Go usage request failed: HTTP 401"
@@ -189,7 +191,7 @@
             (expect (= :provider/opencode-go-usage-error (get-in report [:error :type])))))))
   (it "reports :error when the key is valid but carries no Go subscription"
       (reload!)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :env-var})
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :env-var})
                        #'opencode-go/fetch-usage!
                        (fn [_api-key]
                          (throw (ex-info "OpenCode Go usage request failed: HTTP 403"
@@ -200,7 +202,7 @@
             (expect (re-find #"subscription" (get-in report [:dynamic :note])))))))
   (it "reports :unauthenticated without calling the endpoint when no key is available"
       (reload!)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)
+      (with-redefs-fn {#'key-store/detect-key (constantly nil)
                        #'opencode-go/fetch-usage!
                        (fn [_api-key]
                          (throw (ex-info "usage endpoint must not be called" {})))}
@@ -220,7 +222,7 @@
                  (reload!)
                  (provider-limits/flush-limits-cache! :opencode-go)
                  (with-redefs-fn
-                   {#'vis/provider-key-detect (constantly {:api-key "k" :source :env-var})
+                   {#'key-store/detect-key (constantly {:api-key "k" :source :env-var})
                     #'opencode-go/fetch-usage!
                     (constantly
                       {:usage

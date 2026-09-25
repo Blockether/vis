@@ -34,7 +34,8 @@
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]))
+            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.provider.key-store :as key-store]))
 
 (def ^:private BOOK
   "Z.ai's slice of the shared static-API-key shape
@@ -323,7 +324,7 @@
           (get-in BOOK [:plans plan-tag])
 
           detected
-          (vis/provider-key-detect BOOK plan-tag)]
+          (key-store/detect-key BOOK plan-tag)]
 
       (cond (nil? detected) {:provider-id provider-id
                              :status :unauthenticated
@@ -347,11 +348,11 @@
 
 (defn register!
   []
-  (vis/register-extension! (vis/extension
+  (ext/register-extension! (ext/extension
                              {:ext/name "provider-zai"
                               :ext/description "Z.ai coding-plan + pass static-API-key providers."
                               :ext/version "0.2.0"
                               :ext/author "Blockether"
                               :ext/owner "vis"
                               :ext/license "Apache-2.0"
-                              :ext/providers (vis/provider-key-entries BOOK make-limits-fn)})))
+                              :ext/providers (key-store/provider-entries BOOK make-limits-fn)})))

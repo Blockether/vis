@@ -20,7 +20,7 @@
   (:require [charred.api :as json]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -45,7 +45,8 @@
 (defn- iteration-rows
   "Fetch the iteration rows for `session-turn-id`; returns [] on any failure."
   [db-info session-turn-id]
-  (try (vis/db-list-session-turn-iterations db-info session-turn-id) (catch Throwable _ [])))
+  (try (persistance/db-list-session-turn-iterations db-info session-turn-id)
+       (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
 ;; Builders - assemble each top-level snapshot map.
@@ -419,7 +420,7 @@
 (defn- latest-turn
   [db-info session-id]
   (when (and db-info session-id)
-    (last (try (vis/db-list-session-turns db-info session-id) (catch Throwable _ [])))))
+    (last (try (persistance/db-list-session-turns db-info session-id) (catch Throwable _ [])))))
 
 (defn- turn-snapshot
   "The single-call rich current-turn snapshot. Aggregates
@@ -466,8 +467,8 @@
    current and foreign live sessions."
   [db-info session-id]
   (when (and db-info session-id)
-    (try (when-let [session (vis/db-get-session db-info session-id)]
-           (let [turn-rows (vis/db-list-session-turns db-info session-id)
+    (try (when-let [session (persistance/db-get-session db-info session-id)]
+           (let [turn-rows (persistance/db-list-session-turns db-info session-id)
                  turns (mapv (fn [turn]
                                (let [iteration-count (count (iteration-rows db-info (:id turn)))]
                                  (cond-> {:id (:id turn)
@@ -517,7 +518,7 @@
 
 (defn- session-turn-rows
   [db-info session-id]
-  (try (vis/db-list-session-turns db-info session-id) (catch Throwable _ [])))
+  (try (persistance/db-list-session-turns db-info session-id) (catch Throwable _ [])))
 
 (defn- session-index-row
   "ONE index row for `session`: identity, turn count and last activity - never
@@ -582,9 +583,9 @@
   (if-let [db (:db-info env)]
     (try (into []
                (keep (fn [match]
-                       (when-let [session (vis/db-get-session db (:id match))]
+                       (when-let [session (persistance/db-get-session db (:id match))]
                          (merge (session-index-row db session) (search-tags match)))))
-               (vis/db-search-session-matches db :all query))
+               (persistance/db-search-session-matches db :all query))
          (catch Throwable _ []))
     []))
 
@@ -596,7 +597,7 @@
    chain seq operations safely."
   ([env]
    (if-let [db (:db-info env)]
-     (try (->> (vis/db-list-sessions db :all)
+     (try (->> (persistance/db-list-sessions db :all)
                (map #(session-index-row db %))
                (sort-by recency-key)
                vec)
@@ -625,10 +626,10 @@
          (or target (current-session-id env))
 
          session-id
-         (or (try (vis/db-resolve-session-id db wanted) (catch Throwable _ nil)) wanted)]
+         (or (try (persistance/db-resolve-session-id db wanted) (catch Throwable _ nil)) wanted)]
 
      (when (and db session-id)
-       (try (when-let [session (vis/db-get-session db session-id)]
+       (try (when-let [session (persistance/db-get-session db session-id)]
               (let [turns (session-turn-rows db (:id session))
                     last-turn (last turns)]
 
@@ -666,7 +667,8 @@
   ([env] (foundation-session-forks env (current-session-id env)))
   ([env session-id]
    (if (and (:db-info env) session-id)
-     (try (vec (vis/db-list-session-states (:db-info env) session-id)) (catch Throwable _ []))
+     (try (vec (persistance/db-list-session-states (:db-info env) session-id))
+          (catch Throwable _ []))
      [])))
 
 (defn- meta-turn-retries
@@ -681,7 +683,7 @@
    when the turn is unknown or the env is missing handles."
   [env session-turn-id]
   (if (and (:db-info env) session-turn-id)
-    (try (vec (vis/db-list-session-turn-states (:db-info env) session-turn-id))
+    (try (vec (persistance/db-list-session-turn-states (:db-info env) session-turn-id))
          (catch Throwable _ []))
     []))
 
@@ -701,7 +703,7 @@
                                     :turn-id (:id turn)
                                     :user-request (:user-request turn))
                                  (failures-from-iterations (:db-info env) iterations))))
-                       (vis/db-list-session-turns (:db-info env) session-id)))
+                       (persistance/db-list-session-turns (:db-info env) session-id)))
           (catch Throwable _ []))
      [])))
 
@@ -1394,7 +1396,7 @@
 ;; The underlying defs (`foundation-inspect`, `foundation-get-session`,
 ;; `foundation-sessions`) are private and named for clarity inside this ns.
 ;; Re-export them under their sandbox-visible names with `:doc` and `:arglists`
-;; baked into the var meta so `vis/symbol` can read both straight off the var.
+;; baked into the var meta so `ext/symbol` can read both straight off the var.
 ;;
 ;; The names are the attachment surface's rule applied here: `verb_noun`, plural
 ;; noun = the index and singular = ONE target, every read taking exactly one
@@ -1428,7 +1430,7 @@
   foundation-sessions)
 
 (def read-session-symbol
-  (vis/symbol
+  (ext/symbol
     #'read-session
     {:activity (presenter/for-tool :read_session)
      :inject-env? true
@@ -1454,7 +1456,7 @@
        "token/cost/outcome/error/routing; its tool rows OVERLAP, so never sum them.")}))
 
 (def get-session-symbol
-  (vis/symbol
+  (ext/symbol
     #'get-session
     {:activity (presenter/for-tool :get_session)
      :inject-env? true
@@ -1473,7 +1475,7 @@
                "None when nothing matches.")}))
 
 (def list-sessions-symbol
-  (vis/symbol
+  (ext/symbol
     #'list-sessions
     {:activity (presenter/for-tool :list_sessions)
      :inject-env? true
@@ -1501,7 +1503,7 @@
   (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
         [read-session-symbol get-session-symbol list-sessions-symbol]))
 
-(vis/register-toggle! {:id "introspection"
+(ext/register-toggle! {:id "introspection"
                        :label "Session introspection"
                        ;; One line for the row; the "debugging Vis itself, not ordinary project
                        ;; work" rationale is the section comment above.

@@ -60,7 +60,8 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
@@ -2988,7 +2989,7 @@
       (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
 (def shell-symbol
-  (vis/symbol
+  (ext/symbol
     #'shell
     {:activity (presenter/for-tool :shell)
      :symbol 'shell
@@ -3041,7 +3042,7 @@
      :on-error-fn (shell-on-error :shell)}))
 
 (def shell-logs-symbol
-  (vis/symbol
+  (ext/symbol
     #'shell-logs
     {:activity (presenter/for-tool :_shell-logs)
      :symbol '_shell-logs
@@ -3071,7 +3072,7 @@
      :on-error-fn (shell-on-error :_shell-logs)}))
 
 (def shell-wait-symbol
-  (vis/symbol
+  (ext/symbol
     #'shell-wait
     {:activity (presenter/for-tool :_shell-wait)
      :symbol '_shell-wait
@@ -3092,7 +3093,7 @@
      :on-error-fn (shell-on-error :_shell-wait)}))
 
 (def shell-type-symbol
-  (vis/symbol
+  (ext/symbol
     #'shell-type
     {:activity (presenter/for-tool :_shell-type)
      :symbol '_shell-type
@@ -3108,7 +3109,7 @@
      :on-error-fn (shell-on-error :_shell-type)}))
 
 (def shell-stop-symbol
-  (vis/symbol
+  (ext/symbol
     #'shell-stop
     {:activity (presenter/for-tool :_shell-stop)
      :symbol '_shell-stop
@@ -3123,7 +3124,7 @@
      :ticker-fn (shell-ticker "stop")
      :on-error-fn (shell-on-error :_shell-stop)}))
 
-(defn shell-enabled? [_env] (vis/toggle-enabled? "shell"))
+(defn shell-enabled? [_env] (toggles/enabled? "shell"))
 
 (def shell-symbols
   ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
@@ -3171,7 +3172,7 @@
                      "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
-(vis/register-toggle!
+(ext/register-toggle!
   {:id "shell"
    :label "Shell commands"
    ;; The full pty-handle, jail, and extension-boundary contract lives in this

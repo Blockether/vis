@@ -53,7 +53,9 @@
    fields are bounded so reports stay safe to open."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.channel.render :as render]
+            [com.blockether.vis.internal.channel.theme :as theme]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt])
@@ -167,7 +169,7 @@
               ;; METADATA lister: this projection drops `:base64` anyway, and
               ;; reading it first made every transcript page pay for (and
               ;; base64-encode) every figure the conversation ever produced.
-              (try (vis/db-list-iteration-attachments-meta db-info (:id iter))
+              (try (persistance/db-list-iteration-attachments-meta db-info (:id iter))
                    (catch Throwable _ [])))]
 
     (cond-> (-> iter
@@ -182,7 +184,8 @@
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
   (let [raw-iters
-        (try (vis/db-list-session-turn-iterations db-info (:id turn)) (catch Throwable _ []))
+        (try (persistance/db-list-session-turn-iterations db-info (:id turn))
+             (catch Throwable _ []))
 
         iters
         (mapv (partial enrich-iteration db-info) raw-iters)
@@ -257,14 +260,15 @@
    session."
   [db-info session-ref]
   (letfn [(existing-id [id]
-            (when (and id (try (vis/db-get-session db-info id) (catch Throwable _ nil))) id))]
+            (when (and id (try (persistance/db-get-session db-info id) (catch Throwable _ nil)))
+              id))]
     (cond (nil? session-ref) nil
           (uuid? session-ref) (existing-id session-ref)
           :else (let [s (str session-ref)]
-                  (or (existing-id (try (vis/db-resolve-session-id db-info s)
+                  (or (existing-id (try (persistance/db-resolve-session-id db-info s)
                                         (catch Throwable _ nil)))
                       (let [matches (->> transcript-known-channels
-                                         (mapcat #(or (vis/db-list-sessions db-info %) []))
+                                         (mapcat #(or (persistance/db-list-sessions db-info %) []))
                                          (filter (fn [session]
                                                    (str/starts-with? (str (:id session)) s)))
                                          vec)]
@@ -346,8 +350,10 @@
    variant uses the live env automatically."
   [db-info session-id]
   (when-let [resolved-id (resolve-session-ref db-info session-id)]
-    (when-let [session (try (vis/db-get-session db-info resolved-id) (catch Throwable _ nil))]
-      (let [turn-rows (try (vis/db-list-session-turns db-info resolved-id) (catch Throwable _ []))
+    (when-let [session (try (persistance/db-get-session db-info resolved-id)
+                            (catch Throwable _ nil))]
+      (let [turn-rows (try (persistance/db-list-session-turns db-info resolved-id)
+                           (catch Throwable _ []))
             turns (mapv (partial build-turn db-info) turn-rows)
             totals (session-totals turns)]
 
@@ -866,12 +872,12 @@
         (str/split-lines (str/join "\n\n" thinking))
 
         n
-        (long vis/reasoning-preview-line-limit)
+        (long render/reasoning-preview-line-limit)
 
         hidden
         (max 0 (- (count lines) n))]
 
-    (if (< hidden (long vis/reasoning-collapse-min-hidden))
+    (if (< hidden (long render/reasoning-collapse-min-hidden))
       {:peek (str/join "\n" lines) :more nil :hidden 0}
       {:peek (str/join "\n" (take n lines)) :more (str/join "\n" (drop n lines)) :hidden hidden})))
 
@@ -1051,7 +1057,7 @@
 
 ;; HTML renderer. Renders the Markdown transcript to a STANDALONE HTML
 ;; document styled with the vis-light theme's shared web CSS variables
-;; (`vis/web-css-root`), so an exported transcript reads the same colors
+;; (`theme/web-css-root`), so an exported transcript reads the same colors
 ;; as the web TUI. Pure transformation over the Markdown surface - no DB
 ;; calls, no side effects. Every channel (web, TUI, CLI) exports through
 ;; here so the output is byte-identical across surfaces.
@@ -1403,9 +1409,9 @@
    Opts:
    - `:mode`     - `:full` (default) or `:dialog`, forwarded to `transcript->md`.
    - `:theme-id` - theme id for the embedded CSS (default = the TUI's active
-                   theme via `vis/default-theme-id`, so exports match the TUI)."
+                   theme via `theme/default-theme-id`, so exports match the TUI)."
   ([data] (transcript->html data {:mode :full}))
-  ([data {:keys [mode theme-id] :or {mode :full theme-id vis/default-theme-id}}]
+  ([data {:keys [mode theme-id] :or {mode :full theme-id theme/default-theme-id}}]
    (let [title
          (or (some-> data
                      :session
@@ -1427,7 +1433,7 @@
           (html-escape title)
           "</title>\n"
           "<style>\n"
-          (vis/web-css-root theme-id)
+          (theme/web-css-root theme-id)
           "\n"
           transcript-html-styles
           "\n"

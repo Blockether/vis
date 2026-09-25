@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.provider.vendor.openrouter-test
   (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -47,8 +49,8 @@
         (expect (= ["OPENROUTER_API_KEY"] (get-in book [:plans :openrouter :env-keys])))))
   (it "detects the TUI/config API key used by runtime model calls"
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (with-redefs-fn {#'vis/current-config (constantly {:providers [{:id :openrouter
-                                                                      :api-key "config-key"}]})}
+      (with-redefs-fn {#'config/current-config (constantly {:providers [{:id :openrouter
+                                                                         :api-key "config-key"}]})}
         (fn []
           (expect (= {:api-key "config-key" :source :config}
                      ((:provider/detect-fn (vis/provider-by-id :openrouter)))))))))
@@ -56,8 +58,8 @@
 (defdescribe get-token-test
              (it "answers the router token envelope from the resolved key"
                  (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-                 (with-redefs-fn {#'vis/current-config (constantly {:providers [{:id :openrouter
-                                                                                 :api-key "k"}]})}
+                 (with-redefs-fn {#'config/current-config
+                                  (constantly {:providers [{:id :openrouter :api-key "k"}]})}
                    (fn []
                      (expect (= {:token "k" :api-url (svar/provider-base-url :openrouter)}
                                 ((:provider/get-token-fn (vis/provider-by-id :openrouter)))))))))
@@ -66,7 +68,7 @@
   limits-test
   (it "reports capped-key credit usage from /api/v1/key"
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :auth-file})
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :auth-file})
                        #'openrouter/fetch-key-info!
                        (fn [api-key]
                          (expect (= "k" api-key))
@@ -98,7 +100,7 @@
         (expect (= :credits (:kind row)))))
   (it "reports :unauthenticated when no key is available"
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
+      (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :openrouter)))]
             (expect (= :openrouter (:provider-id report)))

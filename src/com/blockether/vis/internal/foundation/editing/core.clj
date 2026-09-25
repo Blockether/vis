@@ -15,7 +15,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
@@ -824,7 +824,7 @@
 ;; Editing keeps no copies of these; call the engine functions directly to
 ;; avoid thin shims that cross the abstraction boundary.
 
-;; Op tags are carried INLINE on each `vis/symbol` opts map below.
+;; Op tags are carried INLINE on each `ext/symbol` opts map below.
 
 (defn- tool-success
   "Build a successful tool envelope. The caller passes `:metadata` (per-op
@@ -3914,7 +3914,7 @@
   (patch-file! path edits))
 
 (def cat-symbol
-  (vis/symbol
+  (ext/symbol
     #'cat-tool
     {:activity (presenter/for-tool :cat)
      :symbol 'cat
@@ -3938,7 +3938,7 @@
      :on-error-fn (tool-failure-on-error :cat :file)}))
 
 (def patch-symbol
-  (vis/symbol
+  (ext/symbol
     #'patch-tool
     {:activity (presenter/for-tool :patch)
      :symbol 'patch
@@ -3965,7 +3965,7 @@
      :on-error-fn (tool-failure-on-error :patch :file)}))
 
 (def grep-symbol
-  (vis/symbol
+  (ext/symbol
     #'grep-tool
     {:activity (presenter/for-tool :grep)
      :symbol 'grep

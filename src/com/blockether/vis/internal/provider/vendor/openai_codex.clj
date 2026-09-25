@@ -977,13 +977,13 @@
        :dynamic {:limits [] :note "OpenAI Codex is not authenticated."}}
       (authenticated-limits-report!))))
 
-(require '[com.blockether.vis.core :as vis])
+(require '[com.blockether.vis.extension :as ext])
 
 (require '[com.blockether.svar.core :as svar])
 
 (def ^:private fast-mode-toggle "codex_fast_mode")
 
-(vis/register-toggle! {:id fast-mode-toggle
+(ext/register-toggle! {:id fast-mode-toggle
                        :label "Fast mode"
                        :description
                        "Route eligible OpenAI Codex turns through the priority service tier."
@@ -1010,8 +1010,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension
+  (ext/register-extension!
+    (ext/extension
       {:ext/name "provider-openai-codex"
        :ext/description "OpenAI Codex / ChatGPT OAuth provider."
        :ext/version "0.1.0"

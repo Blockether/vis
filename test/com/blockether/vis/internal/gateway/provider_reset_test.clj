@@ -5,7 +5,7 @@
             [charred.api :as json]
             [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -34,7 +34,7 @@
         account
         (atom "test-account")]
 
-    (with-redefs [vis/register-extension! #(reset! descriptor (first (:ext/providers %)))]
+    (with-redefs [ext/register-extension! #(reset! descriptor (first (:ext/providers %)))]
       (codex/register!))
     (limits/flush-limits-cache! :openai-codex)
     (try

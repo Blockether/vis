@@ -2,6 +2,8 @@
   (:require [babashka.http-client :as http]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -46,9 +48,9 @@
 (defdescribe auth-detection-test
              (it "detects the TUI/config API key used by runtime model calls"
                  (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-                 (with-redefs-fn {#'vis/current-config (constantly {:providers
-                                                                    [{:id :zai-coding-plan
-                                                                      :api-key "config-key"}]})}
+                 (with-redefs-fn {#'config/current-config (constantly {:providers
+                                                                       [{:id :zai-coding-plan
+                                                                         :api-key "config-key"}]})}
                    (fn []
                      (expect (= {:api-key "config-key" :source :config}
                                 ((:provider/detect-fn (vis/provider-by-id :zai-coding-plan)))))))))
@@ -57,9 +59,9 @@
   limits-test
   (it "reports live 5h and 7d coding-plan quota when the coding-plan key is available"
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
-                                                   (when (= :coding plan-tag)
-                                                     {:api-key "k" :source :auth-file}))
+      (with-redefs-fn {#'key-store/detect-key (fn [_book plan-tag]
+                                                (when (= :coding plan-tag)
+                                                  {:api-key "k" :source :auth-file}))
                        #'zai/fetch-quota! (fn [api-key]
                                             (expect (= "k" api-key))
                                             {:data {:level "pro"
@@ -94,7 +96,7 @@
                        (get-in report [:dynamic :limits 1 :window])))))))
   (it "reports :unauthenticated when the coding-plan key is absent"
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
+      (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
             (expect (= :zai-coding-plan (:provider-id report)))
@@ -103,9 +105,9 @@
   (it "treats an application-level 401 quota response as rejected credentials"
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (with-redefs-fn
-        {#'vis/provider-key-detect (fn [_book plan-tag]
-                                     (when (= :coding plan-tag)
-                                       {:api-key "rejected-key" :source :config}))
+        {#'key-store/detect-key (fn [_book plan-tag]
+                                  (when (= :coding plan-tag)
+                                    {:api-key "rejected-key" :source :config}))
          #'http/get (fn [_url _request]
                       {:status 200
                        :body
@@ -121,10 +123,10 @@
 (defdescribe pass-limits-test
              (it "keeps a saved Pass key unverified when no live quota endpoint exists"
                  (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-                 (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
-                                                              (when (= :pass plan-tag)
-                                                                {:api-key "saved-key"
-                                                                 :source :config}))}
+                 (with-redefs-fn {#'key-store/detect-key (fn [_book plan-tag]
+                                                           (when (= :pass plan-tag)
+                                                             {:api-key "saved-key"
+                                                              :source :config}))}
                    (fn []
                      (let [report ((:provider/limits-fn (vis/provider-by-id :zai)))]
                        (expect (= :unsupported (:status report)))

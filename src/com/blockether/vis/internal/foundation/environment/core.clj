@@ -18,7 +18,8 @@
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls, and explicitly by the HOST-ONLY
    `refresh!` — which `/reload` runs and the sandbox cannot call."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.environment.git :as git]
@@ -157,7 +158,7 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
 (defn- environment-warnings
   []
   ;; Surface project-local Python extension failures in project context.
-  (vec (vis/python-extension-load-failures)))
+  (vec (python-extensions/load-failures)))
 
 (defn- main-agent-instructions-tool
   "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where
@@ -167,7 +168,7 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
   (success-envelope (main-agent-instructions)))
 
 (def main-agent-instructions-symbol
-  (vis/symbol
+  (ext/symbol
     #'main-agent-instructions-tool
     {:activity (presenter/for-tool :main_agent_instructions)
      :symbol 'main-agent-instructions

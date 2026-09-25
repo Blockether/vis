@@ -18,7 +18,8 @@
             [babashka.http-client :as http]
             [charred.api :as json]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]))
+            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.provider.key-store :as key-store]))
 
 ;; Constants
 
@@ -142,7 +143,7 @@
    report, so the row carries measured numbers rather than an assumption."
   [plan-tag]
   (fn []
-    (let [detected (vis/provider-key-detect BOOK plan-tag)]
+    (let [detected (key-store/detect-key BOOK plan-tag)]
       {:provider-id PROVIDER_ID
        :status (if detected :ok :unauthenticated)
        :fetched-at-ms (util/now-ms)
@@ -220,8 +221,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension {:ext/name "provider-openrouter"
+  (ext/register-extension!
+    (ext/extension {:ext/name "provider-openrouter"
                     :ext/description "OpenRouter multi-provider gateway (static API key)."
                     :ext/version "0.1.0"
                     :ext/author "Blockether"
@@ -231,4 +232,4 @@
                     ;; live catalog enrichment is this gateway's own business and is stamped
                     ;; onto the entry it produces.
                     :ext/providers (mapv #(assoc % :provider/enrich-models-fn enrich-models)
-                                         (vis/provider-key-entries BOOK make-limits-fn))})))
+                                         (key-store/provider-entries BOOK make-limits-fn))})))

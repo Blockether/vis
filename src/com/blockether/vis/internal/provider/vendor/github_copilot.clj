@@ -793,7 +793,7 @@
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
 ;; to swap providers without touching vis-runtime.
 
-(require '[com.blockether.vis.core :as vis])
+(require '[com.blockether.vis.extension :as ext])
 
 (require '[com.blockether.svar.core :as svar])
 
@@ -952,8 +952,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension {:ext/name "provider-github-copilot"
+  (ext/register-extension!
+    (ext/extension {:ext/name "provider-github-copilot"
                     :ext/description
                     "GitHub Copilot OAuth/token-exchange provider (device flow, any seat tier)."
                     :ext/version "0.4.1"

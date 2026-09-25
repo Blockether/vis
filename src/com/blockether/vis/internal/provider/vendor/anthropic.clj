@@ -13,7 +13,8 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider.oauth :as oauth])
@@ -209,12 +210,12 @@
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
-  "Persist credentials through the ONE JSON boundary (`vis/wire-json-str`):
+  "Persist credentials through the ONE JSON boundary (`wire/json-str`):
    snake_case string keys, total encoding."
   [credentials]
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (vis/wire-json-str (assoc credentials :saved-at-ms (util/now-ms))))
+    (spit (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
     credentials))
 
 (defn- delete-auth-file!
@@ -604,8 +605,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension
+  (ext/register-extension!
+    (ext/extension
       {:ext/name "provider-anthropic"
        :ext/description "Anthropic API-key and Claude subscription OAuth providers."
        :ext/version "0.3.0"

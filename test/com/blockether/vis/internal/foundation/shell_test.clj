@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.foundation.shell-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -2035,9 +2034,9 @@
                  (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))
                  (expect (every? :ext.symbol/active-fn shell/shell-symbols))
-                 (with-redefs [vis/toggle-enabled? (constantly false)]
+                 (with-redefs [toggles/enabled? (constantly false)]
                    (expect (not-any? #(extension/symbol-active? % {}) shell/shell-symbols)))
-                 (with-redefs [vis/toggle-enabled? (constantly true)]
+                 (with-redefs [toggles/enabled? (constantly true)]
                    (expect (every? #(extension/symbol-active? % {}) shell/shell-symbols)))))
 
 (defdescribe

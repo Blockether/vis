@@ -6,14 +6,14 @@
             [com.blockether.vis.contract.diff :as diff]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as capture]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]))
 
-(vis/register-toggle!
+(ext/register-toggle!
   {:id workspace/draft-backend-toggle-id
    :label "Draft backend"
    ;; One line for the Settings row (100 chars max); `doc("drafts")` has the rest.
@@ -420,7 +420,7 @@
                      (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (def draft-status-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-status
     {:activity (presenter/for-tool :draft_status)
      :inject-env? true
@@ -441,7 +441,7 @@
        "Recovery adds `{recovery_required, managed, recovery_hint}`; it never adopts another session's draft.")}))
 
 (def draft-diff-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-diff
     {:activity (presenter/for-tool :draft_diff)
      :inject-env? true
@@ -461,7 +461,7 @@
      "Single repository: attachment descriptor with `{checkpoint, empty}` and a checkpoint string. Several: `{attachments, checkpoint, repository_count, empty}` with a checkpoint map keyed by source. Patch bytes stay in attachments."}))
 
 (def draft-create-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-create
     {:activity (presenter/for-tool :draft_create)
      :inject-env? true
@@ -489,7 +489,7 @@
        "and `session[\"workspace\"]` / `project_root_path` follow from the next block on.")}))
 
 (def draft-sync-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-sync
     {:activity (presenter/for-tool :draft_sync)
      :inject-env? true
@@ -509,7 +509,7 @@
      "String-keyed `{status, repositories}` with per-repository conflicts/commit/error. Conflicts require resolution, not approval."}))
 
 (def draft-approve-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-approve
     {:activity (presenter/for-tool :draft_approve)
      :inject-env? true
@@ -533,7 +533,7 @@
        "`repositories` reports every participant. All targets are preflighted; late publication failures may leave some repositories landed and must be retried without discarding copies.")}))
 
 (def draft-discard-symbol
-  (vis/symbol
+  (ext/symbol
     #'draft-discard
     {:activity (presenter/for-tool :draft_discard)
      :inject-env? true

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.ollama
   "Ollama local provider preset extension."
-  (:require [com.blockether.vis.core :as vis]))
+  (:require [com.blockether.vis.extension :as ext]))
 
 (defn- status
   []
@@ -11,8 +11,8 @@
 
 (defn register!
   []
-  (vis/register-extension!
-    (vis/extension {:ext/name "provider-ollama"
+  (ext/register-extension!
+    (ext/extension {:ext/name "provider-ollama"
                     :ext/description "Ollama local OpenAI-compatible provider preset."
                     :ext/version "0.1.0"
                     :ext/author "Blockether"
