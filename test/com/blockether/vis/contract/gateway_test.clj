@@ -247,3 +247,71 @@
                  (expect (nil? (:behind (release-skew-verdict "0.2.22" "0.2.22"))))
                  (expect (nil? (:behind (release-skew-verdict "dev" "0.2.22"))))
                  (expect (nil? (:behind (release-skew-verdict "0.2.22" nil))))))
+
+(defn- terminal-result
+  "Resolve `event` against a fixed turn `row`; answers the result and every lookup."
+  [event row]
+  (let [lookups
+        (atom [])
+
+        result
+        (contract/terminal-turn-result event
+                                       "t-fallback"
+                                       (fn [session-id turn-id]
+                                         (swap! lookups conj [session-id turn-id])
+                                         row))]
+
+    [result @lookups]))
+
+(defdescribe
+  terminal-turn-result-test
+  (it "reads settled content and meta from the turn row, letting event meta win"
+      (let [[result lookups] (terminal-result {"type" "turn.completed"
+                                               "session_id" "s1"
+                                               "turn_id" "t1"
+                                               "model" "event"
+                                               "provider" nil}
+                                              {"content" [{"type" "prose" "markdown" "done"}]
+                                               "iteration_count" 3
+                                               "model" "row"
+                                               "provider" "row-provider"
+                                               "status" "completed"})]
+        (expect (= [["s1" "t1"]] lookups))
+        (expect (= {"content" [{"type" "prose" "markdown" "done"}]
+                    "iteration_count" 3
+                    "session_turn_id" "t1"
+                    "model" "event"
+                    "provider" "row-provider"}
+                   result))))
+  (it "uses the caller's turn id and the event content when the row is missing"
+      (let [error-block
+            {"type" "error" "message" "Provider stream stalled"}
+
+            [result lookups]
+            (terminal-result
+              {"type" "turn.failed" "session_id" "s1" "status" "failed" "content" [error-block]}
+              nil)]
+
+        (expect (= [["s1" "t-fallback"]] lookups))
+        (expect (= {"content" [error-block]
+                    "iteration_count" 1
+                    "session_turn_id" "t-fallback"
+                    "error" "Provider stream stalled"}
+                   result))))
+  (it "reports suspended and cancelled turns by status"
+      (expect (= "needs_input" (get (first (terminal-result {"status" "suspended"} nil)) "status")))
+      (expect (= "cancelled" (get (first (terminal-result {"status" "cancelled"} nil)) "status")))
+      (expect (= [] (get (first (terminal-result {"status" "cancelled"} nil)) "content")))
+      (expect (not (contains? (first (terminal-result {"status" "cancelled"} nil)) "error"))))
+  (it "takes a failure message from an error block, then the event, then a default"
+      (let [error-of (fn [event row]
+                       (get (first (terminal-result event row)) "error"))]
+        (expect (= "from block"
+                   (error-of {"status" "failed" "error" "from event"}
+                             {"content" [{"type" "prose" "markdown" "partial"}
+                                         {"type" "error" "message" "from block"}]})))
+        (expect (= "from event"
+                   (error-of {"status" "failed" "error" "from event"}
+                             {"content" [{"type" "prose" "markdown" "partial"}]})))
+        (expect (= "turn failed" (error-of {"type" "turn.failed"} nil)))
+        (expect (nil? (error-of {"type" "turn.completed" "error" "ignored"} nil))))))

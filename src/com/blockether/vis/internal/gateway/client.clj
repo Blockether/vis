@@ -2328,48 +2328,10 @@
        "events"))
 
 (defn- terminal-event->result
-  "Resolve a terminal event to the canonical settled content. The event has no
-   duplicate answer body; fetch the turn message that owns the content array."
+  "Resolve a terminal event against the turn row fetched over HTTP; the shared
+   contract owns the result shape."
   [event fallback-turn-id]
-  (let [failed?
-        (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
-
-        cancelled?
-        (= "cancelled" (get event "status"))
-
-        needs-input?
-        (= "suspended" (get event "status"))
-
-        turn-id
-        (or (get event "turn_id") fallback-turn-id)
-
-        message
-        (get-turn (get event "session_id") turn-id)
-
-        blocks
-        (or (get message "content") [])]
-
-    ;; Terminal events are LEAN ({:turn_id :status}); the fetched turn row
-    ;; (`message`) owns the settled meta (tokens/cost/model/…) — mirror of
-    ;; the in-process gateway.state resolution, same shared key list.
-    (cond-> (-> (merge (select-keys message gateway-contract/turn-meta-keys)
-                       (into {}
-                             (filter (comp some? val))
-                             (select-keys event gateway-contract/turn-meta-keys)))
-                (assoc "content" blocks
-                       "iteration_count" (or (get message "iteration_count") 1)
-                       "session_turn_id" turn-id))
-      needs-input?
-      (assoc "status" "needs_input")
-
-      cancelled?
-      (assoc "status" "cancelled")
-
-      failed?
-      (assoc "error"
-        (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
-            (get event "error")
-            "turn failed")))))
+  (gateway-contract/terminal-turn-result event fallback-turn-id get-turn))
 
 (defn- sse-response!
   "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the

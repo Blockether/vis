@@ -4473,60 +4473,14 @@
   (try (lp/db-sweep-orphaned-running-turns!) (catch Throwable _ nil)))
 
 (defn- terminal-event->result
-  "Resolve a terminal event to the canonical settled message. Terminal events
-   intentionally carry no duplicate answer payload; the registry owns content."
+  "Resolve a terminal event against the in-process registry; the shared contract
+   owns the result shape."
   [event fallback-turn-id]
-  (let [failed?
-        (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
-
-        cancelled?
-        (= "cancelled" (get event "status"))
-
-        needs-input?
-        (= "suspended" (get event "status"))
-
-        sid-string
-        (get event "session_id")
-
-        sid
-        (known-sid sid-string)
-
-        turn-id
-        (or (get event "turn_id") fallback-turn-id)
-
-        message
-        (when sid (get-turn sid turn-id))
-
-        ;; The persisted row is the primary settled source. The terminal event also
-        ;; carries the failure content so a listener can render it without racing a
-        ;; registry lookup.
-        blocks
-        (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
-
-    ;; The terminal event is deliberately LEAN ({:turn_id :status}); the
-    ;; registry row (`message`, patched by finish-turn!) owns the settled
-    ;; meta — tokens/cost/model/provider/duration/…. Read the meta from the
-    ;; ROW first, letting any event-carried value win, otherwise the sync
-    ;; submit/attach result drops usage and live bubbles render no
-    ;; tokens/cost meta at all.
-    (cond-> (-> (merge (select-keys message gateway-contract/turn-meta-keys)
-                       (into {}
-                             (filter (comp some? val))
-                             (select-keys event gateway-contract/turn-meta-keys)))
-                (assoc "content" blocks
-                       "iteration_count" (or (get message "iteration_count") 1)
-                       "session_turn_id" turn-id))
-      needs-input?
-      (assoc "status" "needs_input")
-
-      cancelled?
-      (assoc "status" "cancelled")
-
-      failed?
-      (assoc "error"
-        (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
-            (get event "error")
-            "turn failed")))))
+  (gateway-contract/terminal-turn-result event
+                                         fallback-turn-id
+                                         (fn [session-id turn-id]
+                                           (when-let [sid (known-sid session-id)]
+                                             (get-turn sid turn-id)))))
 
 (defn submit-turn-sync!
   "Submit one turn through the gateway and block until that turn reaches a terminal event.

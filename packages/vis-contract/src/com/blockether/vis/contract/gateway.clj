@@ -138,6 +138,46 @@
   "Wire fields copied from a settled turn into blocking submit/attach results."
   (vec (keys (get-in @source ["$defs" "turn_metadata" "properties"]))))
 
+(defn terminal-turn-result
+  "Build the blocking submit/attach result for one terminal session event.
+
+   Terminal events are lean, so `lookup-turn`, called with the event's session id
+   and turn id (`fallback-turn-id` when the event names none), supplies the settled
+   turn row that owns the content and meta; it may answer nil. Event-carried meta
+   wins over the row, and the event's own content stands in when the row has none,
+   so a failure still renders when the lookup races the terminal event. A suspended
+   turn reports `needs_input`; a failed one carries `error` from its first error
+   block, the event, or a generic message."
+  [event fallback-turn-id lookup-turn]
+  (let [turn-id
+        (or (get event "turn_id") fallback-turn-id)
+
+        message
+        (lookup-turn (get event "session_id") turn-id)
+
+        status
+        (get event "status")
+
+        blocks
+        (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
+
+    (cond-> (-> (merge (select-keys message turn-meta-keys)
+                       (into {} (filter (comp some? val)) (select-keys event turn-meta-keys)))
+                (assoc "content" blocks
+                       "iteration_count" (or (get message "iteration_count") 1)
+                       "session_turn_id" turn-id))
+      (= "suspended" status)
+      (assoc "status" "needs_input")
+
+      (= "cancelled" status)
+      (assoc "status" "cancelled")
+
+      (or (= "turn.failed" (get event "type")) (= "failed" status))
+      (assoc "error"
+        (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
+            (get event "error")
+            "turn failed")))))
+
 (defn handshake
   "Build the engine handshake from schema protocol numbers and runtime release identity."
   [{:keys [version build]}]
