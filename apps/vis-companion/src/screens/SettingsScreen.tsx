@@ -5,9 +5,9 @@ import { applyTheme } from '../lib/theme';
 import { usePythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
 import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
 import { speechOutput } from '../lib/speech';
-import { PlusIcon } from '../components/icons';
+import { MinusIcon, PlusIcon } from '../components/icons';
 import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
-import { Banner, ChoiceCell, CloseButton, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
+import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 import { MachineSettings } from './settings/MachineSettings';
@@ -178,24 +178,16 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* The + becomes the shared close mark while the form is open. Both
-                 keep their glyphs on the disclosure rail inside the sheet. */
-              isAdding ? (
-                <CloseButton
-                  label="Cancel adding a machine"
-                  className="translate-x-2.5 mouse:translate-x-2"
-                  onClick={() => setIsAdding(false)}
-                />
-              ) : (
-                <IconButton
-                  variant="quiet"
-                  align="trailing"
-                  label="Add a machine"
-                  onClick={() => setIsAdding(true)}
-                >
-                  <PlusIcon className="size-4" />
-                </IconButton>
-              )
+              /* Like Providers, the band uses one +/− toggle on the disclosure rail. */
+              <IconButton
+                variant="quiet"
+                align="trailing"
+                label={isAdding ? 'Cancel adding a machine' : 'Add a machine'}
+                aria-expanded={isAdding}
+                onClick={() => setIsAdding((open) => !open)}
+              >
+                {isAdding ? <MinusIcon className="size-4" /> : <PlusIcon className="size-4" />}
+              </IconButton>
             }
           >
             {/* THE COG'S FIRST ANSWER IS THE FLEET. Reported over the machines screen:

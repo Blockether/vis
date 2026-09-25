@@ -144,7 +144,7 @@ export const SingleMachine: Story = {
 
 /**
  * PAIRING IS A BAND IN THE MACHINES COLUMN, never a dialog over the dialog: the
- * ＋ that opens it is the × that takes it away, and the fleet stays on the same
+ * ＋ that opens it becomes − to hide it again, and the fleet stays on the same
  * plane as the form that joins it.
  */
 export const PairingInline: Story = {
@@ -153,6 +153,12 @@ export const PairingInline: Story = {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = await page.findByRole('dialog', { name: 'Settings' });
     await userEvent.click(page.getByRole('button', { name: 'Add a machine' }));
+    // Regression, settings screenshot: the expanded machine control used an X rather
+    // than the minus mark of the matching provider control.
+    const toggle = page.getByRole('button', { name: 'Cancel adding a machine' });
+    await expect(toggle.querySelector('.lucide-minus')).not.toBeNull();
+    await expect(toggle.querySelector('.lucide-x')).toBeNull();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
     await expect(page.getAllByRole('dialog')).toHaveLength(1);
     const panel = within(dialog).getByRole('heading', { name: 'Add a machine' }).closest('section')!;
@@ -164,7 +170,10 @@ export const PairingInline: Story = {
       machine.getBoundingClientRect().top,
     );
 
-    await userEvent.click(page.getByRole('button', { name: 'Cancel adding a machine' }));
+    await userEvent.click(toggle);
+    const addButton = page.getByRole('button', { name: 'Add a machine' });
+    await expect(addButton.querySelector('.lucide-plus')).not.toBeNull();
+    await expect(addButton).toHaveAttribute('aria-expanded', 'false');
     await waitFor(() => expect(page.queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull());
   },
 };
