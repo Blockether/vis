@@ -4222,8 +4222,9 @@
          :node-id (str node-id)
          :collapsed? collapsed?}]
 
-    (if (= marker result-marker)
-      ;; Keep the tally and chevron together; only timing belongs at the right edge.
+    (if (contains? #{result-marker err-result-marker} marker)
+      ;; Result and failure controls keep the chevron after the bold name.
+      ;; Only their tally and timing have different content.
       (let [hidden-n
             (count (remove #(str/blank? (subs (str (:line %)) 1)) (:hidden-entries detail-ctx)))
 
@@ -7763,13 +7764,15 @@
                                   (or (:group-errors form) [error])))]
 
                     (if node-id
-                      (vec (concat (detail-summary-entries {:marker err-result-marker
+                      (vec (concat [(line-entry (str code-err-pad-marker ""))]
+                                   (detail-summary-entries {:marker err-result-marker
                                                             :max-w fill-w
-                                                            :summary "Failed"
+                                                            :summary (band-label "FAILED")
                                                             :collapsed? (not expanded?)
                                                             :session-id session-id
                                                             :node-id node-id
                                                             :duration-ms duration})
+                                   [(line-entry (str code-err-pad-marker ""))]
                                    (map #(line-entry (str err-result-marker %)) details)))
                       ;; Noninteractive output cannot offer a toggle: retain all diagnostics.
                       (mapv #(line-entry (str err-result-marker %))
@@ -7818,9 +7821,8 @@
                 inline-live-entries
                 (mapcat #((:inline-entries %) fill-w) (filter :inline-entries runs))
 
-                ;; A failure closes with one blank error row, the same bottom edge a code
-                ;; band or a result band ends on; without it the red message sat hard
-                ;; against whatever followed while a success kept its air.
+                ;; The failed control has red padding above and below its name. Keep
+                ;; a neutral blank after any diagnostics before the next surface.
                 execution-details
                 (vec (concat inline-error-message-lines
                              (when (seq inline-error-message-lines)

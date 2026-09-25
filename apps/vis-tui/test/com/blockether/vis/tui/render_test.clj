@@ -1249,8 +1249,8 @@
       (expect (not (str/includes? shut "x = 1/0")))
       (expect (not (str/includes? shut "PYCODEMARKER")))
       (expect (not (str/includes? shut "ZeroDivisionError")))
-      (expect (str/includes? shut "Failed"))
-      (expect (< (.indexOf ^String shut "CODE") (.indexOf ^String shut "Failed")))
+      (expect (str/includes? shut "FAILED"))
+      (expect (< (.indexOf ^String shut "CODE") (.indexOf ^String shut "FAILED")))
       (expect (not (str/includes? open "RUNTIME_EXCERPT_ONLY")))
       (expect (str/includes? open "PYCODEMARKER"))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" open))))))
@@ -1282,7 +1282,7 @@
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
         (expect (not (str/includes? txt "x = 1 / 0")))
-        (expect (str/includes? txt "Failed"))
+        (expect (str/includes? txt "FAILED"))
         (expect (not (str/includes? txt "ZeroDivisionError"))))))
 
 (defdescribe
@@ -1347,7 +1347,7 @@
             (paint {["s" error-id] true})]
 
         (expect (some? error-id))
-        (expect (str/includes? (text-of closed) "Failed"))
+        (expect (str/includes? (text-of closed) "FAILED"))
         (expect (not (str/includes? (text-of closed) "DIAGNOSTIC_MARKER")))
         (expect (not (str/includes? (text-of closed) "SECOND_FAILURE")))
         (expect (not (str/includes? (text-of closed) "PRIVATE_SOURCE")))
@@ -1469,7 +1469,7 @@
             (str/split-lines text)
 
             row
-            (first (keep-indexed #(when (str/includes? %2 "Failed") %1) lines))]
+            (first (keep-indexed #(when (str/includes? %2 "FAILED") %1) lines))]
 
         (expect (nil? (:error captured)))
         (expect (some? row))
@@ -1477,7 +1477,7 @@
         (expect (= expanded? (str/includes? text "SECOND_FAILURE")))
         (expect (not (str/includes? text "PRIVATE_SOURCE")))
         (let [col
-              (.indexOf ^String (nth lines row) "Failed")
+              (.indexOf ^String (nth lines row) "FAILED")
 
               region
               (.lookup interactions/hit-map col row)]
@@ -1521,8 +1521,8 @@
         (expect (not (str/includes? header " · ")))
         ;; Failure status stays visible below the independent source disclosure.
         (expect (not (str/includes? txt "NameError")))
-        (expect (str/includes? txt "Failed"))
-        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "Failed")))))
+        (expect (str/includes? txt "FAILED"))
+        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "FAILED")))))
   (it "keeps the CODE name plain when the form succeeded"
       (let [header
             (some #(when (str/includes? (str %) "CODE") (str %))
@@ -1558,6 +1558,118 @@
                    (expect (seq err-lines))
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
                    (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
+
+(defdescribe
+  failed-disclosure-layout-test
+  (it
+    "aligns and pads a bold failure control beside other bands at different sizes and fold states"
+    (doseq [width
+            [40 80 120]
+
+            expanded?
+            [false true]
+
+            activity?
+            [false true]
+
+            preceded-by-result?
+            [false true]]
+
+      (let [form
+            (cond-> {:code "print(missing)" :duration-ms 29 :error {:message "MISSING_VALUE"}}
+              activity?
+              (assoc :activity
+                {:state "failed"
+                 :rows [{:id "a" :sequence 1 :operation "read" :state "failed" :duration-ms 29}]}))
+
+            entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:forms (cond-> []
+                                                preceded-by-result?
+                                                (conj {:code "print(42)\nprint(43)"
+                                                       :stdout "42\n43"
+                                                       :duration-ms 14
+                                                       :success? true})
+
+                                                true
+                                                (conj form))})
+              (- width 8)
+              1
+              {:session-id "s"
+               :session-turn-id "t"
+               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+
+            captured
+            (cap/capture! {:cols width
+                           :rows 40
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-chat-bubble! g
+                                                               {:role :assistant
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               0
+                                                               (- width 4)
+                                                               {:viewport-top 0 :viewport-h 40}))})
+
+            frame
+            (last (:frames captured))
+
+            lines
+            (str/split-lines (cap/frame-text captured))
+
+            row-for
+            (fn [pattern]
+              (first (keep-indexed #(when (re-find pattern %2) %1) lines)))
+
+            code-row
+            (row-for #"CODE")
+
+            result-row
+            (row-for #"RESULT")
+
+            failed-row
+            (row-for #"(?i)failed")
+
+            activity-row
+            (row-for #"ACTIVITY")
+
+            detail-row
+            (row-for #"MISSING_VALUE")]
+
+        (expect (nil? (:error captured)))
+        (expect (and code-row failed-row))
+        (expect (= activity? (some? activity-row)))
+        (expect (= (and preceded-by-result? expanded?) (some? result-row)))
+        (expect (= expanded? (some? detail-row)))
+        (when (and code-row failed-row)
+          (let [failed-line
+                (nth lines failed-row)
+
+                column
+                (.indexOf ^String failed-line "FAILED")
+
+                ink
+                (apply str (map :ch (filter :bold (nth frame failed-row))))
+
+                red
+                (get-in (shared-theme/theme shared-theme/default-theme-id) [:palette :code-err-bg])]
+
+            (expect (str/includes? failed-line (if expanded? "FAILED ▾" "FAILED ▸")))
+            (expect (= "FAILED" ink))
+            (expect (= (.indexOf ^String (nth lines code-row) "CODE") column))
+            (expect (str/blank? (apply str (map :ch (nth frame (dec failed-row))))))
+            (expect (str/blank? (apply str (map :ch (nth frame (inc failed-row))))))
+            (expect (= red (get-in frame [(dec failed-row) 20 :bg])))
+            (expect (= red (get-in frame [failed-row 20 :bg])))
+            (expect (= red (get-in frame [(inc failed-row) 20 :bg])))
+            (when result-row
+              (expect (< code-row result-row))
+              (expect (not= red (get-in frame [result-row 20 :bg]))))
+            (when activity-row
+              (expect (< code-row failed-row activity-row))
+              (expect (= column (.indexOf ^String (nth lines activity-row) "ACTIVITY"))))))))))
 
 (defdescribe
   failed-form-error-surface-test
@@ -1607,7 +1719,7 @@
               (row-for "CODE")
 
               failed-row
-              (row-for "Failed")
+              (row-for "FAILED")
 
               detail-row
               (row-for "MISSING_VALUE")]
@@ -1621,9 +1733,10 @@
                        [:palette
                         (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])
                      (get-in frame [code-row 20 :bg])))
-          (expect (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
-                     (get-in frame [failed-row 20 :bg]))
-                  (str id " failed row expanded? " expanded?))
+          (doseq [row [(dec failed-row) failed-row (inc failed-row)]]
+            (expect (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
+                       (get-in frame [row 20 :bg]))
+                    (str id " failed band row " row " expanded? " expanded?)))
           (when detail-row
             (expect (= (get-in (shared-theme/theme id) [:palette :terminal-bg])
                        (get-in frame [detail-row 20 :bg]))
