@@ -104,6 +104,7 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
       ) => (view === 'only' ? archive : ACTIVE_PAGE),
     ),
     isSessionDeleted: () => false,
+    heldSessionGroups: () => null,
     // THE WALL ANSWERS FOR ITSELF: one page of bands carries the whole wall's own tally, and
     // that is what the reveal counts beside the rows it painted.
     listSessionGroups: vi.fn(

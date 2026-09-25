@@ -404,6 +404,68 @@ describe('GatewayClient project-page snapshots', () => {
     expect(wall).toContain('offset=20');
   });
 
+  // THE WALL A PROJECT OPENS ON IS HELD LIKE ITS HEAD. Reported in this Vis session
+  // (paraphrased: opening the app painted every band as "Group" until the names arrived).
+  // A cold start names the first page of bands before the gateway answers again.
+  it('holds the first page of a project wall across a cold start', async () => {
+    const wallet = {
+      id: 'group-wallet',
+      project_id: 'project-alpha',
+      name: 'Wallet work',
+      color: 'blue',
+      position: 0,
+      session_count: 2,
+    };
+    const page = {
+      project_id: 'project-alpha',
+      groups: [wallet],
+      total: 1,
+      session_total: 2,
+      limit: 10,
+      offset: 0,
+      has_more: false,
+    };
+    const fetches = vi.fn(async (url: string, init?: RequestInit) =>
+      new Response(
+        JSON.stringify(
+          init?.method === 'POST'
+            ? { ...wallet, id: 'group-new', name: 'New work' }
+            : init?.method === 'PATCH'
+              ? { ...wallet, name: 'Renamed work' }
+              : String(url).includes('archived=only')
+                ? { ...page, groups: [] }
+                : page,
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const client = new gateway.GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    const bands = { limit: 10, offset: 0 };
+    await client.listSessionGroups(root, undefined, 'exclude', bands);
+    await client.listSessionGroups(root, undefined, 'only', bands);
+    await client.listSessionGroups(root, undefined, 'exclude', { limit: 10, offset: 10 });
+    gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(cold.heldSessionGroups(root, 'exclude', bands)).toEqual(page);
+    // Only the active first page is held: a reveal, a deeper page, another page size or
+    // another project asked a different question.
+    expect(cold.heldSessionGroups(root, 'only', bands)).toBeNull();
+    expect(cold.heldSessionGroups(root, 'exclude', { limit: 10, offset: 10 })).toBeNull();
+    expect(cold.heldSessionGroups(root, 'exclude', { limit: 20, offset: 0 })).toBeNull();
+    expect(cold.heldSessionGroups('/Users/dev/beta', 'exclude', bands)).toBeNull();
+
+    // A band changed on this device is never painted back from the wall saved before it.
+    await cold.updateSessionGroup(wallet.id, { name: 'Renamed work' });
+    expect(cold.heldSessionGroups(root, 'exclude', bands)).toBeNull();
+    await cold.listSessionGroups(root, undefined, 'exclude', bands);
+    await cold.createSessionGroup(root, 'New work');
+    expect(cold.heldSessionGroups(root, 'exclude', bands)).toBeNull();
+  });
+
   it('sends group archive and restoration as PATCH requests', async () => {
     const fetches = vi.fn(async (_url: string, _init: RequestInit) =>
       new Response(JSON.stringify({ id: 'wallet', archived_at: null })),

@@ -3676,7 +3676,7 @@ export class GatewayClient {
    * `bands` cuts ONE page out of that wall, and the answer then carries `total` and
    * `has_more` for the pager over them. Without it the answer is every band.
    */
-  listSessionGroups(
+  async listSessionGroups(
     root: string,
     signal?: AbortSignal,
     archived: ArchiveView = 'exclude',
@@ -3688,7 +3688,58 @@ export class GatewayClient {
       query.set('limit', String(bands.limit));
       query.set('offset', String(bands.offset));
     }
-    return this.request('GET', `/v1/session-groups?${query.toString()}`, undefined, signal);
+    const page = await this.request<SessionGroupPage>(
+      'GET',
+      `/v1/session-groups?${query.toString()}`,
+      undefined,
+      signal,
+    );
+    // The page of the wall a project OPENS on is saved beside its head, so the next cold
+    // start names its bands before this read comes back (`heldSessionGroups`).
+    if (archived === 'exclude' && (bands?.offset ?? 0) === 0 && Array.isArray(page?.groups))
+      writeSnapshot(this.snapshotKey('project-groups', root), {
+        key: this.groupWallKey(root, archived, bands),
+        page,
+      });
+    return page;
+  }
+
+  /**
+   * The page of a project's wall this reader was answered last time, or `null`.
+   *
+   * Only the active first page is kept, the one a project opens on. Painting it with the
+   * held head (`heldProjectPage`) names the bands on the first frame of a cold start;
+   * `listSessionGroups` then confirms or replaces them.
+   */
+  heldSessionGroups(
+    root: string,
+    archived: ArchiveView = 'exclude',
+    bands?: BandWindow,
+  ): SessionGroupPage | null {
+    const saved = readSnapshot<{ key: string; page: SessionGroupPage }>(
+      this.snapshotKey('project-groups', root),
+    );
+    return saved?.key === this.groupWallKey(root, archived, bands) ? saved.page : null;
+  }
+
+  /** The question a page of a project's wall answered, as one string. */
+  private groupWallKey(root: string, archived: ArchiveView, bands?: BandWindow): string {
+    return [this.base, root, archived, bands ? `${bands.limit}:${bands.offset}` : ''].join('\u0000');
+  }
+
+  /** A band changed on this device must not be painted from a wall saved before the change. */
+  private forgetGroupWalls(owner: { root?: string; gid?: string | null; projectId?: string | null }): void {
+    const prefix = `${this.snapshotKey('project-groups')}\u0000`;
+    for (const [key, value] of snapshots) {
+      if (!key.startsWith(prefix)) continue;
+      const { page } = value as { page: SessionGroupPage };
+      if (
+        (owner.root && key === this.snapshotKey('project-groups', owner.root)) ||
+        (owner.projectId && page.project_id === owner.projectId) ||
+        (owner.gid && page.groups.some((group) => group.id === owner.gid))
+      )
+        snapshots.delete(key);
+    }
   }
 
   /**
@@ -3696,16 +3747,29 @@ export class GatewayClient {
    * so the first group a reader makes needs no separate step. A name already taken
    * in the project is a 409 (`group-exists`), which is the caller's to report.
    */
-  createSessionGroup(root: string, name: string, color?: string): Promise<SessionGroup> {
-    return this.request('POST', '/v1/session-groups', color ? { root, name, color } : { root, name });
+  async createSessionGroup(root: string, name: string, color?: string): Promise<SessionGroup> {
+    const group = await this.request<SessionGroup>(
+      'POST',
+      '/v1/session-groups',
+      color ? { root, name, color } : { root, name },
+    );
+    this.forgetGroupWalls({ root });
+    return group;
   }
 
   /** Rename, recolour, reorder, archive or restore a group. */
-  updateSessionGroup(
+  async updateSessionGroup(
     gid: string,
     fields: { name?: string; color?: string; position?: number; archived?: boolean },
   ): Promise<SessionGroup> {
-    return this.request('PATCH', `/v1/session-groups/${encodeURIComponent(gid)}`, fields);
+    const group = await this.request<SessionGroup>(
+      'PATCH',
+      `/v1/session-groups/${encodeURIComponent(gid)}`,
+      fields,
+    );
+    // A reorder moves the other bands of the project too.
+    this.forgetGroupWalls({ gid, projectId: group?.project_id });
+    return group;
   }
 
   /**
@@ -3728,6 +3792,7 @@ export class GatewayClient {
         sessions === 'with-sessions' ? '?sessions=delete' : ''
       }`,
     );
+    this.forgetGroupWalls({ gid });
     const detached = res?.scattered_session_ids ?? [];
     const deleted = res?.deleted_session_ids ?? [];
     for (const sid of detached) {
@@ -3744,12 +3809,12 @@ export class GatewayClient {
    * gateway's own answer instead of a guess this device made.
    */
   async assignSessionGroup(sid: string, gid: string | null): Promise<Session> {
-    return this.absorbSessionRow(
-      sid,
-      await this.request<Session>('PUT', `/v1/sessions/${encodeURIComponent(sid)}/group`, {
-        group_id: gid,
-      }),
-    );
+    const row = await this.request<Session>('PUT', `/v1/sessions/${encodeURIComponent(sid)}/group`, {
+      group_id: gid,
+    });
+    // Filing moves a session between bands, so the counts a saved wall paints are stale.
+    this.forgetGroupWalls({ root: row?.workspace?.root, gid });
+    return this.absorbSessionRow(sid, row);
   }
 
   /**

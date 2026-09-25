@@ -580,12 +580,6 @@ export const ProjectGroup = memo(function ProjectGroup({
   // `position` orders the groups and no turn moves one, so the third page of them names
   // the same shelves tomorrow (`state/list-session-groups-page`).
   const [groupPage, setGroupPage] = useState(1);
-  // THE WALL'S OWN TALLIES, as the gateway counted them: how many bands this project
-  // holds, and how many sessions are filed across ALL of them. Both count the wall and
-  // not the page of it on screen, so the steps over the bands and the counts beside them
-  // do not move while the reader walks it.
-  const [groupTotal, setGroupTotal] = useState(0);
-  const [groupSessionTotal, setGroupSessionTotal] = useState(0);
   // ONE WINDOW OVER THE WALL, ASKED FOR BY BOTH READS. The bands on this page and the
   // sessions filed under them are two halves of one answer, so the session read carries
   // the same window: `grouped` then holds those bands' rows and nothing from a shelf that
@@ -662,6 +656,18 @@ export const ProjectGroup = memo(function ProjectGroup({
   const isSessionRevealing = isSessionRevealed && needle === '';
   const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
   const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
+  // THE WALL THIS READER WAS SHOWN LAST TIME, held by the client beside the project's head:
+  // a cold start names its bands from it on the first frame instead of after a round trip,
+  // and the read below confirms or replaces it (`heldSessionGroups`).
+  const [heldWall] = useState(() =>
+    getClient(conn).heldSessionGroups(root, groupArchived, bandWindow),
+  );
+  // THE WALL'S OWN TALLIES, as the gateway counted them: how many bands this project
+  // holds, and how many sessions are filed across ALL of them. Both count the wall and
+  // not the page of it on screen, so the steps over the bands and the counts beside them
+  // do not move while the reader walks it.
+  const [groupTotal, setGroupTotal] = useState(heldWall?.total ?? 0);
+  const [groupSessionTotal, setGroupSessionTotal] = useState(heldWall?.session_total ?? 0);
   const [groupsRead, setGroupsRead] = useState(0);
   const [groupsReady, setGroupsReady] = useState<{
     view: ArchiveView;
@@ -669,13 +675,26 @@ export const ProjectGroup = memo(function ProjectGroup({
     read: number;
   } | null>(null);
   // A page of bands and its shelves are one picture. Keep the last complete picture
-  // until both independent reads answer for the same window and refresh.
+  // until both independent reads answer for the same window and refresh. A cold start
+  // opens on the picture held from the last run: the saved wall over the saved head.
   const [presentedGroups, setPresentedGroups] = useState<{
     view: ArchiveView;
     offset: number;
     groups: SessionGroup[];
     rows: Session[];
-  } | null>(null);
+  } | null>(() =>
+    heldWall
+      ? {
+          view: groupArchived,
+          offset: bandWindow.offset,
+          groups: heldWall.groups,
+          rows:
+            paged?.view === groupArchived && paged.bandOffset === bandWindow.offset
+              ? paged.grouped
+              : NO_ROWS,
+        }
+      : null,
+  );
   // The gateway leaves the sessions unstamped when it archives their group. Hold its
   // answer until both the next page and group reads arrive, then defer to fresh reads.
   const [groupArchive, setGroupArchive] = useState<{
@@ -1134,60 +1153,24 @@ export const ProjectGroup = memo(function ProjectGroup({
         : { view: groupArchived, offset: bandWindow.offset, groups, rows: matchedRows },
     );
   }, [groupsReady, groupsRead, groupArchived, bandWindow, groups, matchedRows]);
-  // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
-  // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
-  // which keeps the project's own order. It is the shape the TUI's navigator paints
-  // (`tui/dialogs`), so one list is not two different pictures.
-  const filed = useMemo(() => {
-    const byGroup = new Map<string, Session[]>();
-    const loose: Session[] = [];
-    const seen = new Set<string>();
-    // The shelves first, then the page: a row the reader just filed is on both until
-    // the next poll lands, and it belongs to its band either way.
-    for (const session of painted) {
-      if (seen.has(session.id)) continue;
-      seen.add(session.id);
-      const gid = typeof session.group_id === 'string' ? session.group_id : '';
-      if (gid === '') {
-        loose.push(session);
-        continue;
-      }
-      const held = byGroup.get(gid);
-      if (held) held.push(session);
-      else byGroup.set(gid, [session]);
-    }
-    return { byGroup, loose };
-  }, [painted]);
-  // A band for every group the project HAS, plus one for any group a ROW names that
-  // this device has not read yet: a row is never dropped because the list arrived a
-  // beat ahead of the groups.
-  const bands = useMemo<GroupBandView[]>(() => {
-    const known = shownGroups
-      .map((group) => ({
-        id: group.id,
-        name: group.name,
-        color: group.color,
-        count: group.session_count,
-        archived: groupArchive?.id === group.id ? groupArchive.archived : group.archived_at != null,
-      }))
-      .filter((group) => group.archived === isGroupRevealing);
-    // A REVEAL PAINTS THE ARCHIVE'S OWN BANDS AND NOTHING ELSE. A session archived inside
-    // a group that is still active belongs to THAT group's reveal; a band invented here
-    // from the group such a row names would file it under a project that does not have it.
-    if (isGroupRevealing) return known;
-    const unread = [...filed.byGroup.entries()]
-      .filter(([gid]) => !shownGroups.some((group) => group.id === gid) && groupArchive?.id !== gid)
-      .map(([gid, held]) => ({
-        id: gid,
-        // The GROUP owns its name and its colour, and this device has not read THIS one
-        // yet. The band stands under a plain word until the re-read below lands it.
-        name: 'Group',
-        color: null,
-        count: held.length,
-        archived: false,
-      }));
-    return [...known, ...unread];
-  }, [shownGroups, filed, isGroupRevealing, groupArchive]);
+  // A band for every group on this page of the wall. A group only a ROW names is not
+  // painted under a stand-in name while this device reads it: the row waits for the
+  // band that names it (`askedForGroup` below).
+  const bands = useMemo<GroupBandView[]>(
+    () =>
+      shownGroups
+        .map((group) => ({
+          id: group.id,
+          name: group.name,
+          color: group.color,
+          count: group.session_count,
+          archived: groupArchive?.id === group.id ? groupArchive.archived : group.archived_at != null,
+        }))
+        // A REVEAL PAINTS THE ARCHIVE'S OWN BANDS AND NOTHING ELSE. A session archived inside
+        // a group that is still active belongs to THAT group's reveal, not to a band here.
+        .filter((group) => group.archived === isGroupRevealing),
+    [shownGroups, isGroupRevealing, groupArchive],
+  );
   // Both sides of the project header count the sets currently on display.
   const visibleCount = total + groupSessionTotal;
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
@@ -1199,19 +1182,57 @@ export const ProjectGroup = memo(function ProjectGroup({
     () => new Map(shownGroups.map((group) => [group.id, group])),
     [shownGroups],
   );
-  // A ROW CAN NAME A GROUP THIS DEVICE HAS NOT READ: it was made on another client, or the
-  // rows landed a beat ahead of the groups. Ask for the groups again ONCE per such id, so
-  // that band gets its own name and colour instead of standing as a plain "Group" forever.
+  // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
+  // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
+  // which keeps the project's own order. It is the shape the TUI's navigator paints
+  // (`tui/dialogs`), so one list is not two different pictures.
+  const filed = useMemo(() => {
+    const banded = new Set(bands.map((band) => band.id));
+    const byGroup = new Map<string, Session[]>();
+    const loose: Session[] = [];
+    // The groups rows name that this page of the wall does not hold.
+    const unread = new Set<string>();
+    const seen = new Set<string>();
+    // The shelves first, then the page: a row the reader just filed is on both until
+    // the next poll lands, and it belongs to its band either way.
+    for (const session of painted) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
+      const gid = typeof session.group_id === 'string' ? session.group_id : '';
+      if (banded.has(gid)) {
+        const held = byGroup.get(gid);
+        if (held) held.push(session);
+        else byGroup.set(gid, [session]);
+        continue;
+      }
+      if (gid !== '' && !groupById.has(gid)) unread.add(gid);
+      // A FILED ROW WAITS FOR ITS BAND rather than standing under a name nobody gave it.
+      // A run parked on the reader is never held back: it is said among the loose ones.
+      if (gid === '' || sessionNeedsInput(session)) loose.push(session);
+    }
+    return { byGroup, loose, unread };
+  }, [painted, bands, groupById]);
+  // A ROW CAN NAME A GROUP THIS DEVICE HAS NOT READ: it was made on another client after
+  // this page of the wall was read. Ask for the groups again ONCE per such id, and only
+  // after the reads under way have answered: asking while they were still out cancelled
+  // the very reads that were bringing the names.
   const askedForGroup = useRef(new Set<string>());
+  const isPictured =
+    groupsReady?.view === groupArchived &&
+    groupsReady.offset === bandWindow.offset &&
+    groupsReady.read === groupsRead &&
+    presentedGroups?.groups === groups &&
+    presentedGroups.rows === matchedRows;
   useEffect(() => {
+    if (!isPictured) return;
     let missing = false;
-    for (const gid of filed.byGroup.keys()) {
-      if (groupById.has(gid) || askedForGroup.current.has(gid)) continue;
+    for (const gid of filed.unread) {
+      if (askedForGroup.current.has(gid)) continue;
       askedForGroup.current.add(gid);
       missing = true;
     }
     if (missing) setGroupsRead((read) => read + 1);
-  }, [filed, groupById]);
+  }, [filed, isPictured]);
   // A GROUP FOLDS ON ITS OWN, out of the store the project's fold lives in, so a band
   // this reader shut stays shut on the next screen. A group nobody shut is open: a
   // name and a count with nothing under them say less than the rows do.

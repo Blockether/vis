@@ -99,6 +99,7 @@ function machine(overrides: Machine = {}) {
   return {
     base: 'https://story.example.com',
     heldProjectPage: () => page,
+    heldSessionGroups: () => null,
     listProjectPage: vi.fn(async () => page),
     isSessionDeleted: () => false,
     listSessionGroups: vi.fn(async () => wall([WALLET_GROUP])),
@@ -1516,5 +1517,89 @@ describe('ProjectGroup groups', () => {
     );
     const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
     expect(within(header).queryByRole('navigation')).toBeNull();
+  });
+
+  // Reported in this Vis session (paraphrased: opening the app painted the Groups set as a
+  // stack of bands all called "Group" before their names arrived). The machine's window
+  // held the filed rows before this project's groups were read, every group those rows
+  // named stood as an invented band with nothing to call it, and asking for those groups
+  // again cancelled the two reads that were already bringing them.
+  it('paints no placeholder band while the groups are still being read', async () => {
+    const client = machine({
+      heldProjectPage: () => null,
+      listProjectPage: vi.fn(() => new Promise(() => {})),
+      listSessionGroups: vi.fn(() => new Promise(() => {})),
+    });
+    mount(client);
+    await act(async () => {});
+
+    expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
+    // A filed row waits for the band that names it; what nobody filed paints meanwhile.
+    expect(surface(ROWS[0].id)).toBeNull();
+    expect(surface(LOOSE.id)).toBeInTheDocument();
+    // One read of each, left to answer.
+    expect(client.listSessionGroups).toHaveBeenCalledOnce();
+    expect(client.listProjectPage).toHaveBeenCalledOnce();
+  });
+
+  it('names the bands it read last time on the first frame of a cold start', async () => {
+    const client = machine({
+      heldSessionGroups: vi.fn(() => wall([WALLET_GROUP])),
+      listProjectPage: vi.fn(() => new Promise(() => {})),
+      listSessionGroups: vi.fn(() => new Promise(() => {})),
+    });
+    mount(client);
+
+    const wallet = await band('Wallet work');
+    expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
+      row.getAttribute('data-session-id'),
+    )).toEqual([ROWS[0].id, ROWS[1].id]);
+    expect(client.heldSessionGroups).toHaveBeenCalledWith(ROOT, 'exclude', BANDS);
+  });
+
+  it('asks again once for a group the wall it read does not hold', async () => {
+    const other: SessionGroup = {
+      ...WALLET_GROUP,
+      id: 'group-other',
+      name: 'Other work',
+      position: 1,
+      session_count: 1,
+    };
+    const rows = ROWS.map((row) => (row.id === LOOSE.id ? { ...row, group_id: other.id } : row));
+    const page = { rows, total: rows.length, awaiting: [], grouped: [], nextCursor: '' };
+    let answer!: (value: ReturnType<typeof wall>) => void;
+    const client = machine({
+      heldProjectPage: () => page,
+      listProjectPage: vi.fn(async () => page),
+      listSessionGroups: vi
+        .fn()
+        .mockResolvedValueOnce(wall([WALLET_GROUP]))
+        .mockReturnValueOnce(new Promise((resolve) => (answer = resolve))),
+    });
+    mount(client, undefined, '', rows);
+
+    await band('Wallet work');
+    await waitFor(() => expect(client.listSessionGroups).toHaveBeenCalledTimes(2));
+    expect(surface(LOOSE.id)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
+
+    await act(async () => answer(wall([WALLET_GROUP, other])));
+    const shelf = await band('Other work');
+    expect(shelf.querySelector(`[data-session-id="${LOOSE.id}"]`)).toBeInTheDocument();
+    expect(client.listSessionGroups).toHaveBeenCalledTimes(2);
+  });
+
+  // A RUN PARKED ON THE READER IS NEVER HELD BACK: filed under a band this page of the wall
+  // does not paint, it stays in sight among the loose sessions instead.
+  it('keeps a session waiting for input in sight while its band is not painted', async () => {
+    const rows = ROWS.map((row) =>
+      row.id === LOOSE.id ? { ...row, group_id: 'group-elsewhere', is_awaiting_input: true } : row,
+    );
+    const page = { rows, total: rows.length, awaiting: [], grouped: [], nextCursor: '' };
+    mount(machine({ heldProjectPage: () => page, listProjectPage: vi.fn(async () => page) }), undefined, '', rows);
+
+    await band('Wallet work');
+    expect(surface(LOOSE.id)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
   });
 });

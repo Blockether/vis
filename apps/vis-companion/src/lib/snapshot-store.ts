@@ -31,9 +31,11 @@ const DURABLE_KINDS = new Set([
   'sessions',
   'sessions-pin',
   // The head window can contain only one busy project. Keep every project header
-  // and each visited project's first page beside it for a complete cold paint.
+  // and each visited project's first page beside it for a complete cold paint, with
+  // the first page of that project's bands, so the rows filed under them paint named.
   'projects-overview',
   'project-head',
+  'project-groups',
   'session',
   'transcript',
   'setting',
