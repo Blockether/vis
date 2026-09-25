@@ -34,7 +34,7 @@
    to stay sensitive to behavior changes (the assembly path is what
    we're verifying)."
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.loop :as lp]))
+            [com.blockether.vis.internal.loop.transcript :as transcript]))
 
 ;; Trailer reconstruction (mirrors the live-loop's `:trailer-iters` shape)
 
@@ -84,10 +84,10 @@
         (replay-target (nth iters idx))
 
         compatible
-        (#'lp/compatible-preserved-thinking-trailer-iters trailer target)
+        (#'transcript/compatible-preserved-thinking-trailer-iters trailer target)
 
         replays
-        (#'lp/preserved-thinking-replay-messages compatible)]
+        (#'transcript/preserved-thinking-replay-messages compatible)]
 
     {:trailer-size (count trailer)
      :compatible (count compatible)

@@ -4,7 +4,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.decisions.assets :as decisions-assets]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -119,9 +119,9 @@
 (defdescribe one-shot-router-boundary-test
              (it "uses Vis's provider-enriching router builder for explicit overrides"
                  (let [config {:providers [{:id :lmstudio :models [{:name "meta/muse-glimmer"}]}]}]
-                   (with-redefs [lp/build-router #(assoc % :enriched? true)
-                                 lp/get-router (fn []
-                                                 :shared)]
+                   (with-redefs [loop-router/build-router #(assoc % :enriched? true)
+                                 loop-router/get-router (fn []
+                                                          :shared)]
 
                      (expect (= (assoc config :enriched? true) (#'main/router-for-run config true)))
                      (expect (= :shared (#'main/router-for-run config false))))))
@@ -149,7 +149,7 @@
               config {:providers [{:id :openai-codex :models [{:name "gpt-6-astra"}]}
                                   {:id :github-copilot :models [{:name "gpt-6-astra"}]}]}]
 
-          (with-redefs [lp/rebuild-router! (constantly nil)
+          (with-redefs [loop-router/rebuild-router! (constantly nil)
                         gateway-state/create-session! (constantly {"id" "wire-session"})
                         gateway-state/submit-turn-sync! (fn [_ request]
                                                           (reset! submitted request)

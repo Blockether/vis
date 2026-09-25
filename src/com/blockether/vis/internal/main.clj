@@ -2,10 +2,11 @@
   "vis-agent CLI binary - :db Telemere handler, one-shot agent helper,
    built-in CLI commands, and the `-main` dispatcher entry point.
 
-   Everything in this file is binary-only. The library surface
-   (iteration loop, turn engine, environment lifecycle, session
-   cache) lives in `com.blockether.vis.internal.loop`; this namespace requires
-   that one and wires it into the command tree the `vis-agent` wrapper
+   Everything in this file is binary-only. The library surface lives in
+   the `com.blockether.vis.internal.loop` namespaces: the session cache in
+   `loop`, the turn engine in `loop.turn`, the iteration loop in
+   `loop.iteration` and the environment lifecycle in `loop.environment`.
+   This namespace wires them into the command tree the `vis-agent` wrapper
    exposes.
 
    Public entry point:
@@ -56,7 +57,9 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.server :as gateway-server]
             [com.blockether.vis.internal.gateway.stdio :as gateway-stdio]
@@ -376,8 +379,8 @@
     ;; Use the same provider enrichment and network-policy boundary as the
     ;; shared router. LM Studio needs this to replace svar's conservative
     ;; context fallback with the window reported by its native model endpoint.
-    (lp/build-router config)
-    (lp/get-router)))
+    (loop-router/build-router config)
+    (loop-router/get-router)))
 
 (defn- run-error-result
   [session-id e]
@@ -525,9 +528,9 @@
       ;; persistent path already creates a `:cli` session). The prompt keys
       ;; off it to drop the candidate propose-and-STOP-for-approval gate —
       ;; there is no human here to approve, so a candidate plan would stall.
-      (let [env (lp/create-environment (router-for-run cfg local-router?)
-                                       {:db (or db :memory) :channel :cli})]
-        (try (let [result (lp/turn! env messages q-opts)]
+      (let [env (loop-env/create-environment (router-for-run cfg local-router?)
+                                             {:db (or db :memory) :channel :cli})]
+        (try (let [result (turn/turn! env messages q-opts)]
                (cond-> {:session-id nil
                         :content (content/answer-content (:answer result))
                         :iteration-count (:iteration-count result)
@@ -544,12 +547,12 @@
                  (:eval result)
                  (assoc :eval (:eval result))))
              (catch Exception e (run-error-result nil e))
-             (finally (try (lp/dispose-environment! env) (catch Exception _ nil)))))
+             (finally (try (loop-env/dispose-environment! env) (catch Exception _ nil)))))
       ;; Persistent path: route through the canonical in-process gateway so
       ;; CLI, TUI, web, and transport clients share the same session/turn
       ;; machinery.
       (let [_
-            (when local-router? (lp/rebuild-router! cfg))
+            (when local-router? (loop-router/rebuild-router! cfg))
 
             resolve-session
             (fn [input]

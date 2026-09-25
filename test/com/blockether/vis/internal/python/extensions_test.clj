@@ -37,7 +37,8 @@
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.python.test-runner :as runner]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -317,7 +318,7 @@
            (check-session [env]
              (let [ext (registered "helper-reload")]
                (reset! (:extensions env) [ext])
-               (lp/sync-active-extension-symbols! env [ext])
+               (loop-env/sync-active-extension-symbols! env [ext])
                (let
                  [out
                   (ep/run-python-block
@@ -993,7 +994,7 @@ vis.register_extension(vis.Extension(
                      (mapv :ext.symbol/symbol entries)))
           (expect (= [:observation :observation :mutation] (mapv :ext.symbol/tag entries)))
           (expect (nil? (symbol-fn ext 'uberworkspace.vis.issues._token)))
-          (try (lp/sync-active-extension-symbols! env [ext])
+          (try (loop-env/sync-active-extension-symbols! env [ext])
                (let
                  [answer
                   (ep/run-python-block
@@ -1018,7 +1019,7 @@ vis.register_extension(vis.Extension(
                  (expect (str/includes? out "pong\n171\nnested\n"))
                  (expect (str/includes? out "uberworkspace.vis.issues.find_issue"))
                  (expect (str/ends-with? (str/trim out) "True")))
-               (lp/sync-active-extension-symbols! env [])
+               (loop-env/sync-active-extension-symbols! env [])
                (expect (= {:stdout "False\n"}
                           (ep/run-python-block ctx "print('uberworkspace' in globals())")))
                (finally (ep/dispose-python-context! ctx))))))))
@@ -1043,7 +1044,7 @@ vis.register_extension(vis.Extension(
                 env
                 {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
-            (try (lp/sync-active-extension-symbols! env [ext])
+            (try (loop-env/sync-active-extension-symbols! env [ext])
                  (let [answer (ep/run-python-block ctx
                                                    (slurp (io/file
                                                             "test/resources/sequence_check.py")))]
@@ -1115,7 +1116,7 @@ raise RuntimeError(' | '.join(errors))
               env
               {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
-          (try (lp/sync-active-extension-symbols! env [ext])
+          (try (loop-env/sync-active-extension-symbols! env [ext])
                (let [result
                      (ep/run-python-block
                        ctx
@@ -1136,7 +1137,7 @@ raise RuntimeError(' | '.join(errors))
                  (expect (str/includes? out "(job, number=None, wait=0)"))
                  (expect (str/includes? out "['deploy_status', 'poll']"))
                  (expect (str/ends-with? (str/trim out) "True"))
-                 (lp/sync-active-extension-symbols! env [])
+                 (loop-env/sync-active-extension-symbols! env [])
                  (expect (= {:stdout "False\n"}
                             (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
                (finally (ep/dispose-python-context! ctx))))))))
@@ -1277,7 +1278,7 @@ vis.register_extension(vis.Extension(
                :active-extensions (atom [])}]
 
           (try
-            (lp/sync-active-extension-symbols! env [ext])
+            (loop-env/sync-active-extension-symbols! env [ext])
             (let
               [result
                (ep/run-python-block
@@ -1944,12 +1945,12 @@ vis.register_extension(vis.Extension(
               snapshot
               #(get ((:ext/ctx-fn ext) env) "execution_hook")]
 
-          (try (lp/sync-active-extension-symbols! env [ext])
+          (try (loop-env/sync-active-extension-symbols! env [ext])
                (let [code
                      "print('observed')"
 
                      result
-                     (#'lp/run-python-code ctx code :env env)
+                     (#'python-exec/run-python-code ctx code :env env)
 
                      state
                      (snapshot)]
@@ -1968,7 +1969,7 @@ vis.register_extension(vis.Extension(
                           "raise ValueError('after the write')")
 
                      result
-                     (#'lp/run-python-code ctx code :env env)
+                     (#'python-exec/run-python-code ctx code :env env)
 
                      state
                      (snapshot)]
@@ -1983,7 +1984,7 @@ vis.register_extension(vis.Extension(
                           ", 'w') as f:\n" "    f.write('must not run')")
 
                      result
-                     (#'lp/run-python-code ctx code :env env)]
+                     (#'python-exec/run-python-code ctx code :env env)]
 
                  (expect (str/includes? (or (get-in result [:error :message]) "")
                                         "Use the reviewed write operation."))
@@ -2045,7 +2046,7 @@ vis.register_extension(vis.Extension(
                  :active-extensions (atom [])
                  :activity/on-snapshot #(swap! snapshots conj %)}
                 report #(get ((:ext/ctx-fn ext) env) "code_quality")
-                run-block #(#'lp/run-python-code ctx % :env env)
+                run-block #(#'python-exec/run-python-code ctx % :env env)
                 check-activity
                 (fn [summary evidence]
                   (reset! snapshots [])
@@ -2062,7 +2063,7 @@ vis.register_extension(vis.Extension(
                                            evidence))
                     (expect (every? #(not= "running" (:state %)) (mapcat :rows @snapshots)))))]
 
-            (lp/sync-active-extension-symbols! env extensions)
+            (loop-env/sync-active-extension-symbols! env extensions)
             (expect (str/includes? (first (get (report) "findings")) "not been checked"))
             (let [result (run-block (str "from pathlib import Path\n"
                                          "path = Path("
@@ -2138,7 +2139,7 @@ vis.register_extension(vis.Extension(
                      :activity/on-snapshot #(swap! snapshots conj %)}
                 run-report (fn []
                              (reset! snapshots [])
-                             (#'lp/run-python-code
+                             (#'python-exec/run-python-code
                               ctx
                               (str "report = read_ci_report("
                                    (json-text (str file))
@@ -2146,8 +2147,9 @@ vis.register_extension(vis.Extension(
                               :env
                               env))]
 
-            (try (lp/sync-active-extension-symbols! env extensions)
-                 (let [help (#'lp/run-python-code ctx "print(doc('read_ci_report'))" :env env)]
+            (try (loop-env/sync-active-extension-symbols! env extensions)
+                 (let [help
+                       (#'python-exec/run-python-code ctx "print(doc('read_ci_report'))" :env env)]
                    (expect (nil? (:error help)) (pr-str help))
                    (expect (str/includes? (:stdout help) "Read a local CI summary")))
                  (doseq [[passed failed summary] [[42 1 "42 passed · 1 failed"]
@@ -3112,7 +3114,7 @@ vis.register_extension(vis.Extension(
                                  :active-extensions (atom [])}]
 
                         (try
-                          (lp/sync-active-extension-symbols! env [ext])
+                          (loop-env/sync-active-extension-symbols! env [ext])
                           (let
                             [result
                              (ep/run-python-block
@@ -5205,7 +5207,7 @@ vis.register_extension(vis.Extension(
                                :active-extensions (atom [])}]
 
                       (try
-                        (lp/sync-active-extension-symbols! env [ext])
+                        (loop-env/sync-active-extension-symbols! env [ext])
                         (let
                           [reply
                            (ep/run-python-block
@@ -5343,7 +5345,7 @@ vis.register_extension(vis.Extension(
 
                 (expect (= "greet.hello" (get-in entry [:ext.symbol/contract "name"])))
                 (reset! (:extensions env) [ext])
-                (lp/sync-active-extension-symbols! env [ext])
+                (loop-env/sync-active-extension-symbols! env [ext])
                 (let
                   [answer
                    (ep/run-python-block
@@ -5454,9 +5456,9 @@ vis.register_extension(vis.Extension(
                 (let [ext (registered "literal-defaults")]
                   (reset! (:extensions env) [ext])
                   (if worker?
-                    (lp/sync-active-extension-symbols! env [ext])
+                    (loop-env/sync-active-extension-symbols! env [ext])
                     ;; A local test context has no owning worker; use the registration context.
-                    (lp/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+                    (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
                   (ep/set-python-binding! ctx 'expected_limit (+ 200 iteration))
                   (ep/set-python-binding! ctx 'expected_since (if (zero? iteration) "1h" "2h"))
                   (let
@@ -5525,7 +5527,7 @@ vis.register_extension(vis.Extension(
               {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
           (try
-            (lp/sync-active-extension-symbols! env [ext])
+            (loop-env/sync-active-extension-symbols! env [ext])
             (let
               [answer
                (ep/run-python-block
@@ -5593,7 +5595,7 @@ vis.register_extension(vis.Extension(
 
             (try
               (reset! (:extensions env) [ext])
-              (lp/sync-active-extension-symbols! env [ext])
+              (loop-env/sync-active-extension-symbols! env [ext])
               (let
                 [answer
                  (ep/run-python-block
@@ -5711,7 +5713,7 @@ vis.register_extension(vis.Extension(
                 env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
             (try
-              (lp/sync-active-extension-symbols! env [ext])
+              (loop-env/sync-active-extension-symbols! env [ext])
               (let
                 [answer
                  (ep/run-python-block
@@ -5755,7 +5757,7 @@ vis.register_extension(vis.Extension(
                   env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
               (try
-                (lp/sync-active-extension-symbols! env [ext])
+                (loop-env/sync-active-extension-symbols! env [ext])
                 (let
                   [answer
                    (ep/run-python-block
@@ -5837,7 +5839,7 @@ vis.register_extension(vis.Extension(
              :extensions (atom [ext])
              :active-extensions (atom [])}]
 
-        (try (lp/sync-active-extension-symbols! env [ext])
+        (try (loop-env/sync-active-extension-symbols! env [ext])
              ;; Worker startup is not what these deliberately short budgets measure.
              (let [warm (ep/run-python-block ctx "await watchdog_probe.poll(0)")]
                (expect (nil? (:error warm)) (pr-str warm)))
@@ -5850,7 +5852,7 @@ vis.register_extension(vis.Extension(
     (binding [rt/*eval-timeout-ms* 1000]
       ;; A source-code timeout heuristic must not hide this regression.
       (expect (= 1000 (rt/eval-timeout-ms-for-code 1000 code)))
-      (#'lp/run-python-code ctx code :env env :tool-event-fn tool-event-fn))))
+      (#'python-exec/run-python-code ctx code :env env :tool-event-fn tool-event-fn))))
 
 (defdescribe
   python-extension-execution-budget-test
@@ -6211,7 +6213,7 @@ vis.register_extension(vis.Extension(
               {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
           (try
-            (lp/sync-active-extension-symbols! env [ext])
+            (loop-env/sync-active-extension-symbols! env [ext])
             (let
               [answer
                (ep/run-python-block

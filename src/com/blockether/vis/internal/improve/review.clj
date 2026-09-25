@@ -7,7 +7,7 @@
             [com.blockether.vis.internal.config.improve :as settings]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.improve.core :as improve]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -85,7 +85,7 @@
   (when-not (and (util/non-blank-string? provider) (util/non-blank-string? model))
     (failure! "Choose a provider and model before running Automatic review" 409))
   (let [router
-        (lp/get-router)
+        (loop-router/get-router)
 
         selected
         (some #(when (= (keyword provider) (:id %)) %) (:providers router))

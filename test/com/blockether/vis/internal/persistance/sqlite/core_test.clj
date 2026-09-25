@@ -212,7 +212,7 @@
           (atom [])
 
           previous-usage
-          (requiring-resolve 'com.blockether.vis.internal.loop/previous-request-usage)
+          (requiring-resolve 'com.blockether.vis.internal.loop.transcript/previous-request-usage)
 
           result
           (with-redefs [jdbc/execute! (fn [db statement & options]

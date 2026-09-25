@@ -34,6 +34,8 @@
             [com.blockether.vis.internal.speech.files :as speech-files]
             [com.blockether.vis.internal.speech.core :as speech]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.util :as util]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
@@ -1450,7 +1452,7 @@
                   (fn [_]
                     (throw (ex-info "Session must not be loaded" {})))
 
-                  lp/get-router
+                  loop-router/get-router
                   (fn []
                     (throw (ex-info "No AI provider" {})))
 
@@ -2547,7 +2549,7 @@
   (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
   (toggles/set-enabled! "server_test_toggle" false)
   (let [synced (atom 0)]
-    (with-redefs [lp/sync-cached-extension-symbols! #(swap! synced inc)]
+    (with-redefs [loop-env/sync-cached-extension-symbols! #(swap! synced inc)]
       (let [response ((rv 'set-setting-handler)
                        {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
         (is (= 200 (:status response))))

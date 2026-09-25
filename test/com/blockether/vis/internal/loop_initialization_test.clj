@@ -2,6 +2,10 @@
   "Recovery after an interrupted lazy Python sandbox initialization."
   (:require [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.session.titling :as titling]
@@ -87,13 +91,13 @@
           (str (random-uuid))
 
           k
-          (#'lp/cache-key id)
+          (#'loop-env/cache-key id)
 
           cache
-          @#'lp/cache
+          @#'loop-env/cache
 
           entry
-          (#'lp/new-cache-entry (interrupted-environment))
+          (#'loop-env/new-cache-entry (interrupted-environment))
 
           fresh-env
           {:db-info ::db
@@ -116,20 +120,20 @@
 
       (swap! cache assoc k entry)
       (try
-        (with-redefs-fn {#'lp/open-env! (fn [_ _]
-                                          (swap! opened inc)
-                                          fresh-env)
-                         #'lp/ensure-env-reaper! (constantly nil)
-                         #'lp/turn! (fn [environment _ opts]
-                                      (#'lp/run-normal-turn! environment "continue" opts))
-                         #'lp/iteration-loop
+        (with-redefs-fn {#'loop-env/open-env! (fn [_ _]
+                                                (swap! opened inc)
+                                                fresh-env)
+                         #'loop-env/ensure-env-reaper! (constantly nil)
+                         #'turn/turn! (fn [environment _ opts]
+                                        (#'turn/run-normal-turn! environment "continue" opts))
+                         #'iteration/iteration-loop
                          (fn [environment _ _]
                            (expect (identical? fresh-env environment))
                            (expect (some? (env/python-context environment)))
                            (swap! iterations inc)
                            {:status :success :answer answer :iteration-count 1 :duration-ms 1})
-                         #'lp/session-turn-position (fn [& _]
-                                                      (inc @iterations))
+                         #'transcript/session-turn-position (fn [& _]
+                                                              (inc @iterations))
                          #'persistance/db-store-session-turn! (fn [& _]
                                                                 (str (random-uuid)))
                          #'persistance/db-update-session-turn! (fn [_ _ opts]

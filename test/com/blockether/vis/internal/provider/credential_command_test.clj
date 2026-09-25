@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.credential-command :as cred]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.provider.service :as providers]
             [lazytest.core :refer [defdescribe expect it]]
@@ -260,20 +260,20 @@
 
         ;; Steady state: the request boundary re-reads the CACHE, never forks.
         (expect (= "tok-1"
-                   (-> (#'lp/hydrate-router-credentials router)
+                   (-> (#'loop-router/hydrate-router-credentials router)
                        :providers
                        first
                        :api-key)))
         (expect (= 1 (exec-count)))
         (with-redefs [perr/svar-classification (constantly {:category :invalid-request})]
-          (expect (not (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401}))))
+          (expect (not (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-401}))))
         (with-redefs [perr/svar-classification (constantly {:category :auth})]
-          (expect (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401})))
-        (expect (#'lp/try-refresh-provider-token! router {:provider :sso-401}))
+          (expect (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-401})))
+        (expect (#'loop-router/try-refresh-provider-token! router {:provider :sso-401}))
         ;; …and the retry actually SENDS the freshly minted token: a short-lived
         ;; SSO credential that expired mid-session heals without a restart.
         (expect (= "tok-2"
-                   (-> (#'lp/hydrate-router-credentials router)
+                   (-> (#'loop-router/hydrate-router-credentials router)
                        :providers
                        first
                        :api-key)))
@@ -298,7 +298,7 @@
         (config/invalidate-credential-command! :sso-flaky)
         (expect (nil? (config/command-token :sso-flaky)))
         (expect (= "tok-1"
-                   (-> (#'lp/hydrate-router-credentials router)
+                   (-> (#'loop-router/hydrate-router-credentials router)
                        :providers
                        first
                        :api-key)))))
@@ -309,9 +309,9 @@
         (config/->svar-provider {:id :sso-literal :api-key "literal-key" :models [{:name "m1"}]})
         (expect (not (config/command-backed? :sso-literal)))
         (expect (nil? (config/command-token :sso-literal)))
-        (expect (not (#'lp/auth-refreshable-error? unauthorized {:provider :sso-literal})))
+        (expect (not (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-literal})))
         (expect (= "literal-key"
-                   (-> (#'lp/hydrate-router-credentials
+                   (-> (#'loop-router/hydrate-router-credentials
                         {:providers [{:id :sso-literal :api-key "literal-key"}]})
                        :providers
                        first

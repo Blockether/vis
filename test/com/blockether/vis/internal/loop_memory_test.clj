@@ -1,55 +1,59 @@
 (ns com.blockether.vis.internal.loop-memory-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.internal.attachment.storage :as storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [lazytest.core :refer [defdescribe it expect]]))
 
-(defdescribe
-  folded-carry-retention-test
-  (it "releases folded payloads rather than only hiding their forms from the wire"
-      (let [payload
-            (apply str (repeat 10000 "retained"))
+(defdescribe folded-carry-retention-test
+             (it "releases folded payloads rather than only hiding their forms from the wire"
+                 (let [payload
+                       (apply str (repeat 10000 "retained"))
 
-            record
-            {:forms-vec [{:scope "t1/i1/f1" :stdout payload}]
-             :blocks [{:stdout payload}]
-             :thinking payload
-             :attachments [{:base64 payload}]
-             :reinspect-attachments [{:base64 payload}]
-             :assistant-message {:role "assistant" :content payload}
-             :tool-calls [{:arguments payload}]
-             :council-input {:content payload}
-             :ctx-diff payload
-             :goal-continuation payload}
+                       record
+                       {:forms-vec [{:scope "t1/i1/f1" :stdout payload}]
+                        :blocks [{:stdout payload}]
+                        :thinking payload
+                        :attachments [{:base64 payload}]
+                        :reinspect-attachments [{:base64 payload}]
+                        :assistant-message {:role "assistant" :content payload}
+                        :tool-calls [{:arguments payload}]
+                        :council-input {:content payload}
+                        :ctx-diff payload
+                        :goal-continuation payload}
 
-            summaries
-            [{"through" "t1/i1" "at_turn" 1 "gist" "settled"}]
+                       summaries
+                       [{"through" "t1/i1" "at_turn" 1 "gist" "settled"}]
 
-            compacted
-            (#'lp/apply-summaries [[1 record]] summaries)
+                       compacted
+                       (#'transcript/apply-summaries [[1 record]] summaries)
 
-            kept
-            (second (first compacted))]
+                       kept
+                       (second (first compacted))]
 
-        (expect (= "t1/i1" (:iteration-scope kept)))
-        (expect (not-any? #(contains? kept %)
-                          [:blocks :thinking :attachments :reinspect-attachments :assistant-message
-                           :tool-calls :council-input :ctx-diff :goal-continuation]))
-        (expect (= compacted (#'lp/apply-summaries compacted summaries)))))
-  (it "keeps visible provider-native replay and forms unchanged"
-      (let [record
-            {:forms-vec [{:scope "t1/i2/f1" :stdout "answer"}]
-             :assistant-message {:role "assistant"
-                                 :content [{:type "thinking" :signature "opaque"}]}
-             :tool-calls [{:id "call"}]}
+                   (expect (= "t1/i1" (:iteration-scope kept)))
+                   (expect (not-any? #(contains? kept %)
+                                     [:blocks :thinking :attachments :reinspect-attachments
+                                      :assistant-message :tool-calls :council-input :ctx-diff
+                                      :goal-continuation]))
+                   (expect (= compacted (#'transcript/apply-summaries compacted summaries)))))
+             (it "keeps visible provider-native replay and forms unchanged"
+                 (let [record
+                       {:forms-vec [{:scope "t1/i2/f1" :stdout "answer"}]
+                        :assistant-message {:role "assistant"
+                                            :content [{:type "thinking" :signature "opaque"}]}
+                        :tool-calls [{:id "call"}]}
 
-            result
-            (#'lp/apply-summaries [[2 record]] [{"through" "t1/i1" "at_turn" 1 "gist" "settled"}])]
+                       result
+                       (#'transcript/apply-summaries
+                        [[2 record]]
+                        [{"through" "t1/i1" "at_turn" 1 "gist" "settled"}])]
 
-        (expect (= record (second (first result)))))))
+                   (expect (= record (second (first result)))))))
 
 (defdescribe disk-trace-retention-test
              (it "retains offsets during a turn and reconstructs exact terminal trace from disk"
@@ -63,13 +67,13 @@
                         :final? false}
 
                        result
-                       (#'lp/with-trace-store
+                       (#'iteration/with-trace-store
                         (fn [journal]
                           (let [a
-                                (#'lp/store-trace! journal entry)
+                                (#'iteration/store-trace! journal entry)
 
                                 b
-                                (#'lp/store-trace! journal {:iteration 4 :final? true})]
+                                (#'iteration/store-trace! journal {:iteration 4 :final? true})]
 
                             (expect (and (integer? a) (integer? b) (< a b)))
                             {:trace [a b] :answer "done"})))]
@@ -78,7 +82,7 @@
              (it "closes the journal on successful and exceptional exits"
                  (doseq [fail? [false true]]
                    (let [journal-ref (atom nil)]
-                     (try (#'lp/with-trace-store
+                     (try (#'iteration/with-trace-store
                            (fn [journal]
                              (reset! journal-ref journal)
                              (if fail? (throw (ex-info "fixture" {})) {:trace []})))
@@ -95,9 +99,9 @@
                        {:iteration 2 :error {:data {:on-chunk callback}}}
 
                        result
-                       (#'lp/with-trace-store
+                       (#'iteration/with-trace-store
                         (fn [journal]
-                          {:trace [(#'lp/store-trace! journal {:iteration 1}) terminal]}))]
+                          {:trace [(#'iteration/store-trace! journal {:iteration 1}) terminal]}))]
 
                    (expect (= [{:iteration 1} terminal] (:trace result)))
                    (expect (identical? callback
@@ -157,7 +161,10 @@
                       (throw (ex-info "eager hydration" {})))]
 
         (let [entries
-              (#'lp/seed-trailer-iters {:session-id "s" :db-info :fixture} "current" summaries)
+              (#'iteration/seed-trailer-iters
+               {:session-id "s" :db-info :fixture}
+               "current"
+               summaries)
 
               visible
               (second (last entries))
@@ -169,7 +176,7 @@
           (expect (= [{:scope "t2/i2/f1" :stdout "kept"}] (:forms-vec visible)))
           (expect (false? (:preserved-thinking/replay? visible)))
           (expect (= 2 (count (filter (comp :collapsed? second) entries))))
-          (#'lp/stamp-iter-universe! context entries entries)
+          (#'transcript/stamp-iter-universe! context entries entries)
           (expect (= ["t1/i1" "t2/i1" "t2/i2"] (get @context "engine_iter_universe")))
           (expect (zero? (get-in @context ["engine_iter_weights" "t1/i1"])))))))
   (it "does not read bodies from completed turns and supports sessions without persistence"
@@ -190,9 +197,9 @@
                     (fn [& _]
                       {})]
 
-        (expect (nil? (#'lp/seed-trailer-iters {} nil [])))
+        (expect (nil? (#'iteration/seed-trailer-iters {} nil [])))
         (expect (= "t1/i1"
-                   (get-in (#'lp/seed-trailer-iters {:session-id "s"} nil [])
+                   (get-in (#'iteration/seed-trailer-iters {:session-id "s"} nil [])
                            [0 1 :iteration-scope]))))))
 
 (defdescribe
@@ -209,7 +216,7 @@
           (mapv (fn [n]
                   [n
                    {:attachments
-                    [{:id n :media-type "image/png" :size 3 ::lp/attachment-db :fixture}]}])
+                    [{:id n :media-type "image/png" :size 3 ::transcript/attachment-db :fixture}]}])
                 (range 30))]
 
       (with-redefs [db/db-read-attachment
@@ -225,7 +232,7 @@
                     attachments/wire-image
                     identity]
 
-        (let [plan (#'lp/replay-image-plan
+        (let [plan (#'transcript/replay-image-plan
                     (into entries
                           [[30 {:collapsed? true :attachments [{:id "folded"}]}]
                            [31 {:attachments [{:id "text" :media-type "text/plain"}]}]]))]
@@ -245,7 +252,7 @@
                               :models [{:name "model" :input-limit 1000000}]}])
 
           env
-          (lp/create-environment router {:db :memory})
+          (loop-env/create-environment router {:db :memory})
 
           store
           (:db-info env)
@@ -265,29 +272,29 @@
           (atom [])
 
           stamp
-          @#'lp/stamp-iter-universe!
+          @#'transcript/stamp-iter-universe!
 
           spill
-          @#'lp/store-trace!]
+          @#'iteration/store-trace!]
 
       (try
         (let [result
-              (with-redefs-fn {#'lp/stamp-iter-universe! (fn [ctx entries & rest-args]
-                                                           (doseq [[_ rec]
-                                                                   entries
+              (with-redefs-fn {#'transcript/stamp-iter-universe!
+                               (fn [ctx entries & rest-args]
+                                 (doseq [[_ rec]
+                                         entries
 
-                                                                   :when (:collapsed? rec)]
+                                         :when (:collapsed? rec)]
 
-                                                             (swap! carry-verdicts conj
-                                                               (not-any? #(contains? rec %)
-                                                                         [:blocks :thinking
-                                                                          :attachments
-                                                                          :assistant-message])))
-                                                           (apply stamp ctx entries rest-args))
-                               #'lp/store-trace! (fn [journal entry]
-                                                   (let [offset (spill journal entry)]
-                                                     (swap! offsets conj offset)
-                                                     offset))
+                                   (swap! carry-verdicts conj
+                                     (not-any? #(contains? rec %)
+                                               [:blocks :thinking :attachments
+                                                :assistant-message])))
+                                 (apply stamp ctx entries rest-args))
+                               #'iteration/store-trace! (fn [journal entry]
+                                                          (let [offset (spill journal entry)]
+                                                            (swap! offsets conj offset)
+                                                            offset))
                                #'svar/ask-code!
                                (fn [_ _]
                                  (let [i
@@ -313,7 +320,7 @@
                                                            :name "python_execution"
                                                            :input {:code code}}]}
                                             {:stop-reason :end :tool-calls [] :content "done"}))))}
-                #(lp/iteration-loop env "fold large output" {:session-turn-id tid}))
+                #(iteration/iteration-loop env "fold large output" {:session-turn-id tid}))
 
               persisted
               (db/db-list-session-turn-iterations store tid)
@@ -326,7 +333,7 @@
           (expect (and (= 2 (count @offsets)) (every? integer? @offsets)))
           (expect (= (str (apply str (repeat 10000 "large-payload-")) "\n") stdout))
           (expect (= stdout (get-in persisted [0 :forms 0 :stdout]))))
-        (finally (lp/dispose-environment! env))))))
+        (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
   metadata-first-recap-test
@@ -388,7 +395,7 @@
                         :user-request "question"
                         :content [(content/prose "answer")]))]
 
-        (let [result (#'lp/previous-turn-context env "current")]
+        (let [result (#'transcript/previous-turn-context env "current")]
           (expect (= ["visible" "unfinished"] @reads))
           ;; ONLY the cancelled turn's iterations: an answered turn's recap still
           ;; costs nothing but its stored-iteration line.
@@ -433,6 +440,6 @@
                     (fn [& _]
                       {})]
 
-        (let [entries (#'lp/seed-trailer-iters {:session-id "s"} nil [])]
+        (let [entries (#'iteration/seed-trailer-iters {:session-id "s"} nil [])]
           (expect (= ["local"] @reads))
           (expect (= ["t2/i1"] (mapv (comp :iteration-scope second) entries))))))))

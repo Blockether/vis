@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.env :as env]
@@ -66,7 +66,7 @@
                                          (doseq [i (range n)]
                                            (emit-operation! ctx i)))
                                        {:stdout "done"})]
-    (let [result (#'lp/run-python-code pc "pass" :env {:db-info store :session-id sid})
+    (let [result (#'python-exec/run-python-code pc "pass" :env {:db-info store :session-id sid})
           tid (db/db-store-session-turn! store
                                          {:parent-session-id (str sid) :user-request request})]
 

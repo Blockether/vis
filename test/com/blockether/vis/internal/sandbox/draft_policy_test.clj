@@ -4,7 +4,8 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.sandbox.jail :as jail]
@@ -58,7 +59,7 @@
                               ["config" "commit.gpgsign" "false"] ["add" "source.txt"]
                               ["commit" "-q" "-m" "initial"]]]
                   (is (zero? (:exit (git/run-git project args))))))))
-          (with-redefs-fn {#'lp/security-config-snapshot (constantly snapshot)
+          (with-redefs-fn {#'loop-env/security-config-snapshot (constantly snapshot)
                            #'workspace/draft-isolation-plan
                            (constantly (mapv (fn [entry]
                                                {:trunk (get entry "path")
@@ -69,15 +70,16 @@
                                                                 (workspace/create-trunk-at! db root)
 
                                                                 environment
-                                                                (lp/create-environment
+                                                                (loop-env/create-environment
                                                                   ::router
                                                                   {:db db :workspace-id (:id ws)})]
 
                                                             (reset! (:extensions environment)
                                                               [foundation/vis-extension])
                                                             (try (f environment root)
-                                                                 (finally (lp/dispose-environment!
-                                                                            environment))))))
+                                                                 (finally
+                                                                   (loop-env/dispose-environment!
+                                                                     environment))))))
           (finally (doseq [file (reverse (file-seq dir))]
                      (io/delete-file file true)))))))
 
@@ -137,7 +139,7 @@
             (.getCanonicalPath (io/file root ".." "reference"))
 
             result
-            (#'lp/execute-code
+            (#'python-exec/execute-code
              environment
              (str "from pathlib import Path\n"
                   "Path("
@@ -178,7 +180,7 @@
         (is (string? clone) (str opened))
         (let
           [result
-           (#'lp/execute-code
+           (#'python-exec/execute-code
             environment
             (str
               "(project_root_path / 'source.txt').write_text('draft')\n"
@@ -211,7 +213,7 @@
           (is (nil? (:error discarded)) (str discarded)))
         (let
           [result
-           (#'lp/execute-code
+           (#'python-exec/execute-code
             environment
             (str
               "try:\n    Path(" (pr-str (str clone "/source.txt"))
@@ -231,42 +233,42 @@
                     (is (= "off" (slurp (io/file root "source.txt")))))
                   (binding [workspace/*draft-backend* :worktree]
                     (is (= :draft/policy-changed
-                           (try (#'lp/execute-code environment "print('must not execute')")
+                           (try (#'python-exec/execute-code environment "print('must not execute')")
                                 nil
                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest disposed-session-resumes-its-owned-draft
   ;; #242: a fresh worker must recover private grants, not silently return to shared writes.
-  (with-project :worktree
-                (fn [environment root]
-                  (ep/python-context environment)
-                  (let [opened
-                        (drafts/draft-create environment "resume-private")
+  (with-project
+    :worktree
+    (fn [environment root]
+      (ep/python-context environment)
+      (let [opened
+            (drafts/draft-create environment "resume-private")
 
-                        clone
-                        (get-in opened [:result "root"])
+            clone
+            (get-in opened [:result "root"])
 
-                        db
-                        (:db-info environment)
+            db
+            (:db-info environment)
 
-                        session-id
-                        (:session-id @(:state-atom environment))]
+            session-id
+            (:session-id @(:state-atom environment))]
 
-                    (is (string? clone) (str opened))
-                    (is (some? session-id))
-                    (lp/dispose-environment! environment)
-                    (let [resumed (lp/create-environment ::router {:db db :session session-id})]
-                      (try (reset! (:extensions resumed) [foundation/vis-extension])
-                           (is (= clone (:root @(:workspace-atom resumed))))
-                           (let [result
-                                 (#'lp/execute-code
-                                  resumed
-                                  "(project_root_path / 'source.txt').write_text('resumed')\n")]
-                             (is (nil? (:error result)) (str result))
-                             (is (= "resumed" (slurp (io/file clone "source.txt"))))
-                             (is (= "original" (slurp (io/file root "source.txt")))))
-                           (drafts/draft-discard resumed)
-                           (finally (lp/dispose-environment! resumed))))))))
+        (is (string? clone) (str opened))
+        (is (some? session-id))
+        (loop-env/dispose-environment! environment)
+        (let [resumed (loop-env/create-environment ::router {:db db :session session-id})]
+          (try (reset! (:extensions resumed) [foundation/vis-extension])
+               (is (= clone (:root @(:workspace-atom resumed))))
+               (let [result (#'python-exec/execute-code
+                             resumed
+                             "(project_root_path / 'source.txt').write_text('resumed')\n")]
+                 (is (nil? (:error result)) (str result))
+                 (is (= "resumed" (slurp (io/file clone "source.txt"))))
+                 (is (= "original" (slurp (io/file root "source.txt")))))
+               (drafts/draft-discard resumed)
+               (finally (loop-env/dispose-environment! resumed))))))))
 
 (deftest new-repository-in-a-pregranted-cache-requires-rebuild
   ;; #242: audit updates cannot revoke a writable handle opened before root selection.
@@ -280,7 +282,7 @@
             (.getCanonicalPath (io/file root ".." "cache"))
 
             epoch
-            @lp/policy-reload-epoch]
+            @python-exec/policy-reload-epoch]
 
         (ep/run-python-block
           context
@@ -300,12 +302,13 @@
                (finally (when (workspace/draft? @(:workspace-atom environment))
                           (drafts/draft-discard environment)))))
         (is (= :draft/policy-expanded
-               (try (#'lp/execute-code
+               (try (#'python-exec/execute-code
                      environment
                      "held_cache_file.write('escaped'); held_cache_file.flush()\n")
                     nil
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-        (is (#'lp/policy-stale? {:policy-epoch (java.util.concurrent.atomic.AtomicLong. epoch)}))
+        (is (#'loop-env/policy-stale?
+             {:policy-epoch (java.util.concurrent.atomic.AtomicLong. epoch)}))
         (is (= "original" (slurp (io/file cache "source.txt"))))
         (ep/run-python-block context "held_cache_file.close()\n")))))
 
@@ -337,7 +340,7 @@
                  (is (= cache clone))))
            (is (not (jail/draft-policy-expanded? environment)))
            (let [result
-                 (#'lp/execute-code
+                 (#'python-exec/execute-code
                   environment
                   (str (when available? "(cache_path / 'source.txt').write_text('private cache')\n")
                        "try:\n    Path("
@@ -474,7 +477,7 @@
                       (let [refusal (:result (gate path))]
                         (is (some? refusal) path)
                         (is (re-find #"draft_create" (str refusal)) path)))
-                    (let [result (#'lp/execute-code
+                    (let [result (#'python-exec/execute-code
                                   environment
                                   (str "(project_root_path / 'source.txt').write_text('draft')\n"
                                        "(extra_path / 'source.txt').write_text('extra draft')\n"))]

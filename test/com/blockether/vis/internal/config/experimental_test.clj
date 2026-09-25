@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.gateway.agents-test :as agent-http]
             [com.blockether.vis.internal.gateway.improve-test :as improve-http]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -194,6 +195,6 @@
                                   [:patch "/v1/improve/settings"
                                    (json/write-json-str {:mode "automatic"})]]]
         (is (= 409 (:status (#'improve-http/request method path body {}))))))
-    (is (not (str/includes? (:description (#'lp/python-execution-tool {})) "autocomplain")))
+    (is (not (str/includes? (:description (#'transcript/python-execution-tool {})) "autocomplain")))
     (toggles/set-enabled! "improve" true)
-    (is (str/includes? (:description (#'lp/python-execution-tool {})) "autocomplain"))))
+    (is (str/includes? (:description (#'transcript/python-execution-tool {})) "autocomplain"))))

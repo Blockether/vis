@@ -21,7 +21,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.renderer :as cr]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -269,7 +269,7 @@
    request's read anchor lands exactly where its predecessor wrote. The 1-hour
    tier is asked for only on a route measured to honour it."
   (let [apply-bp
-        @#'lp/apply-cache-breakpoints
+        @#'transcript/apply-cache-breakpoints
 
         cached?
         (fn [m]
@@ -340,10 +340,10 @@
    written with — a 1-hour breakpoint is worthless if the checkpoint carrying it
    is still discarded after five minutes."
   (let [window
-        @#'lp/prompt-cache-window-ms
+        @#'transcript/prompt-cache-window-ms
 
         fresh?
-        @#'lp/prompt-cache-entry-fresh?
+        @#'transcript/prompt-cache-entry-fresh?
 
         half-hour-old
         {:at-ms (- (util/now-ms) 1800000)}]

@@ -5,7 +5,10 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -74,11 +77,12 @@
                                           :spawn_fingerprint "boundary-fixture"
                                           :checkpoint checkpoint}})]
 
-    (lp/create-environment (:router parent) {:db {:datasource (:datasource db)} :session child})))
+    (loop-env/create-environment (:router parent)
+                                 {:db {:datasource (:datasource db)} :session child})))
 
 (deftest inherited-checkpoint-fresh-sandbox-and-durable-budget-test
   (let [parent
-        (lp/create-environment (router) {:db :memory})
+        (loop-env/create-environment (router) {:db :memory})
 
         parent-calls
         (atom 0)]
@@ -96,7 +100,7 @@
                           "print(fold_session('-t1/i1', 'Accepted folded parent conclusion'))")
 
                         {:stop-reason :end :content "Parent result"}))]
-        (lp/run-turn! parent "Preserve the accepted conclusion and delegate." {}))
+        (turn/run-turn! parent "Preserve the accepted conclusion and delegate." {}))
       (let [checkpoint
             (:agent-checkpoint (ctx-loop/read-turn-state parent))
 
@@ -119,7 +123,7 @@
                  (code-response
                    "print('parent_only' in globals())\nprint(session['agent']['role'])\nprint(session['agent']['parent_id'])")
                  {:stop-reason :end :content "Delegated result"}))]
-            (let [result (lp/run-turn! child "Verify the delegated boundary only" {})]
+            (let [result (turn/run-turn! child "Verify the delegated boundary only" {})]
               (is (= "Delegated result" (get-in result [:answer :answer]))))
             (is (= 2 (count @calls)))
             ;; Provider cache markers may wrap text blocks without changing their contents.
@@ -132,27 +136,27 @@
                                "False\nsubagent\n"))
             (is (str/includes? (pr-str (second @calls)) (str (:session-id parent))))
             (is (= 2 (:iterations_used (agents/info (:db-info child) (:session-id child)))))
-            (lp/run-turn! child "An exhausted child cannot make another paid request" {})
+            (turn/run-turn! child "An exhausted child cannot make another paid request" {})
             (is (= 2 (count @calls)))
             (is (= "budget_limited" (:status (agents/info (:db-info child) (:session-id child)))))
             (h/fork-session! (:db-info child) (:session-id child) {})
             (is
               (nil? (agents/inherited-base child 2 [{:role "user" :content "Post-fold task"}] []))
               "A later state must not reinherit the parent's checkpoint at a repeated turn position"))
-          (finally (lp/dispose-environment! child))))
-      (finally (lp/dispose-environment! parent)))))
+          (finally (loop-env/dispose-environment! child))))
+      (finally (loop-env/dispose-environment! parent)))))
 
 (deftest session-route-changes-at-the-next-model-request-test
   (let [shared
         (router)
 
         env
-        (lp/create-environment shared {:db :memory})
+        (loop-env/create-environment shared {:db :memory})
 
         calls
         (atom [])]
 
-    (try (with-redefs [lp/get-router
+    (try (with-redefs [loop-router/get-router
                        (constantly shared)
 
                        svar/ask-code!
@@ -167,27 +171,27 @@
                                (code-response "print('Route selected')"))
                            {:stop-reason :end :content "Routed result"}))]
 
-           (lp/run-turn! env "Verify a local route change" {}))
+           (turn/run-turn! env "Verify a local route change" {}))
          (is (= 2 (count @calls)))
          (is (= "large" (get-in @calls [1 1 :model])))
          (is (= "small" (get-in shared [:providers 0 :root])))
          (is (= 2 (count (get-in shared [:providers 0 :models]))))
-         (finally (lp/dispose-environment! env)))))
+         (finally (loop-env/dispose-environment! env)))))
 
 (deftest session-route-change-is-visible-to-a-retry-test
   (let [shared
         (router)
 
         env
-        (lp/create-environment shared {:db :memory})
+        (loop-env/create-environment shared {:db :memory})
 
         calls
         (atom [])]
 
-    (try (with-redefs [lp/MAX_MAX_TOKENS_EXCEEDED_RETRIES
+    (try (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
                        2
 
-                       lp/get-router
+                       loop-router/get-router
                        (constantly shared)
 
                        svar/ask-code!
@@ -207,14 +211,14 @@
                            {:stop-reason :end :content "Retried result"}))]
 
            (smodel/set-model! (:db-info env) (:session-id env) "fixture" "small" :agent-routing)
-           (lp/run-turn! env "Observe routing at every model request boundary" {}))
+           (turn/run-turn! env "Observe routing at every model request boundary" {}))
          (is (= ["small" "large" "small"] @calls))
          (is (= "small" (get-in shared [:providers 0 :root])))
-         (finally (lp/dispose-environment! env)))))
+         (finally (loop-env/dispose-environment! env)))))
 
 (deftest registered-python-agent-bindings-reach-host-test
   (let [env
-        (lp/create-environment (router) {:db :memory})
+        (loop-env/create-environment (router) {:db :memory})
 
         calls
         (atom [])
@@ -236,24 +240,24 @@
                "assert 'agents' not in globals()\nassert callable(council.members)\nassert council.subagents()['op'] == 'council.subagents'\nassert council.publish_spawn('Verify only the boundary', iteration_budget=2)['op'] == 'council.publish_spawn'\nassert council.route('small', provider='fixture')['op'] == 'council.route'\nassert council.cancel('fixture-child')['op'] == 'council.cancel'")
              {:stop-reason :end :content "Bindings invoked"}))]
 
-        (lp/run-turn! env "Exercise registered Python methods" {}))
+        (turn/run-turn! env "Exercise registered Python methods" {}))
       (is (= [:list :spawn :route :cancel] (mapv second @calls)))
       (is (= [{} {:task "Verify only the boundary" :iteration_budget 2}
               {:model "small" :provider "fixture"} {:session_id "fixture-child"}]
              (mapv #(nth % 2) @calls)))
       (is (every? #(= (:session-id env) (first %)) @calls))
-      (finally (lp/dispose-environment! env)))))
+      (finally (loop-env/dispose-environment! env)))))
 
 (deftest child-allowlist-survives-router-rehydration-and-retries-test
   (let [shared
         (router)
 
         parent
-        (lp/create-environment shared {:db :memory})]
+        (loop-env/create-environment shared {:db :memory})]
 
     (try (with-redefs [svar/ask-code! (fn [_ _]
                                         {:stop-reason :end :content "Parent result"})]
-           (lp/run-turn! parent "Prepare the delegation checkpoint" {}))
+           (turn/run-turn! parent "Prepare the delegation checkpoint" {}))
          (let [child
                (child-environment parent
                                   (:agent-checkpoint (ctx-loop/read-turn-state parent))
@@ -264,7 +268,7 @@
                (atom [])]
 
            (try
-             (with-redefs [lp/get-router
+             (with-redefs [loop-router/get-router
                            (constantly shared)
 
                            svar/ask-code!
@@ -276,7 +280,7 @@
                                                 :output-tokens 32}))
                                {:stop-reason :end :content "Allowed model result"}))]
 
-               (lp/run-turn! child "Retry only within the inherited model allowlist" {})
+               (turn/run-turn! child "Retry only within the inherited model allowlist" {})
                (is (= 2 (count @calls)))
                (is (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models]))) @calls))
                (smodel/set-model! (:db-info child)
@@ -284,9 +288,9 @@
                                   "fixture"
                                   "large"
                                   :agent-routing)
-               (lp/run-turn! child "A disallowed persisted pin cannot bypass the allowlist" {})
+               (turn/run-turn! child "A disallowed persisted pin cannot bypass the allowlist" {})
                (is (every? #(not= "large" (get-in % [1 :model])) @calls))
                (is (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models]))) @calls))
                (is (= 2 (count (get-in shared [:providers 0 :models])))))
-             (finally (lp/dispose-environment! child))))
-         (finally (lp/dispose-environment! parent)))))
+             (finally (loop-env/dispose-environment! child))))
+         (finally (loop-env/dispose-environment! parent)))))

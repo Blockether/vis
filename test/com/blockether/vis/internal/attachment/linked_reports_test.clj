@@ -4,6 +4,9 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.attachment.linked-reports :as reports]
@@ -27,7 +30,7 @@
                             :models [{:name "model"}]}])
 
         environment
-        (lp/create-environment router {:db :memory})
+        (loop-env/create-environment router {:db :memory})
 
         db
         (:db-info environment)
@@ -42,9 +45,9 @@
             (with-redefs [svar/ask-code!
                           (fn [_ _]
                             {:stop-reason :end :tool-calls [] :content "[Report](report.md)"})]
-              (lp/run-turn! environment
-                            "Write a report"
-                            {:hooks {:on-chunk #(swap! chunks conj %)}}))
+              (turn/run-turn! environment
+                              "Write a report"
+                              {:hooks {:on-chunk #(swap! chunks conj %)}}))
 
             tid
             (:session-turn-id result)
@@ -66,7 +69,7 @@
                      :answer (:answer result)
                      :tid tid
                      :iteration-keys (keys iteration)}))
-        (is (str/includes? (str (lp/answer-markdown (:answer result))) link))
+        (is (str/includes? (str (transcript/answer-markdown (:answer result))) link))
         (is (str/includes? (str (:content (last (persistence/db-list-session-turns
                                                   db
                                                   (:session-id environment)))))
@@ -112,7 +115,7 @@
             (is (str/starts-with? (get-in response [:headers "Cache-Control"]) "private"))
             (with-open [body (:body response)]
               (is (= "# Durable report\n" (slurp body)))))))
-      (finally (lp/dispose-environment! environment)
+      (finally (loop-env/dispose-environment! environment)
                (io/delete-file report true)
                (io/delete-file dir true)))))
 

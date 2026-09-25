@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -167,7 +168,7 @@
       db
       {:parent-session-id leader :user-request "Parent task" :status :running})
     (with-redefs-fn {#'lp/db-info (constantly db)
-                     #'lp/get-router (constantly router)
+                     #'loop-router/get-router (constantly router)
                      #'toggles/enabled? (constantly true)
                      #'council/runtime (fn [_]
                                          {leader {:activation-id "parent" :group-id gid}})
@@ -329,7 +330,7 @@
     (ps/db-store-session-turn! db
                                {:parent-session-id leader :user-request "Parent" :status :running})
     (with-redefs-fn {#'lp/db-info (constantly db)
-                     #'lp/get-router (constantly router)
+                     #'loop-router/get-router (constantly router)
                      #'council/enabled? (constantly true)
                      #'council/runtime (fn [_]
                                          @runtime)

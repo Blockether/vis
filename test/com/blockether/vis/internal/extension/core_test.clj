@@ -7,7 +7,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.activity :as activity-contract]
-            [com.blockether.vis.internal.loop :as vis-loop]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -485,7 +485,7 @@
           env
           {:session-id "sid-one-context" :workspace/root root :extensions (atom [ext])}]
 
-      (vis-loop/final-answer-gate-error env 1 [] "an answer" [ext])
+      (iteration/final-answer-gate-error env 1 [] "an answer" [ext])
       (extension/ctx-contributions env [ext])
       (prompt/active-extensions env)
       (#'prompt/extensions-prompt-block env [ext])

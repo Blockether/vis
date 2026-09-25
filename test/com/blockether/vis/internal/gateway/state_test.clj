@@ -15,6 +15,10 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
             [com.blockether.vis.internal.session.model :as smodel]
@@ -4026,8 +4030,8 @@
                             #'state/run-turn! fake-run!
                             #'state/cancel-waiting-turn! (fn [sid tid _token]
                                                            (finish-test-turn! sid tid "cancelled"))
-                            #'lp/condemn-env! (fn [_]
-                                                true)}
+                            #'loop-env/condemn-env! (fn [_]
+                                                      true)}
              (fn []
                (try (#'state/launch-turn-worker! sid-a tid-a "first" {:cancel-token token-a})
                     (expect (= true (deref entered-a 2000 false)))
@@ -4649,9 +4653,9 @@
               (atom nil)]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn "t1"})
-               (with-redefs-fn {#'lp/condemn-env! (fn [id]
-                                                    (reset! condemned id)
-                                                    true)}
+               (with-redefs-fn {#'loop-env/condemn-env! (fn [id]
+                                                          (reset! condemned id)
+                                                          true)}
                  (fn []
                    (backstop sid
                              "t1" token
@@ -5389,16 +5393,16 @@
              #'persistance/db-update-session-turn! (fn [_ _ opts]
                                                      (swap! writes conj opts)
                                                      true)
-             #'lp/session-turn-position (fn [_ _]
-                                          1)
-             #'lp/iteration-loop
+             #'transcript/session-turn-position (fn [_ _]
+                                                  1)
+             #'iteration/iteration-loop
              (fn [_ _ _]
                (when stalled?
                  (swap! stall assoc :stalled? true :stall-detail "no output for 127381ms"))
                (cancellation/cancel! token (if stalled? :stall-watchdog :user))
                {:status :cancelled :answer nil :trace [] :iteration-count 0 :duration-ms 0})
              #'lp/send! (fn [_ request opts]
-                          (let [result (#'lp/run-normal-turn! environment request opts)]
+                          (let [result (#'turn/run-normal-turn! environment request opts)]
                             (expect (= (if stalled? :rlm.status/error :rlm.status/cancelled)
                                        (:status-id result)))
                             result))
@@ -5464,16 +5468,16 @@
                            #'persistance/db-update-session-turn! (fn [_ _ opts]
                                                                    (swap! writes conj opts)
                                                                    true)
-                           #'lp/session-turn-position (fn [_ _]
-                                                        1)
-                           #'lp/iteration-loop
+                           #'transcript/session-turn-position (fn [_ _]
+                                                                1)
+                           #'iteration/iteration-loop
                            (fn [_ _ _]
                              (when user-cancel? (cancellation/cancel! token :user))
                              ;; The retry backoff's `Thread/sleep` woken by a stale interrupt:
                              ;; the loop escapes before its own `persist-turn-outcome!`.
                              (throw (InterruptedException. "sleep interrupted")))
                            #'lp/send! (fn [_ request opts]
-                                        (#'lp/run-normal-turn! environment request opts))
+                                        (#'turn/run-normal-turn! environment request opts))
                            #'state/append-event! (fn [_ type payload & _]
                                                    (swap! events conj [type payload]))
                            #'state/emit-context-updated! (fn [_]

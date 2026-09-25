@@ -8,7 +8,8 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
@@ -30,13 +31,13 @@
                               :models [{:name "model" :context 200000}]}])
 
           a
-          (lp/create-environment router {:db :memory})
+          (loop-env/create-environment router {:db :memory})
 
           db
           (:db-info a)
 
           b
-          (lp/create-environment router {:db db})
+          (loop-env/create-environment router {:db db})
 
           aid
           (str (:session-id a))
@@ -125,7 +126,7 @@
                        :tool-calls
                        [{:id (str "reply-" n) :name "python_execution" :input {:code code}}]}
                       {:stop-reason :end :tokens {} :content "done" :tool-calls []})))]
-               (lp/iteration-loop b "Continue your task" {:session-turn-id tid}))
+               (iteration/iteration-loop b "Continue your task" {:session-turn-id tid}))
 
              iterations
              (ps/db-list-session-turn-iterations db tid)
@@ -168,5 +169,5 @@
               (is (= [reply-id] (mapv :entry_id (:entries notification)))))))
         (finally (#'state/drop-session! aid)
                  (#'state/drop-session! bid)
-                 (lp/dispose-environment! b)
-                 (lp/dispose-environment! a))))))
+                 (loop-env/dispose-environment! b)
+                 (loop-env/dispose-environment! a))))))

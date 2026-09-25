@@ -7,6 +7,9 @@
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.speech.core :as speech]
@@ -109,14 +112,14 @@
                   {:parent-session-id sid :user-request "Summarize this" :attachments staged})
 
                 stored
-                (#'lp/store-transcripts! db tid staged)
+                (#'turn/store-transcripts! db tid staged)
 
                 request
                 (future (prompt/assemble-initial-messages
                           {:stable-prompt-messages []
                            :initial-user-content "Summarize this"
                            :vision? false
-                           :user-images (#'lp/transcribe-turn-attachments
+                           :user-images (#'iteration/transcribe-turn-attachments
                                          staged
                                          {:hooks {:on-chunk #(deliver chunk %)}})}))]
 
@@ -141,7 +144,7 @@
                                     ["attachments" 0 "transcription"])))
                  (expect (str/includes?
                            (prompt/previous-turn-context-block
-                             (#'lp/previous-turn-context {:db-info db :session-id sid} nil))
+                             (#'transcript/previous-turn-context {:db-info db :session-id sid} nil))
                            words))
                  (finally (deliver hold true) (future-cancel request) (future-cancel stored)))))
         (finally (deliver hold true) (at/clear-cache!)))))
@@ -299,7 +302,7 @@
                           (fn [rows opts]
                             (reset! seen opts)
                             (mapv #(assoc % :transcription-status at/PENDING) rows))]
-              (try (#'lp/transcribe-turn-attachments
+              (try (#'iteration/transcribe-turn-attachments
                     [recording]
                     {:hooks {:on-chunk #(swap! chunks conj %)}})
                    nil
@@ -307,7 +310,7 @@
 
         (expect (= 300000 (:timeout-ms @seen)))
         (expect (= [{:phase :attachment-transcription :iteration 1}] @chunks))
-        (expect (= :com.blockether.vis.internal.loop/recording-transcription-timeout
+        (expect (= :com.blockether.vis.internal.loop.iteration/recording-transcription-timeout
                    (:type (ex-data failure))))
         (expect (str/includes? (str (some-> failure
                                             ex-message))

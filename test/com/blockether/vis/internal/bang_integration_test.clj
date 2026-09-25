@@ -7,7 +7,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -42,7 +43,7 @@
 
 (defdescribe parse-bang-test
              (it "recognizes ! (sync) and !& (background), rejecting non-bangs and bare markers"
-                 (let [pb #'lp/parse-bang]
+                 (let [pb #'turn/parse-bang]
                    (expect (= {:kind :run :cmd "ls -la"} (pb "!ls -la")))
                    (expect (= :bg (:kind (pb "!&npm run dev"))))
                    (expect (= "npm run dev" (:cmd (pb "!&npm run dev"))))
@@ -71,7 +72,7 @@
               (atom [])
 
               result
-              (with-redefs [lp/iteration-loop
+              (with-redefs [iteration/iteration-loop
                             (fn [& _]
                               (swap! called inc)
                               {:status :success})
@@ -80,7 +81,9 @@
                             (fn [_]
                               true)]
 
-                (lp/run-turn! env "!echo hi-from-bang" {:hooks {:on-chunk #(swap! chunks conj %)}}))
+                (turn/run-turn! env
+                                "!echo hi-from-bang"
+                                {:hooks {:on-chunk #(swap! chunks conj %)}}))
 
               turns
               (persistance/db-list-session-turns store (:session-id env))
@@ -133,7 +136,7 @@
                            result
                            (with-redefs [toggles/enabled? (fn [_]
                                                             true)]
-                             (lp/run-turn! env "!pwd" {}))
+                             (turn/run-turn! env "!pwd" {}))
 
                            turns
                            (persistance/db-list-session-turns store (:session-id env))
@@ -154,7 +157,7 @@
                                      (bang-env store)
 
                                      result
-                                     (with-redefs [lp/iteration-loop
+                                     (with-redefs [iteration/iteration-loop
                                                    (fn [& _]
                                                      (throw (ex-info "should not run" {})))
 
@@ -162,7 +165,7 @@
                                                    (fn [_]
                                                      false)]
 
-                                       (lp/run-turn! env "!echo nope" {}))]
+                                       (turn/run-turn! env "!echo nope" {}))]
 
                                  (expect (= :success (:status result)))
                                  (expect (str/includes? (:answer result) "Shell layer is OFF")))))))

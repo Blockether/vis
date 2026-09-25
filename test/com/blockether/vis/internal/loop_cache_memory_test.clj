@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-cache-memory-test
-  (:require [com.blockether.vis.internal.loop :as lp]
+  (:require [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
@@ -11,7 +12,7 @@
         text
         (apply str (repeat 100000 "payload"))]
 
-    (#'lp/note-prompt-cache-request!
+    (#'transcript/note-prompt-cache-request!
      history
      :openai
      "model"
@@ -26,7 +27,7 @@
 (deftest request-cache-bounds-route-history-test
   (let [history (atom {})]
     (dotimes [i 100]
-      (#'lp/note-prompt-cache-request!
+      (#'transcript/note-prompt-cache-request!
        history
        :openai
        (str "model-" i)
@@ -47,10 +48,10 @@
         messages
         [{:role "system" :content "stable"} {:role "user" :content "question"}]]
 
-    (#'lp/note-prompt-cache-request! history :openai "model" context messages 1000 0 1000)
+    (#'transcript/note-prompt-cache-request! history :openai "model" context messages 1000 0 1000)
     (doseq [reference (get-in @history [[:openai "model"] :message-refs])]
       (.clear ^java.lang.ref.WeakReference reference))
-    (let [sample (#'lp/note-prompt-cache-request!
+    (let [sample (#'transcript/note-prompt-cache-request!
                   history
                   :openai
                   "model"
@@ -72,10 +73,17 @@
         messages
         [{:role "user" :content "question"}]]
 
-    (#'lp/note-prompt-cache-request! history :openai "old" context messages 1000 0 1)
-    (#'lp/note-prompt-cache-request! history :openai "new" context messages 1000 0 400000)
-    (let [sample
-          (#'lp/note-prompt-cache-request! history :openai "old" context messages 1100 0 400001)]
+    (#'transcript/note-prompt-cache-request! history :openai "old" context messages 1000 0 1)
+    (#'transcript/note-prompt-cache-request! history :openai "new" context messages 1000 0 400000)
+    (let [sample (#'transcript/note-prompt-cache-request!
+                  history
+                  :openai
+                  "old"
+                  context
+                  messages
+                  1100
+                  0
+                  400001)]
       (is (= :expired (:continuity sample)))
       (is (= 1000 (:reusable-tokens sample))))))
 
@@ -86,9 +94,9 @@
         messages
         (vec (repeat 5 {:role "user" :content "small"}))]
 
-    (with-redefs-fn {#'lp/PROMPT_CACHE_MESSAGE_LIMIT 2}
+    (with-redefs-fn {#'transcript/PROMPT_CACHE_MESSAGE_LIMIT 2}
       (fn []
-        (#'lp/note-prompt-cache-request!
+        (#'transcript/note-prompt-cache-request!
          history
          :openai
          "model"
@@ -101,7 +109,7 @@
               (get @history [:openai "model"])
 
               completed
-              (#'lp/completed-prompt-cache-entry
+              (#'transcript/completed-prompt-cache-entry
                entry
                messages
                1
@@ -112,7 +120,7 @@
           (is (empty? (:fingerprints entry)))
           (is (= messages (:messages completed)))
           (is (= 5 (count (:weights completed))))
-          (is (empty? (:fingerprints (#'lp/compact-prompt-cache-entry completed)))))))))
+          (is (empty? (:fingerprints (#'transcript/compact-prompt-cache-entry completed)))))))))
 
 (deftest exact-checkpoint-survives-restart-without-live-payload-retention-test
   (let [dir
@@ -146,10 +154,10 @@
         (atom nil)]
 
     (try
-      (let [environment (lp/create-environment ::router {:db db-path})]
+      (let [environment (loop-env/create-environment ::router {:db db-path})]
         (try (reset! session-id (:session-id environment))
              (reset! (:standing-ctx-atom environment) {:block "standing" :baseline {}})
-             (#'lp/note-prompt-cache-request!
+             (#'transcript/note-prompt-cache-request!
               (:prompt-cache-history-atom environment)
               :openai
               "model"
@@ -158,7 +166,7 @@
               1000
               0
               (util/now-ms))
-             (#'lp/persist-prompt-cache-state!
+             (#'transcript/persist-prompt-cache-state!
               environment
               :openai
               "model"
@@ -169,26 +177,32 @@
                :assistant-message answer})
              (is (nil? (get-in @(:prompt-cache-history-atom environment) [route :messages])))
              (is (nil? (get-in @(:prompt-cache-history-atom environment) [route :completed-turn])))
-             (finally (lp/dispose-environment! environment))))
-      (let [environment (lp/create-environment ::router {:db db-path :session @session-id})]
-        (try
-          (let [history @(:prompt-cache-history-atom environment)
-                state (#'lp/load-prompt-cache-state
-                       (:db-info environment)
-                       (:session/state-id environment))
-                user [{:role "user" :content "follow-up"}]
-                base
-                (#'lp/resumable-prompt-message-base state :openai "model" context 2 [] stable user)]
+             (finally (loop-env/dispose-environment! environment))))
+      (let [environment (loop-env/create-environment ::router {:db db-path :session @session-id})]
+        (try (let [history @(:prompt-cache-history-atom environment)
+                   state (#'transcript/load-prompt-cache-state
+                          (:db-info environment)
+                          (:session/state-id environment))
+                   user [{:role "user" :content "follow-up"}]
+                   base (#'transcript/resumable-prompt-message-base
+                         state
+                         :openai
+                         "model"
+                         context
+                         2
+                         []
+                         stable
+                         user)]
 
-            (is (nil? (get-in history [route :messages])))
-            (is (nil? (get-in history [route :completed-turn])))
-            (is (= (into (conj request answer) user) (:messages base)))
-            (persistance/db-set-session-prompt-cache-state! (:db-info environment)
-                                                            (:session/state-id environment)
-                                                            nil)
-            (is (nil? (#'lp/load-prompt-cache-state
-                       (:db-info environment)
-                       (:session/state-id environment)))))
-          (finally (lp/dispose-environment! environment))))
+               (is (nil? (get-in history [route :messages])))
+               (is (nil? (get-in history [route :completed-turn])))
+               (is (= (into (conj request answer) user) (:messages base)))
+               (persistance/db-set-session-prompt-cache-state! (:db-info environment)
+                                                               (:session/state-id environment)
+                                                               nil)
+               (is (nil? (#'transcript/load-prompt-cache-state
+                          (:db-info environment)
+                          (:session/state-id environment)))))
+             (finally (loop-env/dispose-environment! environment))))
       (finally (doseq [file (reverse (file-seq dir))]
                  (.delete ^java.io.File file))))))

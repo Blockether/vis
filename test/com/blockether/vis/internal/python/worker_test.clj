@@ -7,6 +7,9 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as worker]
@@ -167,27 +170,28 @@ print(worker_value)"))))
                "closes idle workers on reload and rebuilds lazily under the same turn lock"
                (with-worker-context
                  (fn [session]
-                   (with-redefs [loop/cache
+                   (with-redefs [loop-env/cache
                                  (atom {})
 
-                                 loop/policy-reload-epoch
+                                 python-exec/policy-reload-epoch
                                  (atom 0)
 
-                                 loop/env-max-turns-per-ctx
+                                 loop-env/env-max-turns-per-ctx
                                  (delay 0)]
 
                      (let [id
                            (java.util.UUID/randomUUID)
 
                            entry
-                           (#'loop/new-cache-entry {:python-context session})
+                           (#'loop-env/new-cache-entry {:python-context session})
 
                            ^Process process
                            (:process (get @@#'worker/workers session))
 
                            hook
-                           (get @@#'extension/reload-hooks
-                                :com.blockether.vis.internal.loop/security-policy-reload)
+                           (get
+                             @@#'extension/reload-hooks
+                             :com.blockether.vis.internal.loop.environment/security-policy-reload)
 
                            builds
                            (atom 0)
@@ -195,13 +199,13 @@ print(worker_value)"))))
                            fresh
                            {:marker :fresh}]
 
-                       (swap! loop/cache assoc id entry)
-                       (with-redefs [loop/open-env!
+                       (swap! loop-env/cache assoc id entry)
+                       (with-redefs [loop-env/open-env!
                                      (fn [_ _]
                                        (swap! builds inc)
                                        fresh)
 
-                                     loop/turn!
+                                     turn/turn!
                                      (fn [environment _ _]
                                        environment)]
 
@@ -211,10 +215,10 @@ print(worker_value)"))))
                          (expect (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS))
                          (expect (false? (worker/worker-live? session)))
                          (expect (zero? @builds))
-                         (expect (identical? entry (get @loop/cache id)))
+                         (expect (identical? entry (get @loop-env/cache id)))
                          (expect (= fresh (loop/send! id "after reload")))
                          (expect (= 1 @builds))
-                         (expect (identical? (:lock entry) (:lock (get @loop/cache id)))))))))))
+                         (expect (identical? (:lock entry) (:lock (get @loop-env/cache id)))))))))))
 
 (defdescribe worker-unexpected-exit-test
              ;; Regression: a native image-library crash must not silently replace a fully
@@ -667,7 +671,7 @@ print(worker_value)"))))
                                           (or (zero? remaining) (realized? execution)) false
                                           :else (do (Thread/sleep 10) (recur (dec remaining)))))
                                   (true? (deref entered 5000 false))))
-                        (expect (true? (#'loop/interrupt-block!
+                        (expect (true? (#'python-exec/interrupt-block!
                                         session
                                         execution
                                         {:python-context-retired-atom retired})))
@@ -1036,7 +1040,7 @@ print(worker_value)"))))
                               #'env/retire-python-context! (fn [session]
                                                              (swap! stopped conj session))}
                (fn []
-                 (expect (false? ((deref #'loop/interrupt-block!)
+                 (expect (false? ((deref #'python-exec/interrupt-block!)
                                    "broken-session"
                                    exec-task
                                    {:python-context-retired-atom retired})))
@@ -1056,13 +1060,13 @@ print(worker_value)"))))
             exec-task
             (future @release-task)]
 
-        (try (with-redefs-fn {#'loop/INTERRUPT_UNWIND_MS 25
+        (try (with-redefs-fn {#'python-exec/INTERRUPT_UNWIND_MS 25
                               #'env/interrupt-guest! (fn [_]
                                                        true)
                               #'env/retire-python-context! (fn [session]
                                                              (deliver stopped session))}
                (fn []
-                 (expect (true? ((deref #'loop/interrupt-block!)
+                 (expect (true? ((deref #'python-exec/interrupt-block!)
                                   "stuck-native-session"
                                   exec-task
                                   {:python-context-retired-atom retired})))
@@ -1073,7 +1077,7 @@ print(worker_value)"))))
       (let [self (.pid (java.lang.ProcessHandle/current))]
         (with-redefs-fn {#'env/python-worker-pids (fn []
                                                     [self 424242 424242])}
-          #(expect (= [self 424242] (vec ((deref #'loop/runtime-pids))))))))
+          #(expect (= [self 424242] (vec ((deref #'loop-env/runtime-pids))))))))
   (it
     "kills the real session process when a native wait does not unwind"
     (let [marker
@@ -1122,7 +1126,7 @@ print(worker_value)"))))
                      (cond (.exists marker) true
                            (or (zero? remaining) (realized? execution)) false
                            :else (do (Thread/sleep 10) (recur (dec remaining))))))
-           (expect (true? ((deref #'loop/interrupt-block!)
+           (expect (true? ((deref #'python-exec/interrupt-block!)
                             session
                             execution
                             {:python-context-retired-atom retired})))
@@ -1146,11 +1150,11 @@ print(worker_value)"))))
             {:environment {:python-context "abandoned-session"
                            :python-context-retired-atom retired}}]
 
-        (with-redefs-fn {#'loop/cache (atom {key entry})
+        (with-redefs-fn {#'loop-env/cache (atom {key entry})
                          #'env/retire-python-context! (fn [session]
                                                         (swap! stopped conj session))}
           (fn []
-            (expect (true? ((deref #'loop/detach-entry!) key entry)))
+            (expect (true? ((deref #'loop-env/detach-entry!) key entry)))
             (expect (true? @retired))
             (expect (= ["abandoned-session"] @stopped))))))
   (it "keeps a healthy worker when interrupt lost a completion race"
@@ -1171,7 +1175,7 @@ print(worker_value)"))))
                               #'env/retire-python-context! (fn [session]
                                                              (swap! stopped conj session))}
                (fn []
-                 (expect (false? ((deref #'loop/interrupt-block!)
+                 (expect (false? ((deref #'python-exec/interrupt-block!)
                                    "healthy-session"
                                    exec-task
                                    {:python-context-retired-atom retired})))

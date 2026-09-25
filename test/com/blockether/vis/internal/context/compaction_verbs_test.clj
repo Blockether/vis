@@ -17,20 +17,24 @@
             [com.blockether.vis.internal.context.renderer :as cr]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.compaction :as compaction]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [clojure.string :as str]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
+(def ^:private compaction-verbs (var-get #'compaction/compaction-verbs))
 
-(def ^:private rebase-session-context! (var-get #'lp/rebase-session-context!))
+(def ^:private rebase-session-context! (var-get #'compaction/rebase-session-context!))
 
-(def ^:private apply-summaries (var-get #'lp/apply-summaries))
+(def ^:private apply-summaries (var-get #'transcript/apply-summaries))
 
 (def ^:private expand-through (var-get #'eng/expand-through))
 
-(def ^:private irm (var-get #'lp/iteration-results-message))
+(def ^:private irm (var-get #'transcript/iteration-results-message))
 
 (defn- with-verbs
   "Fresh ctx-atom + a Python session with fold_session bound.
@@ -470,7 +474,7 @@
         session-id
         (atom nil)]
 
-    (try (let [initial (lp/create-environment ::router {:db db-path})]
+    (try (let [initial (loop-env/create-environment ::router {:db db-path})]
            (try (let [db (:db-info initial)
                       turn-id (persistance/db-store-session-turn!
                                 db
@@ -490,15 +494,15 @@
                             (cond-> {:status turn-status :ctx {"session_turn" 1}}
                               (= :done turn-status)
                               (assoc :content [(content/prose "The first turn is complete")])))))
-                (finally (lp/dispose-environment! initial))))
-         (let [rebuilt (lp/create-environment ::router {:db db-path :session @session-id})]
+                (finally (loop-env/dispose-environment! initial))))
+         (let [rebuilt (loop-env/create-environment ::router {:db db-path :session @session-id})]
            (try (expect (= (if (= :running turn-status) 1 0)
                            (lp/db-sweep-orphaned-running-turns! (:db-info rebuilt))))
                 (let [ca (:ctx-atom rebuilt)
                       turns (persistance/db-list-session-turns (:db-info rebuilt) @session-id)
                       iterations (persistance/db-list-session-turn-iterations (:db-info rebuilt)
                                                                               (:id (first turns)))
-                      seeded (#'lp/seed-trailer-iters rebuilt nil [])
+                      seeded (#'iteration/seed-trailer-iters rebuilt nil [])
                       current (apply trailer (map #(str "t2/i" %) (range 1 12)))]
 
                   (expect (= 1 (get @ca "session_turn")))
@@ -507,14 +511,14 @@
                              (:status (first turns))))
                   (expect (= (if scoped? 1 0) (count iterations)))
                   (expect (every? #(= :done (:status %)) iterations))
-                  (let [prior (first (#'lp/previous-turn-context rebuilt nil))]
+                  (let [prior (first (#'transcript/previous-turn-context rebuilt nil))]
                     (expect (= "Complete the first turn" (:user-request prior)))
                     (expect (= (when (= :done turn-status) "The first turn is complete")
                                (:answer prior))))
                   (swap! ca assoc "session_turn" 2)
-                  (#'lp/stamp-iter-universe! ca (into seeded current))
+                  (#'transcript/stamp-iter-universe! ca (into seeded current))
                   (f rebuilt))
-                (finally (lp/dispose-environment! rebuilt))))
+                (finally (loop-env/dispose-environment! rebuilt))))
          (finally (doseq [file (reverse (file-seq dir))]
                     (.delete ^java.io.File file))))))
 
@@ -540,7 +544,7 @@
         (expect (= expected-scopes (get @ca "engine_iter_universe")))
         (expect (pos? (get-in @ca ["engine_turn_weights" 1])))
         (expect (str/starts-with? (sf "-t1" "preserved work") "folded through t1"))
-        (let [prior (#'lp/previous-turn-context environment nil)]
+        (let [prior (#'transcript/previous-turn-context environment nil)]
           (if scoped?
             (expect (nil? prior))
             (do (expect (= 1 (count prior)))
@@ -1140,7 +1144,7 @@
          "saturation" 14}
 
         stamp
-        #'lp/stamp-utilization!]
+        #'transcript/stamp-utilization!]
 
     (it "uses a 200k default compaction budget"
         (expect (= 200000 eng/DEFAULT_PROMPT_BUDGET_TOKENS)))
@@ -1210,9 +1214,9 @@
 
 ;; ── layer 5b: what a fold is WORTH — the per-iteration wire residence ────────
 
-(def ^:private form-wire-text (var-get #'lp/form-wire-text))
+(def ^:private form-wire-text (var-get #'transcript/form-wire-text))
 
-(def ^:private stamp-iter-universe! (var-get #'lp/stamp-iter-universe!))
+(def ^:private stamp-iter-universe! (var-get #'transcript/stamp-iter-universe!))
 
 (defn- filler "`n` characters of wire text." [n] (apply str (repeat n "x")))
 
@@ -1268,9 +1272,9 @@
 
 ;; ── layer 5c: the same residence, tokenized instead of character-priced ──────
 
-(def ^:private conversation-suffix (var-get #'lp/conversation-suffix))
+(def ^:private conversation-suffix (var-get #'transcript/conversation-suffix))
 
-(def ^:private messages-wire-tokens (var-get #'lp/messages-wire-tokens))
+(def ^:private messages-wire-tokens (var-get #'transcript/messages-wire-tokens))
 
 (def ^:private priced-model
   "Any model svar resolves an encoding for; the pricing path needs nothing else."

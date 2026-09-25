@@ -7,7 +7,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
@@ -2357,7 +2357,7 @@
              :python-context c}]
 
         (try (toggles/set-enabled! "shell" false)
-             (lp/sync-active-extension-symbols! env)
+             (loop-env/sync-active-extension-symbols! env)
              (expect (false? (boolean (py c "'shell' in globals()"))))
              (finally (toggles/set-enabled! "shell" before)))))
   ;; Regression, issue #106: turning Shell commands back ON from a settings
@@ -2378,16 +2378,16 @@
              :python-context c}
 
             cached
-            (lp/cache-env! (str "shell-toggle-fanout-" (System/nanoTime)) env)]
+            (loop-env/cache-env! (str "shell-toggle-fanout-" (System/nanoTime)) env)]
 
         (try (toggles/set-enabled! "shell" false)
-             (lp/sync-active-extension-symbols! env)
+             (loop-env/sync-active-extension-symbols! env)
              (expect (false? (boolean (py c "'shell' in globals()"))))
              ;; No explicit sync and no HTTP handler: the toggle flip alone has
              ;; to reach this session's live Python globals.
              (toggles/set-enabled! "shell" true)
              (expect (true? (boolean (py c "'shell' in globals()"))))
-             (finally (swap! (deref #'lp/cache) dissoc (:id cached))
+             (finally (swap! (deref #'loop-env/cache) dissoc (:id cached))
                       (toggles/set-enabled! "shell" before)))))
   (it "routes the lifecycle tools through the native Python bridge"
       ;; Regression: a stale positional wrapper invoked shell-dispatch as

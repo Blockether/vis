@@ -61,6 +61,11 @@
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.provider.limits-format :as limits-format]
     [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.loop.environment :as loop-env]
+    [com.blockether.vis.internal.loop.python-exec :as python-exec]
+    [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.loop.transcript :as transcript]
+    [com.blockether.vis.internal.loop.turn :as turn]
     [com.blockether.vis.internal.extension.manifest :as manifest]
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.main :as binary]
@@ -344,7 +349,7 @@
 
 ;; Per-model price table (USD / MILLION tokens) — the SAME table the loop bills
 ;; against, exposed read-only so channel model pickers show the real charge.
-(import-vars [model-pricing lp/model-pricing])
+(import-vars [model-pricing loop-router/model-pricing])
 
 ;; Notifications
 ;;
@@ -713,21 +718,21 @@
              [stop-session-resources! resources/stop-all!])
 
 ;; Turn runtime / iteration loop / environment / sessions
-(import-vars [turn! lp/turn!]
-             [ask-code! lp/ask-code!]
-             [llm-text! lp/llm-text!]
-             [get-router lp/get-router]
-             [router-initialized? lp/router-initialized?]
-             [rebuild-router! lp/rebuild-router!]
-             [resolve-effective-model lp/resolve-effective-model]
+(import-vars [turn! turn/turn!]
+             [ask-code! loop-router/ask-code!]
+             [llm-text! loop-router/llm-text!]
+             [get-router loop-router/get-router]
+             [router-initialized? loop-router/router-initialized?]
+             [rebuild-router! loop-router/rebuild-router!]
+             [resolve-effective-model loop-router/resolve-effective-model]
              ;; Model CAPABILITY, as svar stamped it from the wire — what a
              ;; channel asks before offering a reasoning-depth or verbosity
              ;; control, instead of testing a provider id.
-             [resolve-model-info lp/resolve-model-info]
-             [reasoning-effort-configurable? lp/reasoning-effort-configurable?]
-             [verbosity-configurable? lp/verbosity-configurable?]
-             [model-routing-status lp/model-routing-status]
-             [set-provider! lp/set-provider!])
+             [resolve-model-info loop-router/resolve-model-info]
+             [reasoning-effort-configurable? transcript/reasoning-effort-configurable?]
+             [verbosity-configurable? transcript/verbosity-configurable?]
+             [model-routing-status loop-router/model-routing-status]
+             [set-provider! loop-env/set-provider!])
 
 ;; Historical public helpers removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
@@ -735,17 +740,17 @@
 ;;   `:repaired-source` / `:repaired?`.
 
 ;; Environment lifecycle
-(import-vars [create-environment lp/create-environment]
-             [dispose-environment! lp/dispose-environment!]
-             [install-extension! lp/install-extension!]
-             [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
+(import-vars [create-environment loop-env/create-environment]
+             [dispose-environment! loop-env/dispose-environment!]
+             [install-extension! loop-env/install-extension!]
+             [sync-active-extension-symbols! loop-env/sync-active-extension-symbols!])
 
 ;; Sessions
 (import-vars [db-info lp/db-info]
-             [custom-bindings lp/custom-bindings]
-             [get-locals lp/get-locals]
-             [cache-env! lp/cache-env!]
-             [refresh-cached-routers! lp/refresh-cached-routers!]
+             [custom-bindings turn/custom-bindings]
+             [get-locals python-exec/get-locals]
+             [cache-env! loop-env/cache-env!]
+             [refresh-cached-routers! loop-env/refresh-cached-routers!]
              [create! lp/create!]
              [by-id lp/by-id]
              [by-channel lp/by-channel]

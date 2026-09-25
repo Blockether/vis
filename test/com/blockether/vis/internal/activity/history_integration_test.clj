@@ -6,7 +6,7 @@
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.gateway.resources :as resources]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.env :as env]
@@ -95,7 +95,7 @@
                         {:stdout "done"})]
 
           (let [result
-                (#'lp/run-python-code
+                (#'python-exec/run-python-code
                  pc
                  "pass"
                  :env
@@ -124,7 +124,7 @@
 
         (tpc/with-own [pc {}]
                       (let [result
-                            (#'lp/run-python-code
+                            (#'python-exec/run-python-code
                              pc
                              "for i in range(160):\n    ls('resources/vis-shims')\nprint('done')"
                              :env
@@ -159,7 +159,7 @@
         (tpc/with-own
           [pc (extension/builtin-sandbox-bindings (constantly env))]
           (let [result
-                (#'lp/run-python-code
+                (#'python-exec/run-python-code
                  pc
                  (str "sh = await shell('printf first; sleep 0.2; printf second')\n"
                       "sh.logs()\n"
@@ -245,7 +245,7 @@
                                                                   (sink edge))]
                             (extension/invoke-symbol-wrapper ext sym [{}] {})))
                         {:stdout (if (deref terminal-seen 5000 false) "done" "Timed out")})]
-          (let [result (#'lp/run-python-code
+          (let [result (#'python-exec/run-python-code
                         pc
                         "pass"
                         :env
@@ -290,21 +290,23 @@
 
       (try (let [store (vis/db-create-connection! (str dir))]
              (try (reset! sid (h/store-session! store {}))
-                  (tpc/with-own
-                    [pc {}]
-                    (with-redefs [env/run-python-block
-                                  (fn [_ _ _]
-                                    (let [ctx (event/context)]
-                                      (doseq [n (range 145)]
-                                        (emit-operation! ctx n))
-                                      (doseq [n [145 146]]
-                                        (emit-operation! ctx n "comparison-1")))
-                                    {:stdout "saved"})]
-                      (let [result
-                            (#'lp/run-python-code pc "pass" :env {:db-info store :session-id @sid})]
-                        (expect (nil? (:error result)))
-                        (reset! aid (get-in result [:activity :history :id]))
-                        (reset! original (all-rows store @sid @aid)))))
+                  (tpc/with-own [pc {}]
+                                (with-redefs [env/run-python-block
+                                              (fn [_ _ _]
+                                                (let [ctx (event/context)]
+                                                  (doseq [n (range 145)]
+                                                    (emit-operation! ctx n))
+                                                  (doseq [n [145 146]]
+                                                    (emit-operation! ctx n "comparison-1")))
+                                                {:stdout "saved"})]
+                                  (let [result (#'python-exec/run-python-code
+                                                pc
+                                                "pass"
+                                                :env
+                                                {:db-info store :session-id @sid})]
+                                    (expect (nil? (:error result)))
+                                    (reset! aid (get-in result [:activity :history :id]))
+                                    (reset! original (all-rows store @sid @aid)))))
                   (finally (vis/db-dispose-connection! store))))
            (let [reopened (vis/db-create-connection! (str dir))]
              (try (expect (= 146 (count @original)))
@@ -339,7 +341,8 @@
                           (emit-operation! (event/context) 0)
                           {:stdout "work completed"})]
 
-            (let [result (#'lp/run-python-code pc "pass" :env {:db-info store :session-id sid})]
+            (let [result
+                  (#'python-exec/run-python-code pc "pass" :env {:db-info store :session-id sid})]
               (expect (= "work completed" (:stdout result)))
               (expect (= :activity/persistence (get-in result [:error :type])))))))))
 
@@ -362,7 +365,8 @@
                                                    original-error
                                                    (assoc :error original-error)))]
 
-              (let [result (#'lp/run-python-code pc "pass" :env {:db-info store :session-id sid})]
+              (let [result
+                    (#'python-exec/run-python-code pc "pass" :env {:db-info store :session-id sid})]
                 (expect (= "work completed" (:stdout result)))
                 (expect (nil? (:activity result)))
                 (if original-error

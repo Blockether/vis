@@ -39,6 +39,8 @@
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
@@ -3069,7 +3071,7 @@
                     ;; so the next turn abandons the wedged context and
                     ;; runs on a fresh one instead of queueing behind a
                     ;; thread that is never coming back.
-                    (try (lp/condemn-env! sid) (catch Throwable _ nil)))
+                    (try (loop-env/condemn-env! sid) (catch Throwable _ nil)))
                   (catch InterruptedException _ nil)
                   (catch Throwable _ nil)))
            (str "gateway-turn-cancel-backstop-" tid))
@@ -5155,7 +5157,7 @@
                         "The human model pick is locked; only the user can clear it"))
 
         pair
-        (agent-model! (lp/get-router) (:provider opts) (:model opts))]
+        (agent-model! (loop-router/get-router) (:provider opts) (:model opts))]
 
     (allowed-agent-model! (agents/info db sid) pair)
     (smodel/set-model! db sid (:provider pair) (:model pair) :agent-routing)
@@ -5246,11 +5248,11 @@
               (long (or (:iteration_budget opts) agents/default-iterations))
 
               router
-              (or (:router env) (lp/get-router))
+              (or (:router env) (loop-router/get-router))
 
               inherited
               (or (smodel/model-of db sid)
-                  (let [m (lp/resolve-effective-model router)]
+                  (let [m (loop-router/resolve-effective-model router)]
                     {:provider (:provider m) :model (:name m)}))
 
               pair
@@ -6617,7 +6619,7 @@
         (vals reg)]
 
     (merge @metrics
-           (lp/gateway-runtime-metrics)
+           (loop-env/gateway-runtime-metrics)
            {:sessions-tracked (count reg)
             :turns-running (count (keep :current-turn entries))
             :turns-executing @turns-executing

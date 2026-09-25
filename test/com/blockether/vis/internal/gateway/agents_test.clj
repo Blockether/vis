@@ -3,6 +3,7 @@
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -76,7 +77,7 @@
     (with-redefs [lp/db-info
                   (constantly db)
 
-                  lp/get-router
+                  loop-router/get-router
                   (constantly router)
 
                   lp/env-for

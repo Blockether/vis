@@ -5,7 +5,7 @@
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe expect it]])
@@ -83,7 +83,7 @@
         (with-redefs [state/session-entry
                       (constantly {:current-turn "diagnostic-turn"})
 
-                      lp/condemn-env!
+                      loop-env/condemn-env!
                       (fn [& _]
                         nil)
 

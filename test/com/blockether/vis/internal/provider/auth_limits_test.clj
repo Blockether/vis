@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.provider.auth-limits-test
   (:require [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.provider.limits :as limits]
             [com.blockether.vis.internal.provider.auth :as auth]
             [com.blockether.vis.internal.provider.service :as providers]
@@ -78,7 +78,7 @@
            (is (= "old" (get-in (limits/provider-limits :auth-limits-test) [:dynamic :note])))
            (with-redefs-fn {#'auth-health/refresh-allowed? (constantly true)
                             #'auth-health/last-refreshed (atom {})}
-             #(is (true? (#'lp/try-refresh-provider-token!
+             #(is (true? (#'loop-router/try-refresh-provider-token!
                           {:providers [{:id :auth-limits-test :api-key "old"}]}
                           {:provider :auth-limits-test}))))
            (is (= ["fresh"] @observed))

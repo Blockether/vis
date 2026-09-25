@@ -4,7 +4,7 @@
             [com.blockether.vis.internal.config.improve :as settings]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.improve.review :as review]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
@@ -33,7 +33,7 @@
         result
         {:analyses [] :groups []}]
 
-    (with-redefs [lp/get-router
+    (with-redefs [loop-router/get-router
                   (constantly {:providers [chosen {:id :other :models [{:name "m"}]}]})
 
                   svar/ask!

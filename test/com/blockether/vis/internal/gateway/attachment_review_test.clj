@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
@@ -52,7 +53,7 @@
                   (persistence/db-list-session-attachments db sid)
                   (persistence/db-list-session-attachments-meta db sid)]]
       (is (= [false true false] (mapv :commentable rows)))
-      (is (= [false true false] (mapv (comp :commentable lp/attachment-descriptor) rows)))
+      (is (= [false true false] (mapv (comp :commentable python-exec/attachment-descriptor) rows)))
       (is (= [false true false]
              (mapv #(-> (persistence/db-read-attachment db (:id %))
                         :commentable)

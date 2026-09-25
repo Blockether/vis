@@ -53,10 +53,11 @@ At initial clean main `e3b24d2ca`, Activity drops operations at 128 rows and
 sheds details to fit 64 KiB. Provider TTFT classification may have its owned
 interrupt re-armed by Svar routing; failure during retry backoff can leave the
 durable turn running. Existing liveness-marker repair does not settle that row.
-Owners: `internal/activity/`, Python Activity collection in `internal/loop.clj`,
-SQLite persistence, gateway routes, Companion and TUI Activity clients, and the
-Svar router. Reject higher retention caps, indiscriminate interrupt clearing,
-and reconstructing completed history solely from the live event ring.
+Owners: `internal/activity/`, Python Activity collection in
+`internal/loop/python_exec.clj`, SQLite persistence, gateway routes, Companion
+and TUI Activity clients, and the Svar router. Reject higher retention caps,
+indiscriminate interrupt clearing, and reconstructing completed history solely
+from the live event ring.
 
 ## 1. Reproduce and repair provider recovery
 

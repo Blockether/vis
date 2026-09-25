@@ -40,7 +40,7 @@
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.python.extensions :as pyx]
@@ -1724,7 +1724,7 @@
                                    :db-info store}]
 
                           (try
-                            (lp/sync-active-extension-symbols! env [ext])
+                            (loop-env/sync-active-extension-symbols! env [ext])
                             (let
                               [answer
                                (ep/run-python-block

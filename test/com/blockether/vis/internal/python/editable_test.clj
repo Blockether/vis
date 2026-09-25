@@ -8,7 +8,8 @@
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.loop :as loop]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (defn- entry-source
@@ -38,7 +39,7 @@
 (defn- probe
   [context typed? description]
   (let [ext (#'fixtures/registered "editable-fixture")]
-    (loop/sync-active-extension-symbols!
+    (loop-env/sync-active-extension-symbols!
       {:python-context context :extensions (atom [ext]) :active-extensions (atom [])}
       [ext])
     (env/run-python-block
@@ -86,11 +87,11 @@
                                        (constantly [(str ext-dir)])
                                        {:worker? true :jail-enabled? true :enabled? false}
                                        nil))]
-            (try (loop/sync-active-extension-symbols! {:python-context ctx
-                                                       :db-info store
-                                                       :extensions (atom [ext])
-                                                       :active-extensions (atom [])}
-                                                      [ext])
+            (try (loop-env/sync-active-extension-symbols! {:python-context ctx
+                                                           :db-info store
+                                                           :extensions (atom [ext])
+                                                           :active-extensions (atom [])}
+                                                          [ext])
                  (let [answer (env/run-python-block ctx "print(await sdk_count())")]
                    (is (nil? (:error answer)) (str answer))
                    (is (= "2\n" (:stdout answer))))
@@ -182,13 +183,14 @@
                 (with-redefs [python-runtime/ensure-project!
                               (fn [& _]
                                 (throw (ex-info "Unexpected reinstall" {})))
-                              loop/cache (atom {id (#'loop/new-cache-entry
-                                                    {:python-context first-context})})
-                              loop/policy-reload-epoch (atom @loop/policy-reload-epoch)]
+                              loop-env/cache (atom {id (#'loop-env/new-cache-entry
+                                                        {:python-context first-context})})
+                              python-exec/policy-reload-epoch (atom
+                                                                @python-exec/policy-reload-epoch)]
 
                   (is (= {:loaded 1 :failed 0 :changed? true} (reload! false)))
                   ((get @@#'extension/reload-hooks
-                        :com.blockether.vis.internal.loop/security-policy-reload))
+                        :com.blockether.vis.internal.loop.environment/security-policy-reload))
                   (is (not (worker/worker-live? first-context)))
                   (let [fresh (probe (make-context) true "Typed help.")]
                     (is (nil? (:error fresh)) (str fresh))

@@ -6,6 +6,8 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -46,7 +48,7 @@
   (doseq [kind ["coordination" "informational" "complain"]]
     (let [{:keys [db sid entry]} (fixture kind)
           prompt "Council notification. Read the attributed input."
-          opts (#'lp/turn-store-opts
+          opts (#'turn/turn-store-opts
                 {:session-id sid}
                 prompt
                 {:request-kind :council :council-entry-id (:entry_id entry)})
@@ -103,19 +105,19 @@
                  (assoc :request-kind
                    :council :council-entry-id
                    (:entry_id entry)))
-          ctx (#'lp/prepare-turn-context env [{:role "user" :content prompt}] opts)
-          phase (with-redefs [lp/iteration-loop (fn [_ request _]
-                                                  (is (= prompt request))
-                                                  {:status :success
-                                                   :answer "Acknowledged."
-                                                   :iteration-count 1
-                                                   :duration-ms 0})
+          ctx (#'turn/prepare-turn-context env [{:role "user" :content prompt}] opts)
+          phase (with-redefs [iteration/iteration-loop (fn [_ request _]
+                                                         (is (= prompt request))
+                                                         {:status :success
+                                                          :answer "Acknowledged."
+                                                          :iteration-count 1
+                                                          :duration-ms 0})
                               titling/maybe-auto-title! (fn [& _]
                                                           nil)
                               titling/after-turn-auto-title! (fn [& _]
                                                                nil)]
 
-                  (#'lp/run-iteration-phase ctx))
+                  (#'turn/run-iteration-phase ctx))
           [turn] (ps/db-list-session-turns db sid)
           [wire] (with-redefs [lp/db-info (constantly db)]
                    (state/transcript sid))]

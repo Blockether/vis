@@ -11,7 +11,8 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -70,10 +71,10 @@
 
                            ;; iteration-loop must NOT run for handled slashes.
                            result
-                           (with-redefs [lp/iteration-loop (fn [& _]
-                                                             (swap! call-count inc)
-                                                             {:status :success})]
-                             (lp/run-turn! env "/ping" {}))]
+                           (with-redefs [iteration/iteration-loop (fn [& _]
+                                                                    (swap! call-count inc)
+                                                                    {:status :success})]
+                             (turn/run-turn! env "/ping" {}))]
 
                        (expect (= 0 @call-count))
                        (expect (= :success (:status result)))
@@ -97,7 +98,7 @@
                                      fell-through?
                                      (atom false)]
 
-                                 (with-redefs [lp/iteration-loop
+                                 (with-redefs [iteration/iteration-loop
                                                (fn [& _]
                                                  (reset! fell-through? true)
                                                  ;; Mimic real iteration-loop happy path:
@@ -105,7 +106,7 @@
                                                  ;; :success via `or` then normalized
                                                  ;; to "done"; prior_outcome stays NULL).
                                                  {:answer nil :iteration-count 0 :duration-ms 0})]
-                                   (lp/run-turn! env "hello world" {}))
+                                   (turn/run-turn! env "hello world" {}))
                                  (expect (true? @fell-through?))))))
              ;; Regression: a root-visible nested skill expanded under the root session and then
              ;; ran every relative tool call from the repository root instead of its owning app.
@@ -133,12 +134,12 @@
                            :expand-fn (fn [_ args]
                                         (reset! seen {:root (.getPath (workspace/cwd)) :args args})
                                         "expanded")}]))
-                     (try (with-redefs [lp/iteration-loop
+                     (try (with-redefs [iteration/iteration-loop
                                         (fn [turn-env & _]
                                           (reset! run-root {:env (:workspace/root turn-env)
                                                             :cwd (.getPath (workspace/cwd))})
                                           {:answer "done" :iteration-count 0 :duration-ms 0})]
-                            (lp/run-turn! env "/scoped-template audit apps/companion" {}))
+                            (turn/run-turn! env "/scoped-template audit apps/companion" {}))
                           (expect (= {:root (workspace/workspace-root "/tmp")
                                       :args "audit apps/companion"}
                                      @seen))
@@ -164,9 +165,9 @@
                                                          :slash/body ast})}])
 
                            result
-                           (with-redefs [lp/iteration-loop (fn [& _]
-                                                             {:status :success})]
-                             (lp/run-turn! env "/ir-body" {}))]
+                           (with-redefs [iteration/iteration-loop (fn [& _]
+                                                                    {:status :success})]
+                             (turn/run-turn! env "/ir-body" {}))]
 
                        (expect (= :success (:status result)))
                        (expect (str/includes? (:answer result) "Hello"))
@@ -181,10 +182,10 @@
                                      (slash-env store [(slash-spec-ok "ping" "pong")])
 
                                      result
-                                     (with-redefs [lp/iteration-loop
+                                     (with-redefs [iteration/iteration-loop
                                                    (fn [& _]
                                                      (throw (ex-info "should not be called" {})))]
-                                       (lp/run-turn! env "/nonexistent" {}))]
+                                       (turn/run-turn! env "/nonexistent" {}))]
 
                                  (expect (= :success (:status result)))
                                  (expect (= :unknown (get-in result [:slash :reason])))
