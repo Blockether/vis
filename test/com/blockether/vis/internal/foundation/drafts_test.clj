@@ -91,7 +91,7 @@
         (temp-dir prefix)
 
         store
-        (assoc (ps/db-open! :memory) :backend :sqlite)]
+        (ps/db-open! :memory)]
 
     (try (init-repo! base)
          (binding [ws/*drafts-home*

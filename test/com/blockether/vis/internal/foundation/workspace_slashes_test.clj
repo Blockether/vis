@@ -23,7 +23,7 @@
 
 (defn- with-store
   [f]
-  (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
+  (let [store (ps/db-open! :memory)]
     (try (f store) (finally (ps/db-close! store)))))
 
 (defn- env-with

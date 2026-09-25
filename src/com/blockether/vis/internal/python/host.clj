@@ -20,7 +20,7 @@
    block sits inside it."
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.persistance.codec :as codec]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent.locks ReentrantLock]))
@@ -67,7 +67,7 @@
    escape would take the block, the turn and the interpreter's opinion of this
    session with it."
   [tool reply]
-  (try (persistance/->json reply)
+  (try (codec/->json reply)
        (catch Throwable _
          (json/write-json-str {"error" (str "the vis tool `" tool
                                             "` answered a value this boundary "

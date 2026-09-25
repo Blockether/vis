@@ -6633,7 +6633,7 @@
   "Force the persistence backend + shared connection on the CALLER's
    thread. The gateway runs this on its single-threaded boot path so
    the heavyweight backend namespace never lazy-loads under request
-   concurrency (see require-backend-ns! in internal/persistance/core.clj)."
+   concurrency (see `sqlite` in internal/persistance/core.clj)."
   []
   (try (lp/db-info)
        true

@@ -28,7 +28,7 @@
 (defn- with-store
   "Open an :memory sqlite store, run `f` with it, dispose."
   [f]
-  (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
+  (let [store (ps/db-open! :memory)]
     (try (f store) (finally (ps/db-close! store)))))
 
 (defn- temp-dir

@@ -58,7 +58,7 @@
         (temp-dir prefix)
 
         store
-        (assoc (ps/db-open! :memory) :backend :sqlite)]
+        (ps/db-open! :memory)]
 
     (try (init-repo! base)
          (binding [ws/*drafts-home* (str base "-store")]
@@ -962,7 +962,7 @@
           (temp-dir "vis-review-raw")
 
           store
-          (assoc (ps/db-open! :memory) :backend :sqlite)
+          (ps/db-open! :memory)
 
           outside
           (io/file (str base "-outside"))]

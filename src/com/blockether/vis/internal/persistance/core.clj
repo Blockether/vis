@@ -1,300 +1,250 @@
 (ns com.blockether.vis.internal.persistance.core
-  "Persistence facade: the backend table, connection lifecycle, and every
-   delegated `store-*`/`db-*` fn.
+  "Persistence facade: the `Store` protocol, the connection lifecycle and the
+   guarantees every backend gets before it sees a call.
 
-   SQLite is the backend Vis ships and the default; `backends` is the closed
-   table a second dialect would join. The facade dispatches each delegated call
-   by resolving the matching var on the chosen backend namespace
-   (`(ns-resolve ns-sym 'db-store-iteration!)` etc.) and applying it to the
-   original args. This keeps the facade dialect-agnostic - every migration
-   runner / driver-specific oddity stays inside the backend adapter.
+   SQLite is the one backend Vis ships. Its namespace loads on the first store
+   operation, not with this facade (see `sqlite`), so commands that never touch
+   the store skip ~480 ms of JDBC/Hikari/Flyway class loading on a cold JVM.
+   Every `Store` op forwards to that backend, which hands the facade its
+   implementation through `store-implementation`: a backend missing an op fails
+   to compile.
 
-   Frontends still call `db-error->user-message` here, but the actual
-   translation is offered by backend adapters. Same for store-staleness
-   checks used by the process-wide shared connection."
-  (:require [charred.api :as json]
-            [clojure.walk :as walk])
-  (:import (java.time Instant)
-           (java.util Date UUID)))
+   Frontends still call `db-error->user-message` here; the backend owns the
+   actual translation. Same for the store-staleness check the process-wide
+   shared connection uses."
+  (:require [clojure.walk :as walk]))
 
-;; Storage base helpers
+;; Full-text search query DSL
 
-(defn ds [db-info] (:datasource db-info))
+(def search-query-dsl-doc
+  "Canonical, BACKEND-NEUTRAL search-query DSL — the single source of truth for
+   what a `db-search` query means, independent of the engine underneath
+   (SQLite FTS5 today, Postgres tsvector/tsquery planned). The query is DATA,
+   not an engine operator string: callers/agent compose a value, each backend
+   RENDERS it to its native full-text query. Because every leaf term is escaped
+   by the renderer, punctuation/quotes in code text are inert — a query can
+   never be `broken` by its content, so there is no `parse mode` to choose.
 
-(defn ->id
-  [v]
-  (cond (nil? v) nil
-        (uuid? v) (str v)
-        (string? v) v
-        :else (str v)))
+   A query node is one of:
+     \"word\"                          bare string: implicit-AND of its words
+     {:term   \"w\"}                   one term
+     {:phrase \"a b\"}                 adjacent phrase (verbatim run)
+     {:prefix \"wor\"}                 prefix match (wor…)
+     {:all  [node …]}                AND of children
+     {:any  [node …]}                OR of children
+     {:not  node}                    negation — ONLY as a child of :all
+                                     (`{:all [\"a\" {:not \"b\"}]}` = a, not b)
+     {:near {:terms [\"a\" \"b\" …]    the terms within :within tokens
+             :within k}}
 
-(defn ->uuid
-  ^UUID [v]
-  (cond (nil? v) nil
-        (uuid? v) v
-        (string? v) (try (UUID/fromString v) (catch IllegalArgumentException _ nil))
-        :else nil))
+   Portability (validated node-by-node) — the core nodes map cleanly to every
+   boolean FTS engine:
+                  SQLite FTS5      Postgres tsquery     MariaDB/MySQL BOOLEAN
+     :term        \"w\"              'w'                  +w
+     :all         a AND b          a & b                +a +b
+     :any         a OR b           a | b                (a b)
+     :not(in all) a NOT x          a & !x               +a -x
+     :phrase      \"a b\"            a <-> b              \"a b\"
+     :prefix      \"w\"*            'w':*                w*
+     :near k      NEAR(a b,k) ✓    <N> exact/ordered ✗  \"a b\" @k ✓
 
-(defn ->ref
-  "Normalize an entity reference to a string ID for SQL.
-   Accepts: UUID, string, or nil. Returns string or nil.
+   :near is the ONLY divergence: SQLite and MariaDB do within-k natively;
+   Postgres has only `<N>` (exact distance, ordered), so a PG adapter must
+   OR-expand it or DEGRADE :near -> :all (AND). Per the contract above, an
+   engine that can't express a node degrades it — it never rejects well-formed
+   DSL. Each adapter also owns its own term ESCAPING (FTS5 double-quote, PG
+   lexemes, MySQL boolean-mode metachar stripping); the DSL gives it clean
+   structure to do so. Keeping the DSL here (data, not dialect) is what makes a
+   second backend a localized add.")
 
-   The ONLY way to extract a SQL-ready string from an entity
-   reference -- pass the plain UUID or string directly."
-  [v]
-  (cond (nil? v) nil
-        (uuid? v) (str v)
-        (string? v) v
-        :else (str v)))
+;; Store protocol
 
-(defn ->kw
-  "Keyword/string -> TEXT, stripping the leading colon. Nil -> nil."
-  [v]
-  (cond (nil? v) nil
-        (keyword? v) (subs (str v) 1)
-        :else (str v)))
+(defprotocol Store
+  "Every operation a persistence backend implements. The first argument is the
+   store `db-create-connection!` opened, or nil when there is none; every value
+   dispatches to the SQLite backend."
+  ;; --- Logging ---
+  (db-log! [db-info opts])
+  (db-workspace-insert! [db-info opts])
+  (db-workspace-update-state! [db-info workspace-id new-state])
+  ;; Label override + focus stamp + per-repo focus pointer.
+  (db-workspace-update-label! [db-info workspace-id label])
+  (db-workspace-touch-focus! [db-info workspace-id])
+  (db-repo-focus-get [db-info repo-id])
+  (db-repo-focus-set! [db-info repo-id workspace-id])
+  (db-workspace-get [db-info workspace-id])
+  (db-workspace-list-by-repo [db-info repo-id]
+                             [db-info repo-id state-set])
+  (db-workspace-list-drafts [db-info])
+  (db-workspace-for-session [db-info session-state-id])
+  (db-session-state-list-for-workspace [db-info workspace-id])
+  (db-session-state-set-workspace! [db-info session-state-id workspace-id])
+  ;; --- Session lifecycle ---
+  (db-store-session! [db-info opts])
+  (db-get-session [db-info ref])
+  (db-resolve-session-id [db-info sel])
+  (db-list-sessions [db-info channel])
+  (db-search-session-ids [db-info channel query])
+  (db-search-session-matches [db-info channel query])
+  (db-find-session-by-external [db-info channel ext-id])
+  (db-update-session-title! [db-info ref title])
+  (db-get-session-goal [db-info session-id])
+  (db-compare-session-goal! [db-info session-id revision goal])
+  (db-claim-session! [db-info ref])
+  (db-delete-session-tree! [db-info id])
+  (db-fork-session! [db-info session-id opts])
+  (db-fork-session-at-turn! [db-info session-id opts])
+  (db-agent-info [db-info session-id])
+  (db-agent-list [db-info leader-id])
+  (db-agent-checkpoint [db-info session-id])
+  (db-agent-update! [db-info session-id changes])
+  (db-agent-claim-iteration! [db-info session-id])
+  (db-routing-locked? [db-info session-id])
+  (db-lock-routing! [db-info session-id locked?])
+  (db-list-session-states [db-info session-id])
+  (db-latest-session-state-id [db-info session-id])
+  (db-get-session-prompt-cache-state [db-info session-state-id])
+  (db-set-session-prompt-cache-state! [db-info session-state-id state])
+  ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
+  ;; channel; read by the engine at turn start (see session-model + loop.clj).
+  (db-get-session-model-pref [db-info session-id])
+  (db-set-session-model-pref! [db-info session-id provider model])
+  ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
+  (db-get-project [db-info project-id])
+  (db-list-projects [db-info opts])
+  (db-get-project-by-root [db-info owner-id root])
+  (db-create-project! [db-info opts])
+  (db-update-project! [db-info project-id opts])
+  (db-delete-project! [db-info project-id])
+  (db-set-session-project! [db-info session-id project-id])
+  ;; The human's star on a session soul. Backend-owned: the gateway is the ONE
+  ;; place a star lives, so every client of it reads the same answer.
+  (db-set-session-favorite! [db-info session-id is-favorite])
+  ;; The human's archive on a session soul. Backend-owned for the same reason the
+  ;; star is: a session put out of sight is out of sight on every client of this
+  ;; gateway, not only on the device that archived it.
+  (db-set-session-archived! [db-info session-id archived?])
+  (db-reorder-project-sessions! [db-info project-id session-ids])
+  (db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])
+  ;; --- Session groups: the human's own groups inside ONE project (V8) ---
+  (db-get-session-group [db-info group-id])
+  (db-list-session-groups [db-info project-id opts])
+  (db-archived-session-group-ids [db-info])
+  (db-create-session-group! [db-info project-id opts])
+  (db-update-session-group! [db-info group-id opts])
+  (db-delete-session-group! [db-info group-id])
+  (db-set-session-group! [db-info session-id group-id])
+  (db-session-group-session-ids [db-info group-id])
+  (db-project-session-ids [db-info project-id])
+  ;; --- Read marks: how far a reader has read each conversation (the "NEW" badge) ---
+  (db-session-read-marks [db-info reader-id])
+  (db-seed-session-read-marks! [db-info reader-id marks])
+  (db-mark-session-read! [db-info reader-id session-id seen-answers])
+  ;; --- Turn lifecycle ---
+  (db-store-session-turn! [db-info opts])
+  (db-update-session-turn! [db-info session-turn-id opts]
+    "Write a turn's terminal outcome. The facade bounds the DIAGNOSTIC text before
+     the backend sees it, so the write that records HOW a turn ended can never be
+     lost to an unbounded error message (see [[max-persisted-error-chars]]).")
+  (db-store-iteration! [db-info opts]
+    "Store one iteration row. The facade refuses `opts` that is not a map or lacks
+     `:session-turn-id` before the backend sees it.")
+  (db-list-session-turns-by-status [db-info status])
+  (db-list-session-turns [db-info session-ref])
+  (db-list-session-turns-meta [db-info session-ref])
+  (db-read-session-turn [db-info session-ref turn-ref])
+  (db-session-turn-stats [db-info]
+                         [db-info session-id]
+    "Per-session turn aggregates. 1-arity: the whole store, `{soul-id-str
+     {:turn-count n :latest-turn-at Date}}`. 2-arity: ONE session's stats
+     unwrapped (nil when unknown), so a single-session read never scans the
+     whole store.")
+  (db-session-usage-stats [db-info session-id])
+  (db-retry-session-turn! [db-info session-turn-soul-id opts])
+  (db-list-session-turn-states [db-info session-turn-id])
+  (db-list-turn-attachments [db-info session-turn-soul-id])
+  (db-set-turn-attachment-transcription! [db-info session-turn-soul-id position transcription
+                                          segments])
+  (db-list-turns-attachments [db-info session-turn-soul-ids])
+  (db-list-turn-all-attachments [db-info session-turn-soul-id])
+  (db-list-session-attachments [db-info session-id])
+  (db-list-session-attachments-meta [db-info session-id])
+  (db-list-session-turn-iterations [db-info session-turn-ref])
+  (db-list-session-turns-iterations [db-info session-turn-ids])
+  (db-list-session-turns-iterations-meta [db-info session-turn-ids])
+  (db-list-iterations [db-info iteration-ids])
+  (db-latest-turn-request-usage [db-info session-turn-id])
+  (db-list-iteration-attachments [db-info iteration-id])
+  (db-list-iterations-attachments [db-info iteration-ids])
+  (db-list-iteration-attachments-meta [db-info iteration-id])
+  (db-list-iterations-attachments-meta [db-info iteration-ids])
+  (db-read-attachment [db-info attachment-id])
+  (db-append-iteration-attachment! [db-info iteration-id att])
+  ;; --- Full-text search ---
+  (db-search [db-info query opts]
+    "Backend-neutral full-text search. The backend RENDERS the neutral query DSL
+     into its native full-text query and runs it. No caller passes an engine
+     dialect — only the DSL in `search-query-dsl-doc`.
 
-(defn ->kw-back [v] (when (and v (not= "" v)) (keyword v)))
+     `query` is the DSL — a string (implicit-AND of its words) or a DSL map.
+     `opts`:
+       :owner-table  restrict to one owner table (string)
+       :field        restrict to one indexed field (string)
+       :limit        max hits (backend default applies when nil)
 
-(defn ->epoch-ms
-  [v]
-  (cond (nil? v) nil
-        (instance? Date v) (.getTime ^Date v)
-        (instance? Instant v) (.toEpochMilli ^Instant v)
-        (number? v) (long v)
-        :else nil))
+     Returns a vector of hits sorted by relevance (best first), each
+     `{:owner-table :owner-id :field :snippet :rank}`. Backends MUST honor the
+     DSL; an engine that cannot express a node should degrade it (e.g. :near ->
+     :all), never reject well-formed DSL. A MALFORMED query (e.g. a lone :not)
+     may throw — that is a DSL logic error, distinct from un-matchable content.")
+  ;; --- Turn history (read-only projection) ---
+  (db-turn-history [db-info session-ref])
+  ;; --- CTX snapshots (per-turn string-keyed session_* state, Nippy in session_turn_state.ctx) ---
+  (db-checkpoint-session-turn-ctx! [db-info session-turn-id state-id ctx])
+  (db-load-latest-ctx [db-info session-id])
+  (db-load-ctx-history [db-info session-id])
+  ;; --- Extension aggregate sidecars ---
+  (db-create-extension-aggregate! [db-info opts])
+  (db-put-extension-aggregate! [db-info opts])
+  (db-get-extension-aggregate [db-info opts])
+  (db-list-extension-aggregates [db-info opts])
+  (db-delete-extension-aggregates! [db-info opts])
+  (db-swap-extension-aggregate! [db-info opts f args])
+  ;; --- Improve register ---
+  (db-improve-list [db-info opts])
+  (db-improve-get [db-info id])
+  (db-improve-create! [db-info attrs])
+  (db-improve-update! [db-info id attrs])
+  (db-improve-project-ids [db-info])
+  (db-improve-apply-review! [db-info proposal still-current?])
+  ;; --- Council ---
+  (db-council-source [db-info sid source])
+  (db-council-get [db-info id])
+  (db-council-replay [db-info sid key])
+  (db-council-insert! [db-info row recipients infer-reply?])
+  (db-council-bind-wake! [db-info entry-id sid activation])
+  (db-council-page [db-info gid thread roots? after limit])
+  (db-council-pending [db-info sid activation gid after limit])
+  (db-council-unanswered [db-info sid ids])
+  (db-council-delivered! [db-info sid ids])
+  (db-council-interrupt! [db-info sid activation])
+  (db-council-unavailable! [db-info sid id])
+  ;; --- Activity ---
+  (db-activity-apply! [db-info sid aid event])
+  (db-activity-settle! [db-info aid outcome summary])
+  (db-activity-page [db-info sid aid opts]))
 
-(defn ->date ^Date [v] (when v (Date. (long v))))
+(defmacro store-implementation
+  "Expand, inside a backend namespace, to its `Store` op map: every op keyed to
+   the backend's own fn of the same name. A backend missing an op fails to
+   compile instead of failing at its first call."
+  []
+  (into {}
+        (map (fn [op]
+               [op (symbol (name op))]))
+        (keys (:sigs Store))))
 
-(defn new-uuid ^UUID [] (UUID/randomUUID))
-
-(defn new-id [] (->id (new-uuid)))
-
-;; Column codecs (shared by EVERY backend)
-
-(defn- json-key
-  "A map key charred can actually write. Keyword/symbol/string keys keep their
-   EXACT current spelling (persisted columns must not shift under an existing
-   database); anything else — the int keys a Python `Counter` or a decoded JSON
-   value carries out of the sandbox — is RENDERED rather than left to blow up
-   the whole write."
-  [k]
-  (cond (string? k) k
-        (keyword? k) (subs (str k) 1)
-        (symbol? k) (str k)
-        (nil? k) "null"
-        :else (str k)))
-
-(defn- json-encodable
-  "Rewrite ONLY what charred REFUSES to encode: non-string map keys and
-   non-finite doubles (a pandas `NaN`, a `x/0.0`). Everything else passes
-   through untouched, so no persisted spelling changes. Without this the
-   encoder throws mid-write and the caller loses the whole column — the final
-   answer content of a settled turn — over one exotic value inside it."
-  [x]
-  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
-                                           (assoc! m (json-key k) (json-encodable v)))
-                                         (transient {})
-                                         x))
-        (coll? x) (mapv json-encodable x)
-        (and (float? x) (not (Double/isFinite (double x)))) nil
-        :else x))
-
-(defn ->json
-  "Serialize a value to a JSON TEXT column. Nil in, nil out."
-  [m]
-  (when m (json/write-json-str (json-encodable m))))
-
-(defn <-json
-  "Parse a JSON TEXT column. STRINGS-ONLY: keys come back as VERBATIM STRINGS -
-   no `:key-fn keyword` re-keywordizing. Whatever needs an internal keyword
-   shape converts at ONE named adapter, never here."
-  [s]
-  (when s (json/read-json s)))
-
-(defn normalize-status
-  "Map runtime status keywords to the schema CHECK constraint values.
-   Allowed: running, done, error, interrupted."
-  [status]
-  (case status
-    (:success :done)
-    "done"
-
-    :error
-    "error"
-
-    (:cancelled :interrupted)
-    "interrupted"
-
-    :running
-    "running"
-
-    (->kw (or status :done))))
-
-;; Backends
-
-(def ^:private backends
-  "Every persistence backend Vis ships, keyed by id: the namespace whose public
-   `db-*` fns the facade delegates to. A second dialect (Postgres, ...) is a
-   second entry here and nothing else — the facade never discovers backends at
-   runtime. The namespace loads on the first real DB op (see
-   `require-backend-ns!`), so commands that never touch the store skip the
-   ~480 ms of JDBC/Hikari/Flyway class loading on a cold JVM."
-  {:sqlite 'com.blockether.vis.internal.persistance.sqlite.core})
-
-(def default-backend
-  "The backend a spec/store without an explicit `:backend` dispatches to."
-  :sqlite)
-
-(defn- pick-backend-id
-  "Decide which backend handles this call: the explicit `:backend` key on the
-   spec/store, else `default-backend`. Throws on an unknown id."
-  [db-spec-or-store]
-  (let [bid (or (when (map? db-spec-or-store) (:backend db-spec-or-store)) default-backend)]
-    (when-not (contains? backends bid)
-      (throw (ex-info (str "Unknown persistence backend " bid)
-                      {:backend bid :known (vec (keys backends))})))
-    bid))
-
-(defn- require-backend-ns!
-  "Ensure the backend's heavyweight namespace has finished loading. Fully loaded
-   libraries bypass require and its global lock; namespace existence alone does
-   not prove that initialization completed. Defer the initial load until dispatch.
-
-   SERIALIZED under Clojure's global require lock (what
-   `requiring-resolve` uses): plain `require` is not thread-safe, and
-   the gateway's first DB touch can be N concurrent virtual threads
-   (parallel browser requests after a restart). Unserialized, a second
-   thread could observe the HALF-LOADED namespace — seen live as
-   \"Backend :sqlite ... does not implement 'db-open!'\" and as an
-   unbound `taoensso.nippy/freeze` mid-turn."
-  [bid ns-sym]
-  (try (when-not (contains? (loaded-libs) ns-sym)
-         (locking clojure.lang.RT/REQUIRE_LOCK
-           (when-not (contains? (loaded-libs) ns-sym) (require ns-sym))))
-       (catch Throwable t
-         (throw (ex-info
-                  (str "Backend " bid " (" ns-sym ") failed to load: " (or (ex-message t) (str t)))
-                  {:backend bid :ns ns-sym}
-                  t)))))
-
-(defn- resolve-impl
-  "Resolve the var implementing `fn-name` on the chosen backend, loading the
-   backend ns on first call. Throws a useful error when the backend is missing
-   the fn."
-  [db-spec-or-store fn-name]
-  (let [bid
-        (pick-backend-id db-spec-or-store)
-
-        ns-sym
-        (get backends bid)
-
-        _
-        (require-backend-ns! bid ns-sym)
-
-        v
-        (ns-resolve ns-sym fn-name)]
-
-    (when-not v
-      (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
-                      {:backend bid :ns ns-sym :fn fn-name})))
-    v))
-
-(defn- normalize-spec
-  "Reshape explicit-sqlite nested forms into the canonical shape
-   backends accept. `:memory` is the canonical shorthand for the
-   ephemeral in-process DB."
-  [db-spec]
-  (cond (and (map? db-spec) (= :sqlite (:backend db-spec)))
-        (cond (:datasource db-spec) {:datasource (:datasource db-spec) :backend :sqlite}
-              (:conn db-spec) {:conn (:conn db-spec) :backend :sqlite}
-              (:path db-spec) (assoc {:backend :sqlite} :path (:path db-spec))
-              :else db-spec)
-        :else db-spec))
-
-(defn- resolve-optional-impl
-  "Resolve an optional backend var. Missing vars return nil; bad backend
-   selection still throws because the store/spec itself is invalid.
-   Auto-loads the backend ns the same way `resolve-impl` does."
-  [db-spec-or-store fn-name]
-  (let [bid
-        (pick-backend-id db-spec-or-store)
-
-        ns-sym
-        (get backends bid)]
-
-    (require-backend-ns! bid ns-sym)
-    (some-> (ns-resolve ns-sym fn-name)
-            deref)))
-
-;; Connection lifecycle
-
-(defn db-create-connection!
-  "Open a persistence connection from `db-spec`.
-
-   Common spec forms:
-     nil              - no DB (returns nil)
-     :memory          - in-memory ephemeral store (backend-defined)
-     \"path/to.db\"   - file-backed store (backend-defined)
-     {:backend :sqlite :path ...}     - explicit backend selection
-     {:backend :sqlite :datasource ds} - caller-owned DataSource
-
-   Omitting `:backend` selects `default-backend`; the facade tags the returned
-   store map with the chosen backend so all subsequent facade calls dispatch
-   correctly."
-  [db-spec]
-  (let [normalized
-        (normalize-spec db-spec)
-
-        bid
-        (pick-backend-id normalized)
-
-        f
-        @(resolve-impl {:backend bid} 'db-open!)
-
-        store
-        (f normalized)]
-
-    (cond (nil? store) nil
-          (map? store) (assoc store :backend bid)
-          :else store)))
-
-(defn db-dispose-connection!
-  [store]
-  (when store
-    (let [f @(resolve-impl store 'db-close!)]
-      (f store))))
-
-;; Delegated API
-;;
-;; Every fn delegates to the selected backend adapter's var of the same
-;; name. Keep this as a compact, readable index; add a new entry here only
-;; after the matching fn lands in at least one backend.
-
-(defmacro ^:private defdelegate
-  "Define a facade fn whose body resolves the matching backend var
-   (using the first arg as the dispatch value) and applies it to
-   the original args."
-  [sym arglist]
-  (let [bsym (gensym "backend-fn")]
-    `(defn ~sym
-       ~arglist
-       (let [~bsym @(resolve-impl ~(first arglist) (quote ~sym))]
-         (~bsym ~@arglist)))))
-
-;; --- Iteration lifecycle ---
-(defn db-store-iteration!
-  "Same delegating shape as the macro-defined fns, but with input
-   validation kept here so every backend gets the same precondition
-   guarantees for free."
-  [db-info opts]
-  (when-not (map? opts)
-    (throw (ex-info "db-store-iteration! opts must be a map" {:got (type opts)})))
-  (when-not (:session-turn-id opts)
-    (throw (ex-info "db-store-iteration! requires :session-turn-id" {:opts (keys opts)})))
-  ((deref (resolve-impl db-info 'db-store-iteration!)) db-info opts))
-
-;; --- Turn outcome ---
+;; Turn outcome
 
 (def ^:const max-persisted-error-chars
   "Hard cap on ONE persisted DIAGNOSTIC string (256K chars).
@@ -356,334 +306,117 @@
           content)
     content))
 
-(defn db-update-session-turn!
-  "Write a turn's terminal outcome. Same delegating shape as the macro-defined
-   fns, with the DIAGNOSTIC text bound here so every backend gets the same
-   guarantee for free: the write that records HOW a turn ended can never be lost
-   to an unbounded error message (see [[max-persisted-error-chars]])."
-  [db-info session-turn-id opts]
-  ((deref (resolve-impl db-info 'db-update-session-turn!))
-    db-info
-    session-turn-id
-    (cond-> opts
-      (some? (:error opts))
-      (update :error bound-error-data)
-
-      (some? (:content opts))
-      (update :content bound-content-errors))))
-
-;; --- Logging ---
-(defdelegate db-log! [db-info opts])
-
-(defdelegate db-workspace-insert! [db-info opts])
-
-(defdelegate db-workspace-update-state! [db-info workspace-id new-state])
-
-;; Label override + focus stamp + per-repo focus pointer.
-(defdelegate db-workspace-update-label! [db-info workspace-id label])
-
-(defdelegate db-workspace-touch-focus! [db-info workspace-id])
-
-(defdelegate db-repo-focus-get [db-info repo-id])
-
-(defdelegate db-repo-focus-set! [db-info repo-id workspace-id])
-
-(defdelegate db-workspace-get [db-info workspace-id])
-
-(defn db-workspace-list-by-repo
-  ([db-info repo-id] ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id))
-  ([db-info repo-id state-set]
-   ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id state-set)))
-
-(defdelegate db-workspace-list-drafts [db-info])
-
-(defdelegate db-workspace-for-session [db-info session-state-id])
-
-(defdelegate db-session-state-list-for-workspace [db-info workspace-id])
-
-(defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
-
-;; --- Session lifecycle ---
-(defdelegate db-store-session! [db-info opts])
-
-(defdelegate db-get-session [db-info ref])
-
-(defdelegate db-resolve-session-id [db-info sel])
-
-(defdelegate db-list-sessions [db-info channel])
-
-(defdelegate db-search-session-ids [db-info channel query])
-
-(defdelegate db-search-session-matches [db-info channel query])
-
-(defdelegate db-find-session-by-external [db-info channel ext-id])
-
-(defdelegate db-update-session-title! [db-info ref title])
-
-(defdelegate db-get-session-goal [db-info session-id])
-
-(defdelegate db-compare-session-goal! [db-info session-id revision goal])
-
-(defdelegate db-claim-session! [db-info ref])
-
-(defdelegate db-delete-session-tree! [db-info id])
-
-(defdelegate db-fork-session! [db-info session-id opts])
-
-(defdelegate db-fork-session-at-turn! [db-info session-id opts])
-
-(defdelegate db-agent-info [db-info session-id])
-
-(defdelegate db-agent-list [db-info leader-id])
-
-(defdelegate db-agent-checkpoint [db-info session-id])
-
-(defdelegate db-agent-update! [db-info session-id changes])
-
-(defdelegate db-agent-claim-iteration! [db-info session-id])
-
-(defdelegate db-routing-locked? [db-info session-id])
-
-(defdelegate db-lock-routing! [db-info session-id locked?])
-
-(defdelegate db-list-session-states [db-info session-id])
-
-(defdelegate db-latest-session-state-id [db-info session-id])
-
-(defdelegate db-get-session-prompt-cache-state [db-info session-state-id])
-
-(defdelegate db-set-session-prompt-cache-state! [db-info session-state-id state])
-
-;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
-;; channel; read by the engine at turn start (see session-model + loop.clj).
-(defdelegate db-get-session-model-pref [db-info session-id])
-
-(defdelegate db-set-session-model-pref! [db-info session-id provider model])
-
-;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
-(defdelegate db-get-project [db-info project-id])
-
-(defdelegate db-list-projects [db-info opts])
-
-(defdelegate db-get-project-by-root [db-info owner-id root])
-
-(defdelegate db-create-project! [db-info opts])
-
-(defdelegate db-update-project! [db-info project-id opts])
-
-(defdelegate db-delete-project! [db-info project-id])
-
-(defdelegate db-set-session-project! [db-info session-id project-id])
-
-;; The human's star on a session soul. Backend-owned: the gateway is the ONE
-;; place a star lives, so every client of it reads the same answer.
-(defdelegate db-set-session-favorite! [db-info session-id is-favorite])
-
-;; The human's archive on a session soul. Backend-owned for the same reason the
-;; star is: a session put out of sight is out of sight on every client of this
-;; gateway, not only on the device that archived it.
-(defdelegate db-set-session-archived! [db-info session-id archived?])
-
-(defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
-
-(defdelegate db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])
-
-;; --- Session groups: the human's own groups inside ONE project (V8) ---
-(defdelegate db-get-session-group [db-info group-id])
-
-(defdelegate db-list-session-groups [db-info project-id opts])
-
-(defdelegate db-archived-session-group-ids [db-info])
-
-(defdelegate db-create-session-group! [db-info project-id opts])
-
-(defdelegate db-update-session-group! [db-info group-id opts])
-
-(defdelegate db-delete-session-group! [db-info group-id])
-
-(defdelegate db-set-session-group! [db-info session-id group-id])
-
-(defdelegate db-session-group-session-ids [db-info group-id])
-
-(defdelegate db-project-session-ids [db-info project-id])
-
-;; --- Read marks: how far a reader has read each conversation (the "NEW" badge) ---
-(defdelegate db-session-read-marks [db-info reader-id])
-
-(defdelegate db-seed-session-read-marks! [db-info reader-id marks])
-
-(defdelegate db-mark-session-read! [db-info reader-id session-id seen-answers])
-
-;; --- Turn lifecycle ---
-(defdelegate db-store-session-turn! [db-info opts])
-
-;; db-update-session-turn! is an explicit defn above: it bounds diagnostics.
-
-(defdelegate db-list-session-turns-by-status [db-info status])
-
-(defdelegate db-list-session-turns [db-info session-ref])
-
-(defdelegate db-list-session-turns-meta [db-info session-ref])
-
-(defdelegate db-read-session-turn [db-info session-ref turn-ref])
-
-(defn db-session-turn-stats
-  "Per-session turn aggregates. 1-arity: the whole store, `{soul-id-str
-   {:turn-count n :latest-turn-at Date}}`. 2-arity: ONE session's stats
-   unwrapped (nil when unknown), so a single-session read never scans the
-   whole store."
-  ([db-info] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info))
-  ([db-info session-id] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info session-id)))
-
-(defdelegate db-session-usage-stats [db-info session-id])
-
-(defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
-
-(defdelegate db-list-session-turn-states [db-info session-turn-id])
-
-(defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
-
-(defdelegate db-set-turn-attachment-transcription!
-             [db-info session-turn-soul-id position transcription segments])
-
-(defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
-
-(defdelegate db-list-turn-all-attachments [db-info session-turn-soul-id])
-
-(defdelegate db-list-session-attachments [db-info session-id])
-
-(defdelegate db-list-session-attachments-meta [db-info session-id])
-
-(defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
-
-(defdelegate db-list-session-turns-iterations [db-info session-turn-ids])
-
-(defdelegate db-list-session-turns-iterations-meta [db-info session-turn-ids])
-
-(defdelegate db-list-iterations [db-info iteration-ids])
-
-(defdelegate db-latest-turn-request-usage [db-info session-turn-id])
-
-(defdelegate db-list-iteration-attachments [db-info iteration-id])
-
-(defdelegate db-list-iterations-attachments [db-info iteration-ids])
-
-(defdelegate db-list-iteration-attachments-meta [db-info iteration-id])
-
-(defdelegate db-list-iterations-attachments-meta [db-info iteration-ids])
-
-(defdelegate db-read-attachment [db-info attachment-id])
-
-(defdelegate db-append-iteration-attachment! [db-info iteration-id att])
-
-;; --- Full-text search ---
-(def search-query-dsl-doc
-  "Canonical, BACKEND-NEUTRAL search-query DSL — the single source of truth for
-   what a `db-search` query means, independent of the engine underneath
-   (SQLite FTS5 today, Postgres tsvector/tsquery planned). The query is DATA,
-   not an engine operator string: callers/agent compose a value, each backend
-   RENDERS it to its native full-text query. Because every leaf term is escaped
-   by the renderer, punctuation/quotes in code text are inert — a query can
-   never be `broken` by its content, so there is no `parse mode` to choose.
-
-   A query node is one of:
-     \"word\"                          bare string: implicit-AND of its words
-     {:term   \"w\"}                   one term
-     {:phrase \"a b\"}                 adjacent phrase (verbatim run)
-     {:prefix \"wor\"}                 prefix match (wor…)
-     {:all  [node …]}                AND of children
-     {:any  [node …]}                OR of children
-     {:not  node}                    negation — ONLY as a child of :all
-                                     (`{:all [\"a\" {:not \"b\"}]}` = a, not b)
-     {:near {:terms [\"a\" \"b\" …]    the terms within :within tokens
-             :within k}}
-
-   Portability (validated node-by-node) — the core nodes map cleanly to every
-   boolean FTS engine:
-                  SQLite FTS5      Postgres tsquery     MariaDB/MySQL BOOLEAN
-     :term        \"w\"              'w'                  +w
-     :all         a AND b          a & b                +a +b
-     :any         a OR b           a | b                (a b)
-     :not(in all) a NOT x          a & !x               +a -x
-     :phrase      \"a b\"            a <-> b              \"a b\"
-     :prefix      \"w\"*            'w':*                w*
-     :near k      NEAR(a b,k) ✓    <N> exact/ordered ✗  \"a b\" @k ✓
-
-   :near is the ONLY divergence: SQLite and MariaDB do within-k natively;
-   Postgres has only `<N>` (exact distance, ordered), so a PG adapter must
-   OR-expand it or DEGRADE :near -> :all (AND). Per the contract above, an
-   engine that can't express a node degrades it — it never rejects well-formed
-   DSL. Each adapter also owns its own term ESCAPING (FTS5 double-quote, PG
-   lexemes, MySQL boolean-mode metachar stripping); the DSL gives it clean
-   structure to do so. Keeping the DSL here (data, not dialect) is what makes a
-   second backend a localized add.")
-
-(defn db-search
-  "Backend-neutral full-text search facade. Delegates to the registered
-   persistence backend, which RENDERS the neutral query DSL into its native
-   full-text query and runs it. No caller passes an engine dialect — only the
-   DSL in `search-query-dsl-doc`.
-
-   `query` is the DSL — a string (implicit-AND of its words) or a DSL map.
-   `opts`:
-     :owner-table  restrict to one owner table (string)
-     :field        restrict to one indexed field (string)
-     :limit        max hits (backend default applies when nil)
-
-   Returns a vector of hits sorted by relevance (best first), each
-   `{:owner-table :owner-id :field :snippet :rank}`. Backends MUST honor the
-   DSL; an engine that cannot express a node should degrade it (e.g. :near ->
-   :all), never reject well-formed DSL. A MALFORMED query (e.g. a lone :not)
-   may throw — that is a DSL logic error, distinct from un-matchable content."
-  [db-info query opts]
-  ((deref (resolve-impl db-info 'db-search)) db-info query opts))
-
-;; --- Turn history (read-only projection) ---
-(defdelegate db-turn-history [db-info session-ref])
-
-;; --- CTX snapshots (per-turn string-keyed session_* state, Nippy in session_turn_state.ctx) ---
-(defdelegate db-checkpoint-session-turn-ctx! [db-info session-turn-id state-id ctx])
-
-(defdelegate db-load-latest-ctx [db-info session-id])
-
-(defdelegate db-load-ctx-history [db-info session-id])
-
-;; --- Extension aggregate sidecars ---
-(defdelegate db-create-extension-aggregate! [db-info opts])
-
-(defdelegate db-put-extension-aggregate! [db-info opts])
-
-(defdelegate db-get-extension-aggregate [db-info opts])
-
-(defdelegate db-list-extension-aggregates [db-info opts])
-
-(defdelegate db-delete-extension-aggregates! [db-info opts])
-
-(defdelegate db-swap-extension-aggregate! [db-info opts f args])
+(defn- bound-turn-outcome
+  "Bound the diagnostic fields of a turn's terminal outcome: the error and the
+   ERROR content blocks."
+  [opts]
+  (cond-> opts
+    (some? (:error opts))
+    (update :error bound-error-data)
+
+    (some? (:content opts))
+    (update :content bound-content-errors)))
+
+(defn- check-iteration-opts!
+  [opts]
+  (when-not (map? opts)
+    (throw (ex-info "db-store-iteration! opts must be a map" {:got (type opts)})))
+  (when-not (:session-turn-id opts)
+    (throw (ex-info "db-store-iteration! requires :session-turn-id" {:opts (keys opts)}))))
+
+;; Backend
+
+(defn- load-backend
+  "Load the backend namespace and return its `backend` map. `requiring-resolve`
+   loads under Clojure's global require lock, so a thread can never observe a
+   half-loaded namespace. A failure keeps its cause and names the namespace."
+  [sym]
+  (try @(requiring-resolve sym)
+       (catch Throwable t
+         (throw (ex-info (str "Persistence backend " (namespace sym)
+                              " failed to load: " (or (ex-message t) (str t)))
+                         {:ns (symbol (namespace sym))}
+                         t)))))
+
+(def ^:private sqlite
+  "The SQLite backend: `{:open :close :stale? :error-message :implementation}`.
+   Loaded once, by the first store operation; concurrent first touches (parallel
+   gateway requests after a restart) wait for that one load."
+  (delay (load-backend 'com.blockether.vis.internal.persistance.sqlite.core/backend)))
+
+(defn- backend-op
+  "The backend's fn for the `Store` op `op`."
+  [op]
+  (get (:implementation @sqlite) op))
+
+(defn- forward
+  "A `Store` op that forwards its call to the backend."
+  [op]
+  (fn [db-info & args]
+    (apply (backend-op op) db-info args)))
+
+(def ^:private store-ops
+  "Every `Store` op forwarded to the backend, with the facade's own checks and
+   bounds applied first, so every backend gets them for free."
+  (assoc (into {} (map (juxt identity forward)) (keys (:sigs Store)))
+    :db-store-iteration! (fn [db-info opts]
+                           (check-iteration-opts! opts)
+                           ((backend-op :db-store-iteration!) db-info opts))
+    :db-update-session-turn!
+    (fn [db-info session-turn-id opts]
+      ((backend-op :db-update-session-turn!) db-info session-turn-id (bound-turn-outcome opts)))))
+
+;; Extended once, while this namespace loads: re-exports copy the protocol fns,
+;; and a later `extend` would rebind them behind those copies.
+(extend nil
+  Store
+    store-ops)
+
+(extend Object
+  Store
+    store-ops)
+
+;; Connection lifecycle
+
+(defn- check-spec!
+  "Refuse a spec naming a backend Vis does not ship, before any backend loads."
+  [db-spec]
+  (let [backend (when (map? db-spec) (:backend db-spec))]
+    (when-not (contains? #{nil :sqlite} backend)
+      (throw (ex-info (str "Unknown persistence backend " backend)
+                      {:backend backend :known [:sqlite]})))))
+
+(defn db-create-connection!
+  "Open a persistence connection from `db-spec`.
+
+   Common spec forms:
+     nil              - no DB (returns nil)
+     :memory          - in-memory ephemeral store
+     \"path/to.db\"   - file-backed store
+     {:backend :sqlite :path ...}     - explicit backend selection
+     {:backend :sqlite :datasource ds} - caller-owned DataSource
+
+   SQLite is the only backend; a spec naming another `:backend` is refused."
+  [db-spec]
+  (when (some? db-spec) (check-spec! db-spec) ((:open @sqlite) db-spec)))
+
+(defn db-dispose-connection! [store] (when store ((:close @sqlite) store)))
 
 ;; Error translation
 ;;
-;; Frontends (TUI, CLI) all surface persistence exceptions in
-;; chat bubbles. The facade stays backend-agnostic: adapters may expose
-;; `db-error->user-message`; the first non-empty translation wins.
-
-(defn- backend-error-translators
-  []
-  (keep (fn [[_ ns-sym]]
-          (some-> (ns-resolve ns-sym 'db-error->user-message)
-                  deref))
-        backends))
+;; Frontends (TUI, CLI) all surface persistence exceptions in chat bubbles. The
+;; backend recognizes its own errors once it has loaded; anything else falls
+;; back to the exception message.
 
 (defn db-error->user-message
   "Translate a persistence exception into something a human can act on.
-   Backend adapters own backend-specific recognition; unknown errors fall
+   The backend owns backend-specific recognition; unknown errors fall
    back to `(ex-message e)`."
   [^Throwable e]
-  (or (some (fn [f]
-              (try (when-let [message (f e)]
-                     (when (seq (str message)) (str message)))
-                   (catch Throwable _ nil)))
-            (backend-error-translators))
+  (or (when (realized? sqlite)
+        (try (when-let [message ((:error-message @sqlite) e)]
+               (when (seq (str message)) (str message)))
+             (catch Throwable _ nil)))
       (ex-message e)
       "Internal error"))
 
@@ -692,16 +425,11 @@
 ;; vis runs every channel (TUI, CLI) against one persistence
 ;; store per process. Owning the singleton here - instead of in any
 ;; particular frontend - keeps the DB lifecycle behind the persistence
-;; facade. Backend adapters may expose `db-store-stale?` for
-;; adapter-specific file/handle replacement detection.
+;; facade. The backend detects file/handle replacement (`:stale?`).
 
 (defonce ^:private shared-conn (atom nil))
 
-(defn- store-stale?
-  [store db-spec]
-  (boolean (when store
-             (when-let [f (resolve-optional-impl store 'db-store-stale?)]
-               (f store (normalize-spec db-spec))))))
+(defn- store-stale? [store db-spec] (boolean (when store ((:stale? @sqlite) store db-spec))))
 
 (defn db-shared-connection!
   "Return the process-wide shared persistence connection for `db-spec`,
@@ -736,43 +464,3 @@
   (when-let [c @shared-conn]
     (try (db-dispose-connection! c) (catch Exception _ nil))
     (reset! shared-conn nil)))
-
-(defdelegate db-improve-list [db-info opts])
-
-(defdelegate db-improve-get [db-info id])
-
-(defdelegate db-improve-create! [db-info attrs])
-
-(defdelegate db-improve-update! [db-info id attrs])
-
-(defdelegate db-improve-project-ids [db-info])
-
-(defdelegate db-improve-apply-review! [db-info proposal still-current?])
-
-(defdelegate db-council-source [db-info sid source])
-
-(defdelegate db-council-get [db-info id])
-
-(defdelegate db-council-replay [db-info sid key])
-
-(defdelegate db-council-insert! [db-info row recipients infer-reply?])
-
-(defdelegate db-council-bind-wake! [db-info entry-id sid activation])
-
-(defdelegate db-council-page [db-info gid thread roots? after limit])
-
-(defdelegate db-council-pending [db-info sid activation gid after limit])
-
-(defdelegate db-council-unanswered [db-info sid ids])
-
-(defdelegate db-council-delivered! [db-info sid ids])
-
-(defdelegate db-council-interrupt! [db-info sid activation])
-
-(defdelegate db-council-unavailable! [db-info sid id])
-
-(defdelegate db-activity-apply! [db-info sid aid event])
-
-(defdelegate db-activity-settle! [db-info aid outcome summary])
-
-(defdelegate db-activity-page [db-info sid aid opts])

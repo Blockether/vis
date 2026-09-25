@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.persistance.codec :as codec]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as env]
@@ -797,7 +798,7 @@
    suitable for keying `cache`. Nil → nil so wrapped lookups stay
    honest."
   [id]
-  (persistance/->uuid id))
+  (codec/->uuid id))
 
 ;; Idle-env reaper — authoritative backstop against unbounded Python worker
 ;; growth. Every cached session env pins one process (see `dispose-environment!`);

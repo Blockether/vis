@@ -59,7 +59,7 @@
 (defdescribe
   gateway-session-fork-test
   (it "lists lean fork points and forks through the picked turn into a new session"
-      (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
+      (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid turn-ids]} (seeded-session! store
                                                            ["first ask" "second ask" "third ask"])]
                (with-redefs [lp/db-info (constantly store)]
@@ -86,7 +86,7 @@
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
              (finally (ps/db-close! store)))))
   (it "keeps ordinary forks in the source session group"
-      (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
+      (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])
                    project (ps/db-create-project! store {:name "Fork project"})
                    group (ps/db-create-session-group! store (:id project) {:name "Fork group"})]

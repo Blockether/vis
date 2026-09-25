@@ -1,11 +1,5 @@
 ;; Project-level clj-kondo config.
-{:hooks {:analyze-call {;; Macro that wraps a runtime backend lookup behind a defn.
-                        ;; Without this hook every `defdelegate` call shows up as an
-                        ;; unresolved-symbol error because clj-kondo can't expand the
-                        ;; runtime resolution. See the hook for details.
-                        com.blockether.vis.internal.persistance.core/defdelegate
-                        hooks.com.blockether.vis.defdelegate/defdelegate
-                        ;; In-house `import-vars`/`import-var` re-export the public facade
+{:hooks {:analyze-call {;; In-house `import-vars`/`import-var` re-export the public facade
                         ;; (com.blockether.vis.core). Expand each re-export into a synthetic
                         ;; `def` so `vis/<alias>` resolves at every call site across the repo.
                         com.blockether.vis.internal.import/import-vars

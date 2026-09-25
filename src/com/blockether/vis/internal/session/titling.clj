@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.persistance.codec :as codec]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
@@ -26,14 +27,14 @@
    Returns the listener fn so callers can pass it to
    `remove-title-listener!` later."
   [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (swap! title-listeners update cid (fnil conj #{}) listener-fn))
   listener-fn)
 
 (defn remove-title-listener!
   "Deregister a previously added listener. Idempotent."
   [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (swap! title-listeners update
       cid
       (fn [existing]
@@ -63,7 +64,7 @@
    are swallowed and logged - a misbehaving channel must NOT block the
    iteration loop."
   [session-id title]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
            (catch Throwable t
@@ -94,14 +95,14 @@
    (true when title generation starts, false when it ends). Returns the
    listener fn for later `remove-title-pending-listener!`."
   [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (swap! title-pending-listeners update cid (fnil conj #{}) listener-fn))
   listener-fn)
 
 (defn remove-title-pending-listener!
   "Deregister a previously added pending listener. Idempotent."
   [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (swap! title-pending-listeners update
       cid
       (fn [existing]
@@ -112,7 +113,7 @@
   "Fire every pending listener for `session-id` with `pending?`.
    Listeners that throw are swallowed and logged."
   [session-id pending?]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (doseq [f (get @title-pending-listeners cid)]
       (try (f (boolean pending?))
            (catch Throwable t
@@ -423,11 +424,11 @@
 
 (defn- provisional-title?
   [session-id]
-  (contains? @provisional-title-sessions (persistance/->uuid session-id)))
+  (contains? @provisional-title-sessions (codec/->uuid session-id)))
 
 (defn- mark-provisional-title!
   [session-id provisional?]
-  (let [cid (persistance/->uuid session-id)]
+  (let [cid (codec/->uuid session-id)]
     (swap! provisional-title-sessions (if provisional? conj disj) cid))
   nil)
 

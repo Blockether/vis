@@ -2,11 +2,11 @@
     com.blockether.vis.internal.persistance.sqlite.core
   "SQLite store - V1 schema implementation.
 
-   Every public defn in this file is dispatched dynamically by
-   `vis-sdk.core/defdelegate` via `ns-resolve`; clj-kondo never sees
-   the call sites. The ns-level config above silences
-   `:unused-public-var` for the whole file. The actual call surface
-   is verified through the storage facade tests.
+   Implements the persistence facade's `Store` protocol: `backend`, at the end
+   of this file, hands the facade every op through `store-implementation`,
+   which clj-kondo cannot expand, so the ns-level config above silences
+   `:unused-public-var` for the whole file. The call surface is verified
+   through the storage facade tests.
 
    Tables (V1__schema.sql):
      session_soul, session_state,
@@ -18,7 +18,7 @@
    Connection lifecycle:
      (db-open! db-spec)   -> {:datasource ds :path ...}
      (db-close! store)    -> idempotent dispose"
-  (:require [com.blockether.vis.internal.util :as util]
+  (:require [com.blockether.vis.internal.util :as util :refer [now-ms]]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.contract.activity :as activity-contract]
@@ -35,7 +35,10 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.persistance.codec :refer
+             [ds ->id ->uuid ->ref ->kw ->kw-back ->date new-uuid new-id normalize-status ->json
+              <-json]]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
@@ -56,26 +59,6 @@
 
 ;; Helpers
 
-(def ds vis/ds)
-
-(def now-ms vis/now-ms)
-
-(def ->id vis/->id)
-
-(def ->uuid vis/->uuid)
-
-(def ->ref vis/->ref)
-
-(def ->kw vis/->kw)
-
-(def ->kw-back vis/->kw-back)
-
-(def ->date vis/->date)
-
-(def new-uuid random-uuid)
-
-(defn new-id [] (->id (new-uuid)))
-
 (defonce ^:private sqlite-write-lock (Object.))
 
 (defn- query-sql!
@@ -93,12 +76,6 @@
 (defn query-one! [db-info q] (first (query! db-info q)))
 
 (defn execute! [db-info q] (jdbc/execute! (ds db-info) (sql/format q)))
-
-(def normalize-status vis/normalize-status)
-
-(def ->json vis/->json)
-
-(def <-json vis/<-json)
 
 (defn- ->segments-json
   "Timed transcript lines as the JSON its column holds, or nil when a recording has
@@ -468,8 +445,8 @@
   (try (when-not (.isClosed pool)
          (when-let [^HikariPoolMXBean mx (.getHikariPoolMXBean pool)]
            (.softEvictConnections mx)
-           (let [deadline (+ (util/now-ms) (long POOL_DRAIN_TIMEOUT_MS))]
-             (while (and (pos? (.getActiveConnections mx)) (< (util/now-ms) deadline))
+           (let [deadline (+ (now-ms) (long POOL_DRAIN_TIMEOUT_MS))]
+             (while (and (pos? (.getActiveConnections mx)) (< (now-ms) deadline))
                (Thread/sleep 20)))))
        (catch Throwable _ nil))
   (try (.close pool) (catch Throwable _ nil))
@@ -679,7 +656,7 @@
                                                               :conn ds
                                                               :path nil
                                                               :db-file nil
-                                                              :backend :external
+                                                              :backend :sqlite
                                                               :owned? false
                                                               :mode :external})
                 (:path db-spec) (with-file-key-snapshot (assoc (open-sqlite-at-dir (:path db-spec))
@@ -5797,10 +5774,10 @@
 
 ;; Loading
 ;;
-;; This ns is the `:sqlite` entry of the persistance facade's backend table;
-;; the facade requires it on the first real DB op (see
-;; `com.blockether.vis.internal.persistance.core/require-backend-ns!`), so commands
-;; that never touch the DB skip its ~480 ms of class loading on a cold JVM.
+;; This ns is the persistence facade's SQLite backend; the facade loads it on the
+;; first real DB op (see the `sqlite` delay in
+;; `com.blockether.vis.internal.persistance.core`), so commands that never touch
+;; the DB skip its ~480 ms of class loading on a cold JVM.
 (defn db-load-ctx-history
   "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.
    Each ctx-map is the Nippy-decoded `:session/turn_state.ctx` for the
@@ -6591,3 +6568,13 @@
 
         (improve-review-current! still-current?)
         {:records (mapv #(db-improve-get tx %) changed)}))))
+
+;; Backend
+
+(def backend
+  "The SQLite backend the persistence facade loads on its first store operation."
+  {:open db-open!
+   :close db-close!
+   :stale? db-store-stale?
+   :error-message db-error->user-message
+   :implementation (persistance/store-implementation)})

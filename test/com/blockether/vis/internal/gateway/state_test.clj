@@ -34,7 +34,7 @@
   create-session-from-draft-root-test
   (it "creates a fresh trunk workspace when a client sends another session's draft path"
       (let [store
-            (assoc (sqlite/db-open! :memory) :backend :sqlite)
+            (sqlite/db-open! :memory)
 
             session-id
             (random-uuid)]
@@ -247,7 +247,7 @@
           (doto (io/file base "secondary") .mkdirs)
 
           store
-          (assoc (sqlite/db-open! :memory) :backend :sqlite)
+          (sqlite/db-open! :memory)
 
           draft
           (atom nil)

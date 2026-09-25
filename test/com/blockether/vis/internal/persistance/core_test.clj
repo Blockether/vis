@@ -1,32 +1,8 @@
 (ns com.blockether.vis.internal.persistance.core-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe
-  json-column-totality-test
-  "`->json` is THE column codec for every backend. Charred REFUSES four things —
-   non-string map keys, a nil key, NaN and ±Infinity — and a throw here does not
-   degrade a field, it loses the whole column: `content_json` on the final
-   outcome row IS the settled answer. A Python `Counter` (int keys) or a pandas
-   NaN riding a tool result is enough to trigger it."
-  (it "encodes what charred refuses, instead of throwing"
-      (expect (= "{\"1\":\"a\"}" (persistance/->json {1 :a})))
-      (expect (= "{\"null\":1}" (persistance/->json {nil 1})))
-      (expect (= "{\"v\":null}" (persistance/->json {:v (/ 0.0 0.0)})))
-      (expect (= "{\"v\":null}" (persistance/->json {:v Double/POSITIVE_INFINITY})))
-      (expect (= "{\"v\":null}" (persistance/->json {:v Double/NEGATIVE_INFINITY}))))
-  (it "reaches nested tool-result content, not just the top level"
-      (expect (= "{\"content\":[{\"type\":\"tool_result\",\"counts\":{\"1\":null}}]}"
-                 (persistance/->json {:content [{:type "tool_result" :counts {1 (/ 0.0 0.0)}}]}))))
-  (it "leaves every already-encodable spelling BYTE-identical (persisted data must not shift)"
-      (expect (= "{\"a-b\":1}" (persistance/->json {:a-b 1})))
-      (expect (= "{\"vis\\/x\":1}" (persistance/->json {:vis/x 1})))
-      (expect (= "{\"s\":1}" (persistance/->json {"s" 1})))
-      (expect (= "{\"v\":\"1970-01-01T00:00:00Z\"}" (persistance/->json {:v (java.util.Date. 0)})))
-      (expect (= "{\"v\":[1]}" (persistance/->json {:v #{1}})))
-      (expect (= "{\"v\":1.5}" (persistance/->json {:v 1.5}))))
-  (it "nil in, nil out" (expect (nil? (persistance/->json nil)))))
 
 ;; Regression (session 4b6897d4): a runtime error quoted the entire document
 ;; that broke it, so the turn's terminal write bound a value past
@@ -75,9 +51,9 @@
             seen
             (atom nil)]
 
-        (with-redefs-fn {#'persistance/resolve-impl (fn [_ _]
-                                                      (atom (fn [_ _ opts]
-                                                              (reset! seen opts))))}
+        (with-redefs-fn {#'persistance/backend-op (fn [_]
+                                                    (fn [_ _ opts]
+                                                      (reset! seen opts)))}
           #(persistance/db-update-session-turn! {}
                                                 "turn-1"
                                                 {:status :error
@@ -94,15 +70,42 @@
         (expect (= huge (get (second (:content @seen)) "text"))))))
 
 (defdescribe
-  static-backend-table-test
-  "Backends are a STATIC table in the facade — nothing registers one at runtime.
-   A spec without `:backend` dispatches to `default-backend`; an id the table
-   does not know is refused before any namespace loads."
-  (it "defaults to sqlite and tags the opened store with it"
-      (expect (= :sqlite persistance/default-backend))
+  iteration-precondition-test
+  "`db-store-iteration!` refuses opts no backend can store before the backend
+   sees them."
+  (it "refuses opts without a turn, and opts that are not a map"
+      (let [calls
+            (atom 0)
+
+            refusal
+            (fn [opts]
+              (try (with-redefs-fn {#'persistance/backend-op (fn [_]
+                                                               (fn [& _]
+                                                                 (swap! calls inc)))}
+                     #(persistance/db-store-iteration! {} opts))
+                   nil
+                   (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+
+        (expect (= "db-store-iteration! requires :session-turn-id" (refusal {:iteration 1})))
+        (expect (= "db-store-iteration! opts must be a map" (refusal [:session-turn-id "t"])))
+        (expect (zero? @calls)))))
+
+(defdescribe
+  store-backend-test
+  "SQLite is the one backend: every store value, and nil for no store, forwards
+   to it, and it implements every `Store` op or does not compile."
+  (it "implements every Store op"
+      (expect (= (set (keys (:sigs persistance/Store)))
+                 (set (keys (:implementation sqlite/backend)))))
+      (expect (every? fn? (vals (:implementation sqlite/backend)))))
+  (it "opens and disposes an in-memory store"
       (let [store (persistance/db-create-connection! :memory)]
-        (try (expect (= :sqlite (:backend store)))
+        (try (expect (= :memory (:mode store)))
+             (expect (nil? (persistance/db-get-session store (random-uuid))))
              (finally (persistance/db-dispose-connection! store)))))
+  (it "forwards an absent store to the backend"
+      (expect (nil? (persistance/db-create-connection! nil)))
+      (expect (nil? (persistance/db-get-session nil (random-uuid)))))
   (it "refuses an unknown backend"
       (let [ex (try (persistance/db-create-connection! {:backend :postgres :path "x"})
                     nil
@@ -111,71 +114,13 @@
         (expect (str/includes? (ex-message ex) "Unknown persistence backend"))
         (expect (= [:sqlite] (:known (ex-data ex)))))))
 
-(defdescribe backend-load-fast-path-test
-             (it "does not require an already fully loaded backend again"
-                 (let [calls (atom 0)]
-                   (with-redefs [clojure.core/loaded-libs (constantly #{'loaded.backend})
-                                 clojure.core/require (fn [& _]
-                                                        (swap! calls inc))]
-
-                     (dotimes [_ 10]
-                       (#'persistance/require-backend-ns! :sqlite 'loaded.backend)))
-                   (expect (zero? @calls))))
-             (it "does not treat an existing but unfinished namespace as loaded"
-                 (let [calls (atom [])]
-                   (with-redefs [clojure.core/loaded-libs (constantly #{})
-                                 clojure.core/require
-                                 (fn [ns-sym]
-                                   (swap! calls conj
-                                     [ns-sym (Thread/holdsLock clojure.lang.RT/REQUIRE_LOCK)]))]
-
-                     (#'persistance/require-backend-ns! :sqlite 'clojure.core))
-                   (expect (= [['clojure.core true]] @calls))))
-             (it "rechecks completion under the global require lock for concurrent first use"
-                 (let [loaded
-                       (atom #{})
-
-                       calls
-                       (atom 0)
-
-                       start
-                       (promise)]
-
-                   (with-redefs [clojure.core/loaded-libs
-                                 (fn []
-                                   @loaded)
-
-                                 clojure.core/require
-                                 (fn [ns-sym]
-                                   (expect (Thread/holdsLock clojure.lang.RT/REQUIRE_LOCK))
-                                   (swap! calls inc)
-                                   (swap! loaded conj ns-sym))]
-
-                     (let [workers
-                           (mapv (fn [_]
-                                   (future @start
-                                           (#'persistance/require-backend-ns! :sqlite 'cold.backend)
-                                           :done))
-                                 (range 12))]
-                       (try (deliver start true)
-                            (expect (every? #(= :done (deref % 5000 :timeout)) workers))
-                            (finally (run! future-cancel workers)))))
-                   (expect (= 1 @calls))))
-             (it "retains the backend identity and original cause on failed loading"
-                 (let [cause
-                       (Exception. "Load failed")
-
-                       failure
-                       (with-redefs [clojure.core/loaded-libs
-                                     (constantly #{})
-
-                                     clojure.core/require
-                                     (fn [& _]
-                                       (throw cause))]
-
-                         (try (#'persistance/require-backend-ns! :sqlite 'failed.backend)
-                              nil
-                              (catch clojure.lang.ExceptionInfo e e)))]
-
-                   (expect (= {:backend :sqlite :ns 'failed.backend} (ex-data failure)))
-                   (expect (identical? cause (ex-cause failure))))))
+(defdescribe backend-load-test
+             (it "names the backend namespace and keeps the cause when loading fails"
+                 (let [failure (try (#'persistance/load-backend
+                                     'no.such.persistence.backend/backend)
+                                    nil
+                                    (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (= {:ns 'no.such.persistence.backend} (ex-data failure)))
+                   (expect (some? (ex-cause failure)))
+                   (expect (str/includes? (ex-message failure)
+                                          "no.such.persistence.backend failed to load")))))
