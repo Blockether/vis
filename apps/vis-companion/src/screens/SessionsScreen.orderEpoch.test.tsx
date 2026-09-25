@@ -147,6 +147,50 @@ describe('the order the reader is looking at', () => {
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
 
+  // Regression, user report (forking in the app left its new title hidden behind
+  // "1 new" in its group until the reader tapped that count).
+  it('shows a fork and its later title in its group without accepting newer rows', async () => {
+    const groupId = 'group-forks';
+    const source = { ...row('source', 12), group_id: groupId };
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [source],
+          groups: [
+            {
+              id: groupId,
+              project_id: null,
+              name: 'Forks',
+              color: 'blue',
+              position: 0,
+              session_count: 1,
+            },
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+    await settle(50);
+    expect(rowOrder()).toEqual(['source']);
+    expect(screen.getByRole('button', { name: 'Collapse Forks' })).toBeVisible();
+
+    const fork = { ...row('fork', 20), group_id: groupId, title: 'Session source (fork)' };
+    view.setOpenSession({ conn: view.conns[0]!, sid: fork.id, fresh: true });
+    view.setRows(0, [fork, source]);
+    await settle(10_000);
+
+    expect(rowOrder()).toEqual(['fork', 'source']);
+    expect(screen.getByText('Session source (fork)')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
+
+    // Naming finishes after the fork has already appeared in the project.
+    view.setRows(0, [{ ...fork, title: 'Renamed fork' }, source]);
+    await settle(10_000);
+    expect(screen.getByText('Renamed fork')).toBeVisible();
+    expect(screen.queryByText('Session source (fork)')).toBeNull();
+    expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
+  });
+
   it('counts arrivals per project and opens only the project whose updates were accepted', async () => {
     const inProject = (id: string, hour: number, root: string) =>
       listSession({ ...row(id, hour), workspace: { root } });

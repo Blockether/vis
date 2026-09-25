@@ -289,10 +289,11 @@ interface Props {
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /**
    * The session standing open in the pane beside this list, so the row it belongs to
-   * can say so. `null` while nothing is open — and on a phone, where the transcript
-   * replaces the list instead of standing next to it.
+   * can say so. `fresh` identifies a session this device just created, including a
+   * fork made in the transcript rather than through the list. `null` while nothing
+   * is open — and on a phone, where the transcript replaces the list.
    */
-  openSession?: { conn: GatewayConn; sid: string } | null;
+  openSession?: { conn: GatewayConn; sid: string; fresh?: boolean } | null;
   /**
    * Whether this screen is the one on the glass. It stays MOUNTED behind an open
    * transcript — its rows, scope, scroll position and expanded projects are the
@@ -478,6 +479,16 @@ export function SessionsScreen({
   // Ids this device just created, freshest first. `MINTED_KEEP` is past any burst
   // of taps and keeps the set from growing for the life of the screen.
   const [minted, setMinted] = useState<readonly string[]>([]);
+  // A fork is created in the transcript, not through `createSession` on this list.
+  // Its fresh open reaches the still-mounted list even when the transcript covers it:
+  // admit that row before the fleet read lands instead of parking it behind "1 new".
+  const freshSessionId = openSession?.fresh ? openSession.sid : null;
+  useEffect(() => {
+    if (!freshSessionId) return;
+    setMinted((was) =>
+      was.includes(freshSessionId) ? was : [freshSessionId, ...was].slice(0, MINTED_KEEP),
+    );
+  }, [freshSessionId]);
 
   // ONE machine's list. Machines load independently on purpose: a gateway that is
   // asleep must not keep the machines next to it off the screen, and its failure

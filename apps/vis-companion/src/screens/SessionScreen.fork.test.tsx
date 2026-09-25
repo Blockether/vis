@@ -25,7 +25,7 @@ describe('forking from a turn in the transcript', () => {
   it('forks THROUGH the turn whose verb was pressed and opens the copy', async () => {
     const rows = [turn('t1', 'make the header amber'), turn('t2', 'now undo the second half')];
     const forks: Array<[string, string | undefined]> = [];
-    const opened: string[] = [];
+    const opened: Array<[string, boolean | undefined]> = [];
     renderSessionScreen({
       client: {
         cachedTranscript: () => rows,
@@ -35,7 +35,7 @@ describe('forking from a turn in the transcript', () => {
           return Promise.resolve({ id: 'forked', title: 'A session (fork)' });
         },
       },
-      onOpenSession: (sid) => opened.push(sid),
+      onOpenSession: (sid, fresh) => opened.push([sid, fresh]),
     });
 
     const verbs = await screen.findAllByRole('button', {
@@ -50,7 +50,7 @@ describe('forking from a turn in the transcript', () => {
     }
     await userEvent.click(verbs[0]);
 
-    await waitFor(() => expect(opened).toEqual(['forked']));
+    await waitFor(() => expect(opened).toEqual([['forked', true]]));
     expect(forks).toEqual([['s1', 't1']]);
   });
 

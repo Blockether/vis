@@ -10,7 +10,7 @@ import { render } from '@testing-library/react';
 
 import { projectPath, sessionIsArchived, sessionIsLive } from '../lib/fleet';
 import { SessionsScreen } from './SessionsScreen';
-import type { GatewayConn, ProjectOverview, Session } from '../lib/types';
+import type { GatewayConn, ProjectOverview, Session, SessionGroup } from '../lib/types';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SharedPayload } from '../lib/share-intake';
 
@@ -58,6 +58,8 @@ export interface MachineFixture {
   holdsList?: boolean;
   /** Persisted projects, including roots that do not have a session yet. */
   projects?: ProjectOverview[];
+  /** Gateway-owned bands, whose rows ride beside a project page. */
+  groups?: SessionGroup[];
   routes?: Record<string, unknown>;
 }
 
@@ -186,7 +188,12 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
  * and a fake that cut it a second way would prove the app against a list nobody
  * runs.
  */
-export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverview[] = []) {
+export function sessionsWindow(
+  rows: Session[],
+  url: URL,
+  projects: ProjectOverview[] = [],
+  groups: SessionGroup[] = [],
+) {
   // The device sends the ONE fact this gateway cannot know: which of its sessions
   // are holding words typed here. Everything else about the order is answered.
   const dirty = new Set((url.searchParams.get('dirty') ?? '').split(',').filter((id) => id !== ''));
@@ -197,7 +204,13 @@ export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverv
     view === 'include' ? rows : rows.filter((row) => sessionIsArchived(row) === (view === 'only'));
   const ranked = rankSessions(standing, dirty);
   const root = url.searchParams.get('root');
-  const listed = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
+  const inProject = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
+  const aside = root !== null && url.searchParams.get('grouped') === 'aside';
+  const offset = Number(url.searchParams.get('group_offset') ?? 0);
+  const count = Number(url.searchParams.get('group_limit') ?? groups.length);
+  const bandIds = new Set(groups.slice(offset, offset + count).map((group) => group.id));
+  const listed = aside ? inProject.filter((row) => !row.group_id) : inProject;
+  const grouped = aside ? inProject.filter((row) => bandIds.has(row.group_id ?? '')) : [];
   // A real gateway answers a WINDOW, and a machine with more history than one page
   // makes the client come back for the rest — which is what paints a second
   // machine's rows a beat after the first machine's. The window is a KEYSET:
@@ -217,7 +230,8 @@ export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverv
     // The real gateway answers parked runs BESIDE every window it cuts, complete
     // however deep they sit and narrowed to the same project as the listing; the
     // stable project totals ride only beside the head.
-    awaiting: listed.filter((session) => session.is_awaiting_input === true),
+    awaiting: inProject.filter((session) => session.is_awaiting_input === true),
+    ...(aside ? { grouped } : {}),
     ...(after || root ? {} : { overview: overviewFor(ranked, projects) }),
   };
 }
@@ -233,6 +247,7 @@ export function renderSessionsScreen({
   at,
   share = null,
   onDiscardShare,
+  openSession = null,
   subscriptions = null,
 }: {
   machines?: MachineFixture[];
@@ -253,6 +268,8 @@ export function renderSessionsScreen({
   /** A payload the share sheet parked, waiting for the human to pick a session. */
   share?: SharedPayload | null;
   onDiscardShare?: () => void;
+  /** A transcript opened beside the list, including one just forked there. */
+  openSession?: { conn: GatewayConn; sid: string; fresh?: boolean } | null;
   /**
    * The hub whose fleet stream this list runs on. `null` is a list with no push
    * channel at all — the cadence every other test here was written against.
@@ -375,6 +392,23 @@ export function renderSessionsScreen({
       rows[index] = row;
       return answer(row);
     }
+    if (url.pathname === '/v1/session-groups' && machine.groups) {
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const limit = Number(url.searchParams.get('limit') ?? machine.groups.length);
+      const groups = machine.groups.map((group) => ({
+        ...group,
+        session_count: (machine.sessions ?? []).filter((row) => row.group_id === group.id).length,
+      }));
+      return answer({
+        project_id: groups[0]?.project_id ?? null,
+        groups: groups.slice(offset, offset + limit),
+        total: groups.length,
+        session_total: groups.reduce((total, group) => total + group.session_count, 0),
+        limit,
+        offset,
+        has_more: offset + limit < groups.length,
+      });
+    }
     if (url.pathname === '/v1/sessions') {
       // The create answers a session with an id, the way the gateway's 201 does:
       // without one the screen has nothing to open.
@@ -395,7 +429,7 @@ export function renderSessionsScreen({
           });
         await heldPages;
       }
-      return answer(sessionsWindow(machine.sessions ?? [], url, machine.projects));
+      return answer(sessionsWindow(machine.sessions ?? [], url, machine.projects, machine.groups));
     }
     if (url.pathname === '/v1/sessions/actions/search') return answer({ matches: [] });
     return answer({});
@@ -404,6 +438,7 @@ export function renderSessionsScreen({
   let shownQuery = query;
   let shownConns = conns;
   let shownVisible = isVisible;
+  let shownOpenSession = openSession;
   const screen = (next: string, visible: boolean) => (
     <SessionsScreen
       conns={shownConns}
@@ -412,6 +447,7 @@ export function renderSessionsScreen({
       onQuery={onQuery}
       subscriptions={subscriptions}
       onOpen={onOpen}
+      openSession={shownOpenSession}
       onUnreachable={onUnreachable}
       onSearch={onSearch}
       share={share}
@@ -468,6 +504,11 @@ export function renderSessionsScreen({
     setVisible(next: boolean) {
       shownVisible = next;
       view.rerender(screen(shownQuery, next));
+    },
+    /** Open a transcript beside the list, including a session forked on this device. */
+    setOpenSession(next: { conn: GatewayConn; sid: string; fresh?: boolean } | null) {
+      shownOpenSession = next;
+      view.rerender(screen(shownQuery, shownVisible));
     },
     /** Put the real `fetch` back; every test that mounts must call this. */
     restore() {
