@@ -510,6 +510,7 @@ export function creationKey(base: string, root: string, groupId?: string): strin
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
 const NO_ROWS: Session[] = [];
+const NO_GROUPS: SessionGroup[] = [];
 
 /** Two project pages are read ahead after the visible page answers. */
 const PAGES_AHEAD = 2;
@@ -616,10 +617,13 @@ export const ProjectGroup = memo(function ProjectGroup({
     total: number;
     awaiting: Session[];
     grouped: Session[];
+    bandOffset: number;
+    view: ArchiveView;
+    read: number;
   } | null>(() => {
     // Only the active session page is available in the held window.
     if (readProjectFold(projectRevealKey(machineKey(conn), root, 'sessions'))) return null;
-    const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map());
+    const held = getClient(conn).heldProjectPage(root, pageSize, '', new Map(), 'exclude', bandWindow);
     return held
       ? {
           start: 0,
@@ -627,6 +631,9 @@ export const ProjectGroup = memo(function ProjectGroup({
           total: held.total,
           awaiting: held.awaiting,
           grouped: held.grouped ?? NO_ROWS,
+          bandOffset: bandWindow.offset,
+          view: 'exclude',
+          read: 0,
         }
       : null;
   });
@@ -656,9 +663,19 @@ export const ProjectGroup = memo(function ProjectGroup({
   const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
   const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
   const [groupsRead, setGroupsRead] = useState(0);
-  const [groupsReady, setGroupsReady] = useState<{ view: ArchiveView; offset: number } | null>(
-    null,
-  );
+  const [groupsReady, setGroupsReady] = useState<{
+    view: ArchiveView;
+    offset: number;
+    read: number;
+  } | null>(null);
+  // A page of bands and its shelves are one picture. Keep the last complete picture
+  // until both independent reads answer for the same window and refresh.
+  const [presentedGroups, setPresentedGroups] = useState<{
+    view: ArchiveView;
+    offset: number;
+    groups: SessionGroup[];
+    rows: Session[];
+  } | null>(null);
   // The gateway leaves the sessions unstamped when it archives their group. Hold its
   // answer until both the next page and group reads arrive, then defer to fresh reads.
   const [groupArchive, setGroupArchive] = useState<{
@@ -755,6 +772,9 @@ export const ProjectGroup = memo(function ProjectGroup({
           total: held.total,
           awaiting: held.awaiting,
           grouped: held.grouped ?? NO_ROWS,
+          bandOffset: bandWindow.offset,
+          view: archived,
+          read: groupsRead,
         });
     }
     void (async () => {
@@ -777,6 +797,9 @@ export const ProjectGroup = memo(function ProjectGroup({
           total: answer.total,
           awaiting: answer.awaiting,
           grouped: answer.grouped,
+          bandOffset: bandWindow.offset,
+          view: archived,
+          read: groupsRead,
         });
         noteRefresh('page', groupsRead);
         // Behind the answer, never beside it: the reader's own page is never waiting on
@@ -821,6 +844,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     view: ArchiveView;
     offset: number;
     rows: Session[];
+    read: number;
   } | null>(null);
   useEffect(() => {
     if (!isVisible || !isShowing || searching || groupArchived === archived) return;
@@ -830,7 +854,12 @@ export const ProjectGroup = memo(function ProjectGroup({
       .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow)
       .then((answer) => {
         if (!live) return;
-        setGroupedPage({ view: groupArchived, offset: bandWindow.offset, rows: answer.grouped });
+        setGroupedPage({
+          view: groupArchived,
+          offset: bandWindow.offset,
+          rows: answer.grouped,
+          read: groupsRead,
+        });
         noteRefresh('page', groupsRead);
       })
       .catch(() => {
@@ -855,7 +884,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   // The bands are paged out of the wall's own total, the same way: the steps over them
   // print how many pages of GROUPS this project has, not how many are on screen.
   const groupPageCount = Math.max(1, Math.ceil(Math.max(groupTotal, 1) / GROUPS_PAGE));
-  const shownGroupPage = Math.min(groupPage, groupPageCount);
+  const shownGroupPage = Math.min(
+    presentedGroups?.view === groupArchived
+      ? Math.floor(presentedGroups.offset / GROUPS_PAGE) + 1
+      : 1,
+    groupPageCount,
+  );
   // A PAGE ARRIVES OVER THE ONE BEFORE IT, NEVER OVER A HOLE. The read a step takes
   // lands a beat after the tap, and a group that painted nothing meanwhile lost its
   // rows, its height AND the pager the thumb had just pressed — the reflow this seam
@@ -892,9 +926,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   // the band it just left for a whole cycle after the tap that moved it.
   const [refiled, setRefiled] = useState<ReadonlyMap<string, Session>>(() => new Map());
   const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const shownGroups = presentedGroups?.view === groupArchived ? presentedGroups.groups : NO_GROUPS;
   const archivedGroupIds = useMemo(
-    () => new Set(groups.filter((group) => group.archived_at != null).map((group) => group.id)),
-    [groups],
+    () => new Set(shownGroups.filter((group) => group.archived_at != null).map((group) => group.id)),
+    [shownGroups],
   );
   const paints = useCallback(
     (session: Session) => {
@@ -951,20 +986,11 @@ export const ProjectGroup = memo(function ProjectGroup({
     const api = getClient(conn);
     // A query is answered over the whole project already; its hits are the list.
     if (searching) return NO_ROWS;
-    const grouped =
-      groupArchived === archived
-        ? paged?.grouped
-        : groupedPage?.view === groupArchived && groupedPage.offset === bandWindow.offset
-          ? groupedPage.rows
-          : NO_ROWS;
-    return (grouped ?? NO_ROWS)
+    return (presentedGroups?.view === groupArchived ? presentedGroups.rows : NO_ROWS)
       .filter((session) => !api.isSessionDeleted(session.id))
       .map((session) => settled(session, local, refiled))
       .filter(paints);
-  }, [
-    searching, paged, groupedPage, groupArchived, archived, bandWindow, local, refiled, paints,
-    getClient, conn,
-  ]);
+  }, [searching, presentedGroups, groupArchived, local, refiled, paints, getClient, conn]);
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
   const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
@@ -1065,7 +1091,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         setGroups(answer?.groups ?? []);
         setGroupTotal(answer?.total ?? 0);
         setGroupSessionTotal(answer?.session_total ?? 0);
-        setGroupsReady({ view: groupArchived, offset: bandWindow.offset });
+        setGroupsReady({ view: groupArchived, offset: bandWindow.offset, read: groupsRead });
         noteRefresh('groups', groupsRead);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
@@ -1078,6 +1104,36 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, noteRefresh]);
+  // Each response can land first: never put a new band's name over the previous page's
+  // sessions, or create an unnamed band from rows whose own page has not arrived yet.
+  const matchedRows =
+    groupArchived === archived
+      ? paged?.view === groupArchived &&
+        paged.bandOffset === bandWindow.offset &&
+        paged.read === groupsRead
+        ? paged.grouped
+        : null
+      : groupedPage?.view === groupArchived &&
+          groupedPage.offset === bandWindow.offset &&
+          groupedPage.read === groupsRead
+        ? groupedPage.rows
+        : null;
+  useEffect(() => {
+    if (
+      groupsReady?.view !== groupArchived ||
+      groupsReady.offset !== bandWindow.offset ||
+      groupsReady.read !== groupsRead ||
+      matchedRows === null
+    ) return;
+    setPresentedGroups((current) =>
+      current?.view === groupArchived &&
+      current.offset === bandWindow.offset &&
+      current.groups === groups &&
+      current.rows === matchedRows
+        ? current
+        : { view: groupArchived, offset: bandWindow.offset, groups, rows: matchedRows },
+    );
+  }, [groupsReady, groupsRead, groupArchived, bandWindow, groups, matchedRows]);
   // WHERE EACH ROW IS FILED, AND WHICH OF THE TWO SETS IT IS IN. A group's rows stay
   // CONTIGUOUS under its own name, and a filed row is NOT in the list below the bands —
   // which keeps the project's own order. It is the shape the TUI's navigator paints
@@ -1106,7 +1162,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // this device has not read yet: a row is never dropped because the list arrived a
   // beat ahead of the groups.
   const bands = useMemo<GroupBandView[]>(() => {
-    const known = groups
+    const known = shownGroups
       .map((group) => ({
         id: group.id,
         name: group.name,
@@ -1120,7 +1176,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     // from the group such a row names would file it under a project that does not have it.
     if (isGroupRevealing) return known;
     const unread = [...filed.byGroup.entries()]
-      .filter(([gid]) => !groups.some((group) => group.id === gid) && groupArchive?.id !== gid)
+      .filter(([gid]) => !shownGroups.some((group) => group.id === gid) && groupArchive?.id !== gid)
       .map(([gid, held]) => ({
         id: gid,
         // The GROUP owns its name and its colour, and this device has not read THIS one
@@ -1131,7 +1187,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         archived: false,
       }));
     return [...known, ...unread];
-  }, [groups, filed, isGroupRevealing, groupArchive]);
+  }, [shownGroups, filed, isGroupRevealing, groupArchive]);
   // Both sides of the project header count the sets currently on display.
   const visibleCount = total + groupSessionTotal;
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
@@ -1139,7 +1195,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
   // some of the rows and left the others alone) — the rows were painting a copy stamped on
   // them when the gateway read them, which a later recolour could not reach.
-  const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  const groupById = useMemo(
+    () => new Map(shownGroups.map((group) => [group.id, group])),
+    [shownGroups],
+  );
   // A ROW CAN NAME A GROUP THIS DEVICE HAS NOT READ: it was made on another client, or the
   // rows landed a beat ahead of the groups. Ask for the groups again ONCE per such id, so
   // that band gets its own name and colour instead of standing as a plain "Group" forever.
@@ -1664,7 +1723,8 @@ export const ProjectGroup = memo(function ProjectGroup({
     isGroupRevealing &&
     groupsReady?.view === groupArchived &&
     groupsReady.offset === bandWindow.offset &&
-    groupTotal === 0;
+    groupTotal === 0 &&
+    !hasGroups;
   const emptySessions = isSessionRevealing && paged !== null && listed.length === 0;
   const paintsSets = isShowing;
 

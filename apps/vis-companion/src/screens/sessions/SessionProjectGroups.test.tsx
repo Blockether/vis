@@ -1368,6 +1368,92 @@ describe('ProjectGroup groups', () => {
     );
   });
 
+  // Regression, user report: switching Groups pages changed the sessions under their bands
+  // while the two gateway reads were still arriving. Neither answer is a page on its own.
+  it.each(['bands', 'sessions'] as const)(
+    'keeps the current group shelves while %s arrive last',
+    async (last) => {
+      const names = WIDE_WALL.slice(0, 11).map((group, index) => ({
+        ...group,
+        session_count: index === 0 || index === 10 ? 1 : 0,
+      }));
+      const firstRow = { ...ROWS[0], group_id: names[0].id };
+      const nextRow = { ...ROWS[1], group_id: names[10].id };
+      const page = (grouped: Session[]) => ({
+        rows: [],
+        total: 0,
+        awaiting: [],
+        grouped,
+        nextCursor: '',
+      });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const client = machine({
+        heldProjectPage: () => null,
+        listProjectPage: vi.fn(
+          async (
+            _root: string, _limit: number, _after: string, _pins: unknown, _signal: AbortSignal,
+            _persist: boolean, _view: ArchiveView, bands?: BandWindow,
+          ) => {
+            if (bands?.offset === GROUPS_PAGE && last === 'sessions') await held;
+            return page(bands?.offset === GROUPS_PAGE ? [nextRow] : [firstRow]);
+          },
+        ),
+        listSessionGroups: vi.fn(
+          async (_root: string, _signal?: AbortSignal, _view?: ArchiveView, bands?: BandWindow) => {
+            if (bands?.offset === GROUPS_PAGE && last === 'bands') await held;
+            const offset = bands?.offset ?? 0;
+            return wall(names.slice(offset, offset + GROUPS_PAGE), names.length, offset);
+          },
+        ),
+      });
+      const { user } = mount(client, undefined, '', []);
+      const firstBand = await band(names[0].name);
+      await waitFor(() =>
+        expect(firstBand.querySelector(`[data-session-id="${firstRow.id}"]`)).not.toBeNull(),
+      );
+      const steps = screen.getByRole('navigation', {
+        name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
+      });
+      await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+      await waitFor(() => {
+        expect(client.listSessionGroups).toHaveBeenCalledWith(
+          ROOT,
+          expect.any(AbortSignal),
+          'exclude',
+          { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+        );
+        expect(client.listProjectPage).toHaveBeenCalledWith(
+          ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude',
+          { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+        );
+      });
+      expect(screen.getByRole('button', { name: `Collapse ${names[0].name}` })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: `Collapse ${names[10].name}` })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
+      expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
+
+      await act(async () => {
+        release();
+      });
+      const nextBand = await band(names[10].name);
+      expect(nextBand.querySelector(`[data-session-id="${nextRow.id}"]`)).not.toBeNull();
+      expect(screen.queryByRole('button', { name: `Collapse ${names[0].name}` })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
+      expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument();
+
+      await user.click(within(steps).getByRole('button', { name: 'Previous page' }));
+      const restored = await band(names[0].name);
+      await waitFor(() =>
+        expect(restored.querySelector(`[data-session-id="${firstRow.id}"]`)).not.toBeNull(),
+      );
+      expect(screen.queryByRole('button', { name: `Collapse ${names[10].name}` })).toBeNull();
+      expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
+    },
+  );
+
   it('keeps the Sessions page when the Groups archive opens', async () => {
     const deep = { rows: ROWS, total: 24, awaiting: [], grouped: [], nextCursor: '' };
     const client = machine({ heldProjectPage: () => deep, listProjectPage: vi.fn(async () => deep) });
