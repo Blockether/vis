@@ -174,6 +174,14 @@
       (is (= [{"model_ref" "laya-typed-decisions"
                "revision" "dd079950600224fb459af2a0cb1d74e1e57ee9cf"
                "installed" false
+               "residency" "cold"}
+              {"model_ref" "gliner2.5-base"
+               "revision" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
+               "installed" false
+               "residency" "cold"}
+              {"model_ref" "gliner2.5-decide"
+               "revision" "bbe10ff77ebb238777c17d3a8ac9260e30929057"
+               "installed" false
                "residency" "cold"}]
              (decisions/models-status))))))
 

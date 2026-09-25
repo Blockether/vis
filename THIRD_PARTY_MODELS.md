@@ -18,6 +18,8 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `piper-en_US-ryan-high` | CC-BY-NC-SA-4.0 | no | its publisher | only when asked for by name |
 | `voice-samples` | LicenseRef-public-domain | yes | the Vis assets release | automatically |
 | `laya-typed-decisions` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `gliner2.5-base` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `gliner2.5-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
 
@@ -134,7 +136,7 @@ access and does not redistribute that data in Vis releases.
 
 ## `laya-typed-decisions`
 
-Decision baseline model - Apache-2.0 - commercial use permitted - hosted by Vis.
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
 
 Laya typed decisions by ConvAI Innovations, Apache-2.0. Full ModernBERT encoder and both decision heads; FP32 ONNX export by Vis. Baseline act/escalate decisions are not approved for autonomous actions.
 
@@ -150,5 +152,47 @@ Laya typed decisions by ConvAI Innovations, Apache-2.0. Full ModernBERT encoder 
   their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts
   are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch.
 - Training assets and wheels are installed only when explicitly requested.
-- A base model is not approved to execute autonomous actions without a
-  separate evaluation of both decision heads for the intended use case.
+- Model scores do not authorize autonomous actions; evaluate both decision
+  heads on held-out examples before relying on them.
+
+## `gliner2.5-base`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+GLiNER2.5 base by Fastino, Apache-2.0. Full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.
+
+- Upstream: <https://huggingface.co/fastino/gliner2.5-base-v1/tree/7f1ae80f150e9d3e262ec1684d0d78208e2595d0>
+- Pinned revision: `7f1ae80f150e9d3e262ec1684d0d78208e2595d0`
+- Installs into: `~/.vis/models/decisions/gliner2.5-base/7f1ae80f150e9d3e262ec1684d0d78208e2595d0/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-base-fp32.zip> (749 MB, SHA-256 `fe7a5d0599522596abf6ab6ebb1035470b7588832963fc7e1d29eb48e84fcb80`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-base-training.zip> (694 MB, SHA-256 `162cf2e5bba6553e6857a2b5b95dd478a6468581d777e94ebc966de98de057b9`)
+  - wheels macos-arm64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip> (198 MB, SHA-256 `32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112`)
+  - wheels linux-x86_64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip> (281 MB, SHA-256 `e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf`)
+- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,
+  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts
+  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch.
+- Training assets and wheels are installed only when explicitly requested.
+- Model scores do not authorize autonomous actions; evaluate both decision
+  heads on held-out examples before relying on them.
+
+## `gliner2.5-decide`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+GLiNER2.5 Decide by Fastino, Apache-2.0. Full span-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.
+
+- Upstream: <https://huggingface.co/fastino/GLiNER2.5-Decide/tree/bbe10ff77ebb238777c17d3a8ac9260e30929057>
+- Pinned revision: `bbe10ff77ebb238777c17d3a8ac9260e30929057`
+- Installs into: `~/.vis/models/decisions/gliner2.5-decide/bbe10ff77ebb238777c17d3a8ac9260e30929057/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-fp32.zip> (1754 MB, SHA-256 `36a64cde0ed30e0e26ce7d6a7a320f1c7de3b572d947c3077ef4e58c25518af2`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-training.zip> (1799 MB, SHA-256 `9efeb355eab7b386c74f13f1206504909d831283b538fda8fd25a2592cc49c2e`)
+  - wheels macos-arm64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip> (198 MB, SHA-256 `32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112`)
+  - wheels linux-x86_64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip> (281 MB, SHA-256 `e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf`)
+- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,
+  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts
+  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch.
+- Training assets and wheels are installed only when explicitly requested.
+- Model scores do not authorize autonomous actions; evaluate both decision
+  heads on held-out examples before relying on them.

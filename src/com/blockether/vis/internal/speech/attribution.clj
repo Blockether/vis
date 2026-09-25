@@ -134,10 +134,8 @@
       "\n"
       (concat
         [(str "## `" (:id entry) "`") ""
-         (str "Decision baseline model - "
-              (:license entry)
-              " - commercial use permitted - hosted by Vis.") "" (:attribution entry) ""
-         (str "- Upstream: <" (:source-url entry) ">")
+         (str "Decision model - " (:license entry) " - commercial use permitted - hosted by Vis.")
+         "" (:attribution entry) "" (str "- Upstream: <" (:source-url entry) ">")
          (str "- Pinned revision: `" (:revision entry) "`")
          (str "- Installs into: `~/.vis/models/decisions/" (:id entry) "/" (:revision entry) "/`")
          "- Downloaded from the shared Vis assets-pack release (verified by SHA-256):"]
@@ -155,8 +153,8 @@
          "  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts"
          "  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch."
          "- Training assets and wheels are installed only when explicitly requested."
-         "- A base model is not approved to execute autonomous actions without a"
-         "  separate evaluation of both decision heads for the intended use case."]))))
+         "- Model scores do not authorize autonomous actions; evaluate both decision"
+         "  heads on held-out examples before relying on them."]))))
 
 (defn markdown
   "The entire `THIRD_PARTY_MODELS.md`, rendered from both manifests."

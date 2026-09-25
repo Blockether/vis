@@ -62,5 +62,143 @@
     "license": "Apache-2.0",
     "revision": "dd079950600224fb459af2a0cb1d74e1e57ee9cf",
     "source-url": "https://huggingface.co/convaiinnovations/laya-typed-decisions/tree/dd079950600224fb459af2a0cb1d74e1e57ee9cf"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 749054883,
+        "file": "gliner2.5-base-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "fe7a5d0599522596abf6ab6ebb1035470b7588832963fc7e1d29eb48e84fcb80",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-base-fp32.zip"
+      },
+      "training": {
+        "bytes": 694129956,
+        "file": "gliner2.5-base-training.zip",
+        "requires": [
+          "model.safetensors",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "162cf2e5bba6553e6857a2b5b95dd478a6468581d777e94ebc966de98de057b9",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-base-training.zip"
+      },
+      "wheels": {
+        "linux-x86_64": {
+          "bytes": 281138690,
+          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+          ],
+          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
+        },
+        "macos-arm64": {
+          "bytes": 198416301,
+          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
+          ],
+          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
+        }
+      }
+    },
+    "attribution": "GLiNER2.5 base by Fastino, Apache-2.0. Full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
+    "id": "gliner2.5-base",
+    "license": "Apache-2.0",
+    "revision": "7f1ae80f150e9d3e262ec1684d0d78208e2595d0",
+    "source-url": "https://huggingface.co/fastino/gliner2.5-base-v1/tree/7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1754266311,
+        "file": "gliner2.5-decide-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "36a64cde0ed30e0e26ce7d6a7a320f1c7de3b572d947c3077ef4e58c25518af2",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-fp32.zip"
+      },
+      "training": {
+        "bytes": 1798925087,
+        "file": "gliner2.5-decide-training.zip",
+        "requires": [
+          "model.safetensors",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "9efeb355eab7b386c74f13f1206504909d831283b538fda8fd25a2592cc49c2e",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-training.zip"
+      },
+      "wheels": {
+        "linux-x86_64": {
+          "bytes": 281138690,
+          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+          ],
+          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
+        },
+        "macos-arm64": {
+          "bytes": 198416301,
+          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
+          ],
+          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
+        }
+      }
+    },
+    "attribution": "GLiNER2.5 Decide by Fastino, Apache-2.0. Full span-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
+    "id": "gliner2.5-decide",
+    "license": "Apache-2.0",
+    "revision": "bbe10ff77ebb238777c17d3a8ac9260e30929057",
+    "source-url": "https://huggingface.co/fastino/GLiNER2.5-Decide/tree/bbe10ff77ebb238777c17d3a8ac9260e30929057"
   }
 ]

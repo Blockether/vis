@@ -6,12 +6,12 @@ published baseline is a starting point, **not** a policy for taking actions on y
 behalf: collect representative labels for your use case, evaluate both heads and decide
 when a human should review the result before relying on it.
 
-The `assets-pack` release keeps the existing voice assets and adds a pinned FP32
-inference bundle, a complete training checkpoint and offline training dependencies.
-Model downloads are explicit; starting a gateway never downloads weights. Inside Vis Python,
-a small first-party client reads and infers without installing the full Python SDK or
-any third-party packages. Install the full `vis-agent` SDK separately for training,
-upload, aliases and remote clients; its training extra is optional.
+The `assets-pack` release keeps the existing voice assets and adds pinned FP32
+inference bundles, complete checkpoints and offline training dependencies for Laya
+and both GLiNER2.5 decision models. Downloads are explicit; starting a gateway
+never downloads weights. Inside Vis Python, a small first-party client reads and
+infers without installing the full Python SDK or any third-party packages. Install
+the full `vis-agent` SDK separately for training, upload, aliases and remote clients.
 
 ## Download the baseline
 
@@ -139,15 +139,38 @@ RAM and disk; the extra is not needed for inference-only clients.
 
 ### Train either GLiNER2.5 decision model
 
-If you need the ordinary GLiNER2.5 base model or GLiNER2.5-Decide instead of Laya,
-use a **separate Python 3.12 environment** with `vis-agent[decisions-gliner-training]`.
-The GLiNER extra pins Transformers 4; the Laya training extra pins Transformers 5.
-Installing either extra does not download weights. Obtain the complete, pinned
-training checkpoint for `gliner2.5-base` or `gliner2.5-decide` explicitly, then
-use `GlinerTrainingBundle.open` on its local `training` directory. When you have
-network access, `GlinerTrainingBundle.fetch` explicitly downloads a catalog-pinned
-`model_ref` (`<model>@<revision>`) into a `cache_dir`. Neither `open` nor the
-trainer fetches a model.
+You can choose the ordinary GLiNER2.5 base model or GLiNER2.5-Decide instead of
+Laya. Download the pinned FP32 bundle for the model you want to use on the gateway:
+
+```bash
+vis-agent decisions models download --model gliner2.5-base
+# Or choose the other model:
+vis-agent decisions models download --model gliner2.5-decide
+```
+
+For training, explicitly download the same model's complete checkpoint and the
+shared, platform-specific GLiNER training wheelhouse:
+
+```bash
+vis-agent decisions models download --model gliner2.5-base --training
+# Or train the other model:
+vis-agent decisions models download --model gliner2.5-decide --training
+```
+
+Each command prints the installed paths and an offline `install.sh` command for
+a **new** Python 3.12 environment. The GLiNER wheelhouse supports macOS 14+
+arm64 or Linux x86-64 with glibc 2.28+ and CPU-only PyTorch. Allow several
+gigabytes for checkpoints, exported versions and the training environment.
+Keep GLiNER in a **separate environment** from Laya: install the matching
+`vis-agent` SDK wheel there before going offline (or install
+`vis-agent[decisions-gliner-training]` while online). Its Transformers 4
+requirements conflict with Laya's Transformers 5. The wheelhouse contains
+pinned dependencies, not the SDK wheel; neither installation downloads weights.
+
+Use `GlinerTrainingBundle.open` on the printed `training` directory. When you
+have network access, `GlinerTrainingBundle.fetch` can explicitly download a
+catalog-pinned `model_ref` (`<model>@<revision>`) into a `cache_dir`. Neither
+`open` nor the trainer fetches a model.
 
 The JSONL rows and separate held-out data have the same `state`, `question`,
 `target` and `action` fields as the Laya example above. Keep training and

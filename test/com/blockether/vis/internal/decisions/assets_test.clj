@@ -71,6 +71,29 @@
                     "https://github.com/Blockether/vis/releases/download/assets-pack/"))
           (expect (seq (:requires artifact))))
         (expect (= :decisions/unknown-model (:type (error-data #(assets/entry "unknown")))))))
+  (it "publishes both complete GLiNER2.5 families with distinct pinned artifacts"
+      (expect (= #{"laya-typed-decisions" "gliner2.5-base" "gliner2.5-decide"}
+                 (set (map :id (assets/manifest)))))
+      (doseq [[id revision] {"gliner2.5-base" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
+                             "gliner2.5-decide" "bbe10ff77ebb238777c17d3a8ac9260e30929057"}]
+        (let [model (assets/entry id)
+              artifacts (concat (map #(assets/artifact model %) [:inference :training])
+                                (map #(assets/artifact model :wheels %)
+                                     ["macos-arm64" "linux-x86_64"]))]
+
+          (expect (= revision (:revision model)))
+          (expect (= "Apache-2.0" (:license model)))
+          (expect (str/ends-with? (:source-url model) revision))
+          (expect (= (assets/inference-required id) (:requires (assets/artifact model :inference))))
+          (expect (some #{"model.safetensors"} (:requires (assets/artifact model :training))))
+          (expect (= 4 (count artifacts)))
+          (doseq [artifact artifacts]
+            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
+            (expect (pos? (:bytes artifact)))
+            (expect (str/starts-with?
+                      (:url artifact)
+                      "https://github.com/Blockether/vis/releases/download/assets-pack/"))
+            (expect (seq (:requires artifact)))))))
   (it "selects only a declared local training platform"
       (expect (contains? #{"macos-arm64" "linux-x86_64"} (assets/platform)))))
 

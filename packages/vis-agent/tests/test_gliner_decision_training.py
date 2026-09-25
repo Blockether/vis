@@ -14,6 +14,39 @@ from blockether.vis.decisions.gliner_training import GlinerTrainingBundle
 MODELS = {"gliner2.5-base": "boundary", "gliner2.5-decide": "span"}
 
 
+@pytest.mark.parametrize(
+    ("model_id", "revision"),
+    [
+        ("gliner2.5-base", "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"),
+        ("gliner2.5-decide", "bbe10ff77ebb238777c17d3a8ac9260e30929057"),
+    ],
+)
+def test_catalog_pins_complete_gliner_downloads(model_id, revision):
+    catalog = gliner_training._manifest()
+    assert {entry["id"] for entry in catalog} == {
+        "laya-typed-decisions",
+        "gliner2.5-base",
+        "gliner2.5-decide",
+    }
+    model = next(entry for entry in catalog if entry["id"] == model_id)
+    assert model["revision"] == revision
+    assert model["license"] == "Apache-2.0"
+    assert model["source-url"].endswith(revision)
+    artifacts = model["artifacts"]
+    assert "model.safetensors" in artifacts["training"]["requires"]
+    for artifact in (
+        artifacts["inference"],
+        artifacts["training"],
+        *artifacts["wheels"].values(),
+    ):
+        assert artifact["bytes"] > 0
+        assert len(artifact["sha256"]) == 64
+        assert artifact["url"] == (
+            "https://github.com/Blockether/vis/releases/download/assets-pack/"
+            + artifact["file"]
+        )
+
+
 def source_checkpoint(path: Path, model_id: str) -> Path:
     path.mkdir(parents=True)
     files = {
