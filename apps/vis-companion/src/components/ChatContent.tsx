@@ -3896,6 +3896,36 @@ const councilKindLabel: Record<CouncilRequest['kind'], string> = {
   complain: 'Complaint',
 };
 
+function UserRequestText({ text }: { text: string }) {
+  // Keep authored breaks and literal spacing. Justice only sees ordinary prose
+  // lines; fenced code, indents, and commands retain their exact whitespace.
+  let fence = '';
+  return text.split(/\r?\n/).map((line, index) => {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const literal = Boolean(fence || marker);
+    if (marker) {
+      if (!fence) {
+        fence = marker[1];
+      } else if (
+        marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length &&
+        !line.slice(marker[0].length).trim()
+      ) {
+        fence = '';
+      }
+    }
+    return line && !literal && line.trim() === line && !/[ \t]{2}|\t|\r/.test(line) ? (
+      <JustifiedProse key={index} className="whitespace-normal break-words">
+        {line}
+      </JustifiedProse>
+    ) : (
+      <p key={index} className="min-h-[1lh] whitespace-pre-wrap break-words">
+        {line}
+      </p>
+    );
+  });
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -3912,6 +3942,8 @@ export const UserMessage = memo(function UserMessage({
   createdAt?: number;
 }) {
   const parts = parseUserMessage(children);
+  // Inline image chips must stay in their authored position within the text.
+  const hasInlineImage = parts.some((part) => part.type === 'image');
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
@@ -3980,7 +4012,11 @@ export const UserMessage = memo(function UserMessage({
           ) : (
             parts.map((part) =>
               part.type === 'text' ? (
-                <span key={part.key}>{part.text}</span>
+                hasInlineImage || !part.text ? (
+                  <span key={part.key}>{part.text}</span>
+                ) : (
+                  <UserRequestText key={part.key} text={part.text} />
+                )
               ) : part.type === 'image' ? (
                 <span
                   key={part.key}

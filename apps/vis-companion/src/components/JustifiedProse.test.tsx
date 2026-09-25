@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Markdown } from './ChatContent';
+import { Markdown, UserMessage } from './ChatContent';
 import { JustifiedProse } from './JustifiedProse';
 import { MarkdownAnnotator } from './MarkdownArtifact';
 import { lineText, prepare, solve } from '@kitlangton/justice';
@@ -92,6 +92,75 @@ describe('Justice prose', () => {
     expect(prose).toHaveAttribute('data-justice');
     expect(prose.children.length).toBeGreaterThan(1);
     expect(prose.textContent).toBe(paragraph);
+  });
+
+  it('composes a plain user request with Justice on the first paint', () => {
+    const view = render(<UserMessage>{paragraph}</UserMessage>);
+    const prose = view.container.querySelector('article p');
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose?.textContent).toBe(paragraph);
+  });
+
+  it('keeps hard line breaks and literal spacing in a user request', () => {
+    const view = render(<UserMessage>{`${paragraph}\n\n  git  status\n${paragraph}`}</UserMessage>);
+    const lines = [...view.container.querySelectorAll('article p')];
+    expect(lines.map((line) => line.textContent)).toEqual([paragraph, '', '  git  status', paragraph]);
+    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('leaves fenced code literal while justifying the surrounding request', () => {
+    const request = [paragraph, '```ts', 'const value = getValue(item);', '```', paragraph].join('\n');
+    const view = render(<UserMessage>{request}</UserMessage>);
+    const lines = [...view.container.querySelectorAll('article p')];
+    expect(lines.map((line) => line.textContent)).toEqual([
+      paragraph,
+      '```ts',
+      'const value = getValue(item);',
+      '```',
+      paragraph,
+    ]);
+    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([
+      true,
+      false,
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('justifies request prose around a collapsed paste without opening its literal body', () => {
+    const request = [
+      paragraph,
+      '````vis-paste',
+      '[Pasted #1: 1 line, 3B]',
+      'abc',
+      '````',
+      paragraph,
+    ].join('\n');
+    const view = render(<UserMessage>{request}</UserMessage>);
+    expect(
+      [...view.container.querySelectorAll('article p[data-justice]')].map((line) => line.textContent),
+    ).toEqual([paragraph, paragraph]);
+    expect(view.container.querySelector('details code')?.textContent).toBe('abc');
+  });
+
+  it('keeps an inline image chip beside the original text rather than moving it into a paragraph', () => {
+    const view = render(<UserMessage>{'Look at /art/chart.png and describe it.'}</UserMessage>);
+    const article = view.container.querySelector('article')!;
+    expect(article.querySelector('p')).toBeNull();
+    expect(article).toHaveTextContent('Look at chart.png and describe it.');
+    expect(article).not.toHaveTextContent('/art/chart.png');
+  });
+
+  it('keeps an empty request bubble without introducing a blank paragraph', () => {
+    const view = render(<UserMessage>{''}</UserMessage>);
+    expect(view.container.querySelector('article p')).toBeNull();
+    expect(view.container.querySelector('article .border-you-role')).toBeInTheDocument();
   });
 
   it('measures plain prose without laying out every word separately', async () => {

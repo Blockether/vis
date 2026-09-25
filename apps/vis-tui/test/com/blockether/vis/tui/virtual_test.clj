@@ -1898,7 +1898,33 @@
         (let [pm (project-message (user-msg "> siema") bubble-w settings)]
           (expect (= 1 (count (:prewrapped-lines pm))))
           (expect (not= "" (first (:prewrapped-lines pm))))
-          (expect (str/includes? (first (:prewrapped-lines pm)) "siema")))))
+          (expect (str/includes? (first (:prewrapped-lines pm)) "siema"))))
+    (it "justifies user prose identically in a virtualized window"
+        (let [text
+              (str/join " " (repeat 18 "one"))
+
+              message
+              (user-msg text)
+
+              width
+              24
+
+              full
+              (project-message message width settings)
+
+              window
+              (project-message message width settings {:window-start 0 :window-num 8})
+
+              slice
+              (project-message message width settings {:window-start 1 :window-num 2})]
+
+          (expect (some? (:lines-window window)))
+          (expect (= (:prewrapped-lines full) (:prewrapped-lines window)))
+          (expect (= (subvec (:prewrapped-lines full) 1 3) (:prewrapped-lines slice)))
+          (expect (= text
+                     (str/replace (str/join " " (map #(subs % 1) (:prewrapped-lines window)))
+                                  #"\s+"
+                                  " "))))))
   (describe "plain assistant messages run through markdown formatting"
             (it "produces a non-empty :text"
                 (let [pm (project-message (plain-assistant-msg "**bold**") bubble-w settings)]

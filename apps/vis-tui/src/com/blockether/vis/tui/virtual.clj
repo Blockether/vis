@@ -807,45 +807,39 @@
                         :prewrapped-lines lines
                         :line-meta line-meta)
                  strip-ts))
-           windowed?
-           (let [ast
-                 (ast/markdown->ast (:text message))
+           windowed? (let [ast
+                           (ast/markdown->ast (:text message))
 
-                 content-w
-                 (max 10 (- bubble-w 4))
+                           content-w
+                           (max 10 (- bubble-w 4))
 
-                 window-lines
-                 (layout/ast->lines-window ast content-w (long window-start) (long window-num))
+                           ;; Use the same entry adapter as full messages so soft-wrapped
+                           ;; user prose stays justified when a long bubble is windowed.
+                           ;; Window opts shift each frame, so this bypasses the cached formatter.
+                           entries
+                           (layout/ast->entries ast
+                                                content-w
+                                                {:mode :answer
+                                                 :window-start (long window-start)
+                                                 :window-num (long window-num)})
 
-                 ;; Render through the entries adapter for parity with
-                 ;; the non-windowed path: produce sentinel-prefixed
-                 ;; strings the bubble painter expects. We bypass
-                 ;; format-answer-markdown-data's cache because window
-                 ;; opts shift each frame; not worth keying.
-                 entry-strs
-                 (layout/lines->sentinel-strings window-lines {:mode :answer})
+                           ;; Clickable block windows are excluded above; their line metadata
+                           ;; remains inert here, as it was in the previous window adapter.
+                           prewrapped
+                           (mapv :line entries)
 
-                 ;; The painter consumes `:prewrapped-lines` as a vec of
-                 ;; sentinel-strings (one per content row) for the
-                 ;; clip-lines-preserving-markers pass. Each entry is
-                 ;; just the string; line-meta starts as nil per row.
-                 prewrapped
-                 (mapv (fn [^String s]
-                         s)
-                       entry-strs)
+                           text-display
+                           (str/join "\n" prewrapped)]
 
-                 text-display
-                 (str/join "\n" entry-strs)]
-
-             (-> message
-                 (assoc :text text-display
-                        :prewrapped-lines prewrapped
-                        :line-meta (vec (repeat (count prewrapped) nil))
-                        :lines-window {:start (long window-start)
-                                       :total-h (long (or window-total-h
-                                                          (+ (count prewrapped)
-                                                             (long window-start))))})
-                 strip-ts))
+                       (-> message
+                           (assoc :text text-display
+                                  :prewrapped-lines prewrapped
+                                  :line-meta (vec (repeat (count prewrapped) nil))
+                                  :lines-window {:start (long window-start)
+                                                 :total-h (long (or window-total-h
+                                                                    (+ (count prewrapped)
+                                                                       (long window-start))))})
+                           strip-ts))
            (and (= :assistant (:role message)) trace)
            (let [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
                                                   (:text message)

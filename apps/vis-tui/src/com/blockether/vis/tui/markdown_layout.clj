@@ -1984,6 +1984,9 @@
    inter-word spacing. Set false to keep them ragged-right. Paragraph endings,
    explicit breaks, headings, tables and literal code are never stretched.
 
+   `:window-start` / `:window-num` render a visible slice through the same
+   justification path as the full projection.
+
    `:code-spacing? false` suppresses generated code margins and padding for
    content inside an existing band. Literal blank source lines are preserved.
 
@@ -1997,7 +2000,11 @@
          (:tail-lines opts)
 
          lines
-         (if tail-n (ast->lines-tail ir width (long tail-n) opts) (ast->lines ir width opts))
+         (cond
+           (some? (:window-start opts))
+           (ast->lines-window ir width (long (:window-start opts)) (long (:window-num opts)) opts)
+           tail-n (ast->lines-tail ir width (long tail-n) opts)
+           :else (ast->lines ir width opts))
 
          justify?
          (not (false? (:justify? opts)))
