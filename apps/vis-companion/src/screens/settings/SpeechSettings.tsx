@@ -432,6 +432,7 @@ export function VoicesPanel({
             <div key={voice.id}>
               <SwipeActions
                 label={name}
+                alignMenuWithHeader
                 actions={
                   voice.is_imported && confirming !== voice.id
                     ? [

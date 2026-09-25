@@ -232,6 +232,7 @@ export function SettingsDialog({
             {gateways.length > 0 ? (
               <MachineRows
                 conns={gateways}
+                alignMenuWithHeader
                 openUrls={openUrls}
                 primaryUrl={primaryUrl}
                 health={health}

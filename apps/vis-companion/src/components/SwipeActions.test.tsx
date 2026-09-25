@@ -84,10 +84,11 @@ describe('SwipeActions tones', () => {
 // delete button under the cursor on whichever rows the sideways gesture crossed.
 // A mouse gets no track and no scroll: one button opens the row's dropdown.
 describe('a mouse never slides', () => {
-  const markup = () =>
+  const markup = (alignMenuWithHeader = false) =>
     renderToStaticMarkup(
       <SwipeActions
         label="a session"
+        alignMenuWithHeader={alignMenuWithHeader}
         actions={[
           {
             key: 'delete',
@@ -115,6 +116,16 @@ describe('a mouse never slides', () => {
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('snap-end mouse:hidden');
     expect(html).not.toContain('group-hover/swipe:opacity');
+  });
+
+  // Regression, settings screenshot: a section action stood 8px to the right of its
+  // row menu. Session lists keep their original inset and touch drawers stay put.
+  it('aligns only opted-in desktop menus with settings header actions', () => {
+    const session = markup();
+    const settings = markup(true);
+    expect(session).toContain('mouse:flex pr-3 sm:pr-4');
+    expect(settings).toContain('mouse:flex pr-1 sm:pr-2');
+    expect(settings).toContain('snap-end mouse:hidden pr-3 sm:pr-4');
   });
 
   // Regression, user report (paraphrased: a plus standing on the left is unacceptable,

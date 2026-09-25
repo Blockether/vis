@@ -195,6 +195,7 @@ export const HeaderRhythm: Story = {
           {/* A row as the settings lists build it: the pressable half, then the
               trailing cell every kebab in this dialog lives in. */}
           <SwipeActions
+            alignMenuWithHeader
             label="tower"
             actions={[
               {
@@ -276,6 +277,12 @@ export const HeaderRhythm: Story = {
     };
     for (const add of adds) {
       await expect(center(ink(add))).toBeCloseTo(center(ink(disclosure)), 1);
+    }
+    // Regression, settings screenshot: row menus sat 8px inside the plus/minus rail.
+    // On a pointer the menu mark and section action must share the same vertical line.
+    if (pointer) {
+      const menu = canvas.getByRole('button', { name: 'Actions for tower' });
+      await expect(center(ink(menu))).toBeCloseTo(center(ink(adds[0])), 1);
     }
     const rail = ink(toggle).getBoundingClientRect().right;
     await expect(ink(disclosure).getBoundingClientRect().right).toBeCloseTo(rail, 1);

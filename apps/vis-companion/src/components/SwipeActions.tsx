@@ -234,6 +234,7 @@ export function SwipeActions({
   isSelected = false,
   label,
   paper = 'panel',
+  alignMenuWithHeader = false,
   trailing,
 }: {
   actions: SwipeAction[];
@@ -248,6 +249,8 @@ export function SwipeActions({
   /** The selected range must cover the whole row, including the touch panel and actions. */
   isSelected?: boolean;
   label?: string;
+  /** Put a settings row's desktop menu mark on its header action rail. */
+  alignMenuWithHeader?: boolean;
   /** Opaque touch-row paper; selected and standing rows keep their own states. */
   paper?: 'panel' | 'set-sessions';
   /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
@@ -401,7 +404,7 @@ export function SwipeActions({
         {trailing && <div className="flex shrink-0">{trailing}</div>}
       </div>
       <div
-        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2 mouse:pr-2.5' : LIST_EDGE_END}`}
+        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2 mouse:pr-2.5' : alignMenuWithHeader ? 'pr-1 sm:pr-2' : LIST_EDGE_END}`}
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>

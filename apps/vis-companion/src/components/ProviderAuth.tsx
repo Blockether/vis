@@ -1281,7 +1281,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
 
         return (
           <div key={provider.id}>
-            <SwipeActions label={provider.label} actions={actions}>
+            <SwipeActions label={provider.label} actions={actions} alignMenuWithHeader>
               <div className="min-w-0">
                 <ListRow
                   className="min-w-0 gap-3"

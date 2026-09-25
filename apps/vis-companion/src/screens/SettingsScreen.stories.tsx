@@ -385,13 +385,25 @@ export const Populated: Story = {
       const box = element.getBoundingClientRect();
       return (box.left + box.right) / 2;
     };
-    for (const row of [
-      page.getByText('Anthropic', { exact: true }).closest('button')!,
-      page.getByText('filesystem', { exact: true }).closest('button')!,
-      page.getByRole('button', { name: /ASR/ }),
-    ]) {
-      const chevron = row.querySelector('.lucide-chevron-right')!;
-      await expect(center(chevron)).toBeCloseTo(center(addMark), 1);
+    if (!pointer) {
+      for (const row of [
+        page.getByText('Anthropic', { exact: true }).closest('button')!,
+        page.getByText('filesystem', { exact: true }).closest('button')!,
+        page.getByRole('button', { name: /ASR/ }),
+      ]) {
+        const chevron = row.querySelector('.lucide-chevron-right')!;
+        await expect(center(chevron)).toBeCloseTo(center(addMark), 1);
+      }
+    }
+    // Regression, settings screenshot: the real machine, provider and MCP menus share
+    // the add action's rail on a pointer; only touch drawers keep the list inset.
+    if (pointer) {
+      for (const name of ['tower', 'Anthropic', 'filesystem']) {
+        const menuMark = page
+          .getByRole('button', { name: `Actions for ${name}` })
+          .querySelector('svg')!;
+        await expect(center(menuMark)).toBeCloseTo(center(addMark), 1);
+      }
     }
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);
@@ -407,4 +419,9 @@ export const Populated: Story = {
     ).toBe(1);
     await userEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
   },
+};
+
+export const PopulatedPointer: Story = {
+  ...Populated,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

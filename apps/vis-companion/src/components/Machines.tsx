@@ -495,6 +495,7 @@ export function MachineRows({
   onPick,
   onRetry,
   actionLabel,
+  alignMenuWithHeader = false,
   onMakePrimary,
   onRename,
   onForget,
@@ -519,6 +520,8 @@ export function MachineRows({
   onRetry?: (conn: GatewayConn) => void | Promise<void>;
   /** The word on the trailing edge when the row LEAVES for somewhere else. */
   actionLabel?: string;
+  /** Settings rows align the menu mark with the section action above. */
+  alignMenuWithHeader?: boolean;
   /** Rank this machine first: the app opens on it, and the row wears `PRIMARY`. */
   onMakePrimary?: (conn: GatewayConn) => void | Promise<void>;
   /** The name THIS DEVICE shows; `undefined` gives the machine its host back. */
@@ -687,7 +690,7 @@ export function MachineRows({
 
         return (
           <div key={conn.url} className="min-w-0">
-            <SwipeActions label={name} actions={actions}>
+            <SwipeActions label={name} actions={actions} alignMenuWithHeader={alignMenuWithHeader}>
               {/* The paper belongs to the whole row: a machine standing open is one
                   slab, and its own settings hang under that slab. */}
               <div className={`min-w-0 ${isMarked ? 'bg-panel-2' : ''}`}>

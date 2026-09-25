@@ -1025,7 +1025,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
 
           return (
             <div key={server.name} className="min-w-0">
-              <SwipeActions label={server.name} actions={actions}>
+              <SwipeActions label={server.name} actions={actions} alignMenuWithHeader>
                 <div className="flex min-h-13 min-w-0 items-center gap-2 pl-3 sm:pl-4 mouse:min-h-0">
                   {/* Enablement leads the row; connection status remains in its
                       trailing text. Config-file settings are visible but read-only. */}
