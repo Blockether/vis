@@ -210,8 +210,8 @@ Vis sends `X-Initiator: user` on the first call of each turn and
 `X-Initiator: agent` on tool-call continuations and internal calls such as
 session titling. Copilot determines billing; these headers do not guarantee a
 particular charge. Setting `X-Initiator` in `llm_headers` overrides this
-behavior. Claude models on Copilot are capped at balanced reasoning, and
-trivial messages are sent without a reasoning parameter.
+behavior. Trivial messages to Claude models on Copilot, such as a greeting or
+a thank-you, are sent without a reasoning parameter.
 
 ### Evaluation runs
 

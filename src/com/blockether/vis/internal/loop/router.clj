@@ -4,7 +4,7 @@
    Builds and rebuilds the shared svar router from configuration, hydrates
    provider credentials and model metadata, recovers from a rejected credential
    by refreshing or rerouting, resolves the effective model and its context
-   budget, and estimates request cost, including Codex fast mode."
+   budget, and estimates request cost, including a provider's fast mode."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.wire :as wire]
@@ -28,14 +28,12 @@
 
 (defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
 
-(defn- copilot-provider? [provider-id] (= :github-copilot provider-id))
-
-(defn- github-copilot-claude-model?
-  ;; Every Copilot seat bills Claude the same way, and one provider now covers
-  ;; them all, so the premium-interaction policy below keys off the provider.
+(defn- adaptive-reasoning-model?
+  "True when `resolved-model`'s provider declares, in its policy's
+  `:adaptive-reasoning-models`, that this model chooses its own thinking depth."
   [resolved-model]
-  (and (copilot-provider? (:provider resolved-model))
-       (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
+  (let [pattern (:adaptive-reasoning-models (catalog/policy (:provider resolved-model)))]
+    (boolean (and pattern (re-find (re-pattern pattern) (str (:name resolved-model)))))))
 
 (def ^:private PROVIDER_FALLBACK_TOGGLE
   "Feature-toggle id gating every AUTOMATIC route away from the provider+model a
@@ -78,19 +76,12 @@
   []
   (not (false? (toggles/value-of REFUSAL_FALLBACK_TOGGLE))))
 
-(def ^:private refusal-fallback-models
-  "Ordered models Vis retries when the CURRENT model's Anthropic safety
-   classifier DECLINES the request (`stop_reason: refusal`). Anthropic
-   recommends serving a refused Fable 5 / Opus 5 request on another Claude
-   model; Opus 4.8 is Vis's standing fallback. Passed to svar as
-   `:refusal-fallbacks`, which owns the actual client-side model switch."
-  ["claude-opus-4-8"])
-
 (defn refusal-fallbacks-for
   "The refusal-fallback chain for `resolved-model` WITHIN its own provider, or nil.
-   Only Anthropic's Fable/Opus/Sonnet 5 models emit `stop_reason: refusal`, so this
-   targets those by name and drops the current model — an identical retry earns the
-   identical decline.
+   The provider's policy names the models whose safety classifier can decline a
+   request (`stop_reason: refusal`) and the ordered models to retry it on
+   (`:refusal-fallback`); svar owns the actual client-side switch. The current
+   model is dropped — an identical retry earns the identical decline.
 
    Every candidate is checked against the models `router` says that provider actually
    serves. svar switches by handing the name back as `:routing {:model …}`, which the
@@ -111,13 +102,16 @@
                   name
                   keyword)
 
+          {:keys [models fallbacks]}
+          (:refusal-fallback (catalog/policy provider-id))
+
           served
           (into #{}
                 (map #(str (:name %)))
                 (:models (some #(when (= provider-id (:id %)) %) (:providers router))))]
 
-      (when (re-find #"(?i)claude-(opus|fable|sonnet)-5" nm)
-        (not-empty (into [] (comp (remove #{nm}) (filter served)) refusal-fallback-models))))))
+      (when (and models (re-find (re-pattern models) nm))
+        (not-empty (into [] (comp (remove #{nm}) (filter served)) fallbacks))))))
 
 (defn pin-routing-to-model
   "Routing svar cannot walk away from once the human turned `provider_fallback` off.
@@ -218,33 +212,30 @@
                      str/trim)]
     (boolean (and text (<= (count text) 80) (re-find casual-request-pattern text)))))
 
-(defn copilot-claude-reasoning-level
-  "Return the reasoning level Vis sends to GitHub Copilot Claude.
+(defn casual-reasoning-level
+  "Return the reasoning level Vis sends for `user-request` to `resolved-model`.
 
-   Only casual chat is special-cased: a bare greeting names no depth, and
-   Claude's adaptive thinking then decides for itself whether the turn is
-   worth thinking about. Non-Copilot / non-Claude models are untouched.
-
-   There is no longer a `:deep` cap. It existed because Copilot once served
-   Claude over the OPENAI-compatible chat wire, where svar pushed
-   `reasoning_effort`; the proxy could not read an OpenAI knob for an
-   Anthropic model, chose its own depth and spiralled into autonomous
-   reasoning loops. Copilot Claude has ridden the native `/v1/messages` wire
-   since svar v0.7.111, where depth is `output_config.effort` — the field the
-   backend actually reads. Capping there bought nothing but thinking
-   SHALLOWER than Anthropic's own default, which is exactly how a `:deep`
-   turn ended up rendering two-word thinking summaries."
+  Only casual chat to a model that chooses its own thinking depth
+  (`:adaptive-reasoning-models` in its provider's policy) is special-cased: a
+  bare greeting names no depth, and the model's adaptive thinking then decides
+  for itself whether the turn is worth thinking about. Every other request keeps
+  `reasoning-level`."
   [resolved-model user-request reasoning-level]
-  (cond (not (github-copilot-claude-model? resolved-model)) reasoning-level
-        (casual-user-request? user-request) nil
-        :else reasoning-level))
+  (if (and (adaptive-reasoning-model? resolved-model) (casual-user-request? user-request))
+    nil
+    reasoning-level))
 
-(defn copilot-llm-headers
+(defn initiator-llm-headers
+  "`{header initiator}` when `resolved-model`'s provider names an
+  `:initiator-header` in its policy and `initiator` is \"user\" or \"agent\";
+  nil otherwise. The provider bills by who started the call."
   [resolved-model initiator]
-  (when (and (copilot-provider? (:provider resolved-model)) (#{"user" "agent"} initiator))
-    {"X-Initiator" initiator}))
+  (when-let [header (:initiator-header (catalog/policy (:provider resolved-model)))]
+    (when (#{"user" "agent"} initiator) {header initiator})))
 
-(defn copilot-initiator-for-iteration
+(defn iteration-initiator
+  "Who started iteration `iteration` of a turn: the person for the first, Vis
+  for every tool-call continuation."
   [iteration]
   (if (zero? (long (or iteration 0))) "user" "agent"))
 
@@ -1167,7 +1158,8 @@
    `ask-code!`."
   [opts]
   (let [router (get-router)]
-    (svar/ask-code! router (with-provider-network-defaults router (rt/with-agent-initiator opts)))))
+    (svar/ask-code! router
+                    (with-provider-network-defaults router (catalog/with-agent-initiator opts)))))
 
 (defn llm-text!
   "Fast helper LLM call for extensions.
@@ -1180,9 +1172,9 @@
    :prompt."
   [{:keys [messages system prompt reasoning temperature routing] :as opts}]
   (let [opts
-        ;; Helper traffic is agent activity, not a human prompt: Copilot bills an
-        ;; unmarked request as a full premium interaction.
-        (rt/with-agent-initiator opts)
+        ;; Helper traffic is agent activity, not a human prompt: a provider that
+        ;; bills by initiator treats an unmarked request as a person's.
+        (catalog/with-agent-initiator opts)
 
         messages
         (or messages
@@ -1464,71 +1456,76 @@
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
    "cache_write_cost" "output_cost" "total_cost"])
 
-(def ^:private codex-fast-price-multiplier 2.0)
-
 (def ^:private service-tier-keys [:service_tier "service_tier" :service-tier "service-tier"])
 
-(defn- priority-service-tier?
-  [extra-body]
-  (boolean (some (fn [k]
-                   (= "priority"
-                      (some-> (get extra-body k)
-                              str
-                              str/lower-case)))
-                 service-tier-keys)))
+(defn- service-tier
+  "The service tier `extra-body` names under `k`, lower-cased, or nil."
+  [extra-body k]
+  (some-> (get extra-body k)
+          str
+          str/lower-case))
 
-(defn- codex-provider?
+(defn- fast-mode
+  "The fast mode `provider`'s policy declares, or nil. `provider` is a keyword
+  or string id."
   [provider]
-  (= "openai-codex"
-     (cond (keyword? provider) (name provider)
-           (some? provider) (str provider))))
+  (:fast-mode (catalog/policy provider)))
 
-(defn- codex-fast?
-  [extra-body turn-features]
-  (or (true? (get turn-features "codex_fast_mode")) (priority-service-tier? extra-body)))
+(defn- fast-mode-requested?
+  "True when this turn asks for `fast-mode`: the provider's own turn feature is
+  on, or a caller-level extra body already names its service tier - the spelling
+  of clients predating the turn feature."
+  [fast-mode extra-body turn-features]
+  (boolean (when fast-mode
+             (or (true? (get turn-features (:turn-feature fast-mode)))
+                 (some #(= (str/lower-case (:service-tier fast-mode)) (service-tier extra-body %))
+                       service-tier-keys)))))
 
-(defn codex-fast-router
-  "Put Priority only on the Codex provider so Svar fallback cannot carry it
-   to another provider. Caller-level Priority also activates this projection
-   for requests from clients predating the provider-neutral turn feature."
+(defn fast-mode-router
+  "Put a requested fast service tier only on the router entry of the provider
+  that declares it, so Svar fallback cannot carry it to another provider."
   [router extra-body turn-features]
-  (if-not (codex-fast? extra-body turn-features)
-    router
-    (update router
-            :providers
-            (fn [providers]
-              (mapv (fn [provider]
-                      (if (codex-provider? (:id provider))
-                        (update provider
-                                :extra-body
-                                (fn [body]
-                                  (assoc (apply dissoc (or body {}) service-tier-keys)
-                                    :service_tier "priority")))
-                        provider))
-                    providers)))))
+  (let [tier-for (fn [provider]
+                   (let [fm (fast-mode (:id provider))]
+                     (when (fast-mode-requested? fm extra-body turn-features) (:service-tier fm))))]
+    (if-not (some tier-for (:providers router))
+      router
+      (update router
+              :providers
+              (fn [providers]
+                (mapv (fn [provider]
+                        (if-let [tier (tier-for provider)]
+                          (update provider
+                                  :extra-body
+                                  (fn [body]
+                                    (assoc (apply dissoc (or body {}) service-tier-keys)
+                                      :service_tier tier)))
+                          provider))
+                      providers))))))
 
 (defn provider-extra-body
-  "Remove Codex Priority from caller-level options after it has been scoped to
-   the Codex router entry. Provider-valid tiers and unrelated fields remain."
+  "Remove every fast service tier a provider declares from caller-level options
+  after [[fast-mode-router]] scoped it to that provider's router entry. Other
+  tiers and unrelated fields remain."
   [extra-body]
-  (not-empty (reduce (fn [body k]
-                       (if (= "priority"
-                              (some-> (get body k)
-                                      str
-                                      str/lower-case))
-                         (dissoc body k)
-                         body))
-                     (or extra-body {})
-                     service-tier-keys)))
+  (let [fast-tiers (into #{}
+                         (keep #(some-> %
+                                        :fast-mode
+                                        :service-tier
+                                        str/lower-case))
+                         (vals (catalog/policies)))]
+    (not-empty (reduce (fn [body k]
+                         (if (contains? fast-tiers (service-tier body k)) (dissoc body k) body))
+                       (or extra-body {})
+                       service-tier-keys))))
 
-(defn codex-fast-cost-multiplier
-  "OpenAI Codex Fast mode uses Priority processing, currently billed at 2x
-     Standard for input, cached input, cache writes, and output. Keep the
-     multiplier provider-gated so Fast intent cannot change fallback pricing."
+(defn fast-mode-cost-multiplier
+  "The price multiplier of `provider`'s fast mode when this turn requested it,
+  else 1.0. The multiplier stays provider-gated so fast intent cannot change a
+  fallback provider's pricing."
   [extra-body turn-features provider]
-  (if (and (codex-fast? extra-body turn-features) (codex-provider? provider))
-    codex-fast-price-multiplier
-    1.0))
+  (let [fm (fast-mode provider)]
+    (if (fast-mode-requested? fm extra-body turn-features) (double (:cost-multiplier fm)) 1.0)))
 
 (defn estimate-token-cost
   "Estimate cost from provider usage while preserving cached/non-cached input split.

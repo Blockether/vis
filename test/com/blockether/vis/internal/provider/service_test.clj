@@ -10,6 +10,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.catalog :as catalog]
+            [com.blockether.vis.internal.provider.vendor.github-copilot :as github-copilot]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -388,7 +389,7 @@
   ;; signed-in account reports, so ONE `:github-copilot` preset covers all of
   ;; them and the withdrawn per-seat ids must never return as pickable rows.
   (let [order
-        @(ns-resolve 'com.blockether.vis.internal.provider.catalog 'PRESET_ORDER)
+        (do (github-copilot/register!) (mapv :id (catalog/presets)))
 
         copilot-presets
         (filterv #(str/starts-with? (name %) "github-copilot") order)]

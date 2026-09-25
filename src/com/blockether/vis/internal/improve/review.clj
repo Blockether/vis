@@ -5,9 +5,9 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.improve :as settings]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -128,7 +128,7 @@
                       :refusal-fallbacks []
                       :max-tokens 4000
                       :reasoning :low
-                      :llm-headers rt/AGENT_INITIATOR_HEADERS
+                      :llm-headers (catalog/agent-initiator-headers)
                       :timeout-ms call-timeout-ms
                       :ttft-timeout-ms 30000
                       :idle-timeout-ms 30000

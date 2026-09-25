@@ -2207,32 +2207,25 @@
    per call and the frozen system prefix always takes the first slot."
   3)
 
-(def ^:private EXTENDED_CACHE_TTL_PROVIDERS
-  "Providers whose endpoint HONOURS Anthropic's 1-hour cache tier: svar turns a
-   `:svar/cache-ttl :1h` block into `cache_control {:ttl \"1h\"}` and adds the
-   `extended-cache-ttl-2025-04-11` beta header the tier requires.
-
-   The 5-minute default dies between two human messages — exactly the gap a
-   resumed session has to cross. An hour covers the pause and only a WRITE costs
-   more (2x base instead of 1.25x), against a read at 0.1x that would otherwise
-   be a full-price miss.
-
-   A provider that silently degrades to 5 minutes must stay OUT: this same set
-   widens [[prompt-cache-window-ms]], and a widened window replays a large cold
-   prefix where the compact recap was cheaper. Membership is MEASURED on the live
-   route, never inferred from the api-style."
-  #{:anthropic :anthropic-coding-plan})
+(defn- provider-prompt-cache
+  "The prompt cache `provider` asks for in its policy (`:prompt-cache`), over
+  the defaults every other provider gets: explicit breakpoints on the 5-minute
+  tier. A 1-hour tier also widens [[prompt-cache-window-ms]], so only a provider
+  whose live route honours it may claim it."
+  [provider]
+  (merge {:strategy :explicit-breakpoints :ttl :5m} (:prompt-cache (catalog/policy provider))))
 
 (defn prompt-cache-policy
   "Static descriptor shared with Svar's cache-context fingerprint. It describes the
    placement [[apply-cache-breakpoints]] owns; Vis exposes one provider tool,
    `python_execution`, whose final wire schema is fingerprinted separately by Svar."
   [provider]
-  {:version 1
-   :strategy (if (= :openai-codex provider) :server-continuation :explicit-breakpoints)
-   :system-anchor :last-system
-   :transcript-anchors TRANSCRIPT_CACHE_BREAKPOINTS
-   :ttl (if (contains? EXTENDED_CACHE_TTL_PROVIDERS provider) :1h :5m)})
+  (let [{:keys [strategy ttl]} (provider-prompt-cache provider)]
+    {:version 1
+     :strategy strategy
+     :system-anchor :last-system
+     :transcript-anchors TRANSCRIPT_CACHE_BREAKPOINTS
+     :ttl ttl}))
 
 (def ^:private UNCACHEABLE_BLOCK_TYPES
   "Content-block types that refuse a `cache_control` marker: preserved thinking is
@@ -2312,7 +2305,8 @@
         (vec messages)
 
         ttl
-        (when (contains? EXTENDED_CACHE_TTL_PROVIDERS provider) :1h)]
+        (let [ttl (:ttl (provider-prompt-cache provider))]
+          (when-not (= :5m ttl) ttl))]
 
     (reduce (fn [ms i]
               (update ms i tag-block-cached ttl))
@@ -2440,15 +2434,15 @@
   300000)
 
 (def ^:private EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS
-  "The same window for a route in [[EXTENDED_CACHE_TTL_PROVIDERS]], whose
-   breakpoints are written with `:svar/cache-ttl :1h`."
+  "The same window for a route whose provider policy asks for the 1-hour tier,
+   whose breakpoints are written with `:svar/cache-ttl :1h`."
   3600000)
 
 (defn- prompt-cache-window-ms
   "How long `provider`'s prefix is assumed to outlive the request that wrote it —
    the tier [[apply-cache-breakpoints]] asked THAT provider for, nothing else."
   ^long [provider]
-  (if (contains? EXTENDED_CACHE_TTL_PROVIDERS provider)
+  (if (= :1h (:ttl (provider-prompt-cache provider)))
     (long EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS)
     (long PROMPT_CACHE_REUSE_FRESH_MS)))
 
@@ -2856,7 +2850,8 @@
                :model model)))
 
 (defn- ask-code-with-session!
-  "Keep one opaque Svar session per effective Codex router; other providers stay one-shot."
+  "Keep one opaque Svar session per effective router for a provider whose prompt
+   cache is a server continuation; other providers stay one-shot."
   [environment resolved-model ask-opts]
   (let [provider
         (:provider resolved-model)
@@ -2870,7 +2865,7 @@
         session-atom
         (:llm-session-atom environment)]
 
-    (if (and (= :openai-codex provider) session-atom)
+    (if (and (= :server-continuation (:strategy (provider-prompt-cache provider))) session-atom)
       (locking session-atom
         (let [entry
               @session-atom

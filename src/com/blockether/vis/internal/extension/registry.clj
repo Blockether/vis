@@ -17,6 +17,8 @@
      deregister-provider!     remove by id
      registered-providers     all entries, vec
      provider-by-id           lookup by id
+     A descriptor may carry a `:provider/policy` map; `provider-policy?`
+     documents its keys.
 
    Command registry (`[:cmd/parent :cmd/name]` tuple key):
      command                  build + validate a descriptor
@@ -89,6 +91,58 @@
     :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn :provider/enrich-models-fn
     :provider/consume-reset-credit-fn :provider/on-selected-fn})
 
+(defn- regex-source?
+  "A non-blank string that compiles as a Java regular expression."
+  [s]
+  (and (util/non-blank-string? s) (try (some? (re-pattern s)) (catch Exception _ false))))
+
+(defn- provider-policy?
+  "Routing policy a provider owns, so the turn loop, the prompt cache, titling and
+  the Add-provider picker read capabilities instead of branching on provider ids.
+  Every key is optional; an absent key means the generic default.
+
+    :preset-rank                position in the Add-provider picker, lowest first
+    :title-rank                 preference for the auto-title side channel, lowest
+                                first; unranked providers are not preferred
+    :prompt-cache               {:strategy :explicit-breakpoints | :server-continuation
+                                 :ttl :5m | :1h}
+    :initiator-header           request header telling the provider whether a person
+                                (\"user\") or Vis (\"agent\") started the call
+    :adaptive-reasoning-models  regex source: matching models choose their own
+                                thinking depth, so casual chat carries no level
+    :refusal-fallback           {:models regex-source :fallbacks [model-name ...]}:
+                                models that can decline a request, and the models
+                                on the same provider to retry it on, in order
+    :fast-mode                  {:turn-feature id :service-tier tier
+                                 :cost-multiplier n}: the turn feature that asks for
+                                a faster service tier and how that tier is billed"
+  [x]
+  (and (map? x)
+       (optional-valid? x :preset-rank int?)
+       (optional-valid? x :title-rank int?)
+       (optional-valid?
+         x
+         :prompt-cache
+         #(and (map? %)
+               (optional-valid? % :strategy #{:explicit-breakpoints :server-continuation})
+               (optional-valid? % :ttl #{:5m :1h})))
+       (optional-valid? x :initiator-header util/non-blank-string?)
+       (optional-valid? x :adaptive-reasoning-models regex-source?)
+       (optional-valid? x
+                        :refusal-fallback
+                        #(and (map? %)
+                              (regex-source? (:models %))
+                              (vector? (:fallbacks %))
+                              (seq (:fallbacks %))
+                              (every? util/non-blank-string? (:fallbacks %))))
+       (optional-valid? x
+                        :fast-mode
+                        #(and (map? %)
+                              (util/non-blank-string? (:turn-feature %))
+                              (util/non-blank-string? (:service-tier %))
+                              (number? (:cost-multiplier %))
+                              (pos? (:cost-multiplier %))))))
+
 (defn provider?
   [x]
   (and (map? x)
@@ -97,6 +151,7 @@
        (util/non-blank-string? (:provider/label x))
        (every? #(optional-valid? x % ifn?) provider-function-keys)
        (optional-valid? x :provider/preset map?)
+       (optional-valid? x :provider/policy provider-policy?)
        (optional-valid? x :provider/is-managed boolean?)
        (optional-valid? x :provider/auth-kind #(or (nil? %) (#{:api-key :oauth :none} %)))
        (optional-valid? x :provider/limits-cache-ms pos-int?)))

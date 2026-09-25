@@ -120,25 +120,6 @@
   ([opts] (with-default-ask-code-idle-timeout opts nil))
   ([opts provider-network] (merge ask-code-runtime-network-defaults (or provider-network {}) opts)))
 
-(def AGENT_INITIATOR_HEADERS
-  "`X-Initiator: agent` — the header GitHub Copilot bills by.
-
-   Copilot charges a FULL premium interaction for every request it believes a
-   HUMAN initiated, and a MISSING `X-Initiator` counts as `user`. svar infers
-   the header from message roles, so any freshly built system+user prompt looks
-   exactly like something a person typed. Vis' background traffic — auto-titles,
-   extension helpers, one-shot `ask-code!`/`llm-text!` calls — is agent
-   activity, and without this header a cosmetic session title costs the same
-   premium interaction as the user's own turn. Only the foreground turn's FIRST
-   iteration is genuinely user initiated (`loop/copilot-initiator-for-iteration`)."
-  {"X-Initiator" "agent"})
-
-(defn with-agent-initiator
-  "Mark `opts` as agent-initiated Copilot traffic. Caller headers win, so a call
-   site that really is answering a human can still pin `\"user\"` itself."
-  [opts]
-  (assoc opts :llm-headers (merge AGENT_INITIATOR_HEADERS (:llm-headers opts))))
-
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   ^long [candidate]

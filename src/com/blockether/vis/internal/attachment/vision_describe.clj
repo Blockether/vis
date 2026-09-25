@@ -26,11 +26,13 @@
      in the prompt, never as the agent's own sight, so pixel-exact work still goes
      through the imaging path.
 
-   A LEAF: svar + attachments + config + runtime-settings + toggles, never back on the loop."
+   A LEAF: svar + attachments + config + runtime-settings + toggles + the provider
+   catalog, never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
@@ -661,9 +663,10 @@
                                  {:messages (describe-messages context label image)
                                   :spec describe-spec
                                   :reasoning :off
-                                  ;; An agent-initiated call, never a user interaction: the
-                                  ;; coding plans bill an unmarked request as user initiated.
-                                  :llm-headers rt/AGENT_INITIATOR_HEADERS
+                                  ;; An agent-initiated call, never a user interaction: a
+                                  ;; plan that bills by initiator counts an unmarked request
+                                  ;; as user initiated.
+                                  :llm-headers (catalog/agent-initiator-headers)
                                   :routing routing
                                   :ttft-timeout-ms DESCRIBE_TTFT_MS
                                   :idle-timeout-ms DESCRIBE_IDLE_MS

@@ -1279,7 +1279,7 @@
 ;; Nothing recurses into data we did not declare. That is the whole point: an
 ;; author's `llm_headers` / `extra_body` reach svar exactly as written, in the
 ;; same string-keyed shape a Clojure provider returns
-;; (`runtime-settings/AGENT_INITIATOR_HEADERS` is `{"X-Initiator" "agent"}`), and
+;; (`catalog/agent-initiator-headers` answers `{"X-Initiator" "agent"}`), and
 ;; a key nobody declared can never be re-typed behind the author's back — which
 ;; is how `is_unlimited` once became `:unlimited?` and made every Python limits
 ;; report fail `provider-limits/::limit-row`.

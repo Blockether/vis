@@ -682,8 +682,9 @@
                   ;; `:lru` after eval.
                   :def-resolve-lru-atom (atom {})
                   :router router
-                  ;; Codex owns one explicit Responses WebSocket/cursor per Vis environment.
-                  ;; The socket opens lazily on the first Codex iteration and is closed with env.
+                  ;; A provider with a `:server-continuation` prompt cache keeps one explicit
+                  ;; session/cursor per Vis environment, opened lazily on its first iteration
+                  ;; and closed with env.
                   :llm-session-atom (atom nil)
                   ;; Compact fingerprints and weights support reuse telemetry without
                   ;; retaining full requests. Exact accepted prefixes live in the single

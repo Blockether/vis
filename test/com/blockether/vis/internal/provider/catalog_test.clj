@@ -6,6 +6,16 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.catalog :as catalog]
+            [com.blockether.vis.internal.provider.vendor.alibaba :as alibaba]
+            [com.blockether.vis.internal.provider.vendor.anthropic :as anthropic]
+            [com.blockether.vis.internal.provider.vendor.github-copilot :as github-copilot]
+            [com.blockether.vis.internal.provider.vendor.lmstudio :as lmstudio]
+            [com.blockether.vis.internal.provider.vendor.ollama :as ollama]
+            [com.blockether.vis.internal.provider.vendor.openai :as openai]
+            [com.blockether.vis.internal.provider.vendor.openai-codex :as openai-codex]
+            [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
+            [com.blockether.vis.internal.provider.vendor.zai :as zai]
+            [com.blockether.vis.test-provider-policies :as policies]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (def ^:private svar-defaults
@@ -14,10 +24,12 @@
    :openai {:base-url "https://api.example.com/v1"}})
 
 (def ^:private providers
-  {:openai {:provider/id :openai :provider/label "OpenAI"}
+  {:openai
+   {:provider/id :openai :provider/label "OpenAI" :provider/policy {:preset-rank 0 :title-rank 2}}
    :anthropic {:provider/id :anthropic
                :provider/label "Anthropic"
-               :provider/preset {:base-url "https://anthropic.example.com" :api-style :anthropic}}
+               :provider/preset {:base-url "https://anthropic.example.com" :api-style :anthropic}
+               :provider/policy {:preset-rank 1 :title-rank 0 :initiator-header "X-Initiator"}}
    :late {:provider/id :late :provider/label "Late"}
    :hidden {:provider/id :hidden :provider/label "Hidden" :provider/preset {:is-hidden true}}
    :github-models {:provider/id :github-models :provider/label "GitHub Models"}})
@@ -89,3 +101,49 @@
                     (str file))]
     (is (empty? offenders)
         "engine namespaces require com.blockether.svar.core, never svar internals")))
+
+(deftest provider-policy-is-owned-by-the-registered-provider
+  (with-catalog (fn []
+                  (testing "a provider's policy answers by keyword or string id"
+                    (is (= {:preset-rank 1 :title-rank 0 :initiator-header "X-Initiator"}
+                           (catalog/policy :anthropic)))
+                    (is (= (catalog/policy :anthropic) (catalog/policy "anthropic"))))
+                  (testing "a provider without a policy and an unknown id both answer {}"
+                    (is (= {} (catalog/policy :late)))
+                    (is (= {} (catalog/policy :unknown)))
+                    (is (= {} (catalog/policy nil))))
+                  (testing "policies lists only the providers that declare one"
+                    (is (= #{:openai :anthropic} (set (keys (catalog/policies))))))
+                  (testing "the title chain follows :title-rank"
+                    (is (= [:anthropic :openai] (catalog/title-providers)))))))
+
+(deftest background-calls-carry-every-declared-initiator-header
+  (with-catalog
+    (fn []
+      (is (= {"X-Initiator" "agent"} (catalog/agent-initiator-headers)))
+      (is (= {:x 1 :llm-headers {"X-Initiator" "agent"}} (catalog/with-agent-initiator {:x 1})))
+      (is (= {:llm-headers {"X-Initiator" "user" "X-Other" "1"}}
+             (catalog/with-agent-initiator {:llm-headers {"X-Initiator" "user" "X-Other" "1"}}))
+          "a caller answering a person keeps its own initiator")
+      (with-redefs [registry/registered-providers (constantly [])]
+        (is (= {} (catalog/agent-initiator-headers)))
+        (is (= {:x 1} (catalog/with-agent-initiator {:x 1}))
+            "no provider reads an initiator header, so none is added")))))
+
+;; Engine tests route through `test-provider-policies/first-party` instead of
+;; registering the real providers; this keeps that fixture equal to what the
+;; first-party vendors declare.
+(deftest first-party-policies-match-the-engine-test-fixture
+  (doseq [register! [openai/register! anthropic/register! openai-codex/register!
+                     github-copilot/register! zai/register! alibaba/register! openrouter/register!
+                     ollama/register! lmstudio/register!]]
+    (register!))
+  (is (= policies/first-party
+         (into {}
+               (map (fn [id]
+                      [id (catalog/policy id)]))
+               (keys policies/first-party))))
+  (is (= [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot :zai
+          :zai-coding-plan :alibaba-coding-plan :alibaba-token-plan :openrouter :ollama :lmstudio]
+         (filterv (set (keys policies/first-party)) (mapv :id (catalog/presets))))
+      "the Add-provider picker keeps its first-party order"))

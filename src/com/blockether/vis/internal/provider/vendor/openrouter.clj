@@ -56,7 +56,8 @@
                         :label LABEL
                         :base-url (svar/provider-base-url PROVIDER_ID)
                         :default-models DEFAULT_MODELS
-                        :env-keys ["OPENROUTER_API_KEY"]}}})
+                        :env-keys ["OPENROUTER_API_KEY"]
+                        :policy {:preset-rank 9}}}})
 
 ;; Limits (credits)
 

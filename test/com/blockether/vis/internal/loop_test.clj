@@ -4,6 +4,7 @@
     [charred.api :as json]
     [com.blockether.vis-python-runtime :as python-runtime]
     [com.blockether.vis.test-python-context :as tpc]
+    [com.blockether.vis.test-provider-policies :as policies]
     [clojure.java.io]
     [clojure.string :as str]
     [com.blockether.svar.core :as svar]
@@ -52,10 +53,14 @@
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
     [com.blockether.vis.internal.session.goals :as goals]
-    [lazytest.core :refer [defdescribe describe it expect throws?]])
+    [lazytest.core :refer [around-each defdescribe describe it expect set-ns-context! throws?]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.util.concurrent Executors]))
+
+;; The turn loop reads routing policy from the provider catalog; every test routes
+;; through the first-party declarations, as a booted engine does.
+(set-ns-context! [(around-each [f] (policies/with-policies f))])
 
 (defdescribe
   python-providers-before-router-test
@@ -1869,14 +1874,14 @@
         (#'turn/run-normal-turn! env "finish" {:hooks {:claim-terminal! (constantly false)}})
         (expect (nil? (get-in @history [[:zai-coding-plan "model"] :completed-turn])))))))
 
-(defdescribe
-  copilot-action-service-headers-test
-  (it "marks Copilot requests with X-Initiator for the action service"
-      (expect (= {"X-Initiator" "agent"}
-                 (#'loop-router/copilot-llm-headers {:provider :github-copilot} "agent"))))
-  (it "does not add action-service headers for non-Copilot providers"
-      (expect (nil?
-                (#'loop-router/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
+(defdescribe initiator-headers-test
+             (it "marks requests with the initiator header the provider's policy names"
+                 (expect (= {"X-Initiator" "agent"}
+                            (loop-router/initiator-llm-headers {:provider :github-copilot}
+                                                               "agent"))))
+             (it "adds no initiator header for a provider whose policy names none"
+                 (expect (nil? (loop-router/initiator-llm-headers {:provider :anthropic-coding-plan}
+                                                                  "agent")))))
 
 ;; Provider-specific request identity enters through the extension lifecycle; the
 ;; engine only applies the generic provider/header contribution it receives.
@@ -5557,10 +5562,9 @@
                      (expect (< (Math/abs (- (* 2.0 (double (get standard k)))
                                              (double (get priority k))))
                                 1.0E-12)))))
-             (it "prices Fast intent only when Codex serves the request"
+             (it "prices fast intent only when the provider declaring it serves the request"
                  (let [multiplier
-                       (deref (ns-resolve 'com.blockether.vis.internal.loop.router
-                                          'codex-fast-cost-multiplier))
+                       loop-router/fast-mode-cost-multiplier
 
                        fast
                        {"codex_fast_mode" true}]
@@ -5573,9 +5577,9 @@
 ;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
 ;; a channel chose Codex Priority before the final provider route was known.
 (defdescribe
-  codex-fast-request-projection-test
+  fast-mode-request-projection-test
   (let [project-router
-        (deref #'loop-router/codex-fast-router)
+        loop-router/fast-mode-router
 
         sanitize
         (deref #'loop-router/provider-extra-body)
@@ -8176,9 +8180,11 @@
     (it "never re-asks the very model that declined"
         ;; The chain is data. Were the refusing model listed in it, re-sending it would
         ;; earn the identical decline — a refusal is deterministic.
-        (with-redefs-fn {#'loop-router/refusal-fallback-models ["claude-opus-5" "claude-opus-4-8"]}
-          (fn []
-            (expect (= ["claude-opus-4-8"] (refusals fleet refused))))))
+        (policies/with-policies (assoc-in policies/first-party
+                                  [:anthropic-coding-plan :refusal-fallback :fallbacks]
+                                  ["claude-opus-5" "claude-opus-4-8"])
+                                (fn []
+                                  (expect (= ["claude-opus-4-8"] (refusals fleet refused))))))
     (it "leaves models that never emit a refusal alone"
         ;; Only the Claude 5 family carries the safety classifier; a chain elsewhere pays
         ;; a model switch for an error it will never see.
@@ -11113,24 +11119,30 @@
 ;; proxy; on the native `/v1/messages` wire the cap only bought thinking
 ;; SHALLOWER than Anthropic's own default effort, which is how a `:deep` turn
 ;; came back with two-word thinking summaries.
-(defdescribe copilot-claude-reasoning-level-test
+(defdescribe casual-reasoning-level-test
              (it "sends the requested depth for Copilot Claude"
                  (expect (= :deep
-                            (#'loop-router/copilot-claude-reasoning-level
-                             {:provider :github-copilot :name "claude-opus-5"}
-                             "please refactor the loop"
-                             :deep))))
-             (it "leaves non-Copilot providers at the requested level"
+                            (loop-router/casual-reasoning-level {:provider :github-copilot
+                                                                 :name "claude-opus-5"}
+                                                                "please refactor the loop"
+                                                                :deep))))
+             (it "keeps the requested level for casual chat to a provider without adaptive models"
                  (expect (= :deep
-                            (#'loop-router/copilot-claude-reasoning-level
-                             {:provider :anthropic-coding-plan :name "claude-opus-5"}
-                             "please refactor the loop"
-                             :deep))))
+                            (loop-router/casual-reasoning-level {:provider :anthropic-coding-plan
+                                                                 :name "claude-opus-5"}
+                                                                "hey"
+                                                                :deep))))
+             (it "keeps the requested level for casual chat to a model outside the pattern"
+                 (expect (= :deep
+                            (loop-router/casual-reasoning-level {:provider :github-copilot
+                                                                 :name "gpt-5.6"}
+                                                                "hey"
+                                                                :deep))))
              (it "names no depth for casual Copilot chat, leaving it to adaptive thinking"
-                 (expect (nil? (#'loop-router/copilot-claude-reasoning-level
-                                {:provider :github-copilot :name "claude-opus-5"}
-                                "hey"
-                                :deep)))))
+                 (expect (nil? (loop-router/casual-reasoning-level {:provider :github-copilot
+                                                                    :name "claude-opus-5"}
+                                                                   "hey"
+                                                                   :deep)))))
 
 ;; Regression, issue #112: the `:provider-call` lifecycle marker carried only the iteration
 ;; and a start timestamp, so a stalled stream had nothing to name — the gateway failed the

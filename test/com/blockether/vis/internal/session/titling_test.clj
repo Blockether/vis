@@ -2,7 +2,12 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.session.titling :as titling]
-            [lazytest.core :refer [defdescribe it expect]]))
+            [com.blockether.vis.test-provider-policies :as policies]
+            [lazytest.core :refer [around-each defdescribe it expect set-ns-context!]]))
+
+;; The title chain and its billing header come from provider policy; every test
+;; routes through the first-party declarations, as a booted engine does.
+(set-ns-context! [(around-each [f] (policies/with-policies f))])
 
 ;; The interesting fns are private; reach them the way loop-test does.
 (defn- with-titling-cfg
@@ -350,7 +355,7 @@
               (expect (= "Pinned Title Route" @title*))))))))
 
 ;; Auto-titling is COSMETIC, but it is an `ask!` like any other: with a Copilot
-;; plan in AUTO_TITLE_PROVIDER_ORDER and no `X-Initiator`, svar inferred `user`
+;; plan in the title chain and no `X-Initiator`, svar inferred `user`
 ;; from the fresh system+user title prompt and GitHub billed one FULL premium
 ;; interaction per session title.
 (defdescribe auto-title-agent-initiator-test
@@ -376,3 +381,12 @@
                      @(maybe-auto-title! (env* sid title*) "please redesign the fleet scope chips")
                      (expect (= "agent" (get-in @seen [:llm-headers "X-Initiator"])))
                      (expect (= "Fleet Scope Chips" @title*))))))
+
+(defdescribe auto-title-routing-test
+             (it "prefers the providers that rank themselves for titles, in rank order"
+                 (expect (= {:prefer-providers [:zai-coding-plan :alibaba-coding-plan :openai-codex
+                                                :anthropic-coding-plan :github-copilot]
+                             :optimize [:cost :speed]}
+                            (#'titling/auto-title-routing {}))))
+             (it "lets an explicit titling provider pin the call instead"
+                 (expect (= {:provider :zai} (#'titling/auto-title-routing {"provider" "zai"})))))

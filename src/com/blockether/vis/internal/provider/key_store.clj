@@ -268,7 +268,8 @@
 (defn provider-entries
   "One `:ext/providers` entry per plan in the book, in plan order.
    `limits-fn` is `(fn [plan-tag] (fn [] report))` because a quota endpoint -
-   or the absence of one - is the vendor's own business.
+   or the absence of one - is the vendor's own business. A plan's optional
+   `:policy` becomes the entry's `:provider/policy`.
 
    `:provider/auth-kind :api-key` is DECLARED, never inferred: the
    `:provider/auth-fn` below is only the terminal helper that prints key guidance,
@@ -276,16 +277,18 @@
    auth flow` instead of asking for the key."
   [book limits-fn]
   (mapv (fn [plan-tag]
-          (let [{:keys [provider-id label base-url default-models]} (plan-of book plan-tag)]
-            {:provider/id provider-id
-             :provider/label label
-             :provider/preset {:base-url base-url :default-models default-models}
-             :provider/status-fn #(status-report book plan-tag)
-             :provider/logout-fn #(logout-plan! book plan-tag)
-             :provider/detect-fn #(detect-key book plan-tag)
-             :provider/auth-kind :api-key
-             :provider/auth-fn #(auth! book plan-tag %)
-             :provider/auth-prompt-fn #(auth-instruction-lines book plan-tag)
-             :provider/get-token-fn #(token-envelope book plan-tag)
-             :provider/limits-fn (limits-fn plan-tag)}))
+          (let [{:keys [provider-id label base-url default-models policy]} (plan-of book plan-tag)]
+            (cond-> {:provider/id provider-id
+                     :provider/label label
+                     :provider/preset {:base-url base-url :default-models default-models}
+                     :provider/status-fn #(status-report book plan-tag)
+                     :provider/logout-fn #(logout-plan! book plan-tag)
+                     :provider/detect-fn #(detect-key book plan-tag)
+                     :provider/auth-kind :api-key
+                     :provider/auth-fn #(auth! book plan-tag %)
+                     :provider/auth-prompt-fn #(auth-instruction-lines book plan-tag)
+                     :provider/get-token-fn #(token-envelope book plan-tag)
+                     :provider/limits-fn (limits-fn plan-tag)}
+              policy
+              (assoc :provider/policy policy))))
         (keys (:plans book))))

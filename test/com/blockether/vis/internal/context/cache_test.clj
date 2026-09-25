@@ -27,7 +27,12 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.env-digest :as env-digest]
             [com.blockether.vis.internal.util :as util]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [com.blockether.vis.test-provider-policies :as policies]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; Breakpoint tiers and cache windows come from provider policy; every test routes
+;; through the first-party declarations, as a booted engine does.
+(set-ns-context! [(around-each [f] (policies/with-policies f))])
 
 (def ^:private base-ctx
   {"session_id" "s1"

@@ -63,12 +63,16 @@
                     :label "Z.ai (Coding Plan)"
                     :base-url (svar/provider-base-url :zai-coding-plan)
                     :default-models (svar/provider-default-models :zai-coding-plan)
-                    :env-keys ["ZAI_CODING_API_KEY"]}
+                    :env-keys ["ZAI_CODING_API_KEY"]
+                    ;; A flat-fee plan: its smallest model is the first choice for
+                    ;; session titles.
+                    :policy {:preset-rank 6 :title-rank 0}}
            :pass {:provider-id :zai
                   :label "Z.ai (Pass)"
                   :base-url (svar/provider-base-url :zai)
                   :default-models (svar/provider-default-models :zai)
-                  :env-keys ["ZAI_API_KEY"]}}})
+                  :env-keys ["ZAI_API_KEY"]
+                  :policy {:preset-rank 5}}}})
 
 ;; Coding-plan quota (the one plan with a live usage endpoint)
 

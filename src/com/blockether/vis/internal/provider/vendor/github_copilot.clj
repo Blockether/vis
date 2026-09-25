@@ -876,6 +876,28 @@
     (enable-known-copilot-models! token policy-root))
   {:status :ok})
 
+(def ^:private routing-policy
+  "Copilot's routing policy.
+
+  `:initiator-header` is how Copilot bills: it charges a FULL premium
+  interaction for every request it believes a person started, and a MISSING
+  `X-Initiator` counts as `user`. Vis marks only a turn's first iteration as
+  `user`; tool-call continuations and background calls are `agent`.
+
+  `:adaptive-reasoning-models`: Claude on Copilot rides the native
+  `/v1/messages` wire, where depth is `output_config.effort` and Claude's
+  adaptive thinking decides for itself whether a casual message is worth
+  thinking about, so casual chat carries no reasoning level.
+
+  Copilot serves Claude, so it carries Anthropic's refusal fallback too; the
+  router still drops a fallback this account does not serve."
+  {:preset-rank 4
+   ;; Flat-fee seat: the last titling choice, after the coding plans.
+   :title-rank 4
+   :initiator-header "X-Initiator"
+   :adaptive-reasoning-models "(?i)claude"
+   :refusal-fallback {:models "(?i)claude-(opus|fable|sonnet)-5" :fallbacks ["claude-opus-4-8"]}})
+
 ;; ONE transparent provider for the Copilot account, one OAuth login. Copilot
 ;; serves two cacheable wires behind that single token, BOTH under `/v1`:
 ;;   - Claude      -> native Anthropic `/v1/messages` (signed thinking + cache_control)
@@ -925,7 +947,8 @@
                                :first-byte-timeout-ms 240000
                                :idle-timeout-ms 120000
                                :semantic-timeout-ms 300000}
-                     :default-models (svar/provider-default-models COPILOT_PROVIDER_ID)}})
+                     :default-models (svar/provider-default-models COPILOT_PROVIDER_ID)}
+   :provider/policy routing-policy})
 
 (defn register!
   []

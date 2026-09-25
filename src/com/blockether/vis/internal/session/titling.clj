@@ -3,12 +3,13 @@
    registries (per-session value, global, and the pending/spinner channel), the
    single `set-title-with-broadcast!` mutation point, and the async auto-title
    side-channel (an off-surface `ask!` that names a session on its first
-   real turn). A LEAF — depends only on persistance + svar + runtime-settings,
-   never back on the loop."
+   real turn). A LEAF — depends only on persistance, svar, runtime settings and
+   the provider catalog, never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
@@ -248,20 +249,6 @@
     :content (str "Previous title: " (or (not-empty previous-title) "<none>")
                   "\nLatest user request:\n" user-request)}])
 
-(def ^:private AUTO_TITLE_PROVIDER_ORDER
-  "Preferred provider order for the auto-title side-channel. These are all
-   flat-fee coding-plan subscriptions, so per-token `:cost` is the WRONG lens
-   (it would dodge the metered-but-actually-free plans toward $0 Copilot).
-   Instead we pin each plan in this deliberate order and pick its SMALLEST
-   model (`{:provider p :optimize [:cost :speed]}` selects the cheapest +
-   fastest model WITHIN the pinned provider: glm on zai, a qwen coder on the
-   alibaba coding plan, gpt-5.3-codex on codex, haiku on anthropic, a mini on
-   copilot). Any configured provider not
-   listed here is appended afterwards so the chain still covers the whole
-   fleet. First provider that returns a usable title wins; on failure
-   (model unavailable / endpoint rejects) we fall through to the next."
-  [:zai-coding-plan :alibaba-coding-plan :openai-codex :anthropic-coding-plan :github-copilot])
-
 ;; `titling:` config (Blockether/vis#71)
 ;;
 ;; Auto-titling is COSMETIC; the foreground turn is not. On a gateway with a
@@ -326,7 +313,16 @@
   "Routing for the title side-channel. An explicit `titling.provider` (plus an
    optional `titling.model`) PINS the call, so a constrained deployment can name
    the one cheap endpoint it is happy to spend on instead of having svar walk
-   the configured fleet."
+   the configured fleet.
+
+   Otherwise the call prefers `catalog/title-providers`, the providers that rank
+   themselves with `:title-rank`. They are flat-fee coding-plan subscriptions,
+   so per-token `:cost` is the WRONG lens (it would dodge the metered-but-actually-
+   free plans toward $0 Copilot); `:optimize [:cost :speed]` instead picks the
+   cheapest, fastest model WITHIN each preferred provider. Configured providers
+   without a rank follow, so the chain still covers the whole fleet. The first
+   provider that returns a usable title wins; on failure (model unavailable,
+   endpoint rejects) svar falls through to the next."
   [cfg]
   (if-let [provider (some-> (get cfg "provider")
                             str
@@ -338,7 +334,7 @@
               str/trim
               not-empty)
       (assoc :model (str/trim (str (get cfg "model")))))
-    {:prefer-providers AUTO_TITLE_PROVIDER_ORDER :optimize [:cost :speed]}))
+    {:prefer-providers (catalog/title-providers) :optimize [:cost :speed]}))
 
 (def ^:private TITLE_RATE_LIMIT_POLICY
   "Rate limiting is the FOREGROUND turn's business, not the title's. A titling
@@ -381,10 +377,10 @@
                                         :spec auto-title-spec
                                         :reasoning :off
                                         ;; Cosmetic title, never a premium
-                                        ;; interaction: the Copilot plans in
-                                        ;; AUTO_TITLE_PROVIDER_ORDER bill an
-                                        ;; unmarked request as user initiated.
-                                        :llm-headers rt/AGENT_INITIATOR_HEADERS
+                                        ;; interaction: a plan that bills by
+                                        ;; initiator counts an unmarked request
+                                        ;; as user initiated.
+                                        :llm-headers (catalog/agent-initiator-headers)
                                         :routing (auto-title-routing (titling-config))
                                         :ttft-timeout-ms AUTO_TITLE_TTFT_MS
                                         :idle-timeout-ms AUTO_TITLE_IDLE_MS
@@ -400,14 +396,14 @@
                 {:level :warn
                  :id ::auto-title-deadline
                  :data {:deadline-ms AUTO_TITLE_HARD_DEADLINE_MS
-                        :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
+                        :providers (catalog/title-providers)}}
                 "Auto-title provider call exceeded hard deadline; keeping deterministic fallback")
               nil)
           (:error outcome) (do (tel/log!
                                  {:level :warn
                                   :id ::auto-title-call-failed
                                   :data {:error (ex-message (:error outcome))
-                                         :providers (vec AUTO_TITLE_PROVIDER_ORDER)}}
+                                         :providers (catalog/title-providers)}}
                                  "Auto-title provider chain failed; keeping deterministic fallback")
                                nil)
           :else (sanitize-auto-title (some-> outcome

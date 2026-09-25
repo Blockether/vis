@@ -648,10 +648,10 @@
                                              :done? (boolean done?)})))
                               ;; Provider transport bookkeeping has no channel projection.
                               nil))))
-          copilot-initiator (loop-router/copilot-initiator-for-iteration iteration)
-          effective-llm-headers
-          (not-empty (merge (loop-router/copilot-llm-headers resolved-model copilot-initiator)
-                            llm-headers))
+          initiator (loop-router/iteration-initiator iteration)
+          effective-llm-headers (not-empty (merge (loop-router/initiator-llm-headers resolved-model
+                                                                                     initiator)
+                                                  llm-headers))
           provider-network (loop-router/provider-network-policy (:router environment)
                                                                 resolved-model)
           provider-deadlines (loop-router/provider-watchdog-timeouts provider-network)
@@ -1987,7 +1987,7 @@
           (merge workspace-overrides)
 
           true
-          (update :router loop-router/codex-fast-router extra-body turn-features)
+          (update :router loop-router/fast-mode-router extra-body turn-features)
 
           ;; Surface the cancellation token on the environment
           ;; so `run-python-code` can call
@@ -2154,9 +2154,9 @@
         (loop-router/provider-extra-body extra-body)
 
         root-cost-multiplier
-        (loop-router/codex-fast-cost-multiplier extra-body
-                                                turn-features
-                                                (:provider initial-resolved-model))
+        (loop-router/fast-mode-cost-multiplier extra-body
+                                               turn-features
+                                               (:provider initial-resolved-model))
 
         initial-prompt-cache-context
         (transcript/resolved-prompt-cache-context environment
@@ -2404,7 +2404,7 @@
                                                            out
                                                            {:api-usage api-usage
                                                             :cost-multiplier
-                                                            (loop-router/codex-fast-cost-multiplier
+                                                            (loop-router/fast-mode-cost-multiplier
                                                               extra-body
                                                               turn-features
                                                               served-provider)})
@@ -2581,9 +2581,9 @@
                                                                     (:provider routing)
                                                                     (:model routing))
                  raw-reasoning-level (when has-reasoning? base-reasoning-level)
-                 reasoning-level (loop-router/copilot-claude-reasoning-level pre-resolved-model
-                                                                             user-request
-                                                                             raw-reasoning-level)
+                 reasoning-level (loop-router/casual-reasoning-level pre-resolved-model
+                                                                     user-request
+                                                                     raw-reasoning-level)
                  iteration-extra-body (loop-router/provider-extra-body extra-body)
                  ;; The window the NEXT request is actually measured against —
                  ;; the rescued peer's when this turn moved, else the pin's.

@@ -4,9 +4,11 @@
    Svar's public catalog supplies the defaults - base URLs, dialects, the
    placeholder keys of local presets, rate limits, model filters and pricing.
    A registered provider extension owns its label, preset and transport
-   overrides, and those win over svar's defaults. Config, limits, the gateway
-   and the turn loop read provider facts here instead of merging svar's table
-   themselves."
+   overrides, and those win over svar's defaults. It also owns its routing
+   policy - prompt-cache tier, billing header, fast mode, refusal fallbacks and
+   its rank in the picker and the title chain. Config, limits, the gateway, titling
+   and the turn loop read provider facts here instead of merging svar's table or
+   branching on provider ids themselves."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.registry :as registry]))
@@ -16,11 +18,24 @@
 ;; id, and a seat tier is what the signed-in account reports.
 (def ^:private removed-provider-ids #{:blockether :github-models})
 
-(def ^:private PRESET_ORDER
-  "Stable display order in the 'Add Provider' picker. Most-likely-used
-   first. Anything not in this vec lands at the end."
-  [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot :zai :zai-coding-plan
-   :alibaba-coding-plan :alibaba-token-plan :openrouter :ollama :lmstudio])
+(defn policy
+  "The routing policy the registered provider `pid` owns under `:provider/policy`
+  (keys documented by `extension.registry/provider-policy?`), or {} when the
+  provider declares none or is not registered. `pid` is a keyword or string id."
+  [pid]
+  (or (some-> (if (string? pid) (keyword pid) pid)
+              registry/provider-by-id
+              :provider/policy)
+      {}))
+
+(defn policies
+  "Every registered provider's policy as `{provider-id policy}`, skipping
+  providers that declare none."
+  []
+  (into {}
+        (keep (fn [{:provider/keys [id policy]}]
+                (when (seq policy) [id policy])))
+        (registry/registered-providers)))
 
 (defn- svar-defaults
   "Svar's catalog defaults for a provider id, or nil."
@@ -107,16 +122,12 @@
           (assoc :is-hidden true))))))
 
 (defn presets
-  "All known provider presets, sorted for the 'Add Provider' picker."
+  "All known provider presets, sorted for the 'Add Provider' picker by each
+   provider's `:preset-rank`, unranked last, then by label."
   []
-  (let [order-rank
-        (zipmap PRESET_ORDER (range))
-
-        ids
-        (into #{}
-              (concat (keys svar/KNOWN_PROVIDERS)
-                      (map :provider/id (registry/registered-providers))))]
-
+  (let [ids (into #{}
+                  (concat (keys svar/KNOWN_PROVIDERS)
+                          (map :provider/id (registry/registered-providers))))]
     (->> ids
          (remove removed-provider-ids)
          (keep template)
@@ -128,8 +139,43 @@
          ;; the last named preset in the "Add Provider" picker — and the TUI has
          ;; no handling for them anyway.
          (remove #(str/blank? (:label %)))
-         (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
+         (sort-by (fn [{:keys [id label]}]
+                    [(or (:preset-rank (policy id)) Long/MAX_VALUE) label]))
          vec)))
+
+(defn title-providers
+  "Provider ids the auto-title side channel prefers, in their declared
+  `:title-rank` order. Providers without a rank are left to the router."
+  []
+  (->> (policies)
+       (keep (fn [[id {:keys [title-rank]}]]
+               (when title-rank [title-rank id])))
+       sort
+       (mapv second)))
+
+(defn agent-initiator-headers
+  "Headers marking a background call as started by Vis rather than a person:
+  `{header \"agent\"}` for every provider whose policy names an
+  `:initiator-header`. svar infers the initiator from message roles, so a freshly
+  built system+user prompt looks exactly like something a person typed; without
+  these, background traffic - auto-titles, extension helpers, one-shot
+  `ask-code!`/`llm-text!` calls - bills like the person's own turn. A background
+  call is routed after these are chosen, so it carries each one; a provider
+  ignores headers it does not read."
+  []
+  (into {}
+        (keep (fn [[_ {:keys [initiator-header]}]]
+                (when initiator-header [initiator-header "agent"])))
+        (policies)))
+
+(defn with-agent-initiator
+  "Mark `opts` as agent-initiated traffic. Caller headers win, so a call site
+  that really is answering a person can still pin `\"user\"` itself."
+  [opts]
+  (let [headers (merge (agent-initiator-headers) (:llm-headers opts))]
+    (cond-> opts
+      (seq headers)
+      (assoc :llm-headers headers))))
 
 (defn model-visible?
   "True when svar's provider-scoped model filters allow this model id."

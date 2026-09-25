@@ -21,4 +21,5 @@
                     :ext/providers [{:provider/id :ollama
                                      :provider/label "Ollama"
                                      :provider/preset {:base-url "http://localhost:11434/v1"}
+                                     :provider/policy {:preset-rank 10}
                                      :provider/status-fn #'status}]})))

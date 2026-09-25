@@ -4,9 +4,9 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.context.prompt :as prompt]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.attachment.vision-describe :as vd]
+            [com.blockether.vis.test-provider-policies :as policies]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 (defn- throwaway-store
@@ -266,8 +266,10 @@
         (expect (false? (vd/available? nil)))))
   (it "asks with a vision-required routing and an agent-initiated header"
       (let [{:keys [calls]}
-            (with-asks descriptions
-                       #(vd/describe-images (mixed-fleet) "ctx" [(image "/tmp/a.png")]))
+            (policies/with-policies
+              #(with-asks descriptions
+                          (fn []
+                            (vd/describe-images (mixed-fleet) "ctx" [(image "/tmp/a.png")]))))
 
             opts
             (:opts (first calls))]
@@ -276,7 +278,7 @@
         (expect (= #{:vision} (:capabilities (:routing opts))))
         (expect (= :off (:reasoning opts)))
         (expect (some? (:spec opts)))
-        (expect (= (:llm-headers opts) rt/AGENT_INITIATOR_HEADERS))))
+        (expect (= {"X-Initiator" "agent"} (:llm-headers opts)))))
   (it "runs on a router that never waits out a 429 and retries once"
       (let [{:keys [calls]}
             (with-asks descriptions

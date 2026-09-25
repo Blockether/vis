@@ -3536,7 +3536,7 @@ vis.register_extension(vis.Extension(
             ;; An UNDECLARED preset key is named through `wire/engine-key` and
             ;; its VALUE is never entered: `extra_body`/`llm_headers` are the
             ;; author's own API payloads and reach svar exactly as written —
-            ;; string-keyed, like `runtime-settings/AGENT_INITIATOR_HEADERS`.
+            ;; string-keyed, like `catalog/agent-initiator-headers`.
             (expect (= "/responses" (:responses-path preset)))
             (expect (= {"X-Initiator" "agent"} (:llm-headers preset)))
             (expect (= {"temperature" 0.6 "top_p" 0.95} (:extra-body preset))))

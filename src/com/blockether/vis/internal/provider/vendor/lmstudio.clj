@@ -69,5 +69,6 @@
                          ;; Sampler defaults prevent local thinking-model loops.
                          :extra-body
                          {:temperature 0.6 :top_p 0.95 :top_k 20 :min_p 0.0 :presence_penalty 1.5}}
+                        :provider/policy {:preset-rank 11}
                         :provider/status-fn #'status
                         :provider/enrich-models-fn #'enrich-models}]})))
