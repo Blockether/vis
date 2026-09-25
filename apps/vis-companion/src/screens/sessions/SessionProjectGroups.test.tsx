@@ -238,7 +238,7 @@ describe('ProjectGroup groups', () => {
     expect(groupButton).toHaveClass('pl-3', 'gap-0');
     const groupHeader = groupButton.parentElement!;
     expect(groupHeader).not.toHaveClass('border-t');
-    expect(groupHeader).toHaveClass('border-b', 'border-edge');
+    expect(groupHeader).toHaveClass('border-b', 'border-b-edge-strong');
     // The group fold shares the project mark's column without moving either name.
     const groupChevron = groupButton.querySelector('svg.lucide-chevron-right');
     expect(groupChevron).toHaveClass('-translate-x-1.5');
@@ -302,20 +302,24 @@ describe('ProjectGroup groups', () => {
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
     expect(within(groupsHeader).queryByText('1 group')).toBeNull();
-    // Set captions share the same type scale as the project qualifier without
-    // competing with the group name.
-    expect(groupsHeader).toHaveClass('border-y', 'border-edge', 'bg-set-groups');
+    // Set labels use full-strength ink; the bands remain quieter through their smaller type.
+    // Their tinted upper rules distinguish the shelves; the lower rules close each shelf.
+    expect(groupsHeader).toHaveClass(
+      'border-t', 'border-b', 'border-t-set-groups-border', 'border-b-edge-strong', 'bg-set-groups',
+    );
     expect(groupsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
     // Phone set headings fit the pager's 44px touch target plus their border rules.
     expect(groupsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
     expect(within(groupsHeader).getByText('Groups')).toHaveClass(
-      'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
+      'font-mono', 'text-ui', 'font-medium', 'text-white',
     );
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
     // The project still owns its total; each set keeps only its own heading and actions.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
     expect(within(sessionsHeader).queryByText('2 sessions')).toBeNull();
-    expect(sessionsHeader).toHaveClass('border-y', 'border-edge', 'bg-set-sessions');
+    expect(sessionsHeader).toHaveClass(
+      'border-t', 'border-b', 'border-t-set-sessions-border', 'border-b-edge-strong', 'bg-set-sessions',
+    );
     const sessionPaper = groupsHeader.parentElement!.parentElement!;
     expect(sessionPaper).toHaveClass('bg-set-sessions');
     expect(sessionPaper).toContainElement(wallet.querySelector(`[data-session-id="${ROWS[0].id}"]`));
@@ -327,7 +331,7 @@ describe('ProjectGroup groups', () => {
     expect(sessionsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
     expect(sessionsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
     expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
-      'font-mono', 'text-ui', 'font-medium', 'text-dialog-hint',
+      'font-mono', 'text-ui', 'font-medium', 'text-white',
     );
     const projectHeader = within(list).getByText(STORY_NEWER_PROJECT.name).closest('header')!;
     expect(within(projectHeader).getByText('4 sessions')).toBeInTheDocument();

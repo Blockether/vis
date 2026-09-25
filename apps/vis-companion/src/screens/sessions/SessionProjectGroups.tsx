@@ -279,9 +279,9 @@ function SetHeader({
 }) {
   return (
     <div
-      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-y border-edge py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 max-sm:min-h-11.5 max-sm:py-0 mouse:min-h-8 mouse:py-0 ${label === 'Groups' ? 'bg-set-groups' : 'bg-set-sessions'}`}
+      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 max-sm:min-h-11.5 max-sm:py-0 mouse:min-h-8 mouse:py-0 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
     >
-      <span className="font-mono text-ui font-medium text-dialog-hint">{label}</span>
+      <span className="font-mono text-ui font-medium text-white">{label}</span>
       {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
       {/* The set menu follows its own page controls on the trailing edge. */}
       {(action || navigation) && (
@@ -322,7 +322,7 @@ function GroupBand({
   // The set header supplies the first top edge. A group with visible rows closes
   // its own heading; otherwise the next group or set supplies that boundary.
   return (
-    <div className={`flex items-stretch border-edge bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}>
+    <div className={`flex items-stretch border-t-edge border-b-edge-strong bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}>
       {/* The band and its rows share one coloured edge, so a group reads as a place
           rather than as a caption. That rail is the ONLY place this colour is painted
           in the list: a dot beside the name repeated what the edge already says. */}

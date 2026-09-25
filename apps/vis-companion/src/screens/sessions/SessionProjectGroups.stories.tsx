@@ -417,7 +417,7 @@ export const Groups: Story = {
     );
     const groupType = getComputedStyle(groupName);
     const projectType = getComputedStyle(projectName);
-    // A consistent type ladder: bold project, readable child, quiet set captions.
+    // A consistent type ladder: bold project, readable child, smaller set captions in full ink.
     await expect(
       Math.abs(groupName.getBoundingClientRect().left - projectName.getBoundingClientRect().left),
     ).toBeLessThanOrEqual(1);
@@ -434,10 +434,8 @@ export const Groups: Story = {
       await expect(type.fontSize).toBe('11px');
       await expect(type.fontWeight).toBe('500');
       await expect(type.textTransform).toBe('none');
-      await expect(type.color).not.toBe(groupType.color);
-      await expect(getComputedStyle(header).borderBottomColor).toBe(
-        getComputedStyle(wallet.parentElement!).borderTopColor,
-      );
+      await expect(type.color).toBe(groupType.color);
+      await expect(getComputedStyle(header).borderBottomColor).toBe(groupRule.borderBottomColor);
     }
     // Keep full-size action targets even when the captions get smaller.
     await expect(groupsHeader.getBoundingClientRect().height).toBe(
@@ -977,7 +975,7 @@ export const ExpandedHeaderAcrossThemes: Story = {
           await expect(maxChannelDelta).toBeGreaterThan(0);
           await expect(maxChannelDelta).toBeLessThanOrEqual(20);
           await expect(getComputedStyle(expanded).borderBottomColor).toBe('rgb(216, 209, 200)');
-          await expect(getComputedStyle(groups.firstElementChild!).color).toBe('rgb(98, 93, 87)');
+          await expect(getComputedStyle(groups.firstElementChild!).color).toBe('rgb(38, 38, 38)');
         } else {
           await expect(surface(expanded)).not.toBe(surface(collapsed));
           await expect(surface(expanded)).not.toBe(surface(groups));
@@ -988,10 +986,25 @@ export const ExpandedHeaderAcrossThemes: Story = {
         for (const row of [filedRow, looseRow]) {
           await expect(painted(row)).toBe(surface(sessions));
         }
+        const groupRules = getComputedStyle(groups);
+        const sessionRules = getComputedStyle(sessions);
         const bandRule = getComputedStyle(groupName.closest('button')!.parentElement!);
+        await expect(groupRules.borderTopWidth).toBe('1px');
+        await expect(sessionRules.borderTopWidth).toBe('1px');
+        await expect(groupRules.borderBottomColor).toBe(sessionRules.borderBottomColor);
         await expect(bandRule.borderBottomWidth).toBe('1px');
-        await expect(bandRule.borderBottomColor).toBe(getComputedStyle(groups).borderBottomColor);
-        // Every shipped theme keeps small group and set captions legible on their paper.
+        await expect(bandRule.borderBottomColor).toBe(groupRules.borderBottomColor);
+        // Monochrome themes keep solid rules; other themes tint each upper rule differently.
+        if (id !== 'paper' && id !== 'high-contrast-dark') {
+          await expect(groupRules.borderTopColor).not.toBe(groupRules.borderBottomColor);
+          await expect(sessionRules.borderTopColor).not.toBe(sessionRules.borderBottomColor);
+          await expect(groupRules.borderTopColor).not.toBe(sessionRules.borderTopColor);
+        }
+        // The two set names use strong ink against both shelf surfaces.
+        for (const caption of [groups.firstElementChild!, sessions.firstElementChild!]) {
+          await expect(contrast(caption)).toBeGreaterThanOrEqual(6);
+        }
+        // Every shipped theme keeps small group captions and session titles legible.
         for (const caption of [
           groupName, groups.firstElementChild!, sessions.firstElementChild!,
           within(filedRow as HTMLElement).getByText(SCROLL_ROWS[1].title!),
