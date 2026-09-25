@@ -28,7 +28,6 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.workspace.git :as git]
-            [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -197,10 +196,15 @@
   [sid]
   (get @registry (sid-key sid)))
 
-(defn- session-known?
+(defn session-known?
   "True when this process holds a registry entry for `sid`."
   [sid]
   (contains? @registry (sid-key sid)))
+
+(defn tracked-session-ids
+  "Every session this process holds a registry entry for, in registry-key form."
+  []
+  (keys @registry))
 
 (defn- known-sid
   "`sid` as the key it actually has HERE, or nil when this process is not
@@ -412,18 +416,21 @@
 
 (defn- put-session! [sid entry] (update-session! sid (constantly entry)))
 
-(council/install-runtime!
-  (fn [db session-id]
-    (into {}
-          (keep (fn [[sid entry]]
-                  (when-let [active (:council entry)]
-                    (when-let [record (persistance/db-get-session db sid)]
-                      (when-let [gid (council/session-group db record)]
-                        [sid
-                         (assoc active
-                           :group-id gid
-                           :title (:title record))]))))
-                (if session-id (select-keys @registry [session-id]) @registry)))))
+(defn council-runtime
+  "The gateway registry projection Council reads as its runtime presence: each
+   tracked session (or only `session-id`) with an active Council record, with its
+   group and title."
+  [db session-id]
+  (into {}
+        (keep (fn [[sid entry]]
+                (when-let [active (:council entry)]
+                  (when-let [record (persistance/db-get-session db sid)]
+                    (when-let [gid (council/session-group db record)]
+                      [sid
+                       (assoc active
+                         :group-id gid
+                         :title (:title record))])))))
+        (if session-id (select-keys @registry [session-id]) @registry)))
 
 (defn- drop-session!
   "Forget `sid`'s registry record entirely."
@@ -1680,13 +1687,6 @@
   "Save a human review only when its session-owned artifact explicitly allows comments."
   [sid iid att]
   (append-iteration-attachment! iid (assoc att :revision-session-id sid)))
-
-;; A live View a human stops AFTER the block that opened it returned has no
-;; collector left to file into — the block's was drained the moment it returned.
-;; The engine hands the record here instead, and this is the layer that owns the
-;; database, so this is where the door is hung: the View namespace cannot
-;; require it (the turn loop sits between the two).
-(view/set-late-artifact-filer! append-iteration-attachment!)
 
 (def ^:private turn-progress-phases
   "Coarse 'Vis is doing X' phases surfaced to the live ticker but never pinned
@@ -4420,7 +4420,9 @@
                                   :display-request display-request})
             {:turn turn}))))))
 
-(defn- council-wake-eligible?
+(defn council-wake-eligible?
+  "True when `sid` exists and Council may wake it: it already holds a Council
+   activation, or it is idle - no current or foreign live turn and an unpaused queue."
   [db sid]
   (let [entry (session-entry sid)]
     (and (persistance/db-get-session db sid)
@@ -4433,34 +4435,35 @@
                         (contains? #{"completed" "failed" "cancelled" "suspended"}
                                    (get-in entry [:turns live-tid :status])))))))))
 
-(council/install-waker!
-  council-wake-eligible?
-  (fn [db sid entry]
-    (when-not (and (council/enabled?)
-                   (council-wake-eligible? db sid)
-                   (= (:group_id entry) (council/default-group db sid))
-                   (agents/wake-allowed? db (:author_session_id entry) sid))
-      (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
-    (let [result
-          (submit-turn!
-            sid
-            {:request
-             (str "Council notification #" (:entry_id entry)
-                  ". Read the attributed Council input; if missing or truncated, use council.get("
-                  (:entry_id entry)
-                  ")." (when (:reply_required entry)
-                         (str " Reply before ending this turn with await council.publish(content, "
-                              "kind=\"informational\", reply_to="
-                              (:entry_id entry)
-                              ").")))
-             :display-request (:content entry)
-             :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-             ;; Council insertion already deduplicates dispatch; do not share user turn keys.
-             :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})]
-      (when (:error result)
-        (throw (ex-info (:message result "Council target cannot be started")
-                        {:error (:error result)})))
-      result)))
+(defn council-wake!
+  "Start `sid`'s notification turn for Council `entry`; throws when it may no
+   longer be woken or the turn cannot start."
+  [db sid entry]
+  (when-not (and (council/enabled?)
+                 (council-wake-eligible? db sid)
+                 (= (:group_id entry) (council/default-group db sid))
+                 (agents/wake-allowed? db (:author_session_id entry) sid))
+    (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
+  (let [result
+        (submit-turn!
+          sid
+          {:request
+           (str "Council notification #" (:entry_id entry)
+                ". Read the attributed Council input; if missing or truncated, use council.get("
+                (:entry_id entry)
+                ")." (when (:reply_required entry)
+                       (str " Reply before ending this turn with await council.publish(content, "
+                            "kind=\"informational\", reply_to="
+                            (:entry_id entry)
+                            ").")))
+           :display-request (:content entry)
+           :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
+           ;; Council insertion already deduplicates dispatch; do not share user turn keys.
+           :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})]
+    (when (:error result)
+      (throw (ex-info (:message result "Council target cannot be started")
+                      {:error (:error result)})))
+    result))
 
 (defn reconcile-orphaned-turns!
   "Mark turns left running by a dead process as interrupted.
@@ -5340,8 +5343,9 @@
                    (throw e)))
             (agent-view db (agents/info db child-id))))))))
 
-(agents/install-runtime!
-  {:spawn agent-spawn :list agent-list :cancel agent-cancel :route agent-route})
+(def agent-runtime
+  "The session-agent operations `agents/install-runtime!` receives at startup."
+  {:spawn #'agent-spawn :list #'agent-list :cancel #'agent-cancel :route #'agent-route})
 
 (defn agents-operation!
   [sid operation opts]
@@ -6576,31 +6580,6 @@
 
 (defonce provider-limits-listener
   (swap! provider-limits/auth-change-listeners conj #'broadcast-provider-limits-change!))
-
-(defonce bus-wiring
-  ;; Wire the cross-process bus ONCE at namespace load: foreign events tailed
-  ;; from sibling processes flow into `ingest-mirrored-event!`, and the
-  ;; background tailer starts. Every process that touches the gateway (the
-  ;; TUI, the `serve` daemon) both publishes and consumes.
-  (do
-    ;; pass the VAR so a dev-time ns reload is picked up without re-wiring.
-    (bus/set-deliver-fn! #'ingest-mirrored-event!)
-    ;; Tell the tailer which journals are worth draining: only sessions THIS
-    ;; process tracks. `ingest-mirrored-event!` already no-ops on an unknown sid,
-    ;; so draining the rest just burns CPU stat'ing every sibling's journal.
-    (bus/set-relevant-sid-fn! (fn [sid]
-                                (session-known? sid)))
-    ;; And the SET of those sids, so the tailer drains only their journals
-    ;; directly instead of listing/stat'ing every sibling's file each poll.
-    (bus/set-relevant-sids-fn! (fn []
-                                 (keys @registry)))
-    ;; Skip the tailer thread during native-image BUILD: graal InitClojureClasses
-    ;; runs this ns-load at build time, and a started thread cannot be baked into
-    ;; the image heap. On a normal JVM this guard is false so the tailer starts at
-    ;; load exactly as before; the native RUNTIME starts it lazily on first
-    ;; bus/publish! (see bus/publish!).
-    (when-not (= "buildtime" (System/getProperty "org.graalvm.nativeimage.imagecode")) (bus/start!))
-    true))
 
 (defonce title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation

@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.session.model :as smodel]
@@ -10,6 +11,8 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [reitit.core :as r])
   (:import [java.io ByteArrayInputStream]))
+
+(wiring/install!)
 
 (h/use-mem-store! {"subagents" true})
 

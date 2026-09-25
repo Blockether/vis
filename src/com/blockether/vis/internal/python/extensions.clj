@@ -43,9 +43,11 @@
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.notifications :as notifications]
@@ -58,6 +60,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [taoensso.telemere :as tel])
@@ -521,15 +524,13 @@
               (when-not (and session-id db-info)
                 (throw (ex-info "vis.council.wake needs a bound Vis session"
                                 {:error :session-not-bound})))
-              (stringify-deep
-                ((requiring-resolve 'com.blockether.vis.internal.council.core/wake!)
-                  db-info
-                  #((requiring-resolve 'com.blockether.vis.internal.council.core/runtime) db-info)
-                  {:session-id (str session-id) :source "host"}
-                  (into {}
-                        (map (fn [[k v]]
-                               [(keyword k) v]))
-                        opts))))))
+              (stringify-deep (council/wake! db-info
+                                             #(council/runtime db-info)
+                                             {:session-id (str session-id) :source "host"}
+                                             (into {}
+                                                   (map (fn [[k v]]
+                                                          [(keyword k) v]))
+                                                   opts))))))
     (put! g
           "__vis_host_state_get__"
           (fn [k]
@@ -563,21 +564,15 @@
           ;; even when its caller has an enabled session jail. It keeps the
           ;; native shell tool's one-options-map result grammar.
           (fn [opts]
-            (host-tool-result
-              ((requiring-resolve
-                 'com.blockether.vis.internal.foundation.shell/trusted-extension-shell)
-                extension/*current-environment*
-                opts))))
+            (host-tool-result (shell/trusted-extension-shell extension/*current-environment*
+                                                             opts))))
     (put! g
           "__vis_host_jailed_shell__"
           ;; Latest-config jail: the shell implementation reloads, validates,
           ;; and freezes the merged disk policy at each process spawn. It is
           ;; deliberately independent of the invoking session snapshot.
           (fn [opts]
-            (host-tool-result ((requiring-resolve
-                                 'com.blockether.vis.internal.foundation.shell/jailed-shell)
-                                extension/*current-environment*
-                                opts))))
+            (host-tool-result (shell/jailed-shell extension/*current-environment* opts))))
     (put! g
           "__vis_host_request_input__"
           ;; Typed input View pause: one JSON request object in, one JSON
@@ -603,10 +598,7 @@
                                                 (json/write-json-str values)])]
                         (when (some? verdict) (json/read-json (str verdict) :key-fn identity)))))]
 
-              ((requiring-resolve 'com.blockether.vis.internal.view.core/request-json!)
-                request-json
-                validators-json
-                run))))
+              (view/request-json! request-json validators-json run))))
     (put! g
           "__vis_host_activity__"
           (fn [blocks]
@@ -615,17 +607,15 @@
           "__vis_host_live__"
           ;; Pushes return immediately; a timed state read waits for change or close.
           (fn [envelope]
-            ((requiring-resolve 'com.blockether.vis.internal.view.core/live-json!) envelope)))
+            (view/live-json! envelope)))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
-            ((requiring-resolve 'com.blockether.vis.internal.view.core/reveal-secret)
-              (str handle))))
+            (view/reveal-secret (str handle))))
     (put! g
           "__vis_host_forget_secret__"
           (fn [handle]
-            (boolean ((requiring-resolve 'com.blockether.vis.internal.view.core/forget-secret!)
-                       (str handle)))))
+            (boolean (view/forget-secret! (str handle)))))
     ;; DECLARED ENV: one JSON list of names in, one JSON object of the values
     ;; the host could resolve out. Backed by `resolve-declared-env`, so an
     ;; undeclared name is unreachable no matter what the extension asks for.
@@ -2750,34 +2740,47 @@
 
 (defonce ^:private loader-registered? (atom false))
 
+(defonce ^:private test-slash-fn (atom nil))
+
+(defn install-test-slash!
+  "Install the `/test` slash handler. It lives in `python.test-runner`, which
+   requires this namespace for its trusted-context builder, so the process
+   wiring installs it."
+  [f]
+  (reset! test-slash-fn f)
+  nil)
+
+(defn- test-slash
+  [ctx]
+  (if-let [f @test-slash-fn]
+    (f ctx)
+    {:slash/status :error :slash/title "Python extension tests are not available in this process"}))
+
 (defn- register-loader-extension!
   []
   (when (compare-and-set! loader-registered? false true)
-    ;; `/test` lives in the sibling `python-test-runner` namespace. Resolve it
-    ;; lazily because the runner depends on this namespace's trusted-context builder.
-    (let [test-slash (requiring-resolve 'com.blockether.vis.internal.python.test-runner/test-slash)]
-      (extension/register-extension!
-        {:ext/name "python-extensions"
-         :ext/description
-         "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
-         :ext/kind "host"
-         :ext/source-nses ['com.blockether.vis.internal.python.extensions]
-         :ext/prompt-fn (fn [_]
-                          (when (seq @failures) (str/join "\n" (map failure-summary @failures))))
-         :ext/slash-commands
-         [{:slash/name "reload"
-           :slash/doc
-           "Reload configuration, extensions and context. --sync authorizes locked dependency preparation for declared uv projects."
-           :slash/usage "/reload [--sync]"
-           :slash/run-fn reload-slash}
-          {:slash/name "test"
-           :slash/doc
-           "Run every Python extension test (test_*.py / *_test.py) in a trusted extension session."
-           :slash/usage "/test"
-           :slash/run-fn test-slash}
-          {:slash/name "net-probe"
-           :slash/doc
-           "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
-           :slash/usage "/net-probe [METHOD] <url | host[:port]>"
-           :slash/run-fn net-probe-slash}]
-         :ext/doctor-fn doctor-fn}))))
+    (extension/register-extension!
+      {:ext/name "python-extensions"
+       :ext/description
+       "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
+       :ext/kind "host"
+       :ext/source-nses ['com.blockether.vis.internal.python.extensions]
+       :ext/prompt-fn (fn [_]
+                        (when (seq @failures) (str/join "\n" (map failure-summary @failures))))
+       :ext/slash-commands
+       [{:slash/name "reload"
+         :slash/doc
+         "Reload configuration, extensions and context. --sync authorizes locked dependency preparation for declared uv projects."
+         :slash/usage "/reload [--sync]"
+         :slash/run-fn reload-slash}
+        {:slash/name "test"
+         :slash/doc
+         "Run every Python extension test (test_*.py / *_test.py) in a trusted extension session."
+         :slash/usage "/test"
+         :slash/run-fn test-slash}
+        {:slash/name "net-probe"
+         :slash/doc
+         "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
+         :slash/usage "/net-probe [METHOD] <url | host[:port]>"
+         :slash/run-fn net-probe-slash}]
+       :ext/doctor-fn doctor-fn})))

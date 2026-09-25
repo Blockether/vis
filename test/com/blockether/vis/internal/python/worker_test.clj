@@ -5,6 +5,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -21,6 +22,8 @@
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel])
   (:import (java.util.concurrent.atomic AtomicLong)))
+
+(wiring/install!)
 
 (defn- with-worker-context
   "Run `f` with the session of a fresh confined session worker, then dispose it."

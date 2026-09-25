@@ -6,6 +6,7 @@
    same failure as an op card — the web thread painted that failure twice."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
@@ -28,6 +29,8 @@
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
+
+(wiring/install!)
 
 ;; #245: enforce draft isolation at the session-creation boundary, not only in the UI.
 (defdescribe

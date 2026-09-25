@@ -1381,19 +1381,6 @@
 (defonce ^:private _router-reload-hook
   (extension/register-reload-hook! ::router-reload reload-router!))
 
-;; Provider/selection mutations live in `providers`, which this namespace
-;; requires — so the router cannot be rebuilt from there. Register `reload-router!`
-;; as the hook they fire, so a default/fallback pick (or an add/remove/reorder
-;; provider, or a new API key) rebuilds the shared router and reseeds every cached
-;; session env — not only on `/reload`. Before this, a default-model change via the
-;; picker persisted and displayed but left the shared router on the OLD root, so a
-;; new session's first turn ran the previous model until the user re-pinned it on
-;; the session.
-;; The VAR, not its value: `defonce` skips its body on a `(require … :reload)`, so
-;; registering the FUNCTION left the hook pointing at the definition from the FIRST
-;; load while every caller resolved the new one.
-(defonce ^:private _router-rebuild-hook (providers/set-router-rebuild-hook! #'reload-router!))
-
 ;; Keep live session envs in sync with Python-extension (re)loads. Each env
 ;; caches its own `:extensions` rows — slash dispatch (`active-slashes env`)
 ;; and sandbox bindings read those, NOT the global registry — so a `/reload`

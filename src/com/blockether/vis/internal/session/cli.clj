@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -259,7 +260,7 @@
    forensic body, all CSS inlined), the SAME renderer every other surface
    (`/export`, gateway, companion) uses. No extra extension required."
   [db sid]
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript-html) db sid))
+  (transcript/transcript-html db sid))
 
 (defn- resolve-out-path
   "Resolve a user-supplied output path against the invocation directory.
@@ -312,11 +313,7 @@
                       (spit target (export-html-str d (:id session)))
                       (commandline/stdout! (str "Exported HTML: "
                                                 (paths/abbreviate-home (.getPath target)))))
-          :else (commandline/write-stdout!
-                  ((requiring-resolve
-                     'com.blockether.vis.internal.foundation.transcript/transcript-md)
-                    d
-                    (:id session))))
+          :else (commandline/write-stdout! (transcript/transcript-md d (:id session))))
     (shutdown-agents)))
 
 (defn- cli-delete-session!

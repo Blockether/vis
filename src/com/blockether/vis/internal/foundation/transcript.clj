@@ -21,6 +21,7 @@
      `(transcript      db-info session-id)`  -> transcript data map
      `(transcript->md  data)`             -> Markdown string
      `(transcript-md   db-info session-id)`  -> DB lookup + Markdown string
+     `(session->markdown db-info session-id)` -> summary card + conversation export
 
    Canonical data shape:
 
@@ -1054,6 +1055,71 @@
   (if-let [data (transcript db-info session-id)]
     (render-summary-md data)
     ""))
+
+;; Session exporter — DB → Markdown document
+
+(def ^:private DEFAULT_EXPORT_OPTS {:include-system? false :include-meta? true :flavor :markdown})
+
+(defn- render-export-header
+  [session turn-count]
+  (let [title
+        (or (:title session) "Session")
+
+        soul-id
+        (or (:id session) (:soul-id session))]
+
+    (str "# " title
+         "\n\n"
+         (when soul-id
+           (str "_id: `" soul-id "` · " turn-count " turn" (if (= 1 turn-count) "" "s") "_\n\n")))))
+
+(defn- render-export-turn
+  [opts turn]
+  (let [user-text
+        (or (:user-request turn) (:user turn) (:prompt turn) "")
+
+        ;; Persistence stores the model's raw Markdown answer under
+        ;; `:answer-markdown`. Source of truth; no fallback paths.
+        md
+        (or (:answer-markdown turn) "")
+
+        rendered
+        (case (:flavor opts)
+          :markdown
+          md
+
+          (render/render (render/markdown->ast md) (:flavor opts)))]
+
+    (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
+
+(defn session->markdown
+  "Project a full session as a Markdown document on top of the IR
+   pipeline."
+  ([db-info session-ref] (session->markdown db-info session-ref nil))
+  ([db-info session-ref opts]
+   (when (and db-info session-ref)
+     (let [opts
+           (merge DEFAULT_EXPORT_OPTS opts)
+
+           session
+           (persistance/db-get-session db-info session-ref)
+
+           turns
+           (vec (or (persistance/db-list-session-turns db-info session-ref) []))]
+
+       (when session
+         ;; Canonical header: the SAME grouped session-summary card the HTML
+         ;; transcript surfaces render. Falls back to the minimal title header
+         ;; only when the summary can't be built.
+         (let [summary
+               (session-summary-md db-info session-ref)
+
+               header
+               (if (str/blank? summary)
+                 (render-export-header session (count turns))
+                 (str summary "\n## Conversation\n\n"))]
+
+           (str header (str/join "\n" (map (partial render-export-turn opts) turns)))))))))
 
 ;; HTML renderer. Renders the Markdown transcript to a STANDALONE HTML
 ;; document styled with the vis-light theme's shared web CSS variables

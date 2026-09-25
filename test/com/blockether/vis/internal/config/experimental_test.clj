@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.gateway.agents-test :as agent-http]
             [com.blockether.vis.internal.gateway.improve-test :as improve-http]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -19,6 +20,8 @@
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.agents-test :as agent-fixture]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+
+(wiring/install!)
 
 (h/use-mem-store! {"subagents" false "improve" false "plans" false})
 

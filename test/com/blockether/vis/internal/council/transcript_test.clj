@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.turn :as turn]
@@ -13,6 +14,8 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.titling :as titling]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+
+(wiring/install!)
 
 (h/use-mem-store!)
 
@@ -166,7 +169,7 @@
         (atom nil)
 
         wake!
-        (:wake! @(var-get #'council/runtime-waker))]
+        state/council-wake!]
 
     (doseq [required? [false true]]
       (with-redefs-fn {#'toggles/enabled? (constantly true)

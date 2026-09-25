@@ -11,6 +11,7 @@
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -52,6 +53,8 @@
            [java.lang ProcessHandle]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
+
+(wiring/install!)
 
 ;; Harness
 

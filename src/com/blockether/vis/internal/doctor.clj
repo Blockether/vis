@@ -18,8 +18,11 @@
        :error); 2 if any :error.
      - TTY-detected ANSI colors. UTF-8 icons by default."
   (:require [clojure.string :as string]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.format :as fmt]
             [taoensso.telemere :as tel]))
@@ -249,14 +252,9 @@
 
 (defn- live-config
   "The merged live config a mount check reads: whatever the caller handed in, else
-   the lenient on-disk merge. Resolved LATE so `doctor` keeps no load-order edge
-   on the config loader and a broken config downgrades to \"no report\"."
+   the lenient on-disk merge. A broken config downgrades to \"no report\"."
   [environment]
-  (or (:config environment)
-      (try (when-let [f (requiring-resolve
-                          'com.blockether.vis.internal.config.core/load-config-raw)]
-             (f))
-           (catch Throwable _ nil))))
+  (or (:config environment) (try (config/load-config-raw) (catch Throwable _ nil))))
 
 (defn- workspace-mount-messages
   "Conditional-mount report for the `workspace.filesystem` catalog. A root that
@@ -272,18 +270,10 @@
           (try (when config (config-validation/workspace-mount-diagnostics config))
                (catch Throwable _ nil)))))
 
-(defn- resolve-fn
-  "Late-resolve a fully qualified fn, nil when its namespace cannot load. Keeps
-   doctor free of a load-order edge on the provider/registry stack — and because
-   the VAR is what gets invoked, a test can `with-redefs` the target."
-  [sym]
-  (try (requiring-resolve sym) (catch Throwable _ nil)))
-
 (defn- safe-call
-  [sym fallback]
-  (if-let [f (resolve-fn sym)]
-    (try (f) (catch Throwable _ fallback))
-    fallback))
+  "Call `f`; a provider or registry read that throws answers `fallback`."
+  [f fallback]
+  (try (f) (catch Throwable _ fallback)))
 
 (defn- provider-id-str
   [value]
@@ -294,12 +284,11 @@
 
 (defn- fleet-model-names
   [provider]
-  (let [model-name (resolve-fn 'com.blockether.vis.internal.config.core/model-name)]
-    (into #{}
-          (keep #(some-> (if model-name (model-name %) (or (:name %) (get % "name")))
-                         str
-                         not-empty))
-          (:models provider))))
+  (into #{}
+        (keep #(some-> (config/model-name %)
+                       str
+                       not-empty))
+        (:models provider)))
 
 (defn- selection-message
   "Diagnose ONE router root: the `role` label plus the provider/model ids config
@@ -386,17 +375,14 @@
 
     (when config
       (let [fleet
-            (or (safe-call 'com.blockether.vis.internal.provider.service/picker-fleet nil) [])
+            (or (safe-call providers/picker-fleet nil) [])
 
             registered
             (into {}
                   (keep (fn [p]
                           (when-let [id (provider-id-str (:provider/id p))]
                             [id p])))
-                  (or (safe-call
-                        'com.blockether.vis.internal.extension.registry/registered-providers
-                        nil)
-                      []))
+                  (or (safe-call registry/registered-providers nil) []))
 
             configured-ids
             (into #{}

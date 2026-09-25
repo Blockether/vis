@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -15,6 +16,8 @@
             [next.jdbc :as jdbc]
             [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel]))
+
+(wiring/install!)
 
 (h/use-mem-store! {"subagents" true "improve" true})
 

@@ -25,6 +25,7 @@
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.gateway.wiring :as wiring]
     [com.blockether.vis.internal.improve.review :as improve-review]
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.docs.core :as docs]
@@ -42,6 +43,8 @@
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.foundation.mcp.core :as mcp]
+    [com.blockether.vis.internal.foundation.transcript :as transcript]
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.provider.auth :as provider-auth]
     [com.blockether.vis.internal.provider.catalog :as catalog]
@@ -2099,10 +2102,7 @@
 
     (error-response status (or type :mcp/invalid-request) (ex-message e))))
 
-(defn- mcp-servers-handler
-  [_]
-  (json-response ((requiring-resolve
-                    'com.blockether.vis.internal.foundation.mcp.core/gateway-servers))))
+(defn- mcp-servers-handler [_] (json-response (mcp/gateway-servers)))
 
 (defn- save-mcp-server-handler
   [request]
@@ -2115,10 +2115,7 @@
              server
              (or (get body "server") body)]
 
-         (json-response ((requiring-resolve
-                           'com.blockether.vis.internal.foundation.mcp.core/save-gateway-server!)
-                          name
-                          server)))
+         (json-response (mcp/save-gateway-server! name server)))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (error-response 400 :mcp/invalid-request (ex-message e)))))
 
@@ -2126,28 +2123,20 @@
   [request]
   (try (let [enabled (get (body-json request) "enabled")]
          (if (boolean? enabled)
-           (json-response
-             ((requiring-resolve
-                'com.blockether.vis.internal.foundation.mcp.core/set-gateway-server-enabled!)
-               (get-in request [:path-params :name])
-               enabled))
+           (json-response (mcp/set-gateway-server-enabled! (get-in request [:path-params :name])
+                                                           enabled))
            (error-response 400 :mcp/invalid-request "enabled must be a boolean")))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- delete-mcp-server-handler
   [request]
-  (try (json-response ((requiring-resolve
-                         'com.blockether.vis.internal.foundation.mcp.core/delete-gateway-server!)
-                        (get-in request [:path-params :name])))
+  (try (json-response (mcp/delete-gateway-server! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- test-mcp-server-handler
   [request]
   (try (let [body (body-json request)]
-         (json-response ((requiring-resolve
-                           'com.blockether.vis.internal.foundation.mcp.core/test-gateway-server!)
-                          (get body "name")
-                          (or (get body "server") body))))
+         (json-response (mcp/test-gateway-server! (get body "name") (or (get body "server") body))))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (error-response 400 :mcp/test-failed (ex-message e)))))
 
@@ -2155,27 +2144,21 @@
   "Stop a server NOW and hold it down. Not a config edit — works for hand-written
    servers too, because killing a runaway process is not rewriting the user's file."
   [request]
-  (try (json-response ((requiring-resolve
-                         'com.blockether.vis.internal.foundation.mcp.core/kill-gateway-server!)
-                        (get-in request [:path-params :name])))
+  (try (json-response (mcp/kill-gateway-server! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- start-mcp-server-handler
   [request]
-  (try (json-response ((requiring-resolve
-                         'com.blockether.vis.internal.foundation.mcp.core/start-gateway-server!)
-                        (get-in request [:path-params :name])))
+  (try (json-response (mcp/start-gateway-server! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- mcp-auth-start-handler
   "Begin headless MCP OAuth. Optional callback_mode selects loopback or direct app
    return; the client cannot supply an arbitrary redirect URI."
   [request]
-  (try (json-response
-         ((requiring-resolve
-            'com.blockether.vis.internal.foundation.mcp.core/start-gateway-server-auth!)
-           (get-in request [:path-params :name])
-           {:callback-mode (get (body-json request) "callback_mode")}))
+  (try (json-response (mcp/start-gateway-server-auth! (get-in request [:path-params :name])
+                                                      {:callback-mode (get (body-json request)
+                                                                           "callback_mode")}))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (error-response 400 :mcp/oauth-failed (ex-message e)))))
 
@@ -2196,11 +2179,7 @@
              (or (get body "input") (get body "redirect_url") (get body "code"))]
 
          (if (and flow-id (string? input) (seq (str/trim ^String input)))
-           (json-response
-             ((requiring-resolve
-                'com.blockether.vis.internal.foundation.mcp.core/complete-gateway-server-auth!)
-               flow-id
-               input))
+           (json-response (mcp/complete-gateway-server-auth! flow-id input))
            (error-response 400
                            :mcp/invalid-request
                            "flow_id and input (redirect URL or code) are required")))
@@ -2210,29 +2189,20 @@
 (defn- mcp-auth-poll-handler
   [request]
   (try (if-let [flow-id (mcp-auth-flow-id (body-json request))]
-         (json-response
-           ((requiring-resolve
-              'com.blockether.vis.internal.foundation.mcp.core/poll-gateway-server-auth!)
-             flow-id))
+         (json-response (mcp/poll-gateway-server-auth! flow-id))
          (error-response 400 :mcp/invalid-request "flow_id is required"))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- mcp-auth-cancel-handler
   [request]
   (try (if-let [flow-id (mcp-auth-flow-id (body-json request))]
-         (json-response
-           ((requiring-resolve
-              'com.blockether.vis.internal.foundation.mcp.core/cancel-gateway-server-auth!)
-             flow-id))
+         (json-response (mcp/cancel-gateway-server-auth! flow-id))
          (error-response 400 :mcp/invalid-request "flow_id is required"))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- mcp-auth-logout-handler
   [request]
-  (try (json-response
-         ((requiring-resolve
-            'com.blockether.vis.internal.foundation.mcp.core/logout-gateway-server-auth!)
-           (get-in request [:path-params :name])))
+  (try (json-response (mcp/logout-gateway-server-auth! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- create-session-handler
@@ -3772,36 +3742,25 @@
   "Render a session's user/assistant dialog as Markdown — the canonical
    `transcript->md :dialog` every surface (CLI, web, file export) renders
    through — served as text so a channel can DISPLAY it without re-implementing
-   transcript rendering client-side. `transcript` is resolved dynamically to
-   avoid a load-time require cycle (core -> gateway.server -> transcript ->
-   core)."
+   transcript rendering client-side."
   [request]
   (if-let [sid (path-sid request)]
     {:status 200
      :headers {"Content-Type" "text/markdown; charset=utf-8"}
-     :body (str ((requiring-resolve
-                   'com.blockether.vis.internal.foundation.transcript/transcript-md)
-                  (lp/db-info)
-                  sid
-                  {:mode :dialog}))}
+     :body (str (transcript/transcript-md (lp/db-info) sid {:mode :dialog}))}
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-html-handler
   "Render a session's transcript as a STANDALONE HTML document — the canonical
    `transcript->html` every surface (CLI, web, file export) renders through, the
    HTML sibling of `transcript-md-handler`. `:dialog` when `?mode=dialog`, else
-   the full forensic report. `transcript` is resolved dynamically to avoid a
-   load-time require cycle (core -> gateway.server -> transcript -> core)."
+   the full forensic report."
   [request]
   (if-let [sid (path-sid request)]
     (let [mode (if (= "dialog" (get-in request [:query-params "mode"])) :dialog :full)]
       {:status 200
        :headers {"Content-Type" "text/html; charset=utf-8"}
-       :body (str ((requiring-resolve
-                     'com.blockether.vis.internal.foundation.transcript/transcript-html)
-                    (lp/db-info)
-                    sid
-                    {:mode mode}))})
+       :body (str (transcript/transcript-html (lp/db-info) sid {:mode mode}))})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- turn-trace-handler
@@ -6006,6 +5965,7 @@
   ([] (start! {}))
   ([{:keys [port host token-file require-token? db managed? advertise]}]
    (when @server-state (throw (ex-info "gateway already running" {:type :gateway/already-running})))
+   (wiring/install!)
    (let [port
          (int (or port DEFAULT_PORT))
 

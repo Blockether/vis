@@ -754,7 +754,7 @@
 
 (defn set-deliver-fn!
   "Register the fn the tailer calls for every FOREIGN event:
-   `(f sid event store?)`. Wired by `gateway.state`."
+   `(f sid event store?)`. Filled by `gateway.wiring`."
   [f]
   (reset! deliver-fn f))
 
@@ -769,7 +769,7 @@
    on every poll is pure waste, the CPU an otherwise-idle daemon burns re-scanning
    every sibling's journal forever. Absent a wired predicate (tests, early boot)
    every sid is relevant, preserving the drain-everything behavior. Wired by
-   `gateway.state`."
+   `gateway.wiring`."
   [f]
   (reset! relevant-sid-fn f))
 

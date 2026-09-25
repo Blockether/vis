@@ -3,6 +3,7 @@
     [babashka.http-client :as http]
     [charred.api :as json]
     [com.blockether.vis-python-runtime :as python-runtime]
+    [com.blockether.vis.internal.gateway.wiring :as wiring]
     [com.blockether.vis.test-python-context :as tpc]
     [com.blockether.vis.test-provider-policies :as policies]
     [clojure.java.io]
@@ -57,6 +58,8 @@
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.util.concurrent Executors]))
+
+(wiring/install!)
 
 ;; The turn loop reads routing policy from the provider catalog; every test routes
 ;; through the first-party declarations, as a booted engine does.
@@ -11181,19 +11184,6 @@
                                           42
                                           {:first-output-timeout-ms 700 :stall-timeout-ms 600})
                                          [:first-output-timeout-ms :stall-timeout-ms])))))
-
-(defdescribe providers-router-rebuild-hook-wiring-test
-             ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,
-             ;; which only rebuilds the shared router because `loop` registered `reload-router!`
-             ;; as that hook. Before the wiring the hook fired into nil and a default-model
-             ;; change never reached the shared router — a new session's first turn kept the
-             ;; OLD root until the model was re-pinned on the session.
-             ;; The hook holds the VAR: `permission-config-snapshot-test` above reloads this
-             ;; namespace, and a hook holding the FUNCTION was left pointing at the version
-             ;; from the first load — dead wiring that only a full-suite run ever showed.
-             (it "wires reload-router! as the providers router-rebuild hook"
-                 (expect (identical? (providers/router-rebuild-hook-val)
-                                     #'loop-env/reload-router!))))
 
 ;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at

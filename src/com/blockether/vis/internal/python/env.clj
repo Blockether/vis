@@ -1164,12 +1164,28 @@
     (try (py-network! session net? "Refused: this session was granted no network access.")
          (catch Throwable t (tel/log! {:level :warn :id ::network-capability-failed :error t})))))
 
+(defonce ^:private extension-hooks (atom {}))
+
+(defn install-extension-hooks!
+  "Install the trusted-extension operations this namespace calls but cannot
+   require, because `python.extensions` requires it: `:net-probe-report` answers
+   the sandbox `network_probe` tool and `:close-session-contexts!` stops a
+   session's trusted extension worker. The process wiring installs both; without
+   them a sandbox has no network probe and disposal skips the extension worker."
+  [hooks]
+  (reset! extension-hooks (select-keys hooks [:net-probe-report :close-session-contexts!]))
+  nil)
+
+(defn- close-extension-contexts!
+  [session]
+  (when-let [close-extensions (:close-session-contexts! @extension-hooks)]
+    (try (close-extensions session) (catch Throwable _ nil))))
+
 (defn- install-network-probe!
   "The dev network-filter loop: `network_probe([method,] url)` and
    `network_filter(fn)` over a SYNTHETIC request — no socket, nothing sent."
   [session]
-  (when-let [report-fn (requiring-resolve
-                         'com.blockether.vis.internal.python.extensions/net-probe-report)]
+  (when-let [report-fn (:net-probe-report @extension-hooks)]
     (python-host/install-tools! session
                                 {"__vis_net_probe__" (fn [method target headers body]
                                                        (report-fn method target headers body))}
@@ -1350,9 +1366,7 @@
     (python-host/forget-session! session)
     ;; Reclaim the separate trusted extension process too. The gateway registry
     ;; outlives these per-session extension realizations.
-    (when-let [close-extensions
-               (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
-      (try (close-extensions session) (catch Throwable _ nil)))
+    (close-extension-contexts! session)
     (try (py-close-session! session) (catch Throwable _ nil))
     (pyext/forget-policy! session)
     (swap! session-workers dissoc session)
@@ -1432,9 +1446,7 @@
   [session]
   (when-let [k (worker-of session)]
     (pyext/retire-worker! k "its interpreter or control plane stopped answering")
-    (when-let [close-extensions
-               (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
-      (try (close-extensions session) (catch Throwable _ nil))))
+    (close-extension-contexts! session))
   (try (python-host/forget-session! session) (catch Throwable _ nil))
   nil)
 

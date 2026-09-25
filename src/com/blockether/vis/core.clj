@@ -76,6 +76,7 @@
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.main :as binary]
     [com.blockether.vis.internal.channel.render :as ir]
+    [com.blockether.vis.internal.foundation.transcript :as foundation-transcript]
     [com.blockether.vis.internal.channel.notifications :as notifications]
     [com.blockether.vis.internal.persistance.codec :as codec]
     [com.blockether.vis.internal.persistance.core :as persistance]
@@ -382,7 +383,7 @@
 ;; (every turn: user prompt + final answer + optional metadata) into a
 ;; Markdown parsing/rendering helpers. Parsed Markdown trees are renderer-local;
 ;; canonical answers are string-keyed content blocks.
-(import-vars [session->markdown ir/session->markdown])
+(import-vars [session->markdown foundation-transcript/session->markdown])
 
 (import-vars [render ir/render] [->ast ir/->ast])
 

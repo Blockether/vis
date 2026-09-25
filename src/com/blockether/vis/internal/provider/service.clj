@@ -902,7 +902,8 @@
 ;; default persisted config and the picker showed the new model while the shared
 ;; `router-atom` (and every env built since) kept the OLD root: a new session's
 ;; first turn ran the previous model until the user re-pinned it on the session.
-;; `loop` registers `reload-router!` here at load (no-op until the router is built).
+;; `gateway.wiring` installs `loop.environment/reload-router!` here at startup (a no-op
+;; until the router is built).
 (defonce ^:private router-rebuild-hook (atom nil))
 
 (defn set-router-rebuild-hook!

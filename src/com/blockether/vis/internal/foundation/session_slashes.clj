@@ -11,6 +11,7 @@
    title mutation point."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.session.goals :as goals]))
 
@@ -21,11 +22,7 @@
    one DB-lookup-plus-render surface (also degrades to a `Session not found`
    string instead of throwing), no web extension required."
   [db sid fmt]
-  ((requiring-resolve (if (= fmt :html)
-                        'com.blockether.vis.internal.foundation.transcript/transcript-html
-                        'com.blockether.vis.internal.foundation.transcript/transcript-md))
-    db
-    sid))
+  (if (= fmt :html) (transcript/transcript-html db sid) (transcript/transcript-md db sid)))
 
 (defn- path->fmt
   "Infer the export format from a target path's extension: `.html`/`.htm`

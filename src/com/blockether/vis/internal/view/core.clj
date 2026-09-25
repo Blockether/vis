@@ -675,14 +675,15 @@
    A request raised inside a gateway session has to NAME that session: the
    gateway bridge turns the request into a session event so the companion app
    learns the run is blocked, and a session event with no session has nowhere
-   to go. Resolved late and defensively — the View subsystem must stay loadable
-   (and testable) without the extension runtime."
+   to go. A deref failure answers nil."
   []
-  (try (when-let [v (resolve 'com.blockether.vis.internal.extension.core/*current-environment*)]
-         (let [env (var-get v)
-               env (if (instance? clojure.lang.IDeref env) (deref env) env)]
+  (try (let [env
+             extension/*current-environment*
 
-           (when (map? env) (trimmed (:session-id env)))))
+             env
+             (if (instance? clojure.lang.IDeref env) (deref env) env)]
+
+         (when (map? env) (trimmed (:session-id env))))
        (catch Throwable _ nil)))
 
 (defn- normalize-channel-ids

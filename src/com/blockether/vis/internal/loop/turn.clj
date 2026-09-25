@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.router :as loop-router]
@@ -541,14 +542,13 @@
 
         envelope
         (when enabled?
-          (try (let [shell-fn (requiring-resolve
-                                (if (= kind :bg)
-                                  'com.blockether.vis.internal.foundation.shell/shell
-                                  ;; A `!cmd` bang PRINTS the command's output, so it is the one
-                                  ;; caller that genuinely blocks. The tool no longer takes a wait
-                                  ;; knob — waiting is a handle method — so the bang path calls the
-                                  ;; INTERNAL blocking runner directly instead of a request flag.
-                                  'com.blockether.vis.internal.foundation.shell/run-blocking))]
+          (try (let [shell-fn (if (= kind :bg)
+                                shell/shell
+                                ;; A `!cmd` bang PRINTS the command's output, so it is the one
+                                ;; caller that genuinely blocks. The tool no longer takes a wait
+                                ;; knob — waiting is a handle method — so the bang path calls the
+                                ;; INTERNAL blocking runner directly instead of a request flag.
+                                shell/run-blocking)]
                  ;; Calling the shell var directly skips the symbol-call seam, so the
                  ;; workspace view stays unbound and `resolve-dir` falls back to the
                  ;; PROCESS cwd — a bang inside a draft would then run on trunk.

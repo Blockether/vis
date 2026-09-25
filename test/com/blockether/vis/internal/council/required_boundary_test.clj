@@ -8,11 +8,14 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+
+(wiring/install!)
 
 (deftest required-reply-model-loop-test
   ;; #182: a plain thread reply must also resolve the obligation across the Python boundary.

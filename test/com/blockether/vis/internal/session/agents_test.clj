@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.session.agents-test
   (:require [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -11,6 +12,8 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+
+(wiring/install!)
 
 (h/use-mem-store! {"subagents" true})
 

@@ -482,7 +482,10 @@
                 (Thread/currentThread)
 
                 pid
-                (.pid (java.lang.ProcessHandle/current))]
+                (.pid (java.lang.ProcessHandle/current))
+
+                prev-relevant-sids
+                @(var-get #'bus/relevant-sids-fn)]
 
             (bus/set-deliver-fn! (fn [s _store? _ev]
                                    (swap! seen conj s)))
@@ -494,7 +497,7 @@
                  (expect (false? @(future (#'bus/poll-once!))))
                  (expect (true? (#'bus/poll-once!)))
                  (expect (= [sid] @seen))
-                 (finally (bus/set-relevant-sids-fn! nil))))))))
+                 (finally (bus/set-relevant-sids-fn! prev-relevant-sids))))))))
 
 (defdescribe
   fleet-liveness-test
