@@ -18,28 +18,33 @@
                        command's `:cmd/run-fn`.
 
    Built-in commands registered here:
-     vis-agent providers          - provider inspection, auth, and limits
-     vis-agent sessions      - list persisted sessions
-     vis-agent projects           - list projects, or delete one with its sessions
      vis-agent extension list     - list registered extensions
      vis-agent channels <name>    - auto-mounted via the channel registry
+
+   Domain namespaces own the other command groups. Each exports `command`
+   and, when its children register through the registry, `subcommands`:
+   `gateway.cli`, `foundation.mcp.cli`, `provider.cli`, `session.cli`,
+   `workspace.cli`, `speech.cli` and `decisions.cli`.
 
    `vis-agent doctor` is host-owned. Extensions plug diagnostics into it
    with `:ext/doctor-fn`; extension-owned CLI commands stay under
    `vis-agent extension`."
   (:refer-clojure :exclude [agent run!])
-  (:require [babashka.process :as process]
-            [charred.api :as json]
+  (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
             [com.blockether.vis.internal.decisions.cli :as decisions-cli]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
+            [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
+            [com.blockether.vis.internal.gateway.cli :as gateway-cli]
+            [com.blockether.vis.internal.provider.cli :as provider-cli]
+            [com.blockether.vis.internal.session.cli :as session-cli]
+            [com.blockether.vis.internal.workspace.cli :as workspace-cli]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
             [com.blockether.vis.internal.python.env :as env]
@@ -60,9 +65,7 @@
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.project :as pyproj]
-            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.session.progress :as progress]
-            [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.system-trust :as system-trust]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -660,30 +663,6 @@
 
 ;; Built-in CLI commands
 
-;;; ── Output helpers ──────────────────────────────────────────────────────
-
-(defn- stdout!
-  "Print to the real terminal via the saved original stdout. Other
-   output (telemere, SLF4J) is redirected to the log file."
-  [^String s]
-  (.println ^java.io.PrintStream config/original-stdout s)
-  (.flush ^java.io.PrintStream config/original-stdout))
-
-(defn- stderr!
-  "Print a diagnostic to the process's real stderr."
-  [^String s]
-  (.println ^java.io.PrintStream config/original-stderr s)
-  (.flush ^java.io.PrintStream config/original-stderr))
-
-(defn- write-stdout!
-  "Write to the real terminal without appending a newline. Used by the
-   live trace renderer for cursor-back/redraw frames."
-  [^String s]
-  (.print ^java.io.PrintStream config/original-stdout s)
-  (.flush ^java.io.PrintStream config/original-stdout))
-
-(declare terminal-width)
-
 (def ^:private trace-max-inline-chars 4000)
 
 (defn- trace-safe
@@ -745,7 +724,8 @@
 
 (defn- print-full-trace-json-frame!
   [event payload]
-  (stdout! (json/write-json-str (json-safe (trace-safe {:event event :payload payload})))))
+  (commandline/stdout! (json/write-json-str (json-safe (trace-safe {:event event
+                                                                    :payload payload})))))
 
 (defn- trace-terminal?
   []
@@ -874,7 +854,7 @@
   [label body]
   (when-not (str/blank? (strip-ansi body))
     (let [cols
-          (max 40 (- (long (terminal-width)) 4))
+          (max 40 (- (long (commandline/terminal-width)) 4))
 
           lines
           (->> (str/split-lines (expand-tabs body))
@@ -905,33 +885,33 @@
 
     (case phase
       :provider-call
-      (stdout! (str head
-                    (trace-title "↗" "provider call")
-                    (when-let [t (:started-at-ms chunk)]
-                      (str " " (trace-dim (str "started=" t))))))
+      (commandline/stdout! (str head
+                                (trace-title "↗" "provider call")
+                                (when-let [t (:started-at-ms chunk)]
+                                  (str " " (trace-dim (str "started=" t))))))
 
       :provider-fallback
-      (stdout! (str head
-                    (trace-warn "↷ provider fallback")
-                    " "
-                    (or (:failed-provider chunk) "?")
-                    " → "
-                    (or (:new-provider chunk) "?")
-                    (when-let [reason (:reason chunk)]
-                      (str " " (trace-dim (str "(" reason ")"))))))
+      (commandline/stdout! (str head
+                                (trace-warn "↷ provider fallback")
+                                " "
+                                (or (:failed-provider chunk) "?")
+                                " → "
+                                (or (:new-provider chunk) "?")
+                                (when-let [reason (:reason chunk)]
+                                  (str " " (trace-dim (str "(" reason ")"))))))
 
       :provider-retry-reset
-      (stdout! (str head
-                    (trace-warn "↻ provider stream retry")
-                    (when-let [attempt (:attempt chunk)]
-                      (str " " (trace-dim (str "attempt=" attempt))))
-                    (when-let [delay-ms (:delay-ms chunk)]
-                      (str " " (trace-dim (str "delay=" delay-ms "ms"))))
-                    (pretty-block "error"
-                                  (or (some-> chunk
-                                              :event
-                                              :error)
-                                      (trace-pr-str (:error chunk))))))
+      (commandline/stdout! (str head
+                                (trace-warn "↻ provider stream retry")
+                                (when-let [attempt (:attempt chunk)]
+                                  (str " " (trace-dim (str "attempt=" attempt))))
+                                (when-let [delay-ms (:delay-ms chunk)]
+                                  (str " " (trace-dim (str "delay=" delay-ms "ms"))))
+                                (pretty-block "error"
+                                              (or (some-> chunk
+                                                          :event
+                                                          :error)
+                                                  (trace-pr-str (:error chunk))))))
 
       :reasoning
       ;; Discrete one-shot render: only fires once per iteration when
@@ -942,11 +922,11 @@
       ;; completes. Mid-stream chunks (`:done? false`) are no-ops here so the
       ;; accumulated thinking block is not re-printed on every SSE tick.
       (when (and (:done? chunk) (not (str/blank? (str (:thinking chunk)))))
-        (stdout!
+        (commandline/stdout!
           (str head (trace-title "🧠" "reasoning") (pretty-block "thinking" (:thinking chunk)))))
 
       :response-parse
-      (stdout!
+      (commandline/stdout!
         (if (= :start (:status chunk))
           (str head
                (trace-title "⌁" "response parse")
@@ -966,39 +946,40 @@
                  (str " " (trace-dim (str n "ms")))))))
 
       :form-start
-      (stdout! (str head
-                    (trace-title "▶"
-                                 (str "form "
-                                      (inc (long (or (:form-idx chunk) 0)))
-                                      (when-let [of (:form-of chunk)]
-                                        (str "/" of))))
-                    " "
-                    (trace-dim "started")
-                    (pretty-block "code" (trace-code (:code chunk)))))
+      (commandline/stdout! (str head
+                                (trace-title "▶"
+                                             (str "form "
+                                                  (inc (long (or (:form-idx chunk) 0)))
+                                                  (when-let [of (:form-of chunk)]
+                                                    (str "/" of))))
+                                " "
+                                (trace-dim "started")
+                                (pretty-block "code" (trace-code (:code chunk)))))
 
       :tool-start
-      (stdout! (str head
-                    (trace-title "⚙" "tool")
-                    (pretty-block "event" (trace-pr-str (:tool-event chunk)))))
+      (commandline/stdout! (str head
+                                (trace-title "⚙" "tool")
+                                (pretty-block "event" (trace-pr-str (:tool-event chunk)))))
 
       :form-result
-      (stdout! (str head
-                    (if (:error chunk) (trace-bad "✗ form failed") (trace-ok "✓ form finished"))
-                    " #"
-                    (inc (long (or (:form-idx chunk) 0)))
-                    (when-let [of (:form-of chunk)]
-                      (str "/" of))
-                    (when-let [ms (form/envelope-duration-ms (:envelope chunk))]
-                      (str " " (trace-dim (str ms "ms"))))
-                    (when (:repaired? chunk) (str " " (trace-warn "repaired")))
-                    (when (:timeout? chunk) (str " " (trace-bad "timeout")))
-                    (if-let [err (trace-error-summary (:error chunk))]
-                      (pretty-block "error" (trace-bad err))
-                      (when-let [stdout (not-empty (:stdout chunk))]
-                        (pretty-block "stdout" stdout)))))
+      (commandline/stdout!
+        (str head
+             (if (:error chunk) (trace-bad "✗ form failed") (trace-ok "✓ form finished"))
+             " #"
+             (inc (long (or (:form-idx chunk) 0)))
+             (when-let [of (:form-of chunk)]
+               (str "/" of))
+             (when-let [ms (form/envelope-duration-ms (:envelope chunk))]
+               (str " " (trace-dim (str ms "ms"))))
+             (when (:repaired? chunk) (str " " (trace-warn "repaired")))
+             (when (:timeout? chunk) (str " " (trace-bad "timeout")))
+             (if-let [err (trace-error-summary (:error chunk))]
+               (pretty-block "error" (trace-bad err))
+               (when-let [stdout (not-empty (:stdout chunk))]
+                 (pretty-block "stdout" stdout)))))
 
       :iteration-final
-      (stdout!
+      (commandline/stdout!
         (str head
              (if (:done? chunk) (trace-ok "✓ turn complete") (trace-title "·" "iteration complete"))
              (when-let [final (:final chunk)]
@@ -1006,14 +987,14 @@
                              (trace-pr-str (select-keys final [:status :iteration-count]))))))
 
       :iteration-error
-      (stdout! (str head
-                    (trace-bad "✗ iteration error")
-                    (pretty-block "error"
-                                  (or (trace-error-summary (:error chunk)) (trace-pr-str chunk)))))
+      (commandline/stdout!
+        (str head
+             (trace-bad "✗ iteration error")
+             (pretty-block "error" (or (trace-error-summary (:error chunk)) (trace-pr-str chunk)))))
 
-      (stdout! (str head
-                    (trace-title "•" (name (or phase :unknown)))
-                    (pretty-block "chunk" (trace-pr-str chunk)))))))
+      (commandline/stdout! (str head
+                                (trace-title "•" (name (or phase :unknown)))
+                                (pretty-block "chunk" (trace-pr-str chunk)))))))
 
 (defn- trace-final-summary-prose
   "Human prose for the pretty terminal trace footer. Keep raw maps for the
@@ -1084,8 +1065,8 @@
       [(close-reasoning! [iter]
          (let [s (get @state iter)]
            (when (:reasoning-open? s)
-             (when-not (str/blank? (str (:pending-line s))) (stdout! ""))
-             (stdout! (trace-dim "  └"))
+             (when-not (str/blank? (str (:pending-line s))) (commandline/stdout! ""))
+             (commandline/stdout! (trace-dim "  └"))
              (swap! state assoc
                iter
                (assoc s
@@ -1093,14 +1074,14 @@
                  :pending-line nil)))))
        (emit-reasoning-delta! [iter delta]
          (when-not (get-in @state [iter :reasoning-open?])
-           (stdout! (str (trace-dim "\n┌─")
-                         " "
-                         (trace-title "λ" "trace")
-                         (when iter (str " " (trace-dim (str "iteration " iter))))
-                         " "
-                         (trace-title "🧠" "reasoning")))
-           (stdout! (trace-dim "  ┌─ thinking"))
-           (write-stdout! (trace-dim "  │ "))
+           (commandline/stdout! (str (trace-dim "\n┌─")
+                                     " "
+                                     (trace-title "λ" "trace")
+                                     (when iter (str " " (trace-dim (str "iteration " iter))))
+                                     " "
+                                     (trace-title "🧠" "reasoning")))
+           (commandline/stdout! (trace-dim "  ┌─ thinking"))
+           (commandline/write-stdout! (trace-dim "  │ "))
            (swap! state update iter assoc :reasoning-open? true :pending-line ""))
          ;; `parts` splits on '\n' preserving empty trailing segments.
          ;; Every segment except the LAST was followed by a newline in
@@ -1110,12 +1091,12 @@
          ;; delta to extend.
          (let [parts (str/split (str delta) #"\n" -1)]
            (dotimes [i (dec (count parts))]
-             (write-stdout! (nth parts i))
-             (stdout! "") ; newline
-             (write-stdout! (trace-dim "  │ "))
+             (commandline/write-stdout! (nth parts i))
+             (commandline/stdout! "") ; newline
+             (commandline/write-stdout! (trace-dim "  │ "))
              (swap! state assoc-in [iter :pending-line] ""))
            (let [tail (peek parts)]
-             (when (and tail (pos? (count tail))) (write-stdout! tail))
+             (when (and tail (pos? (count tail))) (commandline/write-stdout! tail))
              (swap! state update-in [iter :pending-line] #(str (or % "") tail)))))]
       (fn pretty-trace-on-chunk [chunk]
         (let [phase (:phase chunk)
@@ -1141,174 +1122,6 @@
             ;; discrete event.
             (do (when iter (close-reasoning! iter)) (print-pretty-trace-chunk! chunk))))))))
 
-(defn- wrap-str
-  "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
-   whitespace; tokens longer than `width` are hard-broken so a single
-   long URL or symbol can't blow the column out."
-  [s ^long width]
-  (let [s
-        (str s)
-
-        s-count
-        (long (count s))]
-
-    (cond (str/blank? s) [""]
-          (<= s-count width) [s]
-          :else
-          (let [tokens (str/split s #"\s+")]
-            (loop [tokens tokens
-                   line ""
-                   lines []]
-
-              (if-let [tok (first tokens)]
-                (cond
-                  ;; token longer than the column -> hard-split it
-                  (> (long (count tok)) width) (let [head (subs tok 0 width)
-                                                     tail (subs tok width)
-                                                     lines' (cond-> lines
-                                                              (seq line)
-                                                              (conj line))]
-
-                                                 (recur (cons tail (rest tokens)) head lines'))
-                  ;; fits on the current line
-                  (or (str/blank? line) (<= (+ (long (count line)) 1 (long (count tok))) width))
-                  (recur (rest tokens) (if (str/blank? line) tok (str line " " tok)) lines)
-                  ;; doesn't fit -> push current line, start a new one
-                  :else (recur (rest tokens) tok (conj lines line)))
-                (cond-> lines
-                  (seq line)
-                  (conj line))))))))
-
-(def ^:private fallback-terminal-width 120)
-
-(defn- terminal-env [k] (System/getenv k))
-
-(defn- parse-positive-long
-  [s]
-  (try (let [n (some-> s
-                       str/trim
-                       parse-long)]
-         (when (and n (pos? (long n))) n))
-       (catch Throwable _ nil)))
-
-(defn- shell-first-line
-  "Run a tiny terminal-size probe and return its first stdout line.
-   Kept private and timeout-bounded so table rendering never hangs CLI startup."
-  [cmd]
-  (try (let [p
-             (process/process {:cmd ["sh" "-c" cmd] :out :string :err :out})
-
-             proc
-             (:proc p)]
-
-         (if (.waitFor ^Process proc 250 java.util.concurrent.TimeUnit/MILLISECONDS)
-           (some-> @p
-                   :out
-                   str/split-lines
-                   first)
-           (do (process/destroy-tree p) nil)))
-       (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
-
-(defn- stty-terminal-width
-  []
-  (when-let [line (shell-first-line "stty size < /dev/tty")]
-    (some-> (re-find #"^\s*\d+\s+(\d+)\s*$" line)
-            second
-            parse-positive-long)))
-
-(defn- tput-terminal-width [] (parse-positive-long (shell-first-line "tput cols")))
-
-(defn- terminal-width
-  "Best-effort terminal width for CLI tables. zsh/bash often keep COLUMNS
-   as a shell variable instead of exporting it, so also query the controlling
-   terminal via stty. Falls back to 120 for non-interactive runs."
-  []
-  (or (parse-positive-long (terminal-env "COLUMNS"))
-      (stty-terminal-width)
-      (tput-terminal-width)
-      fallback-terminal-width))
-
-(defn- table-width
-  "Visible width of a rendered table with `cols`: outer padding + cells + separators."
-  ^long [cols]
-  (+ 2 (long (reduce + (map :width cols))) (* 3 (max 0 (dec (long (count cols)))))))
-
-(defn- expand-table-cols
-  "Grow table columns to `target-width`. Columns marked `:grow? true`
-   share extra width; otherwise the final column grows. This keeps all
-   CLI tables full-width while preserving fixed ID/count/date columns."
-  [cols ^long target-width]
-  (let [cols
-        (vec cols)
-
-        extra
-        (max 0 (- target-width (table-width cols)))]
-
-    (if (zero? (long extra))
-      cols
-      (let [grow-idxs
-            (let [marked (keep-indexed (fn [idx col]
-                                         (when (:grow? col) idx))
-                                       cols)]
-              (if (seq marked) (vec marked) [(dec (long (count cols)))]))
-
-            n
-            (long (count grow-idxs))
-
-            base
-            (quot (long extra) n)
-
-            remainder
-            (rem (long extra) n)
-
-            additions
-            (into {}
-                  (map-indexed (fn [i idx]
-                                 [idx (+ base (if (< (long i) (long remainder)) 1 0))]))
-                  grow-idxs)]
-
-        (mapv (fn [idx col]
-                (update col :width + (get additions idx 0)))
-              (range)
-              cols)))))
-
-(defn- print-table!
-  "Print a formatted table to stdout!.
-   `cols` is `[{:key :k :label \"L\" :width N :align :left|:right}]`.
-   Cells are word-wrapped (not truncated) so long descriptions stay
-   visible across multiple physical lines. Tables expand to terminal
-   width by growing `:grow?` columns (or the final column by default)."
-  [cols rows]
-  (let [cols
-        (expand-table-cols cols (terminal-width))
-
-        align-line
-        (fn [s {:keys [width align]}]
-          (if (= align :right) (commandline/pad-left s width) (commandline/pad-right s width)))
-
-        sep
-        (str "─" (str/join "─┼─" (map #(apply str (repeat (:width %) \─)) cols)) "─")
-
-        header
-        (str " " (str/join " │ " (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
-
-    (stdout! header)
-    (stdout! sep)
-    (doseq [row rows]
-      (let [wrapped (mapv (fn [c]
-                            (wrap-str (get row (:key c)) (:width c)))
-                          cols)
-            row-lines (apply max 1 (map count wrapped))]
-
-        (dotimes [i row-lines]
-          (stdout! (str " "
-                        (str/join " │ "
-                                  (map (fn [lines col]
-                                         (align-line (or (nth lines i nil) "") col))
-                                       wrapped
-                                       cols))
-                        " ")))))))
-
 (defn- print-section-heading!
   "Render a section heading line for a grouped table - used when
    `vis-agent extension list` breaks the rows into per-`:ext/kind`
@@ -1321,8 +1134,8 @@
         rule-len
         (max 4 (- (long width) (long (count label-str)) 2))]
 
-    (stdout! "")
-    (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
+    (commandline/stdout! "")
+    (commandline/stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
 
 ;;; ── Root one-shot run - handler + bespoke arg parser ─────────────────────
 
@@ -1471,50 +1284,53 @@
 
 (defn- print-run-usage!
   []
-  (stdout! "Usage: vis-agent [FLAGS] \"prompt\"")
-  (stdout! "")
-  (stdout! "Flags:")
-  (stdout! "  --json            Print result as a single JSON envelope.")
-  (stdout! "  --code            Print only [:code] block contents from the")
-  (stdout! "                    parsed Markdown. Concatenated in source order;")
-  (stdout! "                    no fences, no language tags. Pipes cleanly")
-  (stdout! "                    into editors / interpreters. Errors when")
-  (stdout! "                    the answer contains no [:code] blocks.")
-  (stdout! "  --raw             Render the answer as raw text (no markdown")
-  (stdout! "                    bold/italics/heading bars). This is also the")
-  (stdout! "                    auto-default when stdout is not a TTY (piped")
-  (stdout! "                    or redirected), so `vis-agent ... > out.txt`")
-  (stdout! "                    produces clean text without ANSI noise.")
-  (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
-  (stdout! "                    registered snake_case toggle id for this run only, e.g.")
-  (stdout! "                    --toggles reasoning_level=deep")
-  (stdout! "  --full-trace-stream")
-  (stdout! "                    Stream a pretty terminal trace while the run is")
-  (stdout! "                    happening, then print the answer.")
-  (stdout! "  --full-trace-json-stream")
-  (stdout! "                    Stream raw JSON trace frames, one object per line.")
-  (stdout! "  --debug           Enable verbose debug logging.")
-  (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
-  (stdout! "  --model MODEL        Override the configured model. Also accepts")
-  (stdout! "                       provider/name (e.g. openai/gpt-4o).")
-  (stdout! "  --reasoning-effort E  Exact provider-native effort (e.g. low, high or max).")
-  (stdout! "  --name NAME          Set the agent name (default: cli).")
-  (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
-  (stdout! "  --session-id ID      Continue an existing persisted session.")
-  (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
-  (stdout! "                       resumable :cli session. Without it a run is")
-  (stdout! "                       ephemeral: no resume, no session row on disk.")
-  (stdout! "  --                   End flag parsing: every later word is prompt")
-  (stdout! "                       text, dashes and all.")
-  (stdout! "")
-  (stdout! "Examples:")
-  (stdout!
+  (commandline/stdout! "Usage: vis-agent [FLAGS] \"prompt\"")
+  (commandline/stdout! "")
+  (commandline/stdout! "Flags:")
+  (commandline/stdout! "  --json            Print result as a single JSON envelope.")
+  (commandline/stdout! "  --code            Print only [:code] block contents from the")
+  (commandline/stdout! "                    parsed Markdown. Concatenated in source order;")
+  (commandline/stdout! "                    no fences, no language tags. Pipes cleanly")
+  (commandline/stdout! "                    into editors / interpreters. Errors when")
+  (commandline/stdout! "                    the answer contains no [:code] blocks.")
+  (commandline/stdout! "  --raw             Render the answer as raw text (no markdown")
+  (commandline/stdout! "                    bold/italics/heading bars). This is also the")
+  (commandline/stdout! "                    auto-default when stdout is not a TTY (piped")
+  (commandline/stdout! "                    or redirected), so `vis-agent ... > out.txt`")
+  (commandline/stdout! "                    produces clean text without ANSI noise.")
+  (commandline/stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
+  (commandline/stdout!
+    "                    registered snake_case toggle id for this run only, e.g.")
+  (commandline/stdout! "                    --toggles reasoning_level=deep")
+  (commandline/stdout! "  --full-trace-stream")
+  (commandline/stdout! "                    Stream a pretty terminal trace while the run is")
+  (commandline/stdout! "                    happening, then print the answer.")
+  (commandline/stdout! "  --full-trace-json-stream")
+  (commandline/stdout! "                    Stream raw JSON trace frames, one object per line.")
+  (commandline/stdout! "  --debug           Enable verbose debug logging.")
+  (commandline/stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
+  (commandline/stdout! "  --model MODEL        Override the configured model. Also accepts")
+  (commandline/stdout! "                       provider/name (e.g. openai/gpt-4o).")
+  (commandline/stdout!
+    "  --reasoning-effort E  Exact provider-native effort (e.g. low, high or max).")
+  (commandline/stdout! "  --name NAME          Set the agent name (default: cli).")
+  (commandline/stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
+  (commandline/stdout! "  --session-id ID      Continue an existing persisted session.")
+  (commandline/stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
+  (commandline/stdout! "                       resumable :cli session. Without it a run is")
+  (commandline/stdout! "                       ephemeral: no resume, no session row on disk.")
+  (commandline/stdout! "  --                   End flag parsing: every later word is prompt")
+  (commandline/stdout! "                       text, dashes and all.")
+  (commandline/stdout! "")
+  (commandline/stdout! "Examples:")
+  (commandline/stdout!
     "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
-  (stdout! "  vis-agent \"Throwaway one-shot probe\"")
-  (stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
-  (stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
-  (stdout!
+  (commandline/stdout! "  vis-agent \"Throwaway one-shot probe\"")
+  (commandline/stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
+  (commandline/stdout!
+    "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
+  (commandline/stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
+  (commandline/stdout!
     "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- parse-toggle-overrides
@@ -1628,10 +1444,10 @@
     ;; escape hatch for prompts that really do start with dashes.
     (when-let [errors (seq (:flag-errors opts))]
       (doseq [e errors]
-        (stdout! (str "vis-agent: " e)))
-      (stdout! "  See the flag list:            vis-agent --help")
+        (commandline/stdout! (str "vis-agent: " e)))
+      (commandline/stdout! "  See the flag list:            vis-agent --help")
       (when (some #(str/starts-with? % "unknown flag") errors)
-        (stdout! "  Or make it the prompt text:   vis-agent -- <text>"))
+        (commandline/stdout! "  Or make it the prompt text:   vis-agent -- <text>"))
       (System/exit 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
@@ -1673,892 +1489,37 @@
       (cond full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
             full-trace-stream?
             (do (tel/log! {:level :info :id ::cli-trace :data trace-result} "CLI trace result")
-                (stdout! (str "\n"
-                              (trace-dim
-                                "└────────────────────────────────────────────────────────")))
-                (stdout! (str "\n"
-                              (trace-title "◆" "final result")
-                              (pretty-block "summary" (trace-final-summary-prose result))))
-                (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
-                (stdout! (content/text-projection (result-content result)))
+                (commandline/stdout!
+                  (str "\n"
+                       (trace-dim "└────────────────────────────────────────────────────────")))
+                (commandline/stdout! (str "\n"
+                                          (trace-title "◆" "final result")
+                                          (pretty-block "summary"
+                                                        (trace-final-summary-prose result))))
+                (commandline/stdout! (str "\n" (trace-title "◆" "answer") "\n"))
+                (commandline/stdout! (content/text-projection (result-content result)))
                 (when (:error result)
                   (when-let [ex (:exception result)]
-                    (stdout! "\nStack trace:")
+                    (commandline/stdout! "\nStack trace:")
                     (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
-            json? (stdout! (result->json result))
+            json? (commandline/stdout! (result->json result))
             code?
             (let [blocks (->> (result-content result)
                               (keep #(when (= "code" (get % "type")) (get % "text")))
                               vec)]
-              (cond (:error result) (stdout! (error/format-error (:error result)))
+              (cond (:error result) (commandline/stdout! (error/format-error (:error result)))
                     (empty? blocks)
-                    (do (stdout!
+                    (do (commandline/stdout!
                           "Error: --code expects at least one code content block; got prose only.")
                         (shutdown-agents)
                         (System/exit 1))
-                    :else (stdout! (str/join "\n\n" blocks))))
-            (:error result) (stdout! (error/format-error (:error result)))
-            :else (do (stdout! (content/text-projection (result-content result)))
+                    :else (commandline/stdout! (str/join "\n\n" blocks))))
+            (:error result) (commandline/stdout! (error/format-error (:error result)))
+            :else (do (commandline/stdout! (content/text-projection (result-content result)))
                       (when (and (:duration-ms result) (not effective-raw?))
-                        (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
+                        (commandline/stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents)
       (when (pos? (long exit-code)) (System/exit exit-code)))))
-
-;;; ── `vis-agent sessions` ─────────────────────────────────────────────────
-
-(def ^:private known-channels #{"tui" "cli" "api"})
-
-(def ^:private known-channel-filters (conj known-channels "all"))
-
-(defn- resolve-session-by-prefix
-  "Resolve a user-supplied session reference (full UUID or an
-   unambiguous prefix) to the canonical UUID. Scans every channel
-   because forks are channel-agnostic; the user typed an id, we find
-   it. Returns nil on miss or ambiguous prefix. Existence-checks full
-   UUID strings; backend `db-resolve-session-id` only parses them."
-  [d input]
-  (let [s (some-> input
-                  str
-                  str/trim)]
-    (when (seq s)
-      (letfn [(existing-id [id]
-                (when (and id (try (persistance/db-get-session d id) (catch Throwable _ nil))) id))]
-        (or (try (existing-id (persistance/db-resolve-session-id d s)) (catch Throwable _ nil))
-            (let [matches (->> (or (persistance/db-list-sessions d :all) [])
-                               (filter #(str/starts-with? (str (:id %)) s))
-                               (map :id)
-                               distinct
-                               vec)]
-              (when (= 1 (count matches)) (existing-id (first matches)))))))))
-
-(defn- cli-fork-session!
-  "Fork a session by id. Creates a new `session_state` row
-   that points at the latest state as its parent, optionally with a
-   user-supplied title. Prints the new state UUID; the session
-   id (soul-id) stays the same so `vis-agent tui --session-id <ID>` keeps
-   working and now resumes from the fork."
-  [cid-input title]
-  (let [d
-        (lp/db-info)
-
-        resolved
-        (resolve-session-by-prefix d cid-input)]
-
-    (cond (nil? resolved) (do (stdout! (str "Session not found: " cid-input))
-                              (stdout! "")
-                              (stdout! "List existing sessions with:")
-                              (stdout! "  vis-agent sessions")
-                              (shutdown-agents)
-                              (System/exit 1))
-          :else (let [;; Fork = new session_state = new workspace pin (1:1).
-                      ;; Mint a fresh isolated workspace for the fork.
-                      ws-id
-                      (:id (workspace/ensure-workspace! d {}))
-
-                      opts
-                      (cond-> {:workspace-id ws-id}
-                        (and title (not (str/blank? title)))
-                        (assoc :title title))
-
-                      new-state
-                      (persistance/db-fork-session! d resolved opts)]
-
-                  (if new-state
-                    (do (stdout! "")
-                        (stdout! (str "  Forked session " resolved))
-                        (when title (stdout! (str "  Title:        " title)))
-                        (stdout! (str "  New state-id: " new-state))
-                        (stdout! "")
-                        (stdout! (str "  Resume with: vis-agent tui --session-id " resolved))
-                        (stdout! ""))
-                    (do (stdout! (str "Failed to fork session "
-                                      resolved
-                                      "; no existing state to fork from."))
-                        (shutdown-agents)
-                        (System/exit 1)))
-                  (shutdown-agents)))))
-
-(defn- session-sort-key
-  [{:keys [last-turn-at created-at id]}]
-  [(- (long (or (some-> last-turn-at
-                        inst-ms)
-                0)))
-   (- (long (or (some-> created-at
-                        inst-ms)
-                0))) (str id)])
-
-(defn- session-row
-  [d c]
-  (let [turns
-        (or (persistance/db-list-session-turns d (:id c)) [])
-
-        last-turn
-        (last turns)
-
-        channel-name
-        (name (or (:channel c) :unknown))]
-
-    {:id (str (:id c))
-     :title (or (:title c) "-")
-     :last-channel channel-name
-     :turns (count turns)
-     :forks (long (or (:fork-count c) 0))
-     :last-turn-at (:created-at last-turn)
-     :last-turn (or (some-> last-turn
-                            :created-at
-                            fmt/format-date)
-                    "-")
-     :created-at (:created-at c)
-     :created (or (fmt/format-date (:created-at c)) "-")}))
-
-(defn- session-rows
-  [d sessions]
-  (->> sessions
-       (mapv #(session-row d %))
-       (sort-by session-sort-key)
-       vec))
-
-(defn- sessions-for-listing
-  [channel-input]
-  (if channel-input (lp/by-channel (keyword channel-input)) (lp/by-channel :all)))
-
-(defn- cli-list-sessions!
-  "List persisted sessions. `channel-input` filters to one channel;
-   nil lists every known channel. Rows sort by most recent turn first,
-   with empty sessions after sessions that have turns."
-  [channel-input]
-  (let [channel-label
-        (or channel-input "all")
-
-        sessions
-        (sessions-for-listing channel-input)
-
-        d
-        (lp/db-info)]
-
-    (if (empty? sessions)
-      (stdout! (if channel-input (str "No " channel-input " sessions found.") "No sessions found."))
-      (let [rows (session-rows d sessions)]
-        (stdout! (str "\n  " (if channel-input (str/upper-case channel-label) "All") " Sessions\n"))
-        (print-table! [{:key :id :label "ID" :width 36 :align :left}
-                       {:key :title :label "Title" :width 24 :align :left :grow? true}
-                       {:key :last-channel :label "Last Channel" :width 12 :align :left}
-                       {:key :turns :label "Turns" :width 5 :align :right}
-                       {:key :forks :label "Forks" :width 5 :align :right}
-                       {:key :last-turn :label "Last Turn" :width 16 :align :left}
-                       {:key :created :label "Created" :width 16 :align :left}]
-                      rows)
-        (stdout! (str "\n  " (count rows) " session(s)\n"))
-        (stdout! "  Resume with: vis-agent tui --session-id <ID>  (full or short)")
-        (stdout! "  Pick latest: vis-agent tui --continue")
-        (stdout! "  Browse:      vis-agent tui --resume")
-        (stdout! "  Show:        vis-agent sessions show <ID>")
-        (stdout! "  Fork:        vis-agent sessions fork <ID> [--title TITLE]")
-        (stdout! "  Export:      vis-agent sessions export <ID> --md"))))
-  (shutdown-agents))
-
-(defn- cli-sessions-list!
-  [parsed _residual]
-  (config/init-cli!)
-  (let [channel
-        (get parsed "channel")
-
-        ch
-        (when (and channel (not= "all" channel)) (when (contains? known-channels channel) channel))]
-
-    (when (and channel (not (contains? known-channel-filters channel)))
-      (stdout! (str "Unknown channel: "
-                    channel
-                    ". Expected one of: "
-                    (str/join ", " (sort known-channel-filters))
-                    ". Showing all sessions."))
-      (stdout! ""))
-    (cli-list-sessions! ch)))
-
-(defn- session-or-exit!
-  [d cid-input]
-  (let [resolved (resolve-session-by-prefix d cid-input)]
-    (if-let [session (when resolved (persistance/db-get-session d resolved))]
-      (assoc session :id resolved)
-      (do (stdout! (str "Session not found: " cid-input))
-          (stdout! "")
-          (stdout! "List existing sessions with:")
-          (stdout! "  vis-agent sessions list")
-          (shutdown-agents)
-          (System/exit 1)))))
-
-(defn- session-detail-row [d session] (session-row d session))
-
-(defn- cli-show-session!
-  [parsed _residual]
-  (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        session
-        (session-or-exit! d (get parsed "session-id"))
-
-        row
-        (session-detail-row d session)
-
-        states
-        (persistance/db-list-session-states d (:id session))]
-
-    (stdout! (str "\n  Session " (:id session)))
-    (stdout! "  ─────────────────────────────────")
-    (stdout! (str "  Title:        " (:title row)))
-    (stdout! (str "  Channel:      " (:last-channel row)))
-    (stdout! (str "  Turns:        " (:turns row)))
-    (stdout! (str "  Forks:        " (:forks row)))
-    (stdout! (str "  Created:      " (:created row)))
-    (stdout! (str "  Last turn:    " (:last-turn row)))
-    (when-let [model (:model session)]
-      (stdout! (str "  Model:        " model)))
-    (when-let [provider (:provider session)]
-      (stdout! (str "  Provider:     " (name provider))))
-    ;; The backend-resolved root remains useful session metadata; whether the engine
-    ;; isolated it is intentionally not a human-facing mode.
-    (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
-                    (workspace/for-session d sid))]
-      (stdout! (str "  Root:         " (:root ws))))
-    (when (seq states)
-      (stdout! "")
-      (stdout! "  States")
-      (print-table! [{:key :version :label "Version" :width 7 :align :right}
-                     {:key :state-id :label "State ID" :width 36 :align :left}
-                     {:key :parent :label "Parent" :width 8 :align :left}
-                     {:key :turns :label "Turns" :width 5 :align :right}
-                     {:key :created :label "Created" :width 16 :align :left}]
-                    (mapv (fn [state]
-                            {:version (:version state)
-                             :state-id (str (:state-id state))
-                             :parent (if-let [p (:parent-state-id state)]
-                                       (subs (str p) 0 8)
-                                       "-")
-                             :turns (:turn-count state)
-                             :created (or (fmt/format-date (:created-at state)) "-")})
-                          states)))
-    (stdout! "")
-    (stdout! (str "  Resume:  vis-agent tui --session-id " (:id session)))
-    (stdout! (str "  Export:  vis-agent sessions export " (subs (str (:id session)) 0 8) " --md"))
-    (stdout! "")
-    (shutdown-agents)))
-
-(defn- export-html-str
-  "Standalone, vis-light-styled HTML transcript for a session — the canonical
-   `transcript/transcript-html` render (DB lookup + summary card + turn-by-turn
-   forensic body, all CSS inlined), the SAME renderer every other surface
-   (`/export`, gateway, companion) uses. No extra extension required."
-  [db sid]
-  ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript-html) db sid))
-
-(defn- resolve-out-path
-  "Resolve a user-supplied output path against the invocation directory.
-   `bin/vis-agent` runs the JVM source runtime from its source root (so
-   `clojure -M:vis` finds deps.edn) but passes the real invocation cwd as
-   `-Duser.dir`. Java resolves relative `File` paths against the OS cwd, so a
-   bare `out.html` would silently land in the source root while the printed
-   path (from `user.dir`) said otherwise. Anchor relatives to `user.dir`;
-   absolute paths pass through."
-  [path]
-  (let [f (io/file path)]
-    (.getPath (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") path)))))
-
-(defn- ensure-ext
-  "Append `.ext` to `path` when it doesn't already end with it (case-insensitive),
-   so a bare `siema` given to `--html` lands as `siema.html`."
-  [path ext]
-  (let [dot (str "." ext)]
-    (if (str/ends-with? (str/lower-case path) (str/lower-case dot)) path (str path dot))))
-
-(defn- cli-export-session!
-  [parsed _residual]
-  (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        session
-        (session-or-exit! d (get parsed "session-id"))
-
-        md?
-        (boolean (get parsed "md"))
-
-        html-path
-        (some-> (get parsed "html")
-                str/trim
-                not-empty
-                (ensure-ext "html")
-                resolve-out-path)
-
-        chosen
-        (filterv some? [(when md? :md) (when html-path :html)])]
-
-    (when (> (count chosen) 1)
-      (stdout! "Choose exactly one of --md or --html PATH.")
-      (shutdown-agents)
-      (System/exit 2))
-    (cond html-path (let [target (io/file html-path)]
-                      (when-let [parent (.getParentFile ^java.io.File target)]
-                        (.mkdirs parent))
-                      (spit target (export-html-str d (:id session)))
-                      (stdout! (str "Exported HTML: " (paths/abbreviate-home (.getPath target)))))
-          :else (write-stdout! ((requiring-resolve
-                                  'com.blockether.vis.internal.foundation.transcript/transcript-md)
-                                 d
-                                 (:id session))))
-    (shutdown-agents)))
-
-(defn- cli-delete-session!
-  [parsed _residual]
-  (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        session
-        (session-or-exit! d (get parsed "session-id"))]
-
-    ;; DELETE removes the draft too: trash the session's draft clones (primary
-    ;; + auto-cloned filesystem roots) before the DB tree. Draft-only — a trunk
-    ;; workspace's roots are the user's real dirs and are never touched.
-    ;; CLI one-shot: deref so reclamation finishes before the JVM exits (the
-    ;; shared discard executor is a daemon thread and would be killed mid-delete).
-    (try (some-> (workspace/discard-session-clones! d (:id session))
-                 deref)
-         (catch Throwable _ nil))
-    (lp/delete! (:id session))
-    (stdout! (str "Deleted session " (:id session)))
-    (shutdown-agents)))
-
-(defn- cli-fork-session-command!
-  [parsed _residual]
-  (config/init-cli!)
-  (cli-fork-session! (get parsed "session-id") (get parsed "title")))
-
-(defn- cli-sessions-search!
-  "`vis-agent sessions search <query>` handler. Uses the same transcript search as the
-   TUI session navigator: token-prefix matching across user requests and assistant
-   replies (answer + thinking), ordered newest-first. Hits print one per line:
-
-     <session-id-prefix>  <side>     <snippet>
-
-   Snippets carry `[match]` markers around hit terms. `--limit N` caps the
-   result count (default 25)."
-  [parsed _residual]
-  (config/init-cli!)
-  (let [query
-        (or (get parsed "query") "")
-
-        limit
-        (max 1
-             (long (or (some-> (get parsed "limit")
-                               str/trim
-                               Long/parseLong)
-                       25)))]
-
-    (cond (str/blank? query) (do (stdout! "vis-agent sessions search <query> [--limit N]")
-                                 (stdout! "")
-                                 (stdout!
-                                   "Searches transcripts exactly like the TUI session navigator.")
-                                 (shutdown-agents)
-                                 (System/exit 1))
-          :else
-          (let [d
-                (lp/db-info)
-
-                hits
-                (->> (persistance/db-search-session-matches d :all query)
-                     (mapcat (fn [{:keys [id hits]}]
-                               (map #(assoc % :session-id id) hits)))
-                     (take limit)
-                     vec)]
-
-            (cond (empty? hits) (do (stdout! (str "No matches for: " query)) (shutdown-agents))
-                  :else (do (stdout! (str (count hits)
-                                          " match" (when (not= 1 (count hits)) "es")
-                                          " for: " query))
-                            (stdout! "")
-                            (doseq [{:keys [session-id side snippet]} hits]
-                              (let [id-pref (let [s (str session-id)]
-                                              (subs s 0 (min 8 (count s))))
-                                    snippet (str/replace (or snippet "") #"\s+" " ")]
-
-                                (stdout!
-                                  (str id-pref "  " (format "%-8s" (name side)) "  " snippet))))
-                            (shutdown-agents)))))))
-
-(defn- cli-sessions!
-  "`vis-agent sessions` default handler. Bare `vis-agent sessions` lists all
-   sessions; every other operation is a canonical subcommand."
-  [_parsed residual]
-  (config/init-cli!)
-  (if (seq residual)
-    (do (stdout! (str "Unknown sessions command: " (first residual)))
-        (stdout! "")
-        (stdout! "Run: vis-agent sessions --help")
-        (shutdown-agents)
-        (System/exit 2))
-    (cli-list-sessions! nil)))
-
-;;; ── `vis-agent projects` ──────────────────────────────────────────────────────
-
-(defn- match-projects
-  "Projects from `projects` selected by `input`: an exact id wins outright,
-   otherwise every id with that prefix (case-insensitive).
-
-   Pure on purpose — this is the resolution RULE, so an ambiguous prefix is
-   provable without a database."
-  [projects input]
-  (let [needle
-        (str/lower-case (str/trim (str input)))
-
-        pid
-        #(str/lower-case (str (:id %)))]
-
-    (if (str/blank? needle)
-      []
-      (let [exact (filterv #(= needle (pid %)) projects)]
-        (if (seq exact) exact (filterv #(str/starts-with? (pid %) needle) projects))))))
-
-(defn- project-or-exit!
-  "Resolve a project by full id or unambiguous prefix, or print why not and exit."
-  [input]
-  (let [matches (match-projects (lp/projects {:archived :include}) input)]
-    (cond (= 1 (count matches)) (first matches)
-          (empty? matches) (do (stdout! (str "Project not found: " input))
-                               (stdout! "")
-                               (stdout! "List existing projects with:")
-                               (stdout! "  vis-agent projects")
-                               (shutdown-agents)
-                               (System/exit 1))
-          :else (do (stdout! (str "Ambiguous project id: " input " (" (count matches) " matches)"))
-                    (stdout! "")
-                    (doseq [p matches]
-                      (stdout! (str "  " (:id p) "  " (or (not-empty (str (:name p))) "-"))))
-                    (shutdown-agents)
-                    (System/exit 1)))))
-
-(defn- project-rows
-  [projects]
-  (mapv (fn [p]
-          {:id (str (:id p))
-           :name (or (not-empty (str (:name p))) "-")
-           :root (or (not-empty (str (:workspace-root p))) "-")
-           :sessions (str (or (:session-count p) 0))
-           :state (if (:archived-at p) "archived" "active")})
-        projects))
-
-(defn- list-projects!
-  "List projects (cross-channel, archived included) with their live session counts."
-  []
-  (let [projects (lp/projects {:archived :include})]
-    (if (empty? projects)
-      (stdout! "No projects found.")
-      (do (stdout! "\n  Projects\n")
-          (print-table! [{:key :id :label "ID" :width 36 :align :left}
-                         {:key :name :label "Name" :width 24 :align :left :grow? true}
-                         {:key :root :label "Workspace Root" :width 28 :align :left :grow? true}
-                         {:key :sessions :label "Sessions" :width 8 :align :right}
-                         {:key :state :label "State" :width 8 :align :left}]
-                        (project-rows projects))
-          (stdout! (str "\n  " (count projects) " project(s)\n"))
-          (stdout! "  Delete the project only:      vis-agent projects delete <ID>")
-          (stdout!
-            "  Delete it and its sessions:   vis-agent projects delete <ID> --with-sessions"))))
-  (shutdown-agents))
-
-(defn- delete-project-tree!
-  "Delete project `project-id` and return a summary; prints nothing.
-
-   Without `:with-sessions` this is the SCATTER delete the schema has always
-   had: the row goes and its sessions survive as project-less. With it, every
-   MEMBER session tree is deleted FIRST — an interrupted teardown must leave a
-   project holding survivors, never orphans with a dead parent. Membership is
-   not a client's visible list: untitled and empty conversations are members
-   too, and a caller fanning out over what it can see would keep the rest."
-  [d project-id {:keys [with-sessions]}]
-  (let [pid
-        (str project-id)
-
-        member-ids
-        (vec (lp/project-session-ids pid))]
-
-    (when with-sessions
-      (doseq [sid member-ids]
-        ;; Same order as `vis-agent sessions delete`: trash the draft clones
-        ;; (primary + auto-cloned roots) before the DB tree, and deref so
-        ;; reclamation finishes before this one-shot JVM exits.
-        (try (some-> (workspace/discard-session-clones! d sid)
-                     deref)
-             (catch Throwable _ nil))
-        (lp/delete! sid)))
-    (lp/delete-project! pid)
-    {:project-id pid
-     :deleted-session-ids (if with-sessions member-ids [])
-     :kept-session-ids (if with-sessions [] member-ids)}))
-
-(defn- cli-delete-project!
-  "`vis-agent projects delete <PROJECT-ID> [--with-sessions]` handler."
-  [parsed _residual]
-  (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        project
-        (project-or-exit! (get parsed "project-id"))
-
-        with-sessions
-        (boolean (get parsed "with-sessions"))
-
-        {:keys [project-id deleted-session-ids kept-session-ids]}
-        (delete-project-tree! d (:id project) {:with-sessions with-sessions})]
-
-    (stdout! (str "Deleted project "
-                  project-id
-                  (when-let [n (not-empty (str (:name project)))]
-                    (str " (" n ")"))))
-    (if with-sessions
-      (stdout! (str "  " (count deleted-session-ids) " session(s) deleted with it."))
-      (when (seq kept-session-ids)
-        (stdout! (str "  " (count kept-session-ids) " session(s) kept, now project-less."))
-        (stdout! "  Delete one with: vis-agent sessions delete <ID>"))))
-  (shutdown-agents))
-
-(defn- cli-projects-list! [_parsed _residual] (config/init-cli!) (list-projects!))
-
-(defn- cli-projects!
-  "`vis-agent projects` default handler. Bare `vis-agent projects` lists them;
-   every other operation is a canonical subcommand."
-  [_parsed residual]
-  (config/init-cli!)
-  (if (seq residual)
-    (do (stdout! (str "Unknown projects command: " (first residual)))
-        (stdout! "")
-        (stdout! "Run: vis-agent projects --help")
-        (shutdown-agents)
-        (System/exit 2))
-    (list-projects!)))
-
-;;; ── `vis-agent providers` ─────────────────────────────────────────────────────
-
-(def ^:private providers-table-cols
-  [{:key :id :label "ID" :width 18 :align :left} {:key :label :label "Label" :width 28 :align :left}
-   {:key :auth :label "Auth" :width 6 :align :left}
-   {:key :rpm :label "Catalog RPM" :width 11 :align :right}
-   {:key :tpm :label "Catalog TPM" :width 12 :align :right}
-   {:key :base-url :label "Base URL" :width 36 :align :left}])
-
-(defn- gateway-provider-status-safe
-  [provider-id]
-  (try (gateway-client/provider-status provider-id)
-       (catch Throwable e {"is_authenticated" false "error" (or (ex-message e) (str e))})))
-
-(defn- gateway-provider-limits-safe
-  [provider-id]
-  (try (gateway-client/provider-limits provider-id)
-       (catch Throwable e
-         {:provider-id provider-id
-          :status :error
-          :static {}
-          :dynamic {:limits []}
-          :error {:message (or (ex-message e) (str e))}})))
-
-(defn- configured-provider-entry
-  [provider-id]
-  (->> (or (:providers (config/current-config)) [])
-       (filter #(= provider-id (:id %)))
-       first))
-
-(defn- configured-provider-status [provider] (gateway-provider-status-safe (:provider/id provider)))
-
-(defn- configured-provider-base-url
-  [provider-id]
-  (or (:base-url (configured-provider-entry provider-id))
-      (some-> provider-id
-              config/provider-template
-              :base-url)))
-
-(defn- provider-label-for-id
-  "Registered/preset branding first, else the id VERBATIM — a `vis.yml` id keeps
-   the casing its author typed (see `config/display-label`)."
-  [provider-id]
-  (or (some-> (registry/provider-by-id provider-id)
-              :provider/label)
-      (some-> (config/provider-template provider-id)
-              :label)
-      (some-> provider-id
-              name)))
-
-(defn- format-limit-window
-  [{:keys [kind unit size resets-at-ms]}]
-  (when kind
-    (str (name kind)
-         (when unit (str " " (or size 1) "/" (name unit)))
-         (when resets-at-ms
-           (str ", resets " (fmt/format-date (java.util.Date. (long resets-at-ms))))))))
-
-(defn- format-limit-row
-  [{:keys [label scope kind is-unlimited used limit remaining note window]}]
-  (let [quota
-        (cond is-unlimited "unlimited"
-              (number? limit) (str (when (number? used) (str used "/"))
-                                   limit
-                                   (when (number? remaining) (str " (" remaining " left)")))
-              (number? used) (str "used " used)
-              :else nil)
-
-        attrs
-        (->> [(some-> scope
-                      name)
-              (some-> kind
-                      name) (format-limit-window window)]
-             (remove nil?))]
-
-    (str label
-         (when (seq attrs) (str " [" (str/join ", " attrs) "]"))
-         (when quota (str ": " quota))
-         (when note (str " - " note)))))
-
-(defn- provider-limit-lines
-  [provider-id]
-  (let [report
-        (gateway-provider-limits-safe provider-id)
-
-        static
-        (:static report)
-
-        dynamic
-        (get-in report [:dynamic :limits])
-
-        note
-        (get-in report [:dynamic :note])
-
-        error*
-        (:error report)]
-
-    (vec (concat [(str "  Limits status: " (name (:status report)))]
-                 (when-let [rpm (:rpm static)]
-                   [(str "  Catalog RPM:    " rpm)])
-                 (when-let [tpm (:tpm static)]
-                   [(str "  Catalog TPM:    " tpm)])
-                 (if (seq dynamic)
-                   (concat ["  Dynamic limits:"] (map #(str "    - " (format-limit-row %)) dynamic))
-                   ["  Dynamic limits: none reported"])
-                 (when note [(str "  Note:           " note)])
-                 (when (seq static)
-                   ["  Catalog RPM / TPM come from svar metadata, not live account quota usage."])
-                 (when error* [(str "  Error:          " (:message error*))])))))
-
-(defn- print-provider-status!
-  [provider]
-  (let [status
-        (or (configured-provider-status provider) {"is_authenticated" false})
-
-        provider-id
-        (:provider/id provider)
-
-        base-url
-        (configured-provider-base-url provider-id)
-
-        rows
-        (->> status
-             (remove (fn [[k _]]
-                       (contains? providers/summary-owned-status-keys k)))
-             (sort-by (comp str key)))]
-
-    (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
-    (stdout! "  ─────────────────────────────────")
-    (when base-url (stdout! (str "  Base URL:       " base-url)))
-    (stdout! (str "  Authenticated:  " (providers/auth-summary status false)))
-    (doseq [[k v] rows]
-      (stdout! (str "  "
-                    (commandline/pad-right (str (providers/status-entry-label k) ":") 15)
-                    (providers/format-status-value v))))
-    (doseq [line (provider-limit-lines provider-id)]
-      (stdout! line))
-    (stdout! "")))
-
-(defn- print-provider-limits!
-  [provider-id]
-  (stdout! (str "\n  " (provider-label-for-id provider-id) " Limits"))
-  (stdout! "  ─────────────────────────────────")
-  (doseq [line (provider-limit-lines provider-id)]
-    (stdout! line))
-  (stdout! ""))
-
-(defn- providers-list-rows
-  []
-  (->> (registry/registered-providers)
-       (sort-by :provider/id)
-       (mapv
-         (fn [provider]
-           (let [status
-                 (configured-provider-status provider)
-
-                 report
-                 (gateway-provider-limits-safe (:provider/id provider))
-
-                 base-url
-                 (configured-provider-base-url (:provider/id provider))]
-
-             {:id (name (:provider/id provider))
-              :label (:provider/label provider)
-              :auth (name (providers/auth-verdict status))
-              :rpm (or (some-> report
-                               :static
-                               :rpm
-                               str)
-                       "-")
-              :tpm (or (some-> report
-                               :static
-                               :tpm
-                               str)
-                       "-")
-              :base-url (or base-url "-")})))))
-
-(defn- print-registered-providers!
-  []
-  (let [all (registry/registered-providers)]
-    (if (seq all)
-      ;; Width tracks the LONGEST provider id + a 2-space gutter so ids like
-      ;; `anthropic-coding-plan` (21 chars) never run into their label.
-      (let [w (+ 2 (long (reduce max 0 (map #(count (name (:provider/id %))) all))))]
-        (stdout! "Available providers:")
-        (doseq [p (sort-by :provider/id all)]
-          (stdout!
-            (str "  " (commandline/pad-right (name (:provider/id p)) w) (:provider/label p)))))
-      (stdout! "No providers registered."))))
-
-(defn- cli-providers-list!
-  [_parsed _residual]
-  (config/init-cli!)
-  (let [rows (providers-list-rows)]
-    (if (empty? rows)
-      (stdout! "No providers registered.")
-      (do (stdout! "\n  Providers\n")
-          (print-table! providers-table-cols rows)
-          (stdout! (str "\n  " (count rows) " provider(s)\n")))))
-  (shutdown-agents))
-
-(defn- cli-providers-status!
-  [_parsed residual]
-  (config/init-cli!)
-  (let [provider-name
-        (first residual)
-
-        provider-id
-        (some-> provider-name
-                keyword)
-
-        provider
-        (when provider-id (registry/provider-by-id provider-id))
-
-        providers
-        (if provider-name
-          (if provider [provider] [])
-          (sort-by :provider/id (registry/registered-providers)))]
-
-    (cond (and provider-name (nil? provider)) (do (stdout! (str "Unknown provider: " provider-name))
-                                                  (stdout! "")
-                                                  (print-registered-providers!))
-          (empty? providers) (stdout! "No providers registered.")
-          :else (doseq [p providers]
-                  (print-provider-status! p))))
-  (shutdown-agents))
-
-(defn- cli-providers-limits!
-  [_parsed residual]
-  (config/init-cli!)
-  (let [provider-name
-        (first residual)
-
-        registered
-        (sort-by :provider/id (registry/registered-providers))]
-
-    (if provider-name
-      (let [provider-id
-            (keyword provider-name)
-
-            known?
-            (or (registry/provider-by-id provider-id)
-                (config/provider-template provider-id)
-                (seq (:static (gateway-provider-limits-safe provider-id))))]
-
-        (if known?
-          (print-provider-limits! provider-id)
-          (do (stdout! (str "Unknown provider: " provider-name))
-              (stdout! "")
-              (print-registered-providers!))))
-      (if (seq registered)
-        (doseq [provider registered]
-          (print-provider-limits! (:provider/id provider)))
-        (stdout! "No providers registered."))))
-  (shutdown-agents))
-
-(defn- cli-providers-auth!
-  [parsed residual]
-  (config/init-cli!)
-  (let [provider-name
-        (or (get parsed "provider") (first residual))
-
-        provider-id
-        (some-> provider-name
-                keyword)
-
-        provider
-        (when provider-id (registry/provider-by-id provider-id))]
-
-    (cond (nil? provider-id) (do (stdout! "Usage: vis-agent providers auth <provider>")
-                                 (stdout! "")
-                                 (print-registered-providers!))
-          (nil? provider) (do (stdout! (str "Unknown provider: " provider-name))
-                              (stdout! "")
-                              (print-registered-providers!))
-          (nil? (:provider/auth-fn provider)) (stdout!
-                                                (str "Provider "
-                                                     (:provider/label provider)
-                                                     " does not expose an interactive auth flow."))
-          :else (try ((:provider/auth-fn provider) stdout!)
-                     (catch Exception e
-                       (stdout! (error/format-error (str "Authentication failed: "
-                                                         (ex-message e))))))))
-  (shutdown-agents))
-
-(defn- cli-providers-logout!
-  [parsed residual]
-  (config/init-cli!)
-  (let [provider-name
-        (or (get parsed "provider") (first residual))
-
-        provider-id
-        (some-> provider-name
-                keyword)
-
-        provider
-        (when provider-id (registry/provider-by-id provider-id))
-
-        configured?
-        (boolean (some #(= (name provider-id) (get % "id"))
-                       (get (config/load-config-raw) "providers")))]
-
-    (cond (nil? provider-id) (do (stdout! "Usage: vis-agent providers logout <provider>")
-                                 (stdout! "")
-                                 (print-registered-providers!))
-          (nil? provider) (do (stdout! (str "Unknown provider: " provider-name))
-                              (stdout! "")
-                              (print-registered-providers!))
-          (and (nil? (:provider/logout-fn provider)) (not configured?))
-          (stdout! (str "Provider " (:provider/label provider) " does not persist credentials."))
-          :else (do (if-let [logout-fn (:provider/logout-fn provider)]
-                      (logout-fn)
-                      ;; Key-only provider: forget the KEY, keep the entry.
-                      (providers/clear-provider-api-key! provider-id :cli-provider-logout))
-                    ;; The config entry stays: logging out drops the credential, not
-                    ;; the provider's models/base-url, so signing back in is one
-                    ;; `providers auth` away.
-                    (stdout! (str "  Logged out of "
-                                  (:provider/label provider)
-                                  ". Credentials cleared; provider stays configured.")))))
-  (shutdown-agents))
 
 ;;; ── `vis-agent doctor` ────────────────────────────────────────────────────────
 
@@ -2610,23 +1571,24 @@
       (let [msgs (doctor/run-checks (cond-> {:db-info db-info}
                                       days
                                       (assoc :housekeeping-days days)))]
-        (stdout! (doctor/format-output msgs))
+        (commandline/stdout! (doctor/format-output msgs))
         (System/exit (int (doctor/exit-code msgs))))
       (let [{:keys [purged count bytes reclaimed-bytes] :as report}
             (housekeeping/purge! {:db-info db-info :days days :is-dry-run is-dry-run})]
-        (stdout! (if (zero? (long (or count 0)))
-                   (str "Nothing untouched for over "
-                        (:days report)
-                        " days — drafts and session journals are already tidy.")
-                   (str (if is-dry-run "Would reclaim " "Reclaimed ")
-                        count
-                        (if (= 1 (long count)) " item, " " items, ")
-                        (fmt/format-bytes (or (if is-dry-run bytes reclaimed-bytes) 0) " ")
-                        " (untouched for over "
-                        (:days report)
-                        " days):\n"
-                        (str/join "\n" (map housekeeping-line purged))
-                        (when is-dry-run "\n\nRe-run without --dry-run to reclaim."))))
+        (commandline/stdout! (if (zero? (long (or count 0)))
+                               (str "Nothing untouched for over "
+                                    (:days report)
+                                    " days — drafts and session journals are already tidy.")
+                               (str (if is-dry-run "Would reclaim " "Reclaimed ")
+                                    count
+                                    (if (= 1 (long count)) " item, " " items, ")
+                                    (fmt/format-bytes (or (if is-dry-run bytes reclaimed-bytes) 0)
+                                                      " ")
+                                    " (untouched for over "
+                                    (:days report)
+                                    " days):\n"
+                                    (str/join "\n" (map housekeeping-line purged))
+                                    (when is-dry-run "\n\nRe-run without --dry-run to reclaim."))))
         (System/exit 0)))))
 
 ;;; ── `vis-agent extension` ───────────────────────────────────────────────────────────
@@ -2647,523 +1609,19 @@
         (list-extensions)
 
         cols
-        (expand-table-cols extensions-table-cols (terminal-width))
+        (commandline/expand-table-cols extensions-table-cols (commandline/terminal-width))
 
         width
-        (table-width cols)]
+        (commandline/table-width cols)]
 
     (if (empty? exts)
-      (stdout! "No extensions registered.")
-      (do (stdout! "\n  Extensions\n")
+      (commandline/stdout! "No extensions registered.")
+      (do (commandline/stdout! "\n  Extensions\n")
           (doseq [[kind rows] (sort-by key (group-by :kind exts))]
             (print-section-heading! kind width)
-            (print-table! cols (sort-by (juxt :group :namespace) rows)))
-          (stdout! (str "\n  " (count exts) " extension(s)\n")))))
+            (commandline/print-table! cols (sort-by (juxt :group :namespace) rows)))
+          (commandline/stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
-
-(defn- advertise-option
-  "The address the pairing link must lead with, in precedence order: `--advertise`
-   on the command, `VIS_GATEWAY_ADVERTISE` in the environment, then
-   `gateway: advertise:` in the Vis config.
-
-   A machine reachable on one route only needs that answer on EVERY pair, not
-   just on the command somebody remembered to decorate. The config tier is the
-   one a service-managed daemon can still read, because a launchd/systemd unit
-   sources no shell profile; it comes off the RAW merged config, like the
-   database path, so a gateway on a machine with no providers saved still gets
-   it. All three stay per machine: the address that works here - a LAN IP, a
-   forwarded router port, a hostname - names a stranger's box on the next
-   network, so no built-in default is safe."
-  ([parsed]
-   (advertise-option parsed
-                     (System/getenv "VIS_GATEWAY_ADVERTISE")
-                     (get-in (config/load-config-raw) ["gateway" "advertise"])))
-  ([parsed from-env from-config]
-   (some #(not-empty (str/trim (str %))) [(get parsed "advertise") from-env from-config])))
-
-(defn- cli-gateway-start!
-  "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
-   Ring/Jetty class loading off every other command's startup path."
-  [parsed _residual]
-  (config/init-cli!)
-  (when-let [db (get parsed "db")]
-    (System/setProperty "vis.db.path" db))
-  ((requiring-resolve 'com.blockether.vis.internal.gateway.server/serve-main!)
-    {:port (get parsed "port")
-     :host (get parsed "host")
-     :token-file (get parsed "token-file")
-     :require-token? (boolean (get parsed "require-token"))
-     :pair? (boolean (get parsed "pair"))
-     :advertise (advertise-option parsed)
-     :managed? (= "1" (System/getenv "VIS_GATEWAY_MANAGED"))
-     :db (config/resolve-db-spec (when-let [db (get parsed "db")]
-                                   (if (= db ":memory") :memory {:backend :sqlite :path db})))}))
-
-(defn- plural
-  "`n` with `one` pluralized by an s - the shape every gateway line counts in."
-  [n one]
-  (str n " " one (when (not= 1 (long n)) "s")))
-
-(defn- build-label
-  "How a Vis build names ITSELF to a human, read off its handshake
-   (`{:version :build}`): the release version, or - when a source checkout has no
-   release to be ordered by - the commit that is its identity, because \"dev\"
-   alone names no code."
-  [{:keys [version build]}]
-  (if (and (= "dev" version) build) (str version " (" build ")") version))
-
-(defn- this-handshake
-  "What THIS runtime advertises about itself ([[runtime/handshake]])."
-  []
-  ((requiring-resolve 'com.blockether.vis.internal.gateway.runtime/handshake)))
-
-(defn- stale-daemon-note
-  "The line `gateway status` adds when THIS runtime (`ours`, a handshake) is newer
-   code than the daemon `status` describes: what picks the new build up, and what
-   still holds the old one. nil when it is not.
-
-   Both halves come out of the handshake the status map already carries, so the
-   answer costs no extra round trip, and it applies the SAME two rules an attach
-   does - [[runtime/superseded?]] for the verdict, [[client/daemon-idle?]] for
-   whether anything is in the way. A status line must never promise a replacement
-   the next client would refuse to make."
-  [status ours]
-  (let [peer
-        (get status "protocol")
-
-        superseded?
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.runtime/superseded?)
-          {:our-version (:version ours)
-           :their-version (get peer "version")
-           :our-build (:build ours)
-           :their-build (get peer "build")})
-
-        {:keys [reason clients running-turns pid]}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/daemon-idle?) status)]
-
-    (when superseded?
-      (str "this build is " (build-label ours)
-           " - " (case reason
-                   :idle
-                   "the next session starts on it"
-
-                   :user-owned
-                   (str "the running daemon is user-owned"
-                        (when pid (str " (pid " pid ")"))
-                        " - stop and start it yourself to pick it up")
-
-                   (if (and clients running-turns)
-                     (str "it is picked up once nothing is using this one ("
-                          (plural clients "client")
-                          ", "
-                          (plural running-turns "running turn")
-                          ")")
-                     "it is picked up once this one is no longer in use"))))))
-
-(defn- newer-daemon-note
-  "The line `gateway status` adds when the RUNNING daemon is newer code than this
-   runtime (`ours`, a handshake): the update is installed and this build is the half
-   that is behind. nil when it is not.
-
-   The mirror of [[stale-daemon-note]], and the only place this side says so: a
-   client never replaces a daemon that is ahead of it, so silence here would read as
-   \"nothing is new\". It applies to a remote gateway too, where the version a human
-   can act on is the one on THIS device."
-  [status ours]
-  (let [peer
-        (get status "protocol")
-
-        theirs
-        (get peer "version")]
-
-    (when ((requiring-resolve 'com.blockether.vis.contract.gateway/newer-release?)
-            theirs
-            (:version ours))
-      (str "a newer Vis is running the gateway: "
-           theirs
-           " - this build is "
-           (build-label ours)
-           " - install it here with: vis-agent update"))))
-
-(defn- cli-gateway-status!
-  [parsed _residual]
-  (config/init-cli!)
-  (when-let [db (get parsed "db")]
-    (System/setProperty "vis.db.path" db))
-  (let [{:strs [status pid host port db clients running_turns require_token] :as m}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
-    (if (= "running" status)
-      (let [peer (get m "protocol")]
-        (stdout!
-          (str "gateway running pid="
-               pid
-               " url=http://"
-               host
-               ":"
-               port
-               " db="
-               db
-               " clients="
-               clients
-               " running-turns="
-               running_turns
-               " auth="
-               (if require_token "token" "loopback-disabled")
-               " version="
-               (or (get peer "version") "unknown")
-               (when-let [build (get peer "build")]
-                 (str " build=" build))))
-        ;; "why is my update not in effect yet" is what this command gets asked, and
-        ;; the answer is already in the map. A --gateway target is another machine's
-        ;; lifecycle, so nothing here is ever going to replace it.
-        (let [ours (this-handshake)]
-          (when-let [note (newer-daemon-note m ours)]
-            (stdout! note))
-          (when-not ((requiring-resolve 'com.blockether.vis.internal.gateway.client/remote-gateway))
-            (when-let [note (stale-daemon-note m ours)]
-              (stdout! note)))))
-      (stdout! (str "gateway stopped"
-                    (when-let [db (get m "db")]
-                      (str " db=" db)))))))
-
-(defn- cli-gateway-pair!
-  "Print a companion pairing QR for the gateway ALREADY running for this DB, so
-   you can pair without stopping/restarting it. Refuses a loopback-bound daemon
-   (a phone can never reach 127.0.0.1) with a copy-paste fix, unless --advertise
-   names the route that does reach it."
-  [parsed _residual]
-  (config/init-cli!)
-  (when-let [db (get parsed "db")]
-    (System/setProperty "vis.db.path" db))
-  (let [{:keys [running? host port token loopback?]}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))
-
-        advertise
-        (advertise-option parsed)]
-
-    (cond (not running?)
-          (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
-                               "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")
-                          {:vis/user-error true}))
-          (and loopback? (empty? (str advertise)))
-          (throw
-            (ex-info
-              (let [ts (first ((requiring-resolve
-                                 'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
-                (str "the running gateway is bound to " host
-                     " (loopback) \u2014 a phone cannot reach it.\n"
-                     "Restart it on a reachable host:\n"
-                     "  vis-agent gateway stop\n"
-                     (if ts
-                       (str
-                         "  vis-agent gateway start --host " ts
-                         " --require-token --pair"
-                         "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
-                       "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")))
-              {:vis/user-error true}))
-          :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
-                  {:host host
-                   :port port
-                   :token token
-                   :require-token? (boolean token)
-                   :advertise advertise
-                   :emit stdout!}))))
-
-(defn- gateway-stop-if-idle!
-  "`--if-idle`: release the daemon only when releasing it is free, and say why when
-   it is not. Never fails - `vis-agent update` runs exactly this after installing a
-   new runtime, and an update must not report failure because someone had a TUI
-   open. Silent when nothing is running, so a plain update prints nothing extra.
-
-   A daemon left alone here is not left stale: the next client to attach it with
-   nobody using it replaces it itself (`client/stale-bounce-verdict`), so the advice
-   printed for a busy one is to finish and close the session, not to run anything."
-  []
-  (let [{:keys [stopped? reason clients running-turns pid]}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon-if-idle!))
-
-        version
-        (build-label (this-handshake))]
-
-    (cond stopped? (stdout! (str "gateway stopped - next session starts on " version))
-          (= :not-running reason) nil
-          (= :remote reason) (stdout!
-                               "gateway is a --gateway target on another machine - left alone")
-          (= :user-owned reason) (stdout!
-                                   (str "gateway is user-owned" (when pid (str " (pid " pid ")"))
-                                        " - restart it yourself when ready:\n"
-                                        "  vis-agent gateway stop && vis-agent gateway start"))
-          :else (stdout! (str "gateway still running ("
-                              (plural clients "client")
-                              ", "
-                              (plural running-turns "running turn")
-                              ") - left alone, still serving the old build.\n"
-                              "  Quit those sessions and the next vis picks up " version
-                              " by itself; to bounce it now:\n" "  vis-agent gateway stop")))))
-
-(defn- cli-gateway-stop!
-  [parsed _residual]
-  (config/init-cli!)
-  (when-let [db (get parsed "db")]
-    (System/setProperty "vis.db.path" db))
-  (if (get parsed "if-idle")
-    (gateway-stop-if-idle!)
-    (let [{:keys [stopping status type host port pid recovery escalated clients running-turns]}
-          ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))
-
-          cost
-          (str/join ", "
-                    (cond-> []
-                      (pos? (long (or clients 0)))
-                      (conj (str "releasing " (plural clients "client")))
-
-                      (pos? (long (or running-turns 0)))
-                      (conj (str "draining " (plural running-turns "running turn")))))]
-
-      (stdout!
-        (cond stopping (str "gateway stopping"
-                            (when pid (str " (pid " pid ")"))
-                            (when (seq cost) (str " - " cost)))
-              (= "stopped" status)
-              (if escalated
-                (str "gateway stopped by " (if (= :kill escalated) "SIGKILL" "SIGTERM")
-                     " - it had stopped answering" (when pid (str " (pid " pid ")")))
-                "gateway stopped")
-              (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
-                                                     host
-                                                     ":"
-                                                     port
-                                                     (when pid (str " (registered PID " pid ")"))
-                                                     ". "
-                                                     recovery)
-              :else (str "gateway stop requested" (when pid (str " (pid " pid ")"))
-                         " - it reported no final state. Check it with:\n"
-                         "  vis-agent gateway status"))))))
-
-;;; ── `vis-agent gateway mcp` subcommands ──────────────────────────────────────
-
-(defn- with-mcp-db!
-  [parsed]
-  (config/init-cli!)
-  (when-let [db (get parsed "db")]
-    (System/setProperty "vis.db.path" db)))
-
-(defn- parse-kv-list
-  "Parse a comma-separated K=V,K2=V2 flag value into a string-keyed map, or nil
-   when blank."
-  [s]
-  (when-not (str/blank? (str s))
-    (into {}
-          (map (fn [pair]
-                 (let [[k v] (str/split pair #"=" 2)]
-                   [(str/trim k) (str/trim (or v ""))])))
-          (str/split s #","))))
-
-(defn- mcp-spec-from-parsed
-  "Build a wire-shaped MCP server spec (string-keyed) from parsed CLI flags.
-   `url` implies Streamable HTTP; `command` implies stdio -- exactly what
-   `mcp.core/transport-of` infers when no explicit `transport` is given."
-  [parsed]
-  (cond-> {"enabled" (not (boolean (get parsed "disabled")))}
-    (get parsed "url")
-    (assoc "url" (get parsed "url"))
-
-    (parse-kv-list (get parsed "headers"))
-    (assoc "headers" (parse-kv-list (get parsed "headers")))
-
-    (get parsed "command")
-    (assoc "command" (get parsed "command"))
-
-    (not (str/blank? (str (get parsed "args"))))
-    (assoc "args" (vec (str/split (get parsed "args") #"\s+")))
-
-    (get parsed "cwd")
-    (assoc "cwd" (get parsed "cwd"))
-
-    (parse-kv-list (get parsed "env"))
-    (assoc "env" (parse-kv-list (get parsed "env")))
-
-    (get parsed "timeout-ms")
-    (assoc "timeout_ms" (get parsed "timeout-ms"))))
-
-(defn- require-mcp-name!
-  [parsed]
-  (let [n (get parsed "name")]
-    (when (str/blank? n) (throw (ex-info "A server NAME is required." {:vis/user-error true})))
-    n))
-
-(defn- cli-mcp-list!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [rows ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-servers))]
-    (if (empty? rows)
-      (stdout! "No MCP servers configured. Add one: vis-agent gateway mcp add <NAME> --url <URL>")
-      (print-table! [{:key "name" :label "Name" :width 16}
-                     {:key "transport" :label "Transport" :width 15}
-                     {:key "enabled" :label "Enabled" :width 7}
-                     {:key "is_connected" :label "Connected" :width 9}
-                     {:key "is_authorized" :label "Authorized" :width 10}
-                     {:key "tools" :label "Tools" :width 5}]
-                    rows))))
-
-(defn- cli-mcp-add!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        spec
-        (mcp-spec-from-parsed parsed)
-
-        saved
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-save-server!)
-          name
-          spec)]
-
-    (stdout! (str "Saved MCP server \"" name "\" (" (get saved "transport") ")."))
-    (when (= "streamable_http" (get saved "transport"))
-      (if (get saved "is_authorized")
-        (stdout! "  Already authorized.")
-        (do (stdout! "  This server needs OAuth sign-in before it can be used:")
-            (stdout! (str "    vis-agent gateway mcp auth-start " name)))))))
-
-(defn- cli-mcp-test!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        spec
-        (mcp-spec-from-parsed parsed)
-
-        result
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-test-server!)
-          name
-          spec)]
-
-    (stdout! (str "connected=" (boolean (get result "is_connected"))
-                  "  tools=" (count (get result "tools"))))))
-
-(defn- cli-mcp-remove!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-delete-server!) name)
-    (stdout! (str "Removed MCP server \"" name "\"."))))
-
-(defn- cli-mcp-enable!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-set-server-enabled!)
-      name
-      true)
-    (stdout! (str "Enabled MCP server \"" name "\"."))))
-
-(defn- cli-mcp-disable!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-set-server-enabled!)
-      name
-      false)
-    (stdout! (str "Disabled MCP server \"" name "\"."))))
-
-(defn- cli-mcp-kill!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-kill-server!) name)
-    (stdout! (str "Killed MCP server \"" name "\" (held down until started again)."))))
-
-(defn- cli-mcp-start!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-start-server!) name)
-    (stdout! (str "Started MCP server \"" name "\"."))))
-
-(defn- cli-mcp-auth-start!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        {:strs [flow_id url redirect_uri]}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-start!) name)]
-
-    (stdout! (str "Step 1. Open this URL in a browser and approve access for \"" name "\":"))
-    (stdout! (str "  " url))
-    (stdout! "")
-    (stdout! (str "Step 2. The provider redirects to a loopback URL (" redirect_uri "?code=...)."))
-    (stdout! "        Copy that FULL redirect URL (it works even if the page shows an error --")
-    (stdout! "        the code is in the URL bar) and run:")
-    (stdout! (str "  vis-agent gateway mcp auth-complete "
-                  name
-                  " --flow-id "
-                  flow_id
-                  " --input \"<PASTED_URL>\""))
-    (stdout! "")
-    (stdout! (str "flow_id=" flow_id))))
-
-(defn- cli-mcp-auth-complete!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        flow-id
-        (get parsed "flow-id")
-
-        input
-        (get parsed "input")
-
-        {:strs [status] :as result}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-complete!)
-          name
-          flow-id
-          input)]
-
-    (stdout! (str "auth status: " (or status "unknown")))
-    (when (= "error" status)
-      (stdout! (str "  " (or (get result "message") "Authorization failed."))))))
-
-(defn- cli-mcp-auth-poll!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        flow-id
-        (get parsed "flow-id")
-
-        {:strs [status] :as result}
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-poll!)
-          name
-          flow-id)]
-
-    (stdout! (str "auth status: " (or status "unknown")))
-    (when (= "error" status)
-      (stdout! (str "  " (or (get result "message") "Authorization failed."))))))
-
-(defn- cli-mcp-auth-cancel!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name
-        (require-mcp-name! parsed)
-
-        flow-id
-        (get parsed "flow-id")]
-
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-cancel!) name flow-id)
-    (stdout! (str "Cancelled auth flow for \"" name "\"."))))
-
-(defn- cli-mcp-auth-logout!
-  [parsed _residual]
-  (with-mcp-db! parsed)
-  (let [name (require-mcp-name! parsed)]
-    ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-logout!) name)
-    (stdout! (str "Signed out of MCP server \"" name "\" (tokens forgotten)."))))
 
 ;;; ── `vis-agent python` — standalone CPython interpreter ────────────────────────
 ;;
@@ -3262,7 +1720,8 @@
 
     ;; The CLI owns a real terminal: prompts must reach it before input() blocks.
     ;; Agent contexts keep the default captured-output callback.
-    (python-host/install-sync-tools! python-context {"__vis_capture_stdout__" write-stdout!})
+    (python-host/install-sync-tools! python-context
+                                     {"__vis_capture_stdout__" commandline/write-stdout!})
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
     ;; Forward script argv + (by default) the caller's env — real-python CLI
@@ -3304,32 +1763,34 @@
    trailing expression is never echoed."
   [ctx code]
   (let [{:keys [error]} (env/run-python-block ctx code)]
-    (if error (do (stdout! (or (:message error) (pr-str error))) 1) 0)))
+    (if error (do (commandline/stdout! (or (:message error) (pr-str error))) 1) 0)))
 
 (defn- python-repl!
   "Minimal interactive REPL over one persistent standalone sandbox `ctx`.
    Reads a whole block (terminated by a blank line, so multi-line defs work),
    evaluates it, and prints captured stdout. Ctrl-D / EOF quits."
   [ctx]
-  (stdout! (str "vis-agent python -- embedded Python sandbox (no tools). "
-                "Blank line runs the block; use print(...) to see output; Ctrl-D quits."))
+  (commandline/stdout! (str
+                         "vis-agent python -- embedded Python sandbox (no tools). "
+                         "Blank line runs the block; use print(...) to see output; Ctrl-D quits."))
   (let [reader (java.io.BufferedReader. (java.io.InputStreamReader. System/in))]
     (loop []
 
-      (write-stdout! ">>> ")
+      (commandline/write-stdout! ">>> ")
       (let [buf (StringBuilder.)
-            eof?
-            (loop []
+            eof? (loop []
 
-              (let [line (.readLine reader)]
-                (cond (nil? line) true
-                      (str/blank? line) false
-                      :else
-                      (do (.append buf line) (.append buf "\n") (write-stdout! "... ") (recur)))))
+                   (let [line (.readLine reader)]
+                     (cond (nil? line) true
+                           (str/blank? line) false
+                           :else (do (.append buf line)
+                                     (.append buf "\n")
+                                     (commandline/write-stdout! "... ")
+                                     (recur)))))
             code (str/trim (.toString buf))]
 
         (when (seq code) (run-python-source! ctx code))
-        (if eof? (stdout! "") (recur))))))
+        (if eof? (commandline/stdout! "") (recur))))))
 
 (defn- python-cli-env-overrides->map
   "Turn `--env` values (`\"K=V\"`, or a bare `\"K\"`) into a `{key value}` map.
@@ -3438,13 +1899,13 @@
           :key-fn
           keyword)]
 
-    (if error (do (stdout! error) 1) (python-cli-exit-code ctx))))
+    (if error (do (commandline/stdout! error) 1) (python-cli-exit-code ctx))))
 
 (defn- run-python-module!
   "Run MODULE as `__main__` in `ctx`, returning its exit code."
   [ctx module]
   (if (str/blank? module)
-    (do (stderr! "vis-agent python -m requires a MODULE argument.") 2)
+    (do (commandline/stderr! "vis-agent python -m requires a MODULE argument.") 2)
     (run-python-program! ctx "__vis_run_module__" module)))
 
 (defn- run-python-file!
@@ -3481,12 +1942,12 @@
                           "Python sandbox options do not apply to uv; put uv directly after python"
                           {})))
                (python-runtime/uv-command! argv {:shared? shared?})
-               (catch Throwable t (stderr! (.getMessage t)) 1))
+               (catch Throwable t (commandline/stderr! (.getMessage t)) 1))
 
           :code
           (if code
             (run-python-source! ctx code)
-            (do (stderr! "vis-agent python -c requires a CODE argument.") 2))
+            (do (commandline/stderr! "vis-agent python -c requires a CODE argument.") 2))
 
           :stdin
           (run-python-source! ctx (slurp System/in))
@@ -3495,7 +1956,7 @@
           (let [f (io/file file)]
             (if (.isFile f)
               (run-python-file! ctx file)
-              (do (stderr! (str "vis-agent python: no such file: " file)) 2)))
+              (do (commandline/stderr! (str "vis-agent python: no such file: " file)) 2)))
 
           :module
           (run-python-module! ctx module)
@@ -3553,29 +2014,8 @@
               (gateway-server/local-handler))
             (finally (doseq [sid (gateway-state/session-ids)]
                        (gateway-state/release-session! sid))
-                     (shutdown-agents))))}
-    {:cmd/name "providers"
-     :cmd/doc "Inspect, authenticate, and introspect LLM providers."
-     :cmd/usage "vis-agent providers <list|status|limits|auth|logout> [...]"
-     :cmd/subcommands #(registry/registered-under ["providers"])}
-    {:cmd/name "sessions"
-     :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
-     :cmd/usage "vis-agent sessions <list|show|fork|delete|search|export> [...]"
-     :cmd/examples
-     ["vis-agent sessions" "vis-agent sessions list" "vis-agent sessions show 3a7b2c1d"
-      "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""
-      "vis-agent sessions export 3a7b2c1d --md" "vis-agent sessions export 3a7b2c1d --html out.html"
-      "vis-agent sessions search \"foo bar\""]
-     :cmd/subcommands #(registry/registered-under ["sessions"])
-     :cmd/run-fn cli-sessions!}
-    {:cmd/name "projects"
-     :cmd/doc "List projects, or delete one (optionally with every session in it)."
-     :cmd/usage "vis-agent projects <list|delete> [...]"
-     :cmd/examples ["vis-agent projects" "vis-agent projects list"
-                    "vis-agent projects delete 9f2c1a44"
-                    "vis-agent projects delete 9f2c1a44 --with-sessions"]
-     :cmd/subcommands #(registry/registered-under ["projects"])
-     :cmd/run-fn cli-projects!}
+                     (shutdown-agents))))} provider-cli/command session-cli/command
+    workspace-cli/command
     {:cmd/name "doctor"
      :cmd/doc "Run cross-extension diagnostics, and reclaim stale drafts / session journals."
      :cmd/usage "vis-agent doctor [--purge] [--dry-run] [--days N]"
@@ -3594,13 +2034,7 @@
     {:cmd/name "extension"
      :cmd/doc "Inspect or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|install|sync|versions|update|rollback|...> [args...]"
-     :cmd/subcommands #(registry/registered-under ["extension"])}
-    {:cmd/name "gateway"
-     :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
-     :cmd/usage
-     "vis-agent [--jvm] [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
-     :cmd/examples ["vis-agent gateway start --jvm"]
-     :cmd/subcommands #(registry/registered-under ["gateway"])}
+     :cmd/subcommands #(registry/registered-under ["extension"])} gateway-cli/command
     {:cmd/name "python"
      :cmd/doc
      "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"
@@ -3622,431 +2056,13 @@
      :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis-agent gateway` subcommands ──────────────────────────────────────────
+;;; ── Domain-owned subcommands ──────────────────────────────────────────────────
 
-(doseq
-  [spec
-   [{:cmd/name "tui"
-     :cmd/parent ["gateway"]
-     :cmd/doc "Run the terminal client with a local gateway lease (used by the launcher)."
-     :cmd/run-fn (fn [_ args]
-                   (let [exit (gateway-client/run-tui! (vec (drop-while #{"--"} args)))]
-                     (shutdown-agents)
-                     (System/exit (int exit))))}
-    {:cmd/name "start"
-     :cmd/parent ["gateway"]
-     :cmd/doc
-     "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine. Use --jvm to run it on the JVM without changing the installed track."
-     :cmd/usage
-     "vis-agent gateway start [--jvm] [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair] [--advertise URL]"
-     :cmd/args
-     [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
-      {:name "host"
-       :kind :flag
-       :type :string
-       :doc
-       "Bind host (default 127.0.0.1, or a phone-reachable host when --pair is given; non-loopback always requires the token)."}
-      {:name "token-file"
-       :kind :flag
-       :type :string
-       :doc "Bearer-token file (default ~/.vis/gateway.token, minted on first run)."}
-      {:name "db"
-       :kind :flag
-       :type :string
-       :doc "SQLite DB path this daemon owns (default ~/.vis/vis.mdb or VIS_DB_PATH)."}
-      {:name "require-token"
-       :kind :flag
-       :type :boolean
-       :doc
-       "Require the bearer token on loopback too (auth is OFF by default on 127.0.0.1; a non-loopback bind always requires it)."}
-      {:name "pair"
-       :kind :flag
-       :type :boolean
-       :doc
-       "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}
-      {:name "advertise"
-       :kind :flag
-       :type :string
-       :doc
-       "Address the pairing link should carry instead of the detected one, as HOST, HOST:PORT or a full URL. Use it when the client must dial a port forward, a proxy, or the single address your network allows. Set VIS_GATEWAY_ADVERTISE, or `gateway: advertise:` in the Vis config, to apply the same address to every start on this machine."}]
-     :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --jvm"
-                    "vis-agent gateway start --port 8080" "vis-agent gateway start --pair"
-                    "vis-agent gateway start --host 0.0.0.0 --require-token --pair"]
-     :cmd/run-fn cli-gateway-start!}
-    {:cmd/name "status"
-     :cmd/parent ["gateway"]
-     :cmd/doc
-     "Show the gateway this invocation drives — the --gateway target, else the daemon registered for the current DB — without starting it."
-     :cmd/usage "vis-agent gateway status [--db PATH]"
-     :cmd/args
-     [{:name "db"
-       :kind :flag
-       :type :string
-       :doc
-       "SQLite DB path whose gateway registry should be inspected (ignored when --gateway names a remote gateway)."}]
-     :cmd/examples ["vis-agent gateway status"
-                    "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway status"]
-     :cmd/run-fn cli-gateway-status!}
-    {:cmd/name "stop"
-     :cmd/parent ["gateway"]
-     :cmd/doc
-     "Stop the gateway daemon registered for the current DB - never a --gateway target, which vis attaches to but never manages."
-     :cmd/usage "vis-agent gateway stop [--if-idle] [--db PATH]"
-     :cmd/args
-     [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}
-      {:name "if-idle"
-       :kind :flag
-       :type :boolean
-       :doc
-       "Stop it only when stopping is free: an auto-spawned daemon with no client and no turn still moving. Prints why it did not otherwise, is silent when none runs, and always succeeds."}]
-     :cmd/examples ["vis-agent gateway stop" "vis-agent gateway stop --if-idle"]
-     :cmd/run-fn cli-gateway-stop!}
-    {:cmd/name "pair"
-     :cmd/parent ["gateway"]
-     :cmd/doc
-     "Print a companion pairing QR for the gateway already running for this DB, or for the --gateway target."
-     :cmd/usage "vis-agent gateway pair [--db PATH] [--advertise URL]"
-     :cmd/examples ["vis-agent gateway pair"
-                    "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway pair"]
-     :cmd/args
-     [{:name "db"
-       :kind :flag
-       :type :string
-       :doc "SQLite DB path whose running gateway should be paired."}
-      {:name "advertise"
-       :kind :flag
-       :type :string
-       :doc
-       "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL). Defaults to VIS_GATEWAY_ADVERTISE, then to `gateway: advertise:` in the Vis config."}]
-     :cmd/run-fn cli-gateway-pair!}
-    {:cmd/name "mcp"
-     :cmd/parent ["gateway"]
-     :cmd/doc
-     "Manage gateway-owned MCP servers: add, list, test, enable/disable, kill/start, and OAuth sign-in."
-     :cmd/usage
-     "vis-agent gateway mcp <list|add|test|remove|enable|disable|kill|start|auth-start|auth-complete|auth-poll|auth-cancel|auth-logout>"
-     :cmd/subcommands #(registry/registered-under ["gateway" "mcp"])}]]
-  (registry/register-cmd! spec))
-
-;;; ── `vis-agent gateway mcp` subcommand registrations ─────────────────────────────
-
-(doseq
-  [spec
-   [{:cmd/name "list"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "List MCP servers configured on this gateway (transport, enabled, connected, authorized, tool count)."
-     :cmd/usage "vis-agent gateway mcp list [--db PATH]"
-     :cmd/args
-     [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be queried."}]
-     :cmd/examples ["vis-agent gateway mcp list"]
-     :cmd/run-fn cli-mcp-list!}
-    {:cmd/name "add"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "Add (or replace) a gateway-managed MCP server. A `--url` makes it Streamable HTTP; a `--command` makes it stdio. OAuth is never configured here -- save the server, then run `auth-start`."
-     :cmd/usage
-     "vis-agent gateway mcp add <NAME> (--url URL [--headers K=V,...] | --command CMD [--args \"a b\"] [--cwd DIR] [--env K=V,...]) [--timeout-ms MS] [--disabled] [--db PATH]"
-     :cmd/args
-     [{:name "name"
-       :kind :positional
-       :type :string
-       :required true
-       :doc "Server name, e.g. \"linear\"."}
-      {:name "url"
-       :kind :flag
-       :type :string
-       :doc "Streamable HTTP endpoint, e.g. https://mcp.linear.app/mcp."}
-      {:name "headers"
-       :kind :flag
-       :type :string
-       :doc
-       "Static request headers as K=V,K2=V2 (e.g. Authorization=Bearer TOKEN) -- the bearer-token alternative to OAuth. Leave unset for OAuth servers; sign in with auth-start instead."}
-      {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
-      {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
-      {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
-      {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
-      {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
-      {:name "disabled" :kind :flag :type :boolean :doc "Save the server switched off."}
-      {:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be updated."}]
-     :cmd/examples
-     ["vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp"
-      "vis-agent gateway mcp add linear-ro --url https://mcp.linear.app/mcp/readonly"
-      "vis-agent gateway mcp add local-fs --command npx --args \"-y @modelcontextprotocol/server-filesystem /tmp\""]
-     :cmd/run-fn cli-mcp-add!}
-    {:cmd/name "test"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "Connect a candidate server spec without saving it, and report whether it connected and how many tools it exposes."
-     :cmd/usage "vis-agent gateway mcp test <NAME> (--url URL | --command CMD ...) [--db PATH]"
-     :cmd/args
-     [{:name "name" :kind :positional :type :string :required true :doc "Server name to test as."}
-      {:name "url" :kind :flag :type :string :doc "Streamable HTTP endpoint."}
-      {:name "headers" :kind :flag :type :string :doc "Static request headers as K=V,K2=V2."}
-      {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
-      {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
-      {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
-      {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
-      {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
-      {:name "db"
-       :kind :flag
-       :type :string
-       :doc "SQLite DB path whose gateway should run the test."}]
-     :cmd/examples ["vis-agent gateway mcp test linear --url https://mcp.linear.app/mcp"]
-     :cmd/run-fn cli-mcp-test!}
-    {:cmd/name "remove"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Delete a gateway-managed MCP server and stop it now."
-     :cmd/usage "vis-agent gateway mcp remove <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/examples ["vis-agent gateway mcp remove linear"]
-     :cmd/run-fn cli-mcp-remove!}
-    {:cmd/name "enable"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Turn a configured server back on."
-     :cmd/usage "vis-agent gateway mcp enable <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-enable!}
-    {:cmd/name "disable"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Turn a configured server off without deleting it."
-     :cmd/usage "vis-agent gateway mcp disable <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-disable!}
-    {:cmd/name "kill"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "Stop a server now and hold it down until started again (runtime only, config unchanged)."
-     :cmd/usage "vis-agent gateway mcp kill <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-kill!}
-    {:cmd/name "start"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Undo a kill and reconnect a server now."
-     :cmd/usage "vis-agent gateway mcp start <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-start!}
-    {:cmd/name "auth-start"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "Begin the headless OAuth 2.1 flow (RFC 9728/8414 discovery, dynamic client registration, PKCE) for an HTTP server. Prints the authorize URL to open and the auth-complete command to run after."
-     :cmd/usage "vis-agent gateway mcp auth-start <NAME> [--db PATH]"
-     :cmd/args [{:name "name"
-                 :kind :positional
-                 :type :string
-                 :required true
-                 :doc "Server name (must be Streamable HTTP)."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/examples ["vis-agent gateway mcp auth-start linear"]
-     :cmd/run-fn cli-mcp-auth-start!}
-    {:cmd/name "auth-complete"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc
-     "Finish an OAuth flow with the redirect URL the browser landed on (or its bare `code=` value)."
-     :cmd/usage
-     "vis-agent gateway mcp auth-complete <NAME> --flow-id ID --input URL_OR_CODE [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "flow-id"
-                 :kind :flag
-                 :type :string
-                 :required true
-                 :doc "flow_id printed by auth-start."}
-                {:name "input"
-                 :kind :flag
-                 :type :string
-                 :required true
-                 :doc "The pasted redirect URL, or its bare authorization code."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/examples
-     ["vis-agent gateway mcp auth-complete linear --flow-id abc123 --input \"http://127.0.0.1:5555/callback?code=xyz&state=...\""]
-     :cmd/run-fn cli-mcp-auth-complete!}
-    {:cmd/name "auth-poll"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Read an in-flight OAuth flow's verdict without blocking: pending, ok, or error."
-     :cmd/usage "vis-agent gateway mcp auth-poll <NAME> --flow-id ID [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "flow-id"
-                 :kind :flag
-                 :type :string
-                 :required true
-                 :doc "flow_id printed by auth-start."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-auth-poll!}
-    {:cmd/name "auth-cancel"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Abandon an in-flight OAuth flow and release its loopback listener."
-     :cmd/usage "vis-agent gateway mcp auth-cancel <NAME> --flow-id ID [--db PATH]"
-     :cmd/args
-     [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-      {:name "flow-id" :kind :flag :type :string :required true :doc "flow_id to abandon."}
-      {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/run-fn cli-mcp-auth-cancel!}
-    {:cmd/name "auth-logout"
-     :cmd/parent ["gateway" "mcp"]
-     :cmd/doc "Forget the gateway's persisted OAuth tokens for a server."
-     :cmd/usage "vis-agent gateway mcp auth-logout <NAME> [--db PATH]"
-     :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-     :cmd/examples ["vis-agent gateway mcp auth-logout linear"]
-     :cmd/run-fn cli-mcp-auth-logout!}]]
-  (registry/register-cmd! spec))
-
-;;; ── `vis-agent providers` subcommands ─────────────────────────────────────────
-
-(doseq [spec
-        [{:cmd/name "list"
-          :cmd/parent ["providers"]
-          :cmd/doc "List registered providers with auth state, static limits, and base URLs."
-          :cmd/usage "vis-agent providers list"
-          :cmd/run-fn cli-providers-list!}
-         {:cmd/name "status"
-          :cmd/parent ["providers"]
-          :cmd/doc "Show provider authentication status together with static/dynamic limits."
-          :cmd/usage "vis-agent providers status [provider]"
-          :cmd/examples ["vis-agent providers status" "vis-agent providers status github-copilot"
-                         "vis-agent providers status openai-codex"]
-          :cmd/run-fn cli-providers-status!}
-         {:cmd/name "limits"
-          :cmd/parent ["providers"]
-          :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
-          :cmd/usage "vis-agent providers limits [provider]"
-          :cmd/examples ["vis-agent providers limits" "vis-agent providers limits openai-codex"
-                         "vis-agent providers limits ollama"]
-          :cmd/run-fn cli-providers-limits!}
-         {:cmd/name "auth"
-          :cmd/parent ["providers"]
-          :cmd/doc "Run a provider's interactive authentication flow."
-          :cmd/usage "vis-agent providers auth <provider>"
-          :cmd/args [{:name "provider"
-                      :kind :positional
-                      :type :string
-                      :doc "Registered provider id (for example: github-copilot or openai-codex)."}]
-          :cmd/examples ["vis-agent providers auth github-copilot"
-                         "vis-agent providers auth openai-codex"]
-          :cmd/run-fn cli-providers-auth!}
-         {:cmd/name "logout"
-          :cmd/parent ["providers"]
-          :cmd/doc "Clear saved credentials for a provider."
-          :cmd/usage "vis-agent providers logout <provider>"
-          :cmd/args
-          [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
-          :cmd/examples ["vis-agent providers logout github-copilot"
-                         "vis-agent providers logout openai-codex"]
-          :cmd/run-fn cli-providers-logout!}]]
-  (registry/register-cmd! spec))
-
-;;; ── `vis-agent sessions` subcommands ──────────────────────────────────────────
-
-(doseq [spec [{:cmd/name "list"
-               :cmd/parent ["sessions"]
-               :cmd/doc "List persisted sessions."
-               :cmd/usage "vis-agent sessions list [all|tui|cli]"
-               :cmd/args [{:name "channel"
-                           :kind :positional
-                           :type :string
-                           :doc "Optional channel filter (all|tui|cli; default all)."}]
-               :cmd/examples ["vis-agent sessions list" "vis-agent sessions list tui"]
-               :cmd/run-fn cli-sessions-list!}
-              {:cmd/name "show"
-               :cmd/parent ["sessions"]
-               :cmd/doc "Show one session's metadata, turns, and fork states."
-               :cmd/usage "vis-agent sessions show <SESSION-ID>"
-               :cmd/args [{:name "session-id"
-                           :kind :positional
-                           :type :string
-                           :required true
-                           :doc "Session id (full UUID or unambiguous prefix)."}]
-               :cmd/examples ["vis-agent sessions show 3a7b2c1d"]
-               :cmd/run-fn cli-show-session!}
-              {:cmd/name "fork"
-               :cmd/parent ["sessions"]
-               :cmd/doc "Fork a session from its latest state."
-               :cmd/usage "vis-agent sessions fork <SESSION-ID> [--title TITLE]"
-               :cmd/args
-               [{:name "session-id"
-                 :kind :positional
-                 :type :string
-                 :required true
-                 :doc "Session id (full UUID or unambiguous prefix)."}
-                {:name "title" :kind :flag :type :string :doc "Title to set on the new fork."}]
-               :cmd/examples ["vis-agent sessions fork 3a7b2c1d"
-                              "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""]
-               :cmd/run-fn cli-fork-session-command!}
-              {:cmd/name "delete"
-               :cmd/parent ["sessions"]
-               :cmd/doc "Delete a session tree from persistent storage."
-               :cmd/usage "vis-agent sessions delete <SESSION-ID>"
-               :cmd/args [{:name "session-id"
-                           :kind :positional
-                           :type :string
-                           :required true
-                           :doc "Session id (full UUID or unambiguous prefix)."}]
-               :cmd/examples ["vis-agent sessions delete 3a7b2c1d"]
-               :cmd/run-fn cli-delete-session!}
-              {:cmd/name "export"
-               :cmd/parent ["sessions"]
-               :cmd/doc "Export a session: Markdown on stdout, or styled HTML to a file."
-               :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH]"
-               :cmd/args
-               [{:name "session-id"
-                 :kind :positional
-                 :type :string
-                 :required true
-                 :doc "Session id (full UUID or unambiguous prefix)."}
-                {:name "md" :kind :flag :type :boolean :doc "Print Markdown to stdout (default)."}
-                {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}]
-               :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
-                              "vis-agent sessions export 3a7b2c1d --html out.html"]
-               :cmd/run-fn cli-export-session!}
-              {:cmd/name "search"
-               :cmd/parent ["sessions"]
-               :cmd/doc
-               "Transcript search with the same matching semantics as the TUI session navigator."
-               :cmd/usage "vis-agent sessions search <query> [--limit N]"
-               :cmd/args
-               [{:name "query"
-                 :kind :positional
-                 :type :string
-                 :doc "Words to search for (case-insensitive token prefixes, as in the TUI)."}
-                {:name "limit" :kind :flag :type :string :doc "Max hits to print (default 25)."}]
-               :cmd/examples ["vis-agent sessions search \"provider credentials\""
-                              "vis-agent sessions search \"authentication failed\" --limit 100"]
-               :cmd/run-fn cli-sessions-search!}]]
-  (registry/register-cmd! spec))
-
-;;; ── `vis-agent projects` subcommands ──────────────────────────────────────────
-
-(doseq
-  [spec
-   [{:cmd/name "list"
-     :cmd/parent ["projects"]
-     :cmd/doc "List projects with their live session counts."
-     :cmd/usage "vis-agent projects list"
-     :cmd/examples ["vis-agent projects list"]
-     :cmd/run-fn cli-projects-list!}
-    {:cmd/name "delete"
-     :cmd/parent ["projects"]
-     :cmd/doc "Delete a project; with --with-sessions, every session in it too."
-     :cmd/usage "vis-agent projects delete <PROJECT-ID> [--with-sessions]"
-     :cmd/args
-     [{:name "project-id"
-       :kind :positional
-       :type :string
-       :required true
-       :doc "Project id (full UUID or unambiguous prefix)."}
-      {:name "with-sessions"
-       :kind :flag
-       :type :boolean
-       :doc
-       "Also delete every session in the project (drafts included), not just the project row."}]
-     :cmd/examples ["vis-agent projects delete 9f2c1a44"
-                    "vis-agent projects delete 9f2c1a44 --with-sessions"]
-     :cmd/run-fn cli-delete-project!}]]
+(doseq [spec (concat gateway-cli/subcommands
+                     mcp-cli/subcommands
+                     provider-cli/subcommands
+                     session-cli/subcommands
+                     workspace-cli/subcommands)]
   (registry/register-cmd! spec))
 
 ;;; ── `vis-agent extension` subcommand (host-owned canonical) ─────────────────────────
@@ -4057,11 +2073,11 @@
 
 (defn- print-package-result
   [action result]
-  (stdout! (str action
-                " " (or (get result "repository") (get result "name"))
-                "@" (get result "version")
-                " (" (get result "mode")
-                "). " (get result "next")))
+  (commandline/stdout! (str action
+                            " " (or (get result "repository") (get result "name"))
+                            "@" (get result "version")
+                            " (" (get result "mode")
+                            "). " (get result "next")))
   result)
 
 (registry/register-cmd! {:cmd/name "list"
@@ -4164,20 +2180,21 @@
            (count (filter #(= "failed" (get % "status")) results))]
 
        (doseq [result results]
-         (stdout! (str (get result "scope")
-                       "  "
-                       (get result "name")
-                       "  "
-                       (get result "status")
-                       (when-let [version (get result "version")]
-                         (str "  " version))
-                       (when-let [error (get result "error")]
-                         (str " — " error)))))
-       (stdout! (str "Synced " (count results)
-                     " package(s) in " (quot (- (System/nanoTime) started) 1000000)
-                     " ms; " failed
-                     " failed." (when-not dry-run
-                                  " Run /reload to use prepared extensions in existing sessions.")))
+         (commandline/stdout! (str (get result "scope")
+                                   "  "
+                                   (get result "name")
+                                   "  "
+                                   (get result "status")
+                                   (when-let [version (get result "version")]
+                                     (str "  " version))
+                                   (when-let [error (get result "error")]
+                                     (str " — " error)))))
+       (commandline/stdout!
+         (str "Synced " (count results)
+              " package(s) in " (quot (- (System/nanoTime) started) 1000000)
+              " ms; " failed
+              " failed." (when-not dry-run
+                           " Run /reload to use prepared extensions in existing sessions.")))
        (when (pos? failed)
          (throw (ex-info "Extension sync did not complete for every package" {:failed failed})))
        results))})
@@ -4198,23 +2215,23 @@
                :type :string
                :doc "Project folder; omitted uses the sole installed project or repository root."}
               {:name "project" :kind :flag :type :boolean :doc "Check the project installation."}]
-   :cmd/run-fn (fn [{:strs [source subdirectory project]} _]
-                 (let [result (python-extensions/package-versions source
-                                                                  {:subdirectory subdirectory
-                                                                   :directory (package-directory
-                                                                                project)})]
-                   (when-let [installed (get result "installed")]
-                     (stdout! (str "Installed: " installed
+   :cmd/run-fn
+   (fn [{:strs [source subdirectory project]} _]
+     (let [result (python-extensions/package-versions source
+                                                      {:subdirectory subdirectory
+                                                       :directory (package-directory project)})]
+       (when-let [installed (get result "installed")]
+         (commandline/stdout! (str "Installed: " installed
                                    ". " (if (get result "update_available")
                                           "Update available."
                                           "No newer stable release."))))
-                   (stdout! (str "Latest approved stable: " (or (get result "latest") "none")))
-                   (doseq [release (get result "releases")]
-                     (stdout! (str (get release "version")
+       (commandline/stdout! (str "Latest approved stable: " (or (get result "latest") "none")))
+       (doseq [release (get result "releases")]
+         (commandline/stdout! (str (get release "version")
                                    "  "
                                    (get release "revision")
                                    (when (get release "prerelease") "  prerelease"))))
-                   result))})
+       result))})
 
 (doseq [[command action operation] [["update" "Selected" #'python-extensions/update-package!]
                                     ["rollback" "Restored" #'python-extensions/rollback-package!]]]
@@ -4563,8 +2580,8 @@
   ;; mismatch). Print that instead of flattening it into one line.
   (if-let [panel (seq (:vis/panel (ex-data t)))]
     (doseq [line panel]
-      (stdout! (str line)))
-    (stdout! (str "vis-agent: " (or (ex-message t) "error"))))
+      (commandline/stdout! (str line)))
+    (commandline/stdout! (str "vis-agent: " (or (ex-message t) "error"))))
   (shutdown-agents)
   (System/exit 2))
 
@@ -4593,19 +2610,19 @@
         same?
         (identical? rc t)]
 
-    (stdout! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
+    (commandline/stdout! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
     ;; ExceptionInInitializerError etc. carry no message; surface the root cause
     ;; so failures (incl. native-image runtime class-init) are diagnosable.
     (when-not same?
-      (stdout! (str "  caused by: "
-                    (.getName (class rc))
-                    (when-let [m (ex-message rc)]
-                      (str ": " m)))))
+      (commandline/stdout! (str "  caused by: "
+                                (.getName (class rc))
+                                (when-let [m (ex-message rc)]
+                                  (str ": " m)))))
     ;; full trace when VIS_DEBUG is set — invaluable for native-image triage
     (when (some-> (System/getenv "VIS_DEBUG")
                   (.equalsIgnoreCase "1"))
       (.printStackTrace t))
-    (stdout! (str "See " (config/log-path) " for details.")))
+    (commandline/stdout! (str "See " (config/log-path) " for details.")))
   (shutdown-agents)
   (System/exit 1))
 
@@ -4613,14 +2630,14 @@
   "Calm, guided message when no AI provider is configured — never a stacktrace.
    Points at the interactive welcome (the curated, zero-friction path)."
   []
-  (stdout! "")
-  (stdout! "  vis-agent needs an AI provider to get started.")
-  (stdout! "")
-  (stdout! "  ▸ Run  vis-agent  with no arguments to open the welcome screen and")
-  (stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
-  (stdout! "    API key, or run a local model).")
-  (stdout! "  ▸ Or hand-write ~/.vis/config.yml.")
-  (stdout! "")
+  (commandline/stdout! "")
+  (commandline/stdout! "  vis-agent needs an AI provider to get started.")
+  (commandline/stdout! "")
+  (commandline/stdout! "  ▸ Run  vis-agent  with no arguments to open the welcome screen and")
+  (commandline/stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
+  (commandline/stdout! "    API key, or run a local model).")
+  (commandline/stdout! "  ▸ Or hand-write ~/.vis/config.yml.")
+  (commandline/stdout! "")
   (shutdown-agents)
   (System/exit 2))
 
@@ -4776,7 +2793,7 @@
     (System/exit (python-runtime/uv-command! (drop 2 raw-args))))
   (when (= ["python" "--shared" "uv"] (take 3 raw-args))
     (System/exit (try (python-runtime/uv-command! (drop 3 raw-args) {:shared? true})
-                      (catch Throwable t (stderr! (.getMessage t)) 1))))
+                      (catch Throwable t (commandline/stderr! (.getMessage t)) 1))))
   (system-trust/install!)
   (let [main-started
         (System/nanoTime)

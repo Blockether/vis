@@ -3,7 +3,6 @@
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.decisions.assets :as decisions-assets]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
@@ -12,7 +11,6 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (toggles/register-toggle!
@@ -315,7 +313,7 @@
   extension-version-commands-test
   (it "prints the repository slug rather than the Python distribution name"
       (let [lines (atom [])]
-        (with-redefs [main/stdout! #(swap! lines conj %)]
+        (with-redefs [commandline/stdout! #(swap! lines conj %)]
           (#'main/print-package-result
            "Installed"
            {"name" "vis-greeter"
@@ -339,7 +337,7 @@
                    (get-in @calls [0 1 :directory])))))
   (it "dispatches approved version discovery with installed and update information"
       (let [lines (atom [])]
-        (with-redefs [main/stdout! #(swap! lines conj %)
+        (with-redefs [commandline/stdout! #(swap! lines conj %)
                       python-extensions/package-versions
                       (fn [source options]
                         (expect (= "example/extensions" source))
@@ -603,8 +601,8 @@
                                                        (swap! writes conj :config))
                                #'config/save-toggles! (fn [& _]
                                                         (swap! writes conj :toggles))
-                               #'main/stdout! (fn [& _]
-                                                nil)
+                               #'commandline/stdout! (fn [& _]
+                                                       nil)
                                #'clojure.core/shutdown-agents (fn []
                                                                 nil)
                                #'main/run! (fn [& _]
@@ -771,245 +769,13 @@
                    (expect (str/includes? help "vis-agent update"))
                    (expect (not (str/includes? help "vis-agent runtime"))))))
 
-;;; ── `vis-agent projects` ──────────────────────────────────────────────────────
-;;
-;; `vis-agent sessions delete` has always existed; there was no way at all to
-;; remove a PROJECT and the conversations in it, so the blast radius is opt-in
-;; (`--with-sessions`) and the default stays the scatter delete the schema has
-;; always had.
-
-(def ^:private match-projects @#'main/match-projects)
-
-(def ^:private delete-project-tree! @#'main/delete-project-tree!)
-
-(defdescribe
-  project-id-resolution-test
-  (let [projects [{:id "9f2c1a44-0000-0000-0000-000000000001" :name "vis"}
-                  {:id "9f2c1a44-0000-0000-0000-000000000002" :name "demo"}
-                  {:id "b1000000-0000-0000-0000-000000000003" :name "svar"}]]
-    (it "resolves a full id, and an unambiguous prefix"
-        (expect (= ["svar"] (mapv :name (match-projects projects "b1000000"))))
-        (expect (= ["vis"]
-                   (mapv :name (match-projects projects "9F2C1A44-0000-0000-0000-000000000001")))))
-    (it "reports EVERY candidate for an ambiguous prefix instead of picking one"
-        ;; Deleting a project is irreversible: a prefix that fits two projects
-        ;; must never silently resolve to the first one.
-        (expect (= ["vis" "demo"] (mapv :name (match-projects projects "9f2c")))))
-    (it "matches nothing for an unknown id or blank input"
-        (expect (= [] (match-projects projects "zzzz")))
-        (expect (= [] (match-projects projects "  ")))
-        (expect (= [] (match-projects projects nil))))))
-
-(defdescribe
-  cli-project-delete-blast-radius-test
-  (let [pid
-        "9f2c1a44-0000-0000-0000-000000000001"
-
-        exec
-        (fn [opts]
-          (let [log (atom [])]
-            (with-redefs [lp/project-session-ids (fn [p]
-                                                   (if (= pid p) ["s-a" "s-b"] []))
-                          workspace/discard-session-clones! (fn [_d sid]
-                                                              (swap! log conj [:drafts sid])
-                                                              (future nil))
-                          lp/delete! (fn [sid]
-                                       (swap! log conj [:session sid]))
-                          lp/delete-project! (fn [p]
-                                               (swap! log conj [:project p]))]
-
-              {:result (delete-project-tree! ::db pid opts) :log @log})))]
-
-    (it "keeps the scatter default: the project row goes, not one conversation"
-        (let [{:keys [result log]} (exec {})]
-          (expect (= [[:project pid]] log))
-          (expect (= [] (:deleted-session-ids result)))
-          (expect (= ["s-a" "s-b"] (:kept-session-ids result)))))
-    (it "--with-sessions deletes each member's drafts and tree BEFORE the project row"
-        ;; Sessions first: an interrupted teardown must leave a project holding
-        ;; survivors, never orphaned sessions with a dead parent.
-        (let [{:keys [result log]} (exec {:with-sessions true})]
-          (expect (= [[:drafts "s-a"] [:session "s-a"] [:drafts "s-b"] [:session "s-b"]
-                      [:project pid]]
-                     log))
-          (expect (= ["s-a" "s-b"] (:deleted-session-ids result)))
-          (expect (= [] (:kept-session-ids result)))
-          (expect (= pid (:project-id result)))))))
-
-(defdescribe
-  gateway-status-staleness-test
-  ;; `gateway status` is what gets asked when an update looks like it did nothing,
-  ;; so it must answer with the same verdict an attach would reach - never promise
-  ;; a replacement the next client would refuse to make.
-  (let [ours
-        {:version "0.1.40" :build "aaaaaaaaaaaa"}
-
-        note
-        (fn [status]
-          (#'main/stale-daemon-note status ours))
-
-        running
-        (fn [m]
-          (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
-
-    (it "names a dev build by its commit, because \"dev\" alone names no code"
-        (expect (= "dev (abc123abc123)"
-                   (#'main/build-label {:version "dev" :build "abc123abc123"})))
-        (expect (= "0.1.40" (#'main/build-label {:version "0.1.40" :build "abc123abc123"}))))
-    (it "says what picks the new build up when nothing is using the old daemon"
-        (let [s (note (running {"protocol" {"version" "0.1.39" "build" "bbbbbbbbbbbb"}}))]
-          (expect (str/includes? s "this build is 0.1.40"))
-          (expect (str/includes? s "next session starts on it"))))
-    (it "counts what is holding the old daemon instead of promising a replacement"
-        (let [s (note (running {"clients" 2 "running_turns" 1 "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "2 clients"))
-          (expect (str/includes? s "1 running turn"))
-          (expect (not (str/includes? s "next session")))))
-    (it "hands a user-owned daemon back to whoever started it"
-        (let [s (note (running {"managed" false "pid" 4242 "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "user-owned"))
-          (expect (str/includes? s "4242"))))
-    (it "counts nothing it could not read"
-        (let [s (note (running {"clients" :two "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "no longer in use"))))
-    (it "is silent about a daemon this build does not replace"
-        (expect (nil? (note (running {"protocol" {"version" "0.1.40" "build" "aaaaaaaaaaaa"}}))))
-        (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
-        (expect (nil? (note (running {"protocol" {"version" "dev"}})))))))
-
-;; Regression: a daemon running a NEWER release than this build was reported by
-;; nothing at all - no bounce, no note, no mismatch screen - so `gateway status` let
-;; somebody sit on the older half with no sign that the update was already serving
-;; them.
-(defdescribe gateway-status-newer-daemon-test
-             (let [ours
-                   {:version "0.1.40" :build "aaaaaaaaaaaa"}
-
-                   note
-                   (fn [status]
-                     (#'main/newer-daemon-note status ours))
-
-                   running
-                   (fn [m]
-                     (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
-
-               (it "names the newer release the running daemon already serves"
-                   (let [s (note (running {"protocol" {"version" "0.1.41"
-                                                       "build" "cccccccccccc"}}))]
-                     (expect (str/includes? s "0.1.41"))
-                     (expect (str/includes? s "this build is 0.1.40"))
-                     (expect (str/includes? s "vis-agent update"))))
-               (it "is silent unless the daemon is strictly newer"
-                   (expect (nil? (note (running {"protocol" {"version" "0.1.40"}}))))
-                   (expect (nil? (note (running {"protocol" {"version" "0.1.39"}}))))
-                   (expect (nil? (note (running {"protocol" {"version" "dev"}}))))
-                   (expect (nil? (note (running {})))))))
-
 (defdescribe pretty-trace-form-output-test
              (it "prints a completed Python form's stdout"
                  (let [lines (atom [])]
-                   (with-redefs [main/stdout! #(swap! lines conj %)]
+                   (with-redefs [commandline/stdout! #(swap! lines conj %)]
                      (#'main/print-pretty-trace-chunk!
                       {:phase :form-result :form-idx 0 :form-of 1 :stdout "hello\n"}))
                    (let [text (str/join "\n" @lines)]
                      (expect (str/includes? text "stdout"))
                      (expect (str/includes? text "hello"))
                      (expect (not (str/includes? text "nil")))))))
-
-;; Regression: the CLI answered `Authenticated:  yes` from `is_authenticated`
-;; alone, so a key that was merely SAVED read as proven -- while the dialog
-;; beside it already said "saved, not verified".
-(defdescribe cli-provider-status-vocabulary-test
-             (it "speaks the daemon's verdict and hides the rows that line covers"
-                 (let [lines (atom [])]
-                   (with-redefs [main/stdout! (fn [s]
-                                                (swap! lines conj s))
-                                 main/configured-provider-status (constantly
-                                                                   {"is_authenticated" true
-                                                                    "auth_state" "unverified"
-                                                                    "is_loading" false
-                                                                    "plan_name" "pro"})
-                                 main/configured-provider-base-url (constantly nil)
-                                 main/provider-limit-lines (constantly [])]
-
-                     (#'main/print-provider-status! {:provider/id :acme :provider/label "Acme"}))
-                   (let [text (str/join "\n" @lines)]
-                     (expect (str/includes? text "Authenticated:  saved, not verified"))
-                     (expect (not (str/includes? text "Authenticated:  yes")))
-                     (expect (str/includes? text "pro"))
-                     (expect (not (str/includes? text "Auth state")))
-                     (expect (not (str/includes? text "Is loading")))))))
-
-(defdescribe
-  gateway-advertise-option-test
-  (it "prefers the flag, then VIS_GATEWAY_ADVERTISE, then config, ignoring blanks"
-      (expect (= "10.0.0.5" (#'main/advertise-option {"advertise" "10.0.0.5"} nil nil)))
-      (expect
-        (= "10.0.0.5"
-           (#'main/advertise-option {"advertise" "10.0.0.5"} "gateway.example.com" "192.0.2.7")))
-      (expect (= "gateway.example.com"
-                 (#'main/advertise-option {} "gateway.example.com" "192.0.2.7")))
-      (expect (= "192.0.2.7" (#'main/advertise-option {} nil "192.0.2.7")))
-      (expect (= "192.0.2.7" (#'main/advertise-option {"advertise" "   "} "" "192.0.2.7")))
-      (expect (= "10.0.0.5" (#'main/advertise-option {} " 10.0.0.5 " nil)))
-      (expect (nil? (#'main/advertise-option {} nil nil)))
-      (expect (nil? (#'main/advertise-option {"advertise" ""} "   " nil)))))
-
-(defdescribe
-  gateway-advertise-config-file-test
-  (it "takes `gateway: advertise:` off the config file when nothing else names an address"
-      (let [dir
-            (java.io.File. (System/getProperty "java.io.tmpdir")
-                           (str "vis-advertise-" (System/nanoTime)))
-
-            store
-            (java.io.File. dir ".vis")
-
-            old-home
-            (System/getProperty "user.home")]
-
-        (try (.mkdirs store)
-             (spit (java.io.File. store "config.yml") "gateway:\n  advertise: 10.0.0.5\n")
-             (System/setProperty "user.home" (.getPath dir))
-             (config/invalidate-config-cache!)
-             ;; Read from the RAW merged config, never `current-config`: a machine with no
-             ;; saved providers still has to pair against the address its network allows.
-             (expect (= (or (not-empty (str (System/getenv "VIS_GATEWAY_ADVERTISE"))) "10.0.0.5")
-                        (#'main/advertise-option {})))
-             (finally (System/setProperty "user.home" old-home)
-                      (config/invalidate-config-cache!))))))
-
-;; Regression (reported: `vis-agent gateway stop` printed
-;; `gateway stop requested: {"stopping" true, "status" {...}}`): the daemon's
-;; acknowledgement has to read as a sentence, never as a wire map.
-(defdescribe
-  cli-gateway-stop-vocabulary-test
-  (it "says the gateway is stopping and what that releases"
-      (let [lines (atom [])]
-        (with-redefs-fn
-          {#'main/stdout! #(swap! lines conj %)
-           #'config/init-cli! (constantly nil)
-           #'gateway-client/stop-daemon!
-           (constantly {:stopping true :status "stopping" :pid 32379 :clients 4 :running-turns 0})}
-          (fn []
-            (#'main/cli-gateway-stop! {} [])))
-        (expect (= ["gateway stopping (pid 32379) - releasing 4 clients"] @lines))))
-  (it "counts a drained turn beside the clients it releases"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'main/stdout! #(swap! lines conj %)
-                         #'config/init-cli! (constantly nil)
-                         #'gateway-client/stop-daemon!
-                         (constantly
-                           {:stopping true :status "stopping" :clients 1 :running-turns 2})}
-          (fn []
-            (#'main/cli-gateway-stop! {} [])))
-        (expect (= ["gateway stopping - releasing 1 client, draining 2 running turns"] @lines))))
-  (it "never answers a human with a map"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'main/stdout! #(swap! lines conj %)
-                         #'config/init-cli! (constantly nil)
-                         #'gateway-client/stop-daemon! (constantly {})}
-          (fn []
-            (#'main/cli-gateway-stop! {} [])))
-        (expect (str/includes? (first @lines) "no final state"))
-        (expect (not (str/includes? (first @lines) "{"))))))

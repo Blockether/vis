@@ -24,11 +24,21 @@
      Dispatch
        dispatch!       resolve, parse, validate, invoke `:cmd/run-fn`
 
+     Terminal output
+       stdout!         print a line to the saved original stdout
+       stderr!         print a line to the saved original stderr
+       write-stdout!   print without a newline (live redraw frames)
+       terminal-width  best-effort terminal columns
+       print-table!    word-wrapped table (`table-width`, `expand-table-cols`)
+
    The registry surface (`command`, `register-cmd!`, `deregister-cmd!`,
    `registered-commands`, `registered-under`, `resolve-subcommands`)
    is reachable through `com.blockether.vis.internal.extension.registry`."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension.registry :as registry]))
+  (:require [babashka.process :as process]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]))
 
 ;; Lookup
 
@@ -599,3 +609,193 @@
                                 :command command
                                 :result ((:cmd/run-fn command) parsed residual)}))))))
      {:status :no-match :args args})))
+
+;; Terminal output
+
+(defn stdout!
+  "Print to the real terminal via the saved original stdout. Other
+   output (telemere, SLF4J) is redirected to the log file."
+  [^String s]
+  (.println ^java.io.PrintStream config/original-stdout s)
+  (.flush ^java.io.PrintStream config/original-stdout))
+
+(defn stderr!
+  "Print a diagnostic to the process's real stderr."
+  [^String s]
+  (.println ^java.io.PrintStream config/original-stderr s)
+  (.flush ^java.io.PrintStream config/original-stderr))
+
+(defn write-stdout!
+  "Write to the real terminal without appending a newline. Used by the
+   live trace renderer for cursor-back/redraw frames."
+  [^String s]
+  (.print ^java.io.PrintStream config/original-stdout s)
+  (.flush ^java.io.PrintStream config/original-stdout))
+
+(defn- wrap-str
+  "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
+   whitespace; tokens longer than `width` are hard-broken so a single
+   long URL or symbol can't blow the column out."
+  [s ^long width]
+  (let [s
+        (str s)
+
+        s-count
+        (long (count s))]
+
+    (cond (str/blank? s) [""]
+          (<= s-count width) [s]
+          :else
+          (let [tokens (str/split s #"\s+")]
+            (loop [tokens tokens
+                   line ""
+                   lines []]
+
+              (if-let [tok (first tokens)]
+                (cond
+                  ;; token longer than the column -> hard-split it
+                  (> (long (count tok)) width) (let [head (subs tok 0 width)
+                                                     tail (subs tok width)
+                                                     lines' (cond-> lines
+                                                              (seq line)
+                                                              (conj line))]
+
+                                                 (recur (cons tail (rest tokens)) head lines'))
+                  ;; fits on the current line
+                  (or (str/blank? line) (<= (+ (long (count line)) 1 (long (count tok))) width))
+                  (recur (rest tokens) (if (str/blank? line) tok (str line " " tok)) lines)
+                  ;; doesn't fit -> push current line, start a new one
+                  :else (recur (rest tokens) tok (conj lines line)))
+                (cond-> lines
+                  (seq line)
+                  (conj line))))))))
+
+(def ^:private fallback-terminal-width 120)
+
+(defn- terminal-env [k] (System/getenv k))
+
+(defn- parse-positive-long
+  [s]
+  (try (let [n (some-> s
+                       str/trim
+                       parse-long)]
+         (when (and n (pos? (long n))) n))
+       (catch Throwable _ nil)))
+
+(defn- shell-first-line
+  "Run a tiny terminal-size probe and return its first stdout line.
+   Kept private and timeout-bounded so table rendering never hangs CLI startup."
+  [cmd]
+  (try (let [p
+             (process/process {:cmd ["sh" "-c" cmd] :out :string :err :out})
+
+             proc
+             (:proc p)]
+
+         (if (.waitFor ^Process proc 250 java.util.concurrent.TimeUnit/MILLISECONDS)
+           (some-> @p
+                   :out
+                   str/split-lines
+                   first)
+           (do (process/destroy-tree p) nil)))
+       (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
+
+(defn- stty-terminal-width
+  []
+  (when-let [line (shell-first-line "stty size < /dev/tty")]
+    (some-> (re-find #"^\s*\d+\s+(\d+)\s*$" line)
+            second
+            parse-positive-long)))
+
+(defn- tput-terminal-width [] (parse-positive-long (shell-first-line "tput cols")))
+
+(defn terminal-width
+  "Best-effort terminal width for CLI tables. zsh/bash often keep COLUMNS
+   as a shell variable instead of exporting it, so also query the controlling
+   terminal via stty. Falls back to 120 for non-interactive runs."
+  []
+  (or (parse-positive-long (terminal-env "COLUMNS"))
+      (stty-terminal-width)
+      (tput-terminal-width)
+      fallback-terminal-width))
+
+(defn table-width
+  "Visible width of a rendered table with `cols`: outer padding + cells + separators."
+  ^long [cols]
+  (+ 2 (long (reduce + (map :width cols))) (* 3 (max 0 (dec (long (count cols)))))))
+
+(defn expand-table-cols
+  "Grow table columns to `target-width`. Columns marked `:grow? true`
+   share extra width; otherwise the final column grows. This keeps all
+   CLI tables full-width while preserving fixed ID/count/date columns."
+  [cols ^long target-width]
+  (let [cols
+        (vec cols)
+
+        extra
+        (max 0 (- target-width (table-width cols)))]
+
+    (if (zero? (long extra))
+      cols
+      (let [grow-idxs
+            (let [marked (keep-indexed (fn [idx col]
+                                         (when (:grow? col) idx))
+                                       cols)]
+              (if (seq marked) (vec marked) [(dec (long (count cols)))]))
+
+            n
+            (long (count grow-idxs))
+
+            base
+            (quot (long extra) n)
+
+            remainder
+            (rem (long extra) n)
+
+            additions
+            (into {}
+                  (map-indexed (fn [i idx]
+                                 [idx (+ base (if (< (long i) (long remainder)) 1 0))]))
+                  grow-idxs)]
+
+        (mapv (fn [idx col]
+                (update col :width + (get additions idx 0)))
+              (range)
+              cols)))))
+
+(defn print-table!
+  "Print a formatted table to stdout!.
+   `cols` is `[{:key :k :label \"L\" :width N :align :left|:right}]`.
+   Cells are word-wrapped (not truncated) so long descriptions stay
+   visible across multiple physical lines. Tables expand to terminal
+   width by growing `:grow?` columns (or the final column by default)."
+  [cols rows]
+  (let [cols
+        (expand-table-cols cols (terminal-width))
+
+        align-line
+        (fn [s {:keys [width align]}]
+          (if (= align :right) (pad-left s width) (pad-right s width)))
+
+        sep
+        (str "─" (str/join "─┼─" (map #(apply str (repeat (:width %) \─)) cols)) "─")
+
+        header
+        (str " " (str/join " │ " (map #(pad-right (:label %) (:width %)) cols)) " ")]
+
+    (stdout! header)
+    (stdout! sep)
+    (doseq [row rows]
+      (let [wrapped (mapv (fn [c]
+                            (wrap-str (get row (:key c)) (:width c)))
+                          cols)
+            row-lines (apply max 1 (map count wrapped))]
+
+        (dotimes [i row-lines]
+          (stdout! (str " "
+                        (str/join " │ "
+                                  (map (fn [lines col]
+                                         (align-line (or (nth lines i nil) "") col))
+                                       wrapped
+                                       cols))
+                        " ")))))))
