@@ -7,11 +7,24 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; A bang runs the `shell` op, which is tagged by the foundation-core extension:
+;; register it when no earlier test in this JVM has, so the namespace passes alone.
+(set-ns-context! [(around-each [f]
+                               (let [registered? (some #(= "foundation-core" (:ext/name %))
+                                                       (extension/registered-extensions))]
+                                 (when-not registered? (foundation/register!))
+                                 (try (f)
+                                      (finally (when-not registered?
+                                                 (extension/deregister-extension!
+                                                   "foundation-core"))))))])
 
 (defn- with-store
   [f]
