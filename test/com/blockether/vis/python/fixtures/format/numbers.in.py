@@ -1,0 +1,11 @@
+hexadecimal = 0XABCDEF
+lower_hex = 0xdeadbeef
+octal = 0O777
+binary = 0B1010
+exponent = 1E5
+float_value = 10.5E-3
+imaginary = 5J
+underscored = 1_000_000
+plain = 0.5
+leading = .5
+trailing = 5.

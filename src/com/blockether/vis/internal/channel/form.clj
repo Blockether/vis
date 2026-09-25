@@ -189,7 +189,7 @@
     (when body {:op op :body body :collapsible? true})))
 
 (defn with-display
-  "Attach the cached ruff rendering of a form's Python source when the form did not
+  "Attach the cached formatted rendering of a form's Python source when the form did not
    author its own `:display-code`. Result presentation is always derived locally
    from canonical facts and is never attached to the form."
   [form]

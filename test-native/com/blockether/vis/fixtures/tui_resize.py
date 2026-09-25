@@ -72,6 +72,26 @@ def check_resize(binary, home, gateway, mode=None):
     sequence = re.compile(rb"\x1b\[([0-9;?]*)([ -/]*)([@-~])")
     output = b""
 
+    def token_colors():
+        """The truecolor foreground each marker token was last painted with."""
+        foreground = None
+        colors = {}
+        end = 0
+        for match in sequence.finditer(output):
+            text = output[end : match.start()]
+            for token in (b"vis_identifier_marker", b"vis_string_marker"):
+                if token in text:
+                    colors[token] = foreground
+            params, _, command = match.groups()
+            if command == b"m":
+                values = params.split(b";")
+                if len(values) == 5 and values[:2] == [b"38", b"2"]:
+                    foreground = tuple(values[2:])
+                elif params in (b"", b"0", b"39"):
+                    foreground = None
+            end = match.end()
+        return colors
+
     def screen_lines():
         """Reconstruct Lanterna's absolute-positioned writes, including delta frames."""
         row, col, end = 1, 1, 0
@@ -113,7 +133,9 @@ def check_resize(binary, home, gateway, mode=None):
         expected = b"\x1b]52;c;" + base64.b64encode(text.encode()) + b"\x07"
         return expected in output
 
-    def await_bottom(timeout, text=None, copied=None, background=None, idle=False):
+    def await_bottom(
+        timeout, highlighting=False, text=None, copied=None, background=None, idle=False
+    ):
         nonlocal pending, cursor_row, cursor_col, output
         deadline = time.monotonic() + timeout
         seen_rows = set()
@@ -127,6 +149,14 @@ def check_resize(binary, home, gateway, mode=None):
                 return
             if text is not None and any(
                 text.decode() in line for line in screen_lines().values()
+            ):
+                return
+            colors = token_colors()
+            if (
+                highlighting
+                and len(colors) == 2
+                and None not in colors.values()
+                and len(set(colors.values())) == 2
             ):
                 return
             if not select.select([master], [], [], 0.1)[0]:
@@ -163,6 +193,7 @@ def check_resize(binary, home, gateway, mode=None):
             if (
                 copied is None
                 and text is None
+                and not highlighting
                 and background is None
                 and not idle
                 and rows in seen_rows
@@ -188,6 +219,10 @@ def check_resize(binary, home, gateway, mode=None):
             raise AssertionError(
                 f"native TUI did not respond with {text!r} within {timeout}s; "
                 f"terminal={sequence.sub(b'', output)[-2000:]!r}"
+            )
+        if highlighting:
+            raise AssertionError(
+                f"native Python syntax colors are missing or identical: {token_colors()}"
             )
         raise AssertionError(
             f"no repaint at row {rows} after resize to {cols}x{rows}; painted rows: {sorted(seen_rows)}"
@@ -389,11 +424,13 @@ def check_resize(binary, home, gateway, mode=None):
             # Do not send a key: resizing alone must wake and repaint the TUI.
             await_bottom(8)
             print(f"resized to {cols}x{rows}", flush=True)
-        # Fences paint as plain code text now that the TUI carries no syntax
-        # highlighter, so the native check is that the persisted Python reaches
-        # the screen and survives the resizes above.
-        await_bottom(8, text=b"vis_identifier_marker")
-        print("native Python fence painted", flush=True)
+        if model_key:
+            await_bottom(8, text=b"vis_identifier_marker")
+        else:
+            # The Python fence is colored by the built-in highlighter: the string
+            # must paint in a different color than the name it is assigned to.
+            await_bottom(8, highlighting=True)
+            print("native Python syntax colors verified", flush=True)
         if model_key:
             output = b""
             os.write(master, b"\x18" + model_key.encode())

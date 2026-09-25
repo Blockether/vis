@@ -935,11 +935,13 @@ EOF
 # finding that out costs a JVM start, measured at 1.03s on EVERY vis-agent
 # invocation, for a step that does nothing after the first. So the answer is
 # remembered against the thing that invalidates it: the dependency set. A changed
-# deps.edn (a bumped pin, a new library) is a different stamp and preps again.
+# deps.edn (a bumped pin, a new library, or a package whose Java sources changed
+# and therefore names a new prep marker) is a different stamp and preps again.
 ensure_source_prepared() {
   local source_root="$1" stamp="" marker
   if command -v shasum >/dev/null 2>&1; then
-    stamp="$(shasum -a 256 "$source_root/deps.edn" 2>/dev/null | cut -d' ' -f1)"
+    stamp="$( { cat "$source_root/deps.edn" "$source_root"/packages/*/deps.edn 2>/dev/null || true; } \
+      | shasum -a 256 | cut -d' ' -f1)"
   fi
   marker="$vis_home/run/prepped-${stamp:-none}"
   [[ -z "$stamp" || ! -f "$marker" ]] || return 0
@@ -1569,6 +1571,8 @@ if (( tui_requested )); then
   [[ -f "$tui_root/deps.edn" ]] || die "the terminal UI is not installed" \
     "Run:  vis-agent update --track dev"
   measure_log "JVM TUI → $tui_root"
+  # The TUI's classpath includes the engine's prepared packages (Python coloring).
+  ensure_source_prepared "$source_root" || exit 1
   cd "$tui_root"
   tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1
   tui_command=(clojure -J--enable-native-access=ALL-UNNAMED "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run)

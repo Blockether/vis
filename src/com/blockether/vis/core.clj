@@ -399,8 +399,8 @@
              [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
              [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
 
-;; ruff-beautify model Python before display (gateway code blocks). Cached +
-;; falls back to verbatim source when ruff is unavailable.
+;; Format model Python the way `ruff format` does before display (gateway code blocks).
+;; Cached; falls back to the verbatim source when the code can't be formatted.
 (import-vars [beautify-python pyfmt/beautify-python])
 
 ;; Canonical `contract.wire/->wire` JSON shape: snake keys,

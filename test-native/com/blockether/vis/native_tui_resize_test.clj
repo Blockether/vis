@@ -159,7 +159,7 @@
 
 (defdescribe native-tui-resize-test
              ;; Regression: Lanterna silently discarded native WINCH handler registration.
-             (it "resizes and repaints persisted Python in the native terminal"
+             (it "resizes and syntax-highlights persisted Python in the native terminal"
                  (check-native-tui! nil)))
 
 (defdescribe native-tui-prose-test

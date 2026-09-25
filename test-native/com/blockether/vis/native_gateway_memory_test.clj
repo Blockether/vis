@@ -1,5 +1,6 @@
 (ns com.blockether.vis.native-gateway-memory-test
-  "Disk-backed terminal turns and SSE replay in the linked gateway image."
+  "Disk-backed terminal turns, SSE replay and Python display formatting in the linked gateway
+   image."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -10,6 +11,10 @@
   (:import [com.sun.net.httpserver HttpServer]
            [java.io File]
            [java.net ServerSocket]))
+
+(def ^:private python-code
+  "The model's Python as it arrives, before the gateway formats it for display."
+  "answer=[1,2];print('native-display',answer)")
 
 (defn- request-json!
   [method path opts]
@@ -84,7 +89,7 @@
 (defdescribe
   native-gateway-memory-test
   (it
-    "hydrates archived terminal turns and replays their persisted events"
+    "hydrates archived terminal turns and replays their persisted events with formatted Python"
     (let [^File dir
           (#'binary/temp-dir "vis-native-gateway-memory-")
 
@@ -105,7 +110,24 @@
             (.getLocalPort socket))
 
           process
-          (atom nil)]
+          (atom nil)
+
+          calls
+          (atom 0)
+
+          original-stream
+          @#'binary/stream-body
+
+          original-whole
+          @#'binary/whole-body
+
+          ;; The first answer runs Python, so the turn carries a block the gateway
+          ;; formats for display; the next one finishes the turn.
+          answer
+          (fn [stream? text]
+            (if (= 1 (swap! calls inc))
+              (#'binary/python-tool-body python-code 1 stream?)
+              ((if stream? original-stream original-whole) text)))]
 
       (try
         (#'binary/overlay! dir port)
@@ -132,7 +154,9 @@
         (with-redefs-fn {#'gateway-client/ensure-gateway!
                          (constantly {:host "127.0.0.1" :port gateway-port :remote? true})
                          #'gateway-client/client-id (atom nil)
-                         #'gateway-client/release-hook-installed? (atom true)}
+                         #'gateway-client/release-hook-installed? (atom true)
+                         #'binary/stream-body #(answer true %)
+                         #'binary/whole-body #(answer false %)}
           (fn []
             (await-health! @process)
             (let [created
@@ -208,7 +232,11 @@
                 (expect (some #(= "turn.started" (get % "type")) events))
                 (expect (= "turn.completed" (get completed "type")))
                 (expect (= tid (get completed "turn_id")))
-                (expect (= reply (get-in completed ["content" 0 "markdown"])))))))
+                (expect (= reply (get-in completed ["content" 0 "markdown"])))
+                (expect (= "answer = [1, 2]\nprint(\"native-display\", answer)\n"
+                           (some #(when (= "block.started" (get % "type")) (get % "display_code"))
+                                 events))
+                        "The linked gateway must format the model's Python for display")))))
         (finally (when-let [owned @process]
                    (#'binary/kill-tree! owned))
                  (.stop ^HttpServer server 0)

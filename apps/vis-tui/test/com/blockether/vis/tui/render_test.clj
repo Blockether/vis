@@ -95,7 +95,7 @@
                    (expect (= 5 (count (re-seq #"┌" text))))
                    (expect (= 6 (count (re-seq #"Result" text))))
                    (doseq [literal ["Next result" "Still separate" "<tag>" "**ready**"]]
-                      (expect (str/includes? text literal))))))
+                     (expect (str/includes? text literal))))))
 
 (defdescribe activity-table-path-test
              (it "a row that names a file presses on the words that spell it"
@@ -122,8 +122,12 @@
 
                    (expect (= 1 (count pressed)))
                    (expect (= ["/w/src/core.clj"] (mapv :path spans)))
-                   (let [{:keys [col width]} (first spans)
-                         body (subs (:line (first pressed)) 1)]
+                   (let [{:keys [col width]}
+                         (first spans)
+
+                         body
+                         (subs (:line (first pressed)) 1)]
+
                      (expect (= "core.clj" (subs body col (+ (long col) (long width)))))))))
 
 (defdescribe
@@ -2464,6 +2468,24 @@
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
         (expect (nil? (first (filter #(str/includes? (strip-ansi %) "command\":") shell-lines))))
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "print(1)") python-lines)))))))
+
+(defdescribe python-code-band-color-test
+             (it "colors a Python band with PythonHighlighter and keeps its text"
+                 (let [lines
+                       (format-iteration-entry {:iteration 0
+                                                :forms [{:started-at-ms 1000
+                                                         :success? nil
+                                                         :code "def f(x):\n    return x  # note"}]}
+                                               80
+                                               1
+                                               {:now-ms 2500})
+
+                       code-row
+                       (first (filter #(str/includes? (strip-ansi %) "return x") lines))]
+
+                   (expect (str/includes? code-row "\u001b[36mreturn\u001b[0m"))
+                   (expect (str/includes? code-row "\u001b[90m# note\u001b[0m"))
+                   (expect (str/ends-with? (strip-ansi code-row) "    return x  # note")))))
 
 (defdescribe
   provider-auth-error-test

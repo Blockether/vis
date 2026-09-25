@@ -155,7 +155,7 @@
             (expect (= durations (mapv :duration-ms (:forms resumed)))))))))
 
 (defdescribe formatted-source-parity-test
-             ;; Regression #269: `block.started` carries the cached ruff rendering as
+             ;; Regression #269: `block.started` carries the cached formatted rendering as
              ;; `display_code`; `block.output` repeats only canonical facts. Rebuilding the
              ;; form record from the result frame alone dropped that rendering, so a settled
              ;; block fell back to the raw source the model wrote — two `;`-separated

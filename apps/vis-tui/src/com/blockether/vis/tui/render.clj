@@ -11,7 +11,8 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.provider-error :as perr])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
+  (:import [com.blockether.vis.python PythonHighlighter]
+           [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [java.util LinkedHashMap]
@@ -7487,7 +7488,7 @@
                     (mapv #(line-entry (str thinking-marker %)) wrapped)))
 
                 ;; THE PROGRAM THE MODEL WROTE, and no second dialect. The gateway attaches
-                ;; the cached ruff rendering as `:display-code` — on the live chunk and on
+                ;; its cached formatted rendering as `:display-code` — on the live chunk and on
                 ;; every restored form alike (`form/with-display`) — so a record that carries
                 ;; none never had one, and its own source is what ran. Formatting it a third
                 ;; time HERE printed a program the companion never shows: `ChatContent` falls
@@ -7503,10 +7504,13 @@
                 show-execution-details?
                 (or show-python-code? (not= "python" code-language))
 
-                ;; Source that already carries ANSI (a colored pre-rendering)
-                ;; folds SGR-aware below; everything else folds plain.
+                ;; Source that already carries ANSI (a colored pre-rendering) keeps its
+                ;; colors and Python gets `PythonHighlighter`'s; both fold SGR-aware
+                ;; below. Any other language folds plain.
                 colored-lines
-                (when (str/includes? code-text "\u001b[") (str/split-lines code-text))
+                (cond (str/includes? code-text "\u001b[") (str/split-lines code-text)
+                      (= "python" code-language) (str/split-lines (PythonHighlighter/highlight
+                                                                    code-text)))
 
                 inline-error-code-lines
                 (when (and error (not (:group-errors form)))

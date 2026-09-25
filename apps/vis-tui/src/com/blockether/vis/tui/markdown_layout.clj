@@ -37,7 +37,8 @@
             [com.blockether.vis.tui.mermaid :as mermaid]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir])
-  (:import [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
+  (:import [com.blockether.vis.python PythonHighlighter]
+           [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
             ParagraphLayout$Options]))
 
 ;; Helpers
@@ -571,6 +572,16 @@
           (.put ^java.util.Map folded-code-cache key lines)
           lines))))
 
+(defn- python-code-lines
+  "Rows of Python `content` colored by `PythonHighlighter`, then folded and cached
+   like `folded-code-lines`."
+  [^String content ^long budget]
+  (let [key [content budget :python]]
+    (or (.get ^java.util.Map folded-code-cache key)
+        (let [lines (compute-folded-code-lines (PythonHighlighter/highlight content) budget)]
+          (.put ^java.util.Map folded-code-cache key lines)
+          lines))))
+
 (def ^:private ^java.util.Map mermaid-cache
   "Bounded access-order cache for rendered mermaid diagrams. A diagram costs a
    full rank / order / place pass, which must not repeat on every repaint; an
@@ -675,8 +686,18 @@
         ansi?
         (and (not fold?) (not diff?) (str/includes? content "\u001b["))
 
+        ;; A Python fence without color of its own gets `PythonHighlighter`'s and
+        ;; then folds like source a producer already colored.
+        python?
+        (and (not fold?)
+             (not ansi?)
+             (contains? #{"python" "py" "python3"}
+                        (some-> lang
+                                str/lower-case)))
+
         ansi-lines
-        (when ansi? (folded-code-lines content budget))
+        (cond ansi? (folded-code-lines content budget)
+              python? (python-code-lines content budget))
 
         ;; A `diff` fence (patch / write / format evidence) is colored by
         ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
@@ -751,16 +772,16 @@
                 wrap? (mapcat wrap-line (str/split-lines content))
                 ;; Unified patches stay compact: one row per patch line.
                 diff? (mapcat diff-line (str/split-lines content))
-                ;; Source a producer already colored (zprint evidence, ANSI tool
-                ;; output) ANSI-CHAR-FOLDS any over-wide row to the bubble width,
+                ;; Colored source (zprint evidence, ANSI tool output, a Python
+                ;; fence) ANSI-CHAR-FOLDS any over-wide row to the bubble width,
                 ;; re-opening the SGR active at each cut so token color survives
                 ;; the fold. Rows that already fit are one segment, untouched.
                 ;; Without this a pathologically wide colorized line (a long JSON
                 ;; row, a `javascript:` bookmarklet) overflowed off the right edge
                 ;; with no wrap and no horizontal scroll, hiding its tail.
-                ansi? (mapv (fn [line]
-                              {:runs (runs-of line)})
-                            ansi-lines)
+                ansi-lines (mapv (fn [line]
+                                   {:runs (runs-of line)})
+                                 ansi-lines)
                 ;; A plain fence has no alignment contract, so CHAR-FOLD any
                 ;; over-wide row too.
                 :else (mapcat fold-line (str/split-lines content))))

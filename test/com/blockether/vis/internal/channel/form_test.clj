@@ -153,7 +153,7 @@
                    (expect (= "shell({\"commands\": [\"sleep 30\"]})" (:code form)))))
              (it "still derives the display for a form that authored none"
                  (let [form (form/with-display {:code "x=1"})]
-                   (expect (seq (:display-code form)))
+                   (expect (= "x = 1\n" (:display-code form)))
                    (expect (nil? (:display-language form))))))
 
 ;; The display is always derived from canonical facts. No rendered copy is stored,

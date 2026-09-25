@@ -138,7 +138,7 @@ supply their own configuration:
   per-namespace `--initialize-at-build-time` flags are needed.
 - The manifest's initialization vector is the native root set; `build.clj`
   derives entry points from it.
-- Native libraries such as fff, ruff, rift and imaging are reached through the
+- Native libraries such as fff, rift and imaging are reached through the
   Foreign Function and Memory API. Each binding jar enables it with its own
   `-H:+ForeignAPISupport` and `--enable-native-access`.
 

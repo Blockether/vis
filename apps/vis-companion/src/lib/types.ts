@@ -1154,7 +1154,7 @@ export interface TranscriptForm {
   src?: string;
   source?: string;
   code?: string;
-  /** Gateway-formatted Python, produced by the same cached ruff formatter as the TUI. */
+  /** Gateway-formatted Python, produced by the same cached formatter the TUI shows. */
   display_code?: string;
   /** Highlighting language for `display_code`, authored by the tool that rendered it. */
   display_language?: string;

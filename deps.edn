@@ -7,6 +7,9 @@
  ;; JitPack hosts sherpa-onnx. tools.deps reads :mvn/repos only from the project it is invoked on.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis-contract {:local/root "packages/vis-contract"}
+        ;; Python formatting and terminal coloring in plain Java; a fresh checkout needs
+        ;; `clojure -X:deps prep` to compile it.
+        com.blockether/vis-python-presentation {:local/root "packages/vis-python-presentation"}
          ai.djl.huggingface/tokenizers {:mvn/version "0.38.0"}
          babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
@@ -16,7 +19,6 @@
         ;; no headless bootstrap, no fontconfig. `java.desktop` still loads, for mic capture.
         com.blockether/imaging {:mvn/version "0.1.10"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-        com.blockether/ruff {:mvn/version "0.3.5"}
         com.blockether/svar {:mvn/version "0.7.179"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.

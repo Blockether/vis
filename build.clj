@@ -572,10 +572,10 @@
   (read-string (slurp "deps.edn")))
 
 (defn- all-source-roots
-  "Every production src/resources directory on the Vis classpath: the repo root's
-   own `:paths` plus each local first-party package. AOT covers all of them and copies
-   every resource into the class directory. The roots come from deps.edn, never a
-   second hand-maintained list."
+  "Every production directory on the Vis classpath: the repo root's own
+   `:paths` plus each local first-party package's. AOT covers all of them and copies
+   every resource, and a package's compiled Java classes, into the class directory.
+   The roots come from deps.edn, never a second hand-maintained list."
   []
   (let [deps
         (root-deps-edn)
@@ -586,10 +586,7 @@
              (keep :local/root))
 
         dirs
-        (into (vec (:paths deps))
-              (mapcat (fn [r]
-                        [(str r "/src") (str r "/resources")])
-                      roots))]
+        (into (vec (:paths deps)) (mapcat #(src-dirs {:dir %})) roots)]
 
     (filterv #(.exists (io/file %)) dirs)))
 
@@ -718,7 +715,7 @@
 (defn- native-lib-jars
   "Resolve every host-platform FFM artifact at the exact version of its main jar
    in `basis`. Only the host native jar enters the image classpath, so each
-   platform image embeds only its own fff/rift/ruff/imaging library.
+   platform image embeds only its own fff/rift/imaging library.
 
    Native images cannot use the runtime tools.deps downloader. A missing main
    dependency, failed resolution, or missing direct native jar is therefore a
@@ -730,7 +727,6 @@
         native-artifacts
         {'com.blockether/fff (str "fff-native-" tok)
          'com.blockether/rift (str "rift-native-" tok)
-         'com.blockether/ruff (str "ruff-native-" tok)
          'com.blockether/imaging (str "imaging-native-" tok)}
 
         missing-mains

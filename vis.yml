@@ -20,9 +20,6 @@ workspace:
     - id: clj-parinferish
       path: ~/clj-parinferish
       description: Sibling repo — conservative structural balancing for Clojure edits.
-    - id: clj-ruff
-      path: ~/clj-ruff
-      description: Blockether Clojure bindings for ruff — bump ruff + release there, then move the com.blockether/ruff pin in deps.edn.
     - id: lanterna
       path: ~/lanterna
       description: Blockether Lanterna fork — release there, then move the com.blockether/lanterna pin in the TUI extension.

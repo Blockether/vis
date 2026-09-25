@@ -15,6 +15,7 @@
                   :main-opts ["-m" "lazytest.main" "test"]}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis-contract {:local/root "../../packages/vis-contract"}
+        com.blockether/vis-python-presentation {:local/root "../../packages/vis-python-presentation"}
         org.babashka/http-client {:mvn/version "0.4.24"}
         com.cnuernber/charred {:mvn/version "1.041"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}

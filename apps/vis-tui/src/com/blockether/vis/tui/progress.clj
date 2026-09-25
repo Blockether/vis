@@ -191,7 +191,7 @@
   [prev-form chunk]
   (let [errored? (some? (:error chunk))]
     (merge
-      ;; The gateway attaches the cached ruff rendering — `:display-code` and the
+      ;; The gateway attaches the cached formatted rendering — `:display-code` and the
       ;; language beside it — to the START frame, and the result frame repeats
       ;; only canonical facts. Rebuilding this record from the chunk alone dropped
       ;; that rendering, so a settled block fell back to the model's raw source.

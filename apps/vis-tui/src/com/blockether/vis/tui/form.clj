@@ -140,9 +140,9 @@
     (when body {:op op :body body :collapsible? true})))
 
 (defn with-display
-  "Attach the cached ruff rendering of a form's Python source when the form did not
-   author its own `:display-code`. Result presentation is always derived locally
-   from canonical facts and is never attached to the form."
+  "Use a form's own Python source as its `:display-code` when the form did not author
+   one. Result presentation is always derived locally from canonical facts and is
+   never attached to the form."
   [form]
   (cond-> form
     (and (str/blank? (str (:display-code form))) (not (str/blank? (str (:code form)))))

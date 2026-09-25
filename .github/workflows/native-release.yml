@@ -272,7 +272,7 @@ jobs:
           set -euo pipefail
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
-          (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
+          (cd apps/vis-tui && clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
           bin/stage-tui-release apps/vis-tui/target/vis-tui "${{ matrix.tui_asset }}"
           bin/verify-linux-abi target/tui-release-bundle
           target/tui-release-bundle/vis-tui --version
@@ -488,7 +488,7 @@ jobs:
           set -euo pipefail
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
-          (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
+          (cd apps/vis-tui && clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
           # The terminal client loads no foreign code, so it needs no
           # entitlements — only the same identity and notary ticket.
           HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release apps/vis-tui/target/vis-tui

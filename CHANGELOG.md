@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The TUI colors Python code blocks and `python` fences with a built-in
+  highlighter for keywords, definitions, types, strings, numbers and comments.
+
+### Changed
+- The gateway formats Python code for the TUI and the companion with a built-in
+  formatter that produces the same result as `ruff format`. Vis no longer bundles
+  the native ruff library, which makes the native binary smaller.
+
 ## [v0.2.29] - 2026-09-25
 
 The v0.2.27 and v0.2.28 tags were not published. This release includes the

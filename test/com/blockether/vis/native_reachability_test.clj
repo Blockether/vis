@@ -78,14 +78,6 @@
   (it "ships reachability metadata that parses"
       (expect (.isFile metadata-file))
       (expect (vector? (reflection-entries))))
-  ;; #225: Ruff eagerly binds all three configured calls before linting.
-  (it "registers configured Ruff formatter, linter and fixer downcalls"
-      (let [downcalls (set (get-in (charred/read-json (slurp metadata-file))
-                                   ["foreign" "downcalls"]))]
-        (doseq [parameters [["void*" "void*" "void*" "jint"]
-                            ["void*" "void*" "void*" "jint" "void*" "void*" "jint"]
-                            ["void*" "void*" "void*" "jint" "void*" "void*" "jint" "jint"]]]
-          (expect (contains? downcalls {"returnType" "void*" "parameterTypes" parameters})))))
   (it "registers Hikari configuration accessors used by disk-pool diagnostics"
       (let [entries
             (get

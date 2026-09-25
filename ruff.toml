@@ -9,11 +9,10 @@
 # layer `bin/export-pocket-tts` runs on a build machine, and it is pinned BY
 # CONTENT — reformatting it would break the only guarantee it carries.
 #
-# This file is what `format_code` / `lint_code` for Python discover: the packs
-# call ruff IN-PROCESS (com.blockether/ruff) and let ruff resolve the nearest
-# config exactly as the `ruff` CLI would, so `vis-agent python -m ruff check` and the
-# tools agree. Without this file both fall back to ruff's own defaults and say
-# so in a `hint`.
+# This file is what `format_code` / `lint_code` for Python discover: the Python
+# language pack runs ruff and lets it resolve the nearest config exactly as the
+# `ruff` CLI would, so `vis-agent python -m ruff check` and the tools agree.
+# Without this file both fall back to ruff's own defaults and say so in a `hint`.
 
 target-version = "py311"
 line-length = 88
