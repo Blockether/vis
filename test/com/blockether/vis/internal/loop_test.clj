@@ -6668,9 +6668,9 @@
         (expect (= 1000 (backoff 0)))
         (expect (= 3000 (backoff 1)))
         (expect (= 3000 (backoff 7)))
-        (expect (= [1 1]
+        (expect (= {:auth 0 :stream 1 :max-tokens 1}
                    (next-counters :com.blockether.vis.internal.loop/retry-stream-recovery
-                                  {:attempt 0 :max-tokens-attempt 1}))))
+                                  {:auth 0 :stream 0 :max-tokens 1}))))
     (it "still fails the turn once the pre-output budget is spent"
         (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error
                          (lp/handle-iteration-exception! ttft
@@ -7065,6 +7065,105 @@
           (expect (= [] @landed)))))))
 
 (defdescribe
+  auth-then-stream-recovery-budget-test
+  ;; Auth refresh and pre-output stream recovery once spent ONE per-iteration counter:
+  ;; after a single forced OAuth refresh the first watchdog retry already announced its
+  ;; last try, and the second stalled request failed the turn. Each recovery kind now
+  ;; spends only its own budget.
+  (it "spends each recovery kind from its own budget"
+      (let [next-counters
+            @#'lp/next-retry-counters
+
+            fresh
+            {:auth 0 :stream 0 :max-tokens 0}
+
+            refreshed
+            (next-counters ::lp/retry-auth-refresh fresh)]
+
+        (expect (= {:auth 1 :stream 0 :max-tokens 0} refreshed))
+        (expect (= {:auth 1 :stream 1 :max-tokens 0}
+                   (next-counters ::lp/retry-stream-recovery refreshed)))
+        (expect (= {:auth 2 :stream 0 :max-tokens 0}
+                   (next-counters ::lp/retry-auth-backoff refreshed)))
+        (expect (= {:auth 0 :stream 0 :max-tokens 1}
+                   (next-counters {::lp/retry-max-tokens {:max_tokens 16384}} fresh)))
+        (expect (nil? (next-counters {:answer "done"} fresh)))))
+  (it
+    "keeps both stream recoveries after a forced auth refresh"
+    (let [warming?
+          (atom true)
+
+          {:keys [base-url requests stop!]}
+          (start-messages-stub! (fn [n]
+                                  (cond @warming? [:answer "Ready."]
+                                        (<= n 2) [:stall 5000]
+                                        :else [:answer "Recovered after two stalls."])))
+
+          router
+          (svar/make-router [{:id :lmstudio
+                              :api-key "test"
+                              :base-url base-url
+                              :models [{:name "model" :context 200000}]}])
+
+          environment
+          (lp/create-environment router {:db :memory})
+
+          chunks
+          (atom [])
+
+          calls
+          (atom 0)
+
+          ask-code!
+          svar/ask-code!]
+
+      (try
+        (goals/set-goal! (:db-info environment)
+                         (:session-id environment)
+                         "Finish the auth and stall drill"
+                         1)
+        ;; Warm the real router before arming the short watchdog budget (see #210).
+        (expect (= "Ready."
+                   (:content (ask-code! router
+                                        {:messages [{:role "user" :content "Warm the transport."}]
+                                         :tools []
+                                         :on-chunk (fn [_])
+                                         :ttft-timeout-ms 5000
+                                         :idle-timeout-ms 5000
+                                         :semantic-timeout-ms 5000}))))
+        (reset! requests 0)
+        (reset! warming? false)
+        (let [result
+              (with-redefs-fn {#'lp/provider-network-policy (fn [_ _]
+                                                              {:ttft-timeout-ms 1000
+                                                               :idle-timeout-ms 1000
+                                                               :semantic-timeout-ms 1000})
+                               ;; The first provider call is rejected once and the
+                               ;; forced refresh succeeds; later calls reach the stub.
+                               #'svar/ask-code! (fn [router opts]
+                                                  (if (= 1 (swap! calls inc))
+                                                    (throw (ex-info "Unauthorized" {:status 401}))
+                                                    (ask-code! router opts)))
+                               #'lp/refresh-just-failed? (constantly false)
+                               #'lp/auth-refreshable-error? (fn [e _]
+                                                              (= 401 (:status (ex-data e))))
+                               #'lp/try-refresh-provider-token! (constantly true)
+                               #'lp/STREAM_RECOVERY_RETRY_DELAYS_MS [25 25]}
+                #(#'lp/run-normal-turn!
+                   environment
+                   "auth then stalls"
+                   {:hooks {:on-chunk (fn [chunk]
+                                        (swap! chunks conj chunk))}}))
+
+              retries
+              (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason])) @chunks)]
+
+          (expect (= :success (:status result)))
+          (expect (= 3 @requests))
+          (expect (= [1 2] (mapv #(get-in % [:event :attempt]) retries))))
+        (finally (stop!) (lp/dispose-environment! environment))))))
+
+(defdescribe
   reasoning-only-stream-boundary-test
   (doseq [[label reasoning? data expected]
           [["observed reasoning" true {} :reasoning]
@@ -7422,9 +7521,9 @@
             @#'lp/next-retry-counters
 
             base
-            {:attempt 2 :max-tokens-attempt 1}]
+            {:auth 2 :stream 1 :max-tokens 1}]
 
-        (expect (= [2 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
+        (expect (= base (next-counters {::lp/retry-auth-fallback {}} base))))))
 
 (defdescribe
   auth-cooldown-routing-test
@@ -9402,9 +9501,9 @@
         (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
         (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))
     (it "has an independent retry budget"
-        (expect (= [2 1]
+        (expect (= {:auth 2 :stream 1 :max-tokens 1}
                    (next-retry-counters ::lp/retry-context-overflow
-                                        {:attempt 2 :max-tokens-attempt 1}))))))
+                                        {:auth 2 :stream 1 :max-tokens 1}))))))
 
 (defn- overflow-loop-scenario
   "Exercise overflow handling, Python execution and the following provider request."

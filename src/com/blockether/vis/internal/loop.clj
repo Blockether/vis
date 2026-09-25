@@ -203,24 +203,35 @@
   (long (nth STREAM_RECOVERY_RETRY_DELAYS_MS
              (min (long attempt) (dec (count STREAM_RECOVERY_RETRY_DELAYS_MS))))))
 
+(def ^:private RETRY_BUDGET_KINDS
+  "The per-iteration budget each Vis-owned retry sentinel spends. Auth, stream and
+   max-token recovery count separately, so one kind of retry never spends another
+   kind's budget. Auth fallback and context-overflow recovery own their bounds."
+  {::retry-auth-refresh :auth
+   ::retry-auth-backoff :auth
+   ::retry-stream-recovery :stream
+   ::retry-max-tokens :max-tokens
+   ::retry-auth-fallback nil
+   ::retry-context-overflow nil})
+
+(defn- retry-sentinel
+  "The retry sentinel `result` carries, or nil for a real result. Map sentinels
+   also carry the retry's input: the bumped extra body or the fallback routing."
+  [result]
+  (cond (keyword? result) (when (contains? RETRY_BUDGET_KINDS result) result)
+        (map? result) (some #(when (contains? result %) %)
+                            [::retry-max-tokens ::retry-auth-fallback])))
+
 (defn- next-retry-counters
   "Pure counter-threading for Vis-owned context, max-token, auth and stream recovery.
    Svar owns other transport retries. Vis additionally recovers pre-output watchdogs
-   and verified reasoning-only EOF before code eval. Returns nil for a real result."
-  [result {:keys [attempt max-tokens-attempt] :or {attempt 0 max-tokens-attempt 0}}]
-  (let [attempt
-        (long attempt)
-
-        max-tokens-attempt
-        (long max-tokens-attempt)]
-
-    (cond (= result ::retry-context-overflow) [attempt max-tokens-attempt]
-          (and (map? result) (contains? result ::retry-max-tokens)) [attempt
-                                                                     (inc max-tokens-attempt)]
-          (and (map? result) (contains? result ::retry-auth-fallback)) [attempt max-tokens-attempt]
-          (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt]
-          (= result ::retry-stream-recovery) [(inc attempt) max-tokens-attempt]
-          (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt])))
+   and verified reasoning-only EOF before code eval. `counters` holds one count per
+   budget kind in [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
+  [result counters]
+  (when-let [sentinel (retry-sentinel result)]
+    (if-let [kind (get RETRY_BUDGET_KINDS sentinel)]
+      (update counters kind (fnil inc 0))
+      counters)))
 
 (defn- provider-retry-event
   [{:keys [provider model reason attempt delay-ms error status]}]
@@ -9234,16 +9245,15 @@
                  applied-routing-preference
                  (atom (if route-change (:preference route-change) routing-pref-at-turn-start))
                  iteration-result
-                 ;; Per-iteration retry state. `:max-tokens-attempt` is separate
-                 ;; from auth/context recovery so those policies do not consume
-                 ;; the max-token budget; `:current-extra-body` carries its bump.
+                 ;; Per-iteration retry state. `retries` counts each recovery kind
+                 ;; on its own budget (see RETRY_BUDGET_KINDS), so no policy spends
+                 ;; another's; `current-extra-body` carries the max-token bump.
                  (with-council-execution
                    environment
                    council-active
                    [session-turn-id iteration]
                    (fn []
-                     (loop [attempt 0
-                            max-tokens-attempt 0
+                     (loop [retries {:auth 0 :stream 0 :max-tokens 0}
                             current-extra-body iteration-extra-body
                             ;; `env` is threaded so the auth-refresh retry can
                             ;; reseat its `:router` to the rebuilt one (the
@@ -9364,7 +9374,7 @@
                                 ;; heavy iterations hit this when the provider's
                                 ;; finish_reason: \"length\" leaves content-acc empty.
                                 (and (max-tokens-exceeded-error? e)
-                                     (< (long max-tokens-attempt)
+                                     (< (long (:max-tokens retries))
                                         (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
                                 (let [data (ex-data e)
                                       prev-max (or (:output-tokens data)
@@ -9376,7 +9386,7 @@
                                   (tel/log! {:level :warn
                                              :id ::max-tokens-exceeded-retry
                                              :data {:iteration iteration
-                                                    :attempt (inc (long max-tokens-attempt))
+                                                    :attempt (inc (long (:max-tokens retries)))
                                                     :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                     :prev-max prev-max
                                                     :new-max (:max_tokens bumped)
@@ -9384,10 +9394,10 @@
                                             (str "max_tokens exhausted on reasoning (~"
                                                  (or (:reasoning-length data) "?")
                                                  " reasoning tokens); retry "
-                                                 (inc (long max-tokens-attempt))
+                                                 (inc (long (:max-tokens retries)))
                                                  "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                  " with max_tokens=" (:max_tokens bumped)))
-                                  ;; Bump max-tokens-attempt so a second cap-hit
+                                  ;; Spend the max-token budget so a second cap-hit
                                   ;; cannot loop forever.
                                   {::retry-max-tokens bumped})
                                 ;; Post-refresh auth 401: the token we
@@ -9399,7 +9409,7 @@
                                 ;; seconds later. Re-minting is what CAUSES
                                 ;; the storm, so DON'T refresh: back off and
                                 ;; retry the SAME token until it settles.
-                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                (and (< (long (:auth retries)) (long MAX_AUTH_REFRESH_RETRIES))
                                      (refresh-just-failed? e resolved-model))
                                 ::retry-auth-backoff
                                 ;; Auth 401/403 from a refreshable provider: adopt a
@@ -9407,7 +9417,7 @@
                                 ;; re-send. The exact attempt router supplies the
                                 ;; rejected token; the next request boundary hydrates
                                 ;; the new value without rebuilding shared routers.
-                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                (and (< (long (:auth retries)) (long MAX_AUTH_REFRESH_RETRIES))
                                      (auth-refreshable-error? e resolved-model)
                                      (try-refresh-provider-token! (:router attempt-env)
                                                                   resolved-model))
@@ -9450,12 +9460,13 @@
                                 ;; remain in the unchanged request. Stop always wins.
                                 (and (not (and cancel-atom @cancel-atom))
                                      (or (pre-output-stream-retryable? e
-                                                                       {:attempt attempt
+                                                                       {:attempt (:stream retries)
                                                                         :output-started?
                                                                         @provider-output-started?})
-                                         (and (not @provider-replay-unsafe?)
-                                              (reasoning-only-stream-retryable? e attempt))))
-                                (let [delay-ms (stream-recovery-backoff-ms attempt)
+                                         (and
+                                           (not @provider-replay-unsafe?)
+                                           (reasoning-only-stream-retryable? e (:stream retries)))))
+                                (let [delay-ms (stream-recovery-backoff-ms (:stream retries))
                                       chunk (provider-retry-progress-chunk
                                               (inc (long iteration))
                                               e
@@ -9465,7 +9476,7 @@
                                                :reason (if (perr/stream-truncated-error? e)
                                                          :stream-truncated-reasoning
                                                          :stream-watchdog-pre-output)
-                                               :attempt (inc (long attempt))
+                                               :attempt (inc (long (:stream retries)))
                                                :max-retries MAX_STREAM_RECOVERY_RETRIES
                                                :delay-ms delay-ms})]
 
@@ -9474,7 +9485,7 @@
                                              :id ::stream-recovery-retry
                                              :data {:iteration iteration
                                                     :provider (:provider resolved-model)
-                                                    :attempt (inc (long attempt))
+                                                    :attempt (inc (long (:stream retries)))
                                                     :max-retries MAX_STREAM_RECOVERY_RETRIES
                                                     :delay-ms delay-ms
                                                     :type (:type (ex-data e))}}
@@ -9532,44 +9543,39 @@
                                          (when (some #(or (perr/stream-truncated-error? %)
                                                           (perr/pre-output-stream-abort? %))
                                                      (bounded-cause-chain e))
-                                           {:attempts attempt
+                                           {:attempts (:stream retries)
                                             :declined (cond (or @provider-replay-unsafe?
                                                                 (= :content
                                                                    (:stream-output (ex-data e))))
                                                             :output-started
-                                                            (>= (long attempt)
+                                                            (>= (long (:stream retries))
                                                                 (long MAX_STREAM_RECOVERY_RETRIES))
                                                             :retry-budget-exhausted
                                                             :else :not-reasoning-only)})}))))))]
 
-                         (if-let [[attempt* max-tokens-attempt*]
-                                  (next-retry-counters result
-                                                       {:attempt attempt
-                                                        :max-tokens-attempt max-tokens-attempt})]
-                           (let [attempt* (long attempt*)
-                                 max-tokens-attempt* (long max-tokens-attempt*)]
-
-                             (cond
-                               (and (map? result) (contains? result ::retry-max-tokens))
-                               (recur attempt* max-tokens-attempt* (::retry-max-tokens result) env)
-                               (and (map? result) (contains? result ::retry-auth-fallback))
-                               (do (reset! iteration-routing (::retry-auth-fallback result))
-                                   (recur attempt* max-tokens-attempt* current-extra-body env))
-                               (= result ::retry-auth-refresh)
-                               ;; Storage changed (or a peer already changed it). The
-                               ;; next loop pass hydrates this same persistent router
-                               ;; immediately before dispatch.
-                               (recur attempt* max-tokens-attempt* current-extra-body env)
-                               (= result ::retry-auth-backoff)
-                               ;; Retry the same fresh token; propagation may still be settling.
-                               (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
-                                   (recur attempt* max-tokens-attempt* current-extra-body env))
-                               (= result ::retry-stream-recovery)
-                               ;; Keep the completed history, route and request unchanged.
-                               (do (Thread/sleep (long (stream-recovery-backoff-ms attempt)))
-                                   (recur attempt* max-tokens-attempt* current-extra-body env))
-                               ;; Stream retry: same route and env.
-                               :else (recur attempt* max-tokens-attempt* current-extra-body env)))
+                         (if-let [retries* (next-retry-counters result retries)]
+                           (cond (and (map? result) (contains? result ::retry-max-tokens))
+                                 (recur retries* (::retry-max-tokens result) env)
+                                 (and (map? result) (contains? result ::retry-auth-fallback))
+                                 (do (reset! iteration-routing (::retry-auth-fallback result))
+                                     (recur retries* current-extra-body env))
+                                 (= result ::retry-auth-refresh)
+                                 ;; Storage changed (or a peer already changed it). The
+                                 ;; next loop pass hydrates this same persistent router
+                                 ;; immediately before dispatch.
+                                 (recur retries* current-extra-body env)
+                                 (= result ::retry-auth-backoff)
+                                 ;; Retry the same fresh token; propagation may still be settling.
+                                 (do (Thread/sleep (long (auth-propagation-backoff-ms (:auth
+                                                                                        retries))))
+                                     (recur retries* current-extra-body env))
+                                 (= result ::retry-stream-recovery)
+                                 ;; Keep the completed history, route and request unchanged.
+                                 (do (Thread/sleep (long (stream-recovery-backoff-ms (:stream
+                                                                                       retries))))
+                                     (recur retries* current-extra-body env))
+                                 ;; Context-overflow retry: the installed projection applies.
+                                 :else (recur retries* current-extra-body env))
                            result)))))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
