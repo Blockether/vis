@@ -1,6 +1,6 @@
 @kitlangton/justice
 https://github.com/kitlangton/justice
-License source: f87695114572db6d50bc7a80cf2520fceacd2759/packages/justice/LICENSE
+License source: 86dbc6da8cc2059cabb2a67c0aa42d773d5023e2/packages/justice/LICENSE
 
 MIT License
 

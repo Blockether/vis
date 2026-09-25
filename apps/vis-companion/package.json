@@ -61,7 +61,7 @@
     "@capacitor/share": "8.0.1",
     "@capawesome/capacitor-file-picker": "8.0.3",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
-    "@kitlangton/justice": "0.3.0",
+    "@kitlangton/justice": "0.3.2",
     "@radix-ui/react-select": "2.3.7",
     "dompurify": "3.4.13",
     "html2canvas-pro": "2.3.3",
