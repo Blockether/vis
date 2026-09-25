@@ -6,7 +6,6 @@
   (:require [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.util :as svar-util]
             [com.blockether.vis.contract.content :as content-contract]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -1223,7 +1222,7 @@
    {:keys [start-time iteration-count status status-id trace locals answer confidence reasoning
            utilization total-tokens-atom total-cost-atom]}]
   (let [duration-ms
-        (svar-util/elapsed-since start-time)
+        (/ (- (System/nanoTime) (long start-time)) 1e6)
 
         eval-evidence
         (transcript/turn-eval-evidence reasoning-effort trace)

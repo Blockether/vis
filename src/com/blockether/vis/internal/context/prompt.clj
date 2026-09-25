@@ -9,7 +9,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
@@ -1052,8 +1051,7 @@ read-only by default: enable commentable=True only for material the human should
                        (cond (seq warnings) {:status "error"}
                              (:found? result) {:status "available"
                                                :path (paths/abbreviate-home (:path result))
-                                               :tokens (svar-router/count-tokens model
-                                                                                 (:content result))}
+                                               :tokens (svar/count-tokens model (:content result))}
                              :else {:status "missing"}))
                      (catch Exception _ {:status "error"})))))
 
@@ -1066,8 +1064,7 @@ read-only by default: enable commentable=True only for material the human should
               (mapcat #(::parts (meta %)))
               (keep (fn [{:keys [label path content]}]
                       (when (util/non-blank-string? content)
-                        (cond-> {:label label
-                                 :tokens (long (svar-router/count-tokens model content))}
+                        (cond-> {:label label :tokens (long (svar/count-tokens model content))}
                           path
                           (assoc :path path))))))
         messages))
@@ -1121,11 +1118,11 @@ read-only by default: enable commentable=True only for material the human should
   ([] (request-token-counter {}))
   ([opts]
    (let [priming
-         (memoize #(svar-router/count-messages % [] opts))
+         (memoize #(svar/count-messages % [] opts))
 
          message-tokens
          (memoize (fn [model message]
-                    (- (svar-router/count-messages model [message] opts) (long (priming model)))))]
+                    (- (svar/count-messages model [message] opts) (long (priming model)))))]
 
      (fn ^long [model messages]
        (long (reduce (fn [^long total message]
@@ -1149,7 +1146,7 @@ read-only by default: enable commentable=True only for material the human should
           (or model "unknown")
 
           count-messages
-          (or message-token-counter svar-router/count-messages)
+          (or message-token-counter svar/count-messages)
 
           priming
           (if accounting 0 (long (count-messages model [])))
@@ -1199,7 +1196,7 @@ read-only by default: enable commentable=True only for material the human should
             (cond-> (conj (vec parts) {:label "Message framing" :tokens priming})
               (seq tools)
               (conj {:label "Tool declarations"
-                     :tokens (svar-router/count-tokens model (json/write-json-str tools))})))
+                     :tokens (svar/count-tokens model (json/write-json-str tools))})))
 
           groups
           (group-by (juxt :label :path) parts)

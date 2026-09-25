@@ -15,7 +15,7 @@
   (:require [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
-            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -1245,7 +1245,7 @@
         (expect (str/starts-with? text (filler 300)))
         (expect (str/includes? text "stdout clipped"))
         (expect (< (count text) 33000))
-        (expect (= (+ 250 (svar-router/count-tokens "unknown" (str (:thinking rec) "\n" text)))
+        (expect (= (+ 250 (svar/count-tokens "unknown" (str (:thinking rec) "\n" text)))
                    (weight-of rec)))))
   (it "includes errors and excludes a fold breadcrumb"
       (expect (str/includes? (form-wire-text {:code "print(1)" :error "boom!!"}) "boom!!"))
@@ -1667,8 +1667,8 @@
         (expect (< 500 (long (messages-wire-tokens priced-model [results])))))
     (it "delegates the whole structured-message count to Svar"
         (expect (= (long (messages-wire-tokens priced-model [assistant results]))
-                   (- (long (svar-router/count-messages priced-model [assistant results]))
-                      (long (svar-router/count-messages priced-model []))))))
+                   (- (long (svar/count-messages priced-model [assistant results]))
+                      (long (svar/count-messages priced-model []))))))
     (it "counts a replayed thinking chain and its signature"
         (expect (< 500
                    (long (messages-wire-tokens priced-model

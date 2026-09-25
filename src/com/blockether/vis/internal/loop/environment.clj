@@ -8,7 +8,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
-            [com.blockether.svar.internal.util :as svar-util]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
@@ -307,7 +306,7 @@
             resolved-channel (or channel (:channel persisted-session) :tui)
             state-atom (atom {:custom-bindings {} :environment nil :session-id nil})
             environment-atom (atom nil)
-            environment-id (str (svar-util/uuid))
+            environment-id (str (random-uuid))
             ;; SINGLE turn-state atom holds all per-turn cursor fields
             ;; (current-{turn-position,iteration,form-idx,iteration-id,
             ;;  session-turn-id,user-request}-atom). All six fields live

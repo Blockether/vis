@@ -77,6 +77,7 @@
     [com.blockether.vis.internal.python.format :as pyfmt]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.python.test-runner :as python-test-runner]
+    [com.blockether.vis.internal.provider.catalog :as catalog]
     [com.blockether.vis.internal.provider.key-store :as provider-key-store]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
@@ -349,7 +350,7 @@
 
 ;; Per-model price table (USD / MILLION tokens) — the SAME table the loop bills
 ;; against, exposed read-only so channel model pickers show the real charge.
-(import-vars [model-pricing loop-router/model-pricing])
+(import-vars [model-pricing catalog/model-pricing])
 
 ;; Notifications
 ;;
@@ -691,9 +692,9 @@
              [display-label config/display-label]
              [model-name config/model-name]
              [provider-base-url config/provider-base-url]
-             [provider-model-visible? config/provider-model-visible?]
-             [provider-presets config/provider-presets]
-             [provider-template config/provider-template]
+             [provider-model-visible? catalog/model-visible?]
+             [provider-presets catalog/presets]
+             [provider-template catalog/template]
              [->svar-model config/->svar-model]
              [->svar-provider config/->svar-provider])
 

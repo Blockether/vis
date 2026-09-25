@@ -7,7 +7,6 @@
    budget, and estimates request cost, including Codex fast mode."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
@@ -19,6 +18,7 @@
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -206,7 +206,7 @@
   [router opts]
   (rt/with-default-ask-code-idle-timeout
     opts
-    (provider-network-policy router (svar-router/resolve-effective-model router (:routing opts)))))
+    (provider-network-policy router (svar/resolve-effective-model router (:routing opts)))))
 
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
@@ -572,11 +572,11 @@
                                   :learned (into {} (map (juxt :name identity)) (:models provider))
                                   :fallback (into {}
                                                   (map (juxt :name identity))
-                                                  (:models (svar-router/normalize-provider
-                                                             (:priority provider)
-                                                             (assoc source
-                                                               :models (::config/configured-models
-                                                                         source)))))}))))
+                                                  (catalog/normalize-models
+                                                    (:priority provider)
+                                                    (assoc source
+                                                      :models (::config/configured-models
+                                                                source))))}))))
                          normalized))))
        (catch Throwable t (throw (env-gap-router-error config t)))))
 
@@ -1543,11 +1543,10 @@
               (double (or (:cost-multiplier opts) 1.0))
 
               cost-map
-              (wire/canonical (svar-router/estimate-cost model
-                                                         input-tokens
-                                                         output-tokens
-                                                         svar-router/MODEL_PRICING
-                                                         (dissoc opts :cost-multiplier)))]
+              (wire/canonical (catalog/estimate-cost model
+                                                     input-tokens
+                                                     output-tokens
+                                                     (dissoc opts :cost-multiplier)))]
 
           (if (and (map? cost-map) (not= 1.0 multiplier))
             (reduce (fn [m k]
@@ -1560,12 +1559,3 @@
 (defn merge-cost-maps
   [acc extra-cost]
   (merge-with + (select-keys acc cost-map-keys) (select-keys extra-cost cost-map-keys)))
-
-(defn model-pricing
-  "Per-model price table entry (USD per MILLION tokens) for `model`, looked up
-   by exact model name in svar's `MODEL_PRICING` — `{:input :output :cache-read
-   :cached-input …}` — or nil when the model isn't priced. Read-only view over
-   the same table `estimate-token-cost` bills against, so channel pickers show
-   the price that actually gets charged."
-  [model]
-  (when model (get svar-router/MODEL_PRICING (str model))))

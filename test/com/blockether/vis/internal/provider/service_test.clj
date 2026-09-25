@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -361,7 +362,7 @@
                                {:provider/id :openai
                                 :provider/detect-fn (fn []
                                                       {:access-token "tok"})}])
-                  config/provider-template
+                  catalog/template
                   (fn [pid]
                     (when (= pid :anthropic-coding-plan)
                       {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
@@ -387,7 +388,7 @@
   ;; signed-in account reports, so ONE `:github-copilot` preset covers all of
   ;; them and the withdrawn per-seat ids must never return as pickable rows.
   (let [order
-        @(ns-resolve 'com.blockether.vis.internal.config.core 'PRESET_ORDER)
+        @(ns-resolve 'com.blockether.vis.internal.provider.catalog 'PRESET_ORDER)
 
         copilot-presets
         (filterv #(str/starts-with? (name %) "github-copilot") order)]
@@ -395,14 +396,14 @@
     (is (= [:github-copilot] copilot-presets)
         "exactly one GitHub Copilot preset, not one per seat tier")
     (doseq [seat [:github-copilot-individual :github-copilot-business :github-copilot-enterprise]]
-      (is (nil? (config/provider-template seat)) (str (name seat) " is not offered as a preset")))))
+      (is (nil? (catalog/template seat)) (str (name seat) " is not offered as a preset")))))
 
 (deftest configured-provider-catalog-cannot-be-narrowed
   (with-redefs [config/load-config-raw
                 (constantly {"providers" [{"id" "openai"
                                            "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
 
-                config/provider-template
+                catalog/template
                 (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
 
     (is (= [{:name "gpt-custom" :output-limit 123} {:name "gpt-default"} {:name "gpt-extra"}]
@@ -469,7 +470,7 @@
                   (fn [provider]
                     (when (= :openrouter (:id provider)) ["z-ai/glm-4.6v"]))
 
-                  config/provider-template
+                  catalog/template
                   (constantly nil)
 
                   config/load-config
@@ -509,10 +510,10 @@
   (with-redefs [providers/fetch-models
                 (constantly ["zebra-live" "alpha-live"])
 
-                config/provider-template
+                catalog/template
                 (constantly nil)
 
-                config/provider-model-visible?
+                catalog/model-visible?
                 (constantly true)]
 
     (let [provider
@@ -530,10 +531,10 @@
   (with-redefs [providers/fetch-models
                 (constantly ["ox-alpha-free"])
 
-                config/provider-template
+                catalog/template
                 (constantly nil)
 
-                config/provider-model-visible?
+                catalog/model-visible?
                 (constantly true)]
 
     (let [provider
@@ -565,7 +566,7 @@
                                :models [{:name "glm-5.2"} {:name "glm-5.3"} {:name "minimax-m2.5"}
                                         {:name "minimax-m2.5"}]})
 
-                  config/provider-template
+                  catalog/template
                   (constantly {:id :fake
                                :default-models ["glm-5.3"
                                                 {:name "minimax-m2.5" :api-style :anthropic}]})
@@ -1012,11 +1013,11 @@
                   registry/provider-by-id
                   (into {} (map (juxt :provider/id identity)) registered)
 
-                  config/provider-template
+                  catalog/template
                   (fn [pid]
                     {:id pid :api-style :openai :default-models ["acme-1"]})
 
-                  config/provider-presets
+                  catalog/presets
                   (constantly [{:id :acme-managed :label "Acme (Managed)"}
                                {:id :acme-managed-oauth :label "Acme (Managed OAuth)"}
                                {:id :acme-byo :label "Acme (Own key)"}])]

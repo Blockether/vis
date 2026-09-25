@@ -43,6 +43,7 @@
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
             [com.blockether.vis.internal.gateway.cli :as gateway-cli]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.cli :as provider-cli]
             [com.blockether.vis.internal.session.cli :as session-cli]
             [com.blockether.vis.internal.workspace.cli :as workspace-cli]
@@ -302,7 +303,7 @@
 
 (defn- provider-from-template
   [provider-id]
-  (when-let [template (config/provider-template provider-id)]
+  (when-let [template (catalog/template provider-id)]
     (select-keys template [:id :base-url :api-style :llm-headers :responses-path])))
 
 (defn- provider-with-model

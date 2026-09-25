@@ -192,11 +192,11 @@
     (try
       (let [{:keys [signals]}
             (tel/with-signals
-              (with-redefs [svar-router/count-messages (fn ^long [model request]
-                                                         (swap! counted conj [model request])
-                                                         (long (counter model request)))
-                            svar-router/count-tokens (fn ^long [_ _]
-                                                       20)
+              (with-redefs [svar/count-messages (fn ^long [model request]
+                                                  (swap! counted conj [model request])
+                                                  (long (counter model request)))
+                            svar/count-tokens (fn ^long [_ _]
+                                                20)
                             svar/ask-code!
                             (fn [_ _]
                               (reset! svar-log-data (#'svar-llm/log-data
@@ -3702,8 +3702,8 @@
         [{:id "t1" :position 1 :status :interrupted :user-request "keep this input"}]
         {}
         (fn []
-          (with-redefs [svar-router/count-messages (fn [_ _]
-                                                     (throw (ex-info "tokenizer unavailable" {})))]
+          (with-redefs [svar/count-messages (fn [_ _]
+                                              (throw (ex-info "tokenizer unavailable" {})))]
             (let [ca (atom {})
                   prior (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2")]
 
@@ -3730,8 +3730,8 @@
                   (prompt/previous-turn-context-block prior)
 
                   expected
-                  (- (svar-router/count-messages model [{:role "user" :content rendered}])
-                     (svar-router/count-messages model []))]
+                  (- (svar/count-messages model [{:role "user" :content rendered}])
+                     (svar/count-messages model []))]
 
               (expect (= expected (get-in @ca ["engine_turn_weights" 1])))
               (expect (> (get-in @ca ["engine_turn_weights" 1]) (quot (count payload) 4))))))))
@@ -5106,7 +5106,7 @@
                    target-for
                    (fn [veto?]
                      ((deref #'transcript/replay-context)
-                       (svar-router/resolve-effective-model (router-for veto?) {})))]
+                       (svar/resolve-effective-model (router-for veto?) {})))]
 
                (it "carries the router's capabilities into the replay target"
                    (expect (contains? (:capabilities (target-for false)) :vision))
@@ -6216,7 +6216,7 @@
             (expect (str/includes? projected "read_session()"))
             (expect (str/includes? projected "r = await read_session()"))
             (expect (str/includes? projected "b.get(\"svar_tool_call_id\") == \"call_A|fc_123\""))
-            (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
+            (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
             (expect (< (count projected) (count stdout)))
             (expect (= stdout (:stdout f))))))
     (it "pairs two same-scope calls with their own recovery identities"
@@ -6821,8 +6821,7 @@
         (expect (true? (:com.blockether.vis.internal.loop.errors/fatal-iteration-error
                          (loop-errors/handle-iteration-exception!
                            ttft
-                           {:iteration 3
-                            :messages [{:role "user" :content "hi"}]})))))))
+                           {:iteration 3 :messages [{:role "user" :content "hi"}]})))))))
 
 (defdescribe
   stream-watchdog-terminal-error-test
@@ -9694,7 +9693,7 @@
                          (:messages opts)
 
                          n
-                         (svar-router/count-messages "model" messages)]
+                         (svar/count-messages "model" messages)]
 
                      (swap! requests conj messages)
                      (if (> n 50000)
@@ -9770,7 +9769,7 @@
                                      :responses [{:code "print('LIVE RESULT')"} {}]})]
 
         (expect (= 3 (count requests)))
-        (expect (> (svar-router/count-messages "model" (first requests)) 50000))
+        (expect (> (svar/count-messages "model" (first requests)) 50000))
         (expect (= [:resumed :canonical :canonical] (mapv :prompt-base counts)))
         (expect (= [0 1 0] (mapv :context-recovery-attempt counts)))
         (expect (= [:canonical-rebuild] (mapv :projection-kind rescues)))
@@ -9780,7 +9779,7 @@
             (expect (not (str/includes? text "CARRIED PAYLOAD")))
             (expect (str/includes? text "CURRENT REQUEST"))
             (expect (str/includes? text "PRIOR OUTCOME"))
-            (expect (< (svar-router/count-messages "model" messages) 50000))))
+            (expect (< (svar/count-messages "model" messages) 50000))))
         (expect (str/includes? (str (last requests)) "LIVE RESULT"))))
   (it "retains a transport fold across the next successful iteration without changing the ledger"
       (let [{:keys [requests counts rescues summaries-unchanged?]}
@@ -9819,7 +9818,7 @@
                    (expect (empty? rescues))
                    (expect summaries-unchanged?)
                    (doseq [messages requests]
-                     (expect (<= (svar-router/count-messages "model" messages) 45000))
+                     (expect (<= (svar/count-messages "model" messages) 45000))
                      (expect (not (str/includes? (str messages) "CARRIED PAYLOAD")))
                      (expect (str/includes? (str messages) "CURRENT REQUEST"))
                      (expect (str/includes? (str messages) "PRIOR OUTCOME")))
@@ -9838,7 +9837,7 @@
                    (expect (every? #(not (contains? % :attempt)) proactive))
                    (expect summaries-unchanged?)
                    (doseq [messages (rest requests)]
-                     (expect (<= (svar-router/count-messages "model" messages) 45000))
+                     (expect (<= (svar/count-messages "model" messages) 45000))
                      (expect (not (str/includes? (str messages) "SETTLED PAYLOAD")))
                      (expect (str/includes? (str messages) "Proactive transport fold")))
                    (expect (str/includes? (str (last requests)) "LIVE RESULT")))))
@@ -9860,12 +9859,12 @@
             (loop-env/create-environment router {:db :memory})
 
             count-messages
-            svar-router/count-messages
+            svar/count-messages
 
             counted
             (atom [])]
 
-        (try (with-redefs [svar-router/count-messages
+        (try (with-redefs [svar/count-messages
                            (fn (^long [model messages] (count-messages model messages {}))
                              (^long [model messages opts] (swap! counted into (for [message
                                                                                     messages
@@ -9923,8 +9922,7 @@
 
         (expect (= 10000 (estimate prior)))
         (expect (= (+ 10000
-                      (- (svar-router/count-messages "gpt-4o" tail)
-                         (svar-router/count-messages "gpt-4o" [])))
+                      (- (svar/count-messages "gpt-4o" tail) (svar/count-messages "gpt-4o" [])))
                    (estimate (into prior tail))))))
   (it "invalidates the usage anchor after a rewrite, route change, or fixed-prefix change"
       (let [prior
@@ -9945,7 +9943,7 @@
                  [:openai "gpt-4o" (assoc context :fixed-prefix-weight 21) prior]
                  [:openai "gpt-4o" nil prior]
                  [:openai "gpt-4o" context [{:role "user" :content "folded recap"}]]]]
-          (expect (= (svar-router/count-messages model messages)
+          (expect (= (svar/count-messages model messages)
                      ((estimate-from-request-fixtures history provider model ctx) messages))))))
   (it "ignores missing or invalid usage"
       (let [messages
@@ -9955,7 +9953,7 @@
             {:id "original" :fixed-prefix-weight 20}
 
             local
-            (svar-router/count-messages "gpt-4o" messages)]
+            (svar/count-messages "gpt-4o" messages)]
 
         (doseq [input [nil 0 -1]]
           (expect (= local
@@ -9967,65 +9965,63 @@
                         context)
                        messages)))))))
 
-(defdescribe provider-usage-calibration-regression-test
-             ;; Issue #173: an accepted prefix must not be estimated a second time at 2.2x.
-             (it "uses measured input for the exact prefix and counts only the new tail locally"
-                 (let [prior
-                       [{:role "user" :content (apply str (repeat 10000 "evidence "))}]
+(defdescribe
+  provider-usage-calibration-regression-test
+  ;; Issue #173: an accepted prefix must not be estimated a second time at 2.2x.
+  (it
+    "uses measured input for the exact prefix and counts only the new tail locally"
+    (let [prior
+          [{:role "user" :content (apply str (repeat 10000 "evidence "))}]
 
-                       tail
-                       [{:role "assistant" :content "new evidence"}]
+          tail
+          [{:role "assistant" :content "new evidence"}]
 
-                       context
-                       {:id "same-route" :fixed-prefix-weight 20}
+          context
+          {:id "same-route" :fixed-prefix-weight 20}
 
-                       estimate
-                       (estimate-from-request-fixtures
-                         {[:openai "gpt-4o"]
-                          {:messages prior :input-tokens 4500 :prompt-cache-context context}}
-                         :openai
-                         "gpt-4o"
-                         context)]
+          estimate
+          (estimate-from-request-fixtures
+            {[:openai "gpt-4o"] {:messages prior :input-tokens 4500 :prompt-cache-context context}}
+            :openai
+            "gpt-4o"
+            context)]
 
-                   (expect (> (svar-router/count-messages "gpt-4o" prior) 9000))
-                   (expect (= 4500 (estimate prior)))
-                   (expect (= (+ 4500
-                                 (- (svar-router/count-messages "gpt-4o" tail)
-                                    (svar-router/count-messages "gpt-4o" [])))
-                              (estimate (into prior tail))))
-                   (expect (nil? (#'iteration/pre-request-context-projection
-                                  {:request-messages (into prior tail)
-                                   :model "gpt-4o"
-                                   :budget-tokens 6000
-                                   :count-messages-fn estimate
-                                   :canonical-base-messages-fn
-                                   (fn []
-                                     (throw (ex-info "Unexpected lossy fold" {})))})))))
-             (it "counts only the tail when provider usage already priced the prefix"
-                 (let [prior
-                       [{:role "user" :content "accepted input"}]
+      (expect (> (svar/count-messages "gpt-4o" prior) 9000))
+      (expect (= 4500 (estimate prior)))
+      (expect (= (+ 4500 (- (svar/count-messages "gpt-4o" tail) (svar/count-messages "gpt-4o" [])))
+                 (estimate (into prior tail))))
+      (expect (nil? (#'iteration/pre-request-context-projection
+                     {:request-messages (into prior tail)
+                      :model "gpt-4o"
+                      :budget-tokens 6000
+                      :count-messages-fn estimate
+                      :canonical-base-messages-fn (fn []
+                                                    (throw (ex-info "Unexpected lossy fold"
+                                                                    {})))})))))
+  (it "counts only the tail when provider usage already priced the prefix"
+      (let [prior
+            [{:role "user" :content "accepted input"}]
 
-                       tail
-                       [{:role "assistant" :content "new output"}]
+            tail
+            [{:role "assistant" :content "new output"}]
 
-                       context
-                       {:id "same-route" :fixed-prefix-weight 20}
+            context
+            {:id "same-route" :fixed-prefix-weight 20}
 
-                       counted
-                       (atom [])]
+            counted
+            (atom [])]
 
-                   (with-redefs [svar-router/count-messages (fn ^long [_ messages]
-                                                              (swap! counted conj (vec messages))
-                                                              (+ 3 (count messages)))]
-                     (let [estimate (estimate-from-request-fixtures
-                                      {[:openai "gpt-4o"] {:messages prior
-                                                           :input-tokens 500
-                                                           :prompt-cache-context context}}
-                                      :openai
-                                      "gpt-4o"
-                                      context)]
-                       (expect (= 501 (estimate (into prior tail))))
-                       (expect (= [[] tail] @counted)))))))
+        (with-redefs [svar/count-messages (fn ^long [_ messages]
+                                            (swap! counted conj (vec messages))
+                                            (+ 3 (count messages)))]
+          (let [estimate (estimate-from-request-fixtures
+                           {[:openai "gpt-4o"]
+                            {:messages prior :input-tokens 500 :prompt-cache-context context}}
+                           :openai
+                           "gpt-4o"
+                           context)]
+            (expect (= 501 (estimate (into prior tail))))
+            (expect (= [[] tail] @counted)))))))
 
 (defdescribe
   pre-request-context-projection-test
@@ -10037,7 +10033,7 @@
             (conj base {:role "assistant" :content (apply str (repeat 1000 "old work "))})
 
             n
-            (svar-router/count-messages "gpt-4o" messages)
+            (svar/count-messages "gpt-4o" messages)
 
             calls
             (atom 0)
@@ -10121,7 +10117,7 @@
             :budget-tokens 45000
             :count-messages-fn estimate})]
 
-      (expect (< (svar-router/count-messages "gpt-4o" request) 45000))
+      (expect (< (svar/count-messages "gpt-4o" request) 45000))
       (expect (>= (:before-tokens projection) 45000))
       (expect (= 1 (:folded-scopes projection)))
       (expect (<= (estimate (:messages projection)) 45000))
@@ -10168,7 +10164,7 @@
 
       (expect (= #{"t1/i2"} (:scopes projection)))
       (expect (= :proactive-fold (:projection-kind projection)))
-      (expect (<= (svar-router/count-messages "gpt-4o" (:messages projection)) 1500))
+      (expect (<= (svar/count-messages "gpt-4o" (:messages projection)) 1500))
       (expect (str/includes? text "MEANINGFUL FINDING"))
       (expect (str/includes? text "LIVE RESULT"))
       (expect (str/includes? text "tc-3"))
@@ -10191,7 +10187,7 @@
                             :content [{:type "text" :text (apply str (repeat 5000 "work "))}]})]
 
           n
-          (svar-router/count-messages "gpt-4o" request)
+          (svar/count-messages "gpt-4o" request)
 
           recovery
           (context-overflow-recovery!
@@ -12302,8 +12298,7 @@
                 {:tokenizer "cl100k_base"}]
 
             (expect (= (+ 12000
-                          (- (svar-router/count-messages "m" tail opts)
-                             (svar-router/count-messages "m" [] opts)))
+                          (- (svar/count-messages "m" tail opts) (svar/count-messages "m" [] opts)))
                        (estimate (update request :messages into tail)))))
           (reset! history {})
           (expect (nil? (estimate request))))))))
@@ -12331,7 +12326,7 @@
             estimate (#'iteration/request-input-token-estimator history)
             calls (atom 0)]
 
-        (expect (> (svar-router/count-messages "m" messages) 1000))
+        (expect (> (svar/count-messages "m" messages) 1000))
         (with-redefs-fn {#'svar-llm/chat-completion
                          (fn [& _]
                            (swap! calls inc)

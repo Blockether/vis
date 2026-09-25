@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.format :as format]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.provider.limits-format :as limits-format]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util])
@@ -121,7 +122,7 @@
                           (let [id (if (string? m) m (or (:id m) (:name m)))]
                             (when (and (string? id)
                                        (chat-model? id)
-                                       (config/provider-model-visible? provider-id id))
+                                       (catalog/model-visible? provider-id id))
                               (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
                   (reduce (fn [acc m]
                             (assoc acc (:name m) m))
@@ -156,7 +157,7 @@
    provider `:default-models`, deduped. Config order leads: the models a
    user wrote in vis.yml come first and `model-options` keeps them there."
   [provider]
-  (let [template (config/provider-template (:id provider))]
+  (let [template (catalog/template (:id provider))]
     (->> (concat (:models provider) (:default-models template) (:default-models provider))
          (keep config/model-name)
          distinct
@@ -195,7 +196,7 @@
          (or (fetch-models provider) [])
 
          defaults
-         (filterv #(config/provider-model-visible? provider-id %) (or default-models []))
+         (filterv #(catalog/model-visible? provider-id %) (or default-models []))
 
          all-ids
          (into configured
@@ -978,14 +979,13 @@
    for a key that every seam below must refuse."
   []
   (let [configured (into #{} (map :id) (configured-providers))]
-    (vec (remove #(or (contains? configured (:id %)) (managed? (:id %)))
-           (config/provider-presets)))))
+    (vec (remove #(or (contains? configured (:id %)) (managed? (:id %))) (catalog/presets)))))
 
 (defn ensure-base-url
   [provider]
   (if (:base-url provider)
     provider
-    (if-let [resolved (:base-url (config/provider-template (:id provider)))]
+    (if-let [resolved (:base-url (catalog/template (:id provider)))]
       (assoc provider :base-url resolved)
       provider)))
 
@@ -1033,7 +1033,7 @@
                              (or is-managed
                                  (and detect-fn
                                       (try (boolean (detect-fn)) (catch Throwable _ false)))))
-                    (let [tmpl (config/provider-template id)
+                    (let [tmpl (catalog/template id)
                           models (default-model-configs tmpl)]
 
                       (when (seq models)
@@ -1517,7 +1517,7 @@
      (when-let [catalog (fetch-model-catalog provider)]
        (let [preset (into {}
                           (map (juxt :name identity))
-                          (default-model-configs (config/provider-template provider-id)))
+                          (default-model-configs (catalog/template provider-id)))
              live (vec (distinct (map :name (:models catalog))))
              unknown (fn [entry]
                        (let [known (into #{} (keep config/model-name) (:models entry))]
@@ -1578,7 +1578,7 @@
                         (if (some #(= provider-id (:id %)) current)
                           (mapv #(if (= provider-id (:id %)) (assoc % :api-key api-key) %) current)
                           (let [tmpl
-                                (config/provider-template provider-id)
+                                (catalog/template provider-id)
 
                                 models
                                 (default-model-configs tmpl)]

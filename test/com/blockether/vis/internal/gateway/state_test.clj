@@ -9,7 +9,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -945,8 +945,7 @@
 
         (expect (str/includes? (:stdout payload) "b.get(\"scope\") == \"t1/i3\""))
         (expect (str/includes? (:stdout payload) "b.get(\"svar_tool_call_id\") == \"call_A\""))
-        (expect (<= (svar-router/count-tokens "glm-5.3" (:stdout payload))
-                    form/MAX_FORM_OUTPUT_TOKENS))))
+        (expect (<= (svar/count-tokens "glm-5.3" (:stdout payload)) form/MAX_FORM_OUTPUT_TOKENS))))
   ;; Activity has one event type for both timing classes: live revisions are
   ;; transient but materialized last-one-wins; the settled revision is durable.
   ;; `block.output` owns only the execution result.

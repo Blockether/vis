@@ -4,7 +4,7 @@
    Providers may optionally expose `:provider/limits-fn` in the global
    registry. The function returns provider-specific limit/quota data;
    this namespace wraps it in one validated envelope and augments it
-   with static provider metadata from svar's catalog (currently RPM /
+   with static provider metadata from the provider catalog (currently RPM /
    TPM).
 
    The limits vocabulary and the report shape belong to
@@ -17,20 +17,10 @@
    - contract validation of every returned report,
    - graceful error envelopes instead of exploding the caller when a
      provider-specific implementation is absent or malformed."
-  (:require [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.contract.provider :as contract-provider]
+  (:require [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.util :as util]))
-
-(defn- static-limits
-  [provider-id]
-  (let [known (get svar-router/KNOWN_PROVIDERS provider-id)]
-    (cond-> {}
-      (some? (:rpm known))
-      (assoc :rpm (long (:rpm known)))
-
-      (some? (:tpm known))
-      (assoc :tpm (long (:tpm known))))))
 
 (defn- base-report
   ([provider-id status] (base-report provider-id status nil))
@@ -38,7 +28,7 @@
    {:provider-id provider-id
     :status status
     :fetched-at-ms (util/now-ms)
-    :static (static-limits provider-id)
+    :static (catalog/static-limits provider-id)
     :dynamic (cond-> {:limits []}
                note
                (assoc :note note))}))

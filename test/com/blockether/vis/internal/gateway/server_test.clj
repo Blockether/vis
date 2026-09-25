@@ -23,6 +23,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.persistance.core]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.gateway.resources :as resources]
@@ -3373,13 +3374,13 @@
         (fn [m]
           ((rv 'add-provider-handler) (json-body m)))]
 
-    (with-redefs-fn {#'config/provider-template (fn [pid]
-                                                  (when (= :lmstudio pid)
-                                                    {:id :lmstudio
-                                                     :label "LM Studio"
-                                                     :base-url "http://localhost:1234/v1"
-                                                     :api-style :openai
-                                                     :default-models ["local-model"]}))
+    (with-redefs-fn {#'catalog/template (fn [pid]
+                                          (when (= :lmstudio pid)
+                                            {:id :lmstudio
+                                             :label "LM Studio"
+                                             :base-url "http://localhost:1234/v1"
+                                             :api-style :openai
+                                             :default-models ["local-model"]}))
                      #'providers/configured-providers (constantly [{:id :zai-coding-plan}])
                      #'providers/add-config-provider! (fn [cfg source]
                                                         (reset! added [cfg source]))}
@@ -3494,13 +3495,13 @@
                      #'provider-limits/limits-without-fetching (fn [_]
                                                                  (swap! cached inc)
                                                                  nil)
-                     #'config/provider-template (fn [pid]
-                                                  (when (= :lmstudio pid)
-                                                    {:id :lmstudio
-                                                     :label "LM Studio"
-                                                     :base-url "http://localhost:1234/v1"
-                                                     :api-style :openai
-                                                     :default-models ["local-model"]}))
+                     #'catalog/template (fn [pid]
+                                          (when (= :lmstudio pid)
+                                            {:id :lmstudio
+                                             :label "LM Studio"
+                                             :base-url "http://localhost:1234/v1"
+                                             :api-style :openai
+                                             :default-models ["local-model"]}))
                      #'providers/configured-providers (constantly [])
                      #'providers/add-config-provider! (fn [& _]
                                                         nil)

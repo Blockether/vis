@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.service :as providers]))
 
 (def ^:private providers-table-cols
@@ -44,7 +45,7 @@
   [provider-id]
   (or (:base-url (configured-provider-entry provider-id))
       (some-> provider-id
-              config/provider-template
+              catalog/template
               :base-url)))
 
 (defn- provider-label-for-id
@@ -53,7 +54,7 @@
   [provider-id]
   (or (some-> (registry/provider-by-id provider-id)
               :provider/label)
-      (some-> (config/provider-template provider-id)
+      (some-> (catalog/template provider-id)
               :label)
       (some-> provider-id
               name)))
@@ -252,7 +253,7 @@
 
             known?
             (or (registry/provider-by-id provider-id)
-                (config/provider-template provider-id)
+                (catalog/template provider-id)
                 (seq (:static (gateway-provider-limits-safe provider-id))))]
 
         (if known?

@@ -18,7 +18,6 @@
   (:require
     [clojure.java.io :as io]
     [clojure.string :as str]
-    [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.vis.contract.activity :as activity-contract]
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.contract.openapi :as openapi-contract]
@@ -45,6 +44,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.provider.auth :as provider-auth]
+    [com.blockether.vis.internal.provider.catalog :as catalog]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -1661,14 +1661,13 @@
         ;; The TUI gates controls on these Svar facts, not on provider/model names.
         models
         (when (seq (:models provider))
-          (:models (svar-router/normalize-provider
-                     0
-                     {:id id
-                      :base-url (config/provider-base-url provider)
-                      :api-style (config/effective-api-style
-                                   {:declared (config/provider-api-style provider)
-                                    :responses-path (:responses-path provider)})
-                      :models (into [] (keep config/->svar-model) (:models provider))})))]
+          (catalog/normalize-models
+            0
+            {:id id
+             :base-url (config/provider-base-url provider)
+             :api-style (config/effective-api-style {:declared (config/provider-api-style provider)
+                                                     :responses-path (:responses-path provider)})
+             :models (into [] (keep config/->svar-model) (:models provider))}))]
 
     {:id (name id)
      :label (config/display-label id)
@@ -1836,7 +1835,7 @@
 
         preset
         (some-> provider-id
-                config/provider-template)
+                catalog/template)
 
         base-url
         (some-> (get body "base_url")

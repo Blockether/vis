@@ -23,8 +23,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
@@ -276,99 +276,6 @@
 
 ;;; ── Provider presets ──────────────────────────────────────────────────────
 
-;; Presets withdrawn from Vis: their stale catalog keys must never return as
-;; pickable rows. Copilot needs no entry - svar ships ONE `:github-copilot`
-;; id, and a seat tier is what the signed-in account reports.
-(def ^:private removed-provider-ids #{:blockether :github-models})
-
-(def ^:private PRESET_ORDER
-  "Stable display order in the 'Add Provider' picker. Most-likely-used
-   first. Anything not in this vec lands at the end."
-  [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot :zai :zai-coding-plan
-   :alibaba-coding-plan :alibaba-token-plan :openrouter :ollama :lmstudio])
-
-(defn- registered-provider-metadata
-  "Provider-owned preset metadata. First-party provider extensions put
-   labels, base URLs, default models, and transport overrides here so
-   internal config stays provider-agnostic."
-  [pid]
-  (when-let [provider (registry/provider-by-id pid)]
-    (merge (:provider/preset provider)
-           (when-let [label (:provider/label provider)]
-             {:label label}))))
-
-(defn- known-provider-base-url
-  "Base URL for a provider id: provider extension first, svar table last."
-  [pid]
-  (or (:base-url (registered-provider-metadata pid))
-      (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
-
-(defn provider-template
-  "Preset descriptor for a provider id, merged from a provider
-   extension's metadata and svar's catalog. Returns nil for unknown or
-   intentionally removed ids."
-  [pid]
-  (when-not (contains? removed-provider-ids pid)
-    (let [provider-md
-          (registered-provider-metadata pid)
-
-          svar-md
-          (get svar-router/KNOWN_PROVIDERS pid)]
-
-      (when (or provider-md svar-md (registry/provider-by-id pid))
-        (cond-> {:id pid}
-          (:label provider-md)
-          (assoc :label (:label provider-md))
-
-          (known-provider-base-url pid)
-          (assoc :base-url (known-provider-base-url pid))
-
-          (or (:api-style provider-md) (:api-style svar-md))
-          (assoc :api-style (or (:api-style provider-md) (:api-style svar-md)))
-
-          (:default-models provider-md)
-          (assoc :default-models (:default-models provider-md))
-
-          (:responses-path provider-md)
-          (assoc :responses-path (:responses-path provider-md))
-
-          (:llm-headers provider-md)
-          (assoc :llm-headers (:llm-headers provider-md))
-
-          (:extra-body provider-md)
-          (assoc :extra-body (:extra-body provider-md))
-
-          (:network provider-md)
-          (assoc :network (:network provider-md))
-
-          (:is-hidden provider-md)
-          (assoc :is-hidden true))))))
-
-(defn provider-presets
-  "All known provider presets, sorted for the 'Add Provider' picker."
-  []
-  (let [order-rank
-        (zipmap PRESET_ORDER (range))
-
-        ids
-        (into #{}
-              (concat (keys svar-router/KNOWN_PROVIDERS)
-                      (map :provider/id (registry/registered-providers))))]
-
-    (->> ids
-         (remove removed-provider-ids)
-         (keep provider-template)
-         (remove :is-hidden)
-         ;; Drop presets with no human label. A label is only set when a vis
-         ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
-         ;; keys with no matching extension (e.g. :zai-coding) would
-         ;; otherwise render as blank, selectable rows after
-         ;; the last named preset in the "Add Provider" picker — and the TUI has
-         ;; no handling for them anyway.
-         (remove #(str/blank? (:label %)))
-         (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
-         vec)))
-
 (defn display-label
   "Human-readable label for a provider id. Never persisted.
 
@@ -380,7 +287,7 @@
    Provider ids are authored display values. Return them verbatim when no registered
    metadata supplies a label."
   [pid]
-  (or (:label (registered-provider-metadata pid))
+  (or (catalog/label pid)
       (some-> pid
               name
               not-empty)
@@ -396,7 +303,7 @@
   [provider-id url]
   (= (some-> url
              trim-trailing-slashes)
-     (some-> (known-provider-base-url provider-id)
+     (some-> (catalog/base-url provider-id)
              trim-trailing-slashes)))
 
 (defn- provider-token-base-url
@@ -404,13 +311,6 @@
   (cond (and api-url (or (nil? explicit-url) (catalog-base-url? provider-id explicit-url))) api-url
         explicit-url explicit-url
         :else api-url))
-
-(defn provider-model-visible?
-  "True when svar's provider-scoped model filters allow this model id."
-  [provider-id model-id]
-  (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
-    (boolean (visible? provider-id model-id))
-    true))
 
 (defn compatibility-api-style
   "`:api-style` implied by a provider's `compatibility` value, resolved through
@@ -425,7 +325,7 @@
    NORMALIZED here (`openai` -> `:openai-compatible-chat`, `openai_responses` ->
    `:openai-compatible-responses`) because svar `case`s the api-style and any
    value it does not know silently means `/chat/completions`."
-  ([provider] (provider-api-style provider (provider-template (:id provider))))
+  ([provider] (provider-api-style provider (catalog/template (:id provider))))
   ([provider template]
    (or (config-validation/normalize-api-style (:api-style provider))
        (compatibility-api-style (:compatibility provider))
@@ -451,7 +351,7 @@
   "Resolve base-url for a provider: explicit field on the provider
    map first (so user-supplied URLs win), then the merged catalog."
   [provider]
-  (or (:base-url provider) (known-provider-base-url (:id provider))))
+  (or (:base-url provider) (catalog/base-url (:id provider))))
 
 ;;; ── Svar-native data helpers ────────────────────────────────────────────
 
@@ -641,7 +541,7 @@
         (:id provider)
 
         template
-        (provider-template pid)
+        (catalog/template pid)
 
         ;; A literal `:api-key` always wins. Otherwise a configured
         ;; `:api-key-command` is exec'd (single-flight, cached, no shell) and its
@@ -670,7 +570,7 @@
         ;; catalogs come back empty. Forward the catalog key when the caller
         ;; configured none. Cloud presets have no catalog key, so unaffected.
         catalog-api-key
-        (:api-key (get svar-router/KNOWN_PROVIDERS pid))
+        (catalog/placeholder-api-key pid)
 
         models
         (->> (:models provider)
@@ -1505,7 +1405,7 @@
    narrowed list can no longer hide models supplied by the provider preset."
   [provider]
   (let [template
-        (provider-template (:id provider))
+        (catalog/template (:id provider))
 
         models
         (->> (concat (:models provider) (:default-models template))
@@ -2076,7 +1976,7 @@
 (defn deleted-provider-ids
   "Provider ids the operator has DELETED, as a set of keywords.
 
-   Distinct from the private `removed-provider-ids` above, which is a fixed set
+   Distinct from the provider catalog's `removed-provider-ids`, a fixed set
    of presets WITHDRAWN FROM VIS. This one is the operator's own decision and
    lives in their machine store.
 
@@ -2273,7 +2173,7 @@
    defaults win. Unknown keys are dropped — only the keys svar's
    `make-router` knows about flow through.
 
-   See `com.blockether.svar.internal.router/make-router` for the
+   See `com.blockether.svar.core/make-router` for the
    authoritative key reference."
   [config]
   (let [block (:router config)]

@@ -7,7 +7,6 @@
    and sends an assembled request through the session's LLM client."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.contract.content :as content-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -22,6 +21,7 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.loop.errors :as loop-errors]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.util :as util]
@@ -465,18 +465,18 @@
             ;; Price the rendered recap in the same tokenizer units as iteration weights.
             _ (when-let [ca (:ctx-atom environment)]
                 (try (let [model (or model "unknown")
-                           priming (svar-router/count-messages model [])]
+                           priming (svar/count-messages model [])]
 
                        (swap! ca assoc
                          "engine_turn_weights"
                          (into {}
                                (map (fn [{:keys [turn] :as entry}]
                                       [turn
-                                       (- (svar-router/count-messages
-                                            model
-                                            [{:role "user"
-                                              :content (prompt/previous-turn-context-block
-                                                         [entry])}])
+                                       (- (svar/count-messages model
+                                                               [{:role "user"
+                                                                 :content
+                                                                 (prompt/previous-turn-context-block
+                                                                   [entry])}])
                                           priming)]))
                                turn-data)))
                      (catch Exception _ nil)))]
@@ -700,9 +700,7 @@
    request. `count-messages` includes the array's one reply-priming charge, so remove
    the empty-array baseline before per-iteration groups are summed."
   ^long [model messages]
-  (max 0
-       (- (long (svar-router/count-messages model messages))
-          (long (svar-router/count-messages model [])))))
+  (max 0 (- (long (svar/count-messages model messages)) (long (svar/count-messages model [])))))
 
 (defn runtime-turn-prefix
   [environment]
@@ -1566,11 +1564,11 @@
   [target]
   (and (not (vision-describe/image-blind-provider? (:provider target)))
        (not (vision-describe/image-blind-model? (:model target)))
-       (contains? (:capabilities (svar-router/provider-model-metadata
-                                   (:provider target)
-                                   (cond-> {:name (str (:model target))}
-                                     (seq (:capabilities target))
-                                     (assoc :capabilities (:capabilities target)))))
+       (contains? (:capabilities (catalog/model-metadata (:provider target)
+                                                         (cond-> {:name (str (:model target))}
+                                                           (seq (:capabilities target))
+                                                           (assoc :capabilities
+                                                             (:capabilities target)))))
                   :vision)))
 
 (defn- wire-image-attachment
@@ -1918,11 +1916,10 @@
    same Svar unknown-model fallback prices the canonical bounded stdout."
   ^long [wire-rec]
   (+ (long MESSAGE_FRAME_TOKENS)
-     (long (svar-router/count-tokens
-             "unknown"
-             (str (:thinking wire-rec)
-                  "\n"
-                  (str/join "\n" (keep form-wire-text (:forms-vec wire-rec))))))))
+     (long (svar/count-tokens "unknown"
+                              (str (:thinking wire-rec)
+                                   "\n"
+                                   (str/join "\n" (keep form-wire-text (:forms-vec wire-rec))))))))
 
 (defn- measured-iteration-tokens
   "`{pos tokens}` for the visible projection, tokenized from the canonical messages

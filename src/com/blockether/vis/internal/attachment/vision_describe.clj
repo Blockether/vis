@@ -29,7 +29,6 @@
    A LEAF: svar + attachments + config + runtime-settings + toggles, never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.error :as perr]
@@ -572,9 +571,8 @@
            blind-models
            (blind-model-names)]
 
-       (try (svar-router/resolve-effective-model
-              router
-              (describe-routing preferred-provider blind blind-models))
+       (try (svar/resolve-effective-model router
+                                          (describe-routing preferred-provider blind blind-models))
             (catch Throwable t
               (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
                         "Vision-capability probe failed; treating the fleet as blind")

@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.svar.internal.llm :as svar-llm]
+            [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.context.agents :as agents]
@@ -56,7 +57,7 @@
             health
             (prompt/request-health {} messages [])]
 
-        (expect (= (svar-router/count-messages "gpt-4o" messages)
+        (expect (= (svar/count-messages "gpt-4o" messages)
                    (reduce + (map :tokens (:breakdown health)))))
         (expect (not (str/includes? (pr-str health) payload)))))
   ;; #186: a logical breakdown is not the prepared Responses request or measured usage.
@@ -98,10 +99,10 @@
                         :input-tokens 123
                         :components
                         {:messages 90 :instructions 20 :tools 8 :output-format 2 :reply-priming 3}}]
-        (with-redefs [svar-router/count-messages (fn [& _]
-                                                   (throw (ex-info "Must not recount" {})))
-                      svar-router/count-tokens (fn [& _]
-                                                 (throw (ex-info "Must not recount" {})))]
+        (with-redefs [svar/count-messages (fn [& _]
+                                            (throw (ex-info "Must not recount" {})))
+                      svar/count-tokens (fn [& _]
+                                          (throw (ex-info "Must not recount" {})))]
 
           (let [health (prompt/request-health {}
                                               [{:role "user" :content "private"}]
@@ -145,11 +146,11 @@
         (expect (contains? labels "User requests"))
         (expect (= :svar-estimate (:token-count-source health)))
         (expect (= "gpt-4" (:token-count-model health)))
-        (expect (= (svar-router/count-messages "gpt-4" messages)
+        (expect (= (svar/count-messages "gpt-4" messages)
                    (reduce + (map :tokens (:breakdown health)))))))
   (it "keeps unavailable token counts diagnostic-only and never exposes the failing content"
-      (with-redefs [svar-router/count-messages (fn [_ _]
-                                                 (throw (ex-info "private request content" {})))]
+      (with-redefs [svar/count-messages (fn [_ _]
+                                          (throw (ex-info "private request content" {})))]
         (expect (= {:token-count-source :unavailable
                     :token-count-model "gpt-4"
                     :counted-projection :logical-request
@@ -277,18 +278,17 @@
                        [{:type "text" :text "Runtime instructions"}
                         {:type "text" :text "Tool declarations"}]]]
         (let [model "gpt-4o"
-              count-messages svar-router/count-messages
+              count-messages svar/count-messages
               message {:role "system" :content content}
               total (count-messages model [message])
               overhead (count-messages model [(assoc message :content "")])
               calls (atom [])]
 
-          (with-redefs [svar-router/count-messages (fn (^long [model messages] (swap! calls conj
-                                                                                 messages)
-                                                        (count-messages model messages {}))
-                                                     (^long [model messages opts] (swap! calls conj
-                                                                                    messages)
-                                                      (count-messages model messages opts)))]
+          (with-redefs [svar/count-messages (fn (^long [model messages] (swap! calls conj messages)
+                                                 (count-messages model messages {}))
+                                              (^long [model messages opts] (swap! calls conj
+                                                                             messages)
+                                               (count-messages model messages opts)))]
             (let [health (prompt/request-health {}
                                                 [(with-meta message
                                                    {::prompt/parts [{:label "Attributed content"
@@ -325,7 +325,7 @@
                 [nil [] [(first messages)] messages (conj messages (first messages))
                  (reverse messages)]]
 
-          (expect (= (svar-router/count-messages model selected) (counter model selected))))))
+          (expect (= (svar/count-messages model selected) (counter model selected))))))
   (it
     "scopes reuse by model and message, and drops it with the counter"
     (let [message
@@ -335,18 +335,18 @@
           (assoc message :content "Changed request")
 
           count-messages
-          svar-router/count-messages
+          svar/count-messages
 
           calls
           (atom [])]
 
-      (with-redefs [svar-router/count-messages (fn (^long [model messages] (swap! calls conj
-                                                                             [model (vec messages)])
-                                                    (count-messages model messages {}))
-                                                 (^long [model messages opts] (swap! calls conj
-                                                                                [model
+      (with-redefs [svar/count-messages
+                    (fn (^long [model messages] (swap! calls conj [model (vec messages)])
+                         (count-messages model messages {})) (^long [model messages opts]
+                                                              (swap! calls conj [model
                                                                                  (vec messages)])
-                                                  (count-messages model messages opts)))]
+                                                              (count-messages model messages
+                                                                opts)))]
         (let [counter (prompt/request-token-counter)]
           (doseq [messages [[message] [(with-meta message {:source :health})] [message message]
                             [changed]]]
@@ -383,7 +383,7 @@
           (expect (= [{:path "/linked"
                        :guidance {:status "available"
                                   :path "/linked/AGENTS.md"
-                                  :tokens (svar-router/count-tokens "unknown" "ąbcde")}}]
+                                  :tokens (svar/count-tokens "unknown" "ąbcde")}}]
                      (:roots health))))))
   (it "distinguishes missing guidance from read failures and never scans denied roots"
       (doseq [[scan status] [[{:result {:found? false}} "missing"]
@@ -1726,18 +1726,18 @@
                            "unrelated or pre-existing changes" "patch bytes unchanged"]]
         (expect (str/includes? prompt/planning-rules instruction)))))
 
-(defdescribe
-  request-tokenizer-test
-  (it "uses a declared tokenizer consistently for priming and marginal message counts"
-      (let [opts
-            {:tokenizer "cl100k_base"}
+(defdescribe request-tokenizer-test
+             (it "uses a declared tokenizer consistently for priming and marginal message counts"
+                 (let [opts
+                       {:tokenizer "cl100k_base"}
 
-            counter
-            (prompt/request-token-counter opts)
+                       counter
+                       (prompt/request-token-counter opts)
 
-            messages
-            [{:role "user" :content "antidisestablishmentarianism"}
-             {:role "assistant" :content "Measured response"}]]
+                       messages
+                       [{:role "user" :content "antidisestablishmentarianism"}
+                        {:role "assistant" :content "Measured response"}]]
 
-        (expect (= (svar-router/count-messages "gpt-4o" messages opts) (counter "gpt-4o" messages)))
-        (expect (= (svar-router/count-messages "gpt-4o" [] opts) (counter "gpt-4o" []))))))
+                   (expect (= (svar/count-messages "gpt-4o" messages opts)
+                              (counter "gpt-4o" messages)))
+                   (expect (= (svar/count-messages "gpt-4o" [] opts) (counter "gpt-4o" []))))))

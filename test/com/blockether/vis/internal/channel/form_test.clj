@@ -8,7 +8,7 @@
    `form/display-keys` but a boundary stops carrying it, `survives-the-gateway`
    fails — no more chasing it through tmux."
   (:require [clojure.string :as str]
-            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
             [com.blockether.vis.contract.wire :as wire]
@@ -64,7 +64,7 @@
         (expect (str/includes? projected "kept "))
         (expect (str/includes? projected "r = await read_session()"))
         (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
-        (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
+        (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
   (it "uses the persisted iteration scope for a live /fN result"
       (let [body
             (apply str (repeat 6000 "printed token "))
@@ -88,7 +88,7 @@
             (form/clip-to-wire body
                                {:scope "t1/i2" :svar/tool-call-id call-id :llm-model "glm-5.3"})]
 
-        (expect (<= (svar-router/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
+        (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
         (expect (not (str/includes? projected "read_session()")))))
   (it "bounds oversized artifact fences before rendering them as a card"
       (let [f
@@ -102,7 +102,7 @@
 
         (expect (str/includes? body "stdout clipped"))
         (expect (not (str/starts-with? body "````vis-doc")))
-        (expect (<= (svar-router/count-tokens "glm-5.3" (form/clip-to-wire (:stdout f) f))
+        (expect (<= (svar/count-tokens "glm-5.3" (form/clip-to-wire (:stdout f) f))
                     form/MAX_FORM_OUTPUT_TOKENS)))))
 
 (defdescribe

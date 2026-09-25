@@ -9,7 +9,7 @@
    helper tolerates the bare ex-info shape too (via `ex-message`).
 
    CLASSIFICATION IS SVAR'S. `svar-classification` wraps
-   `svar.internal.failure/classify` — the single owner of failure families,
+   `svar.core/classify-failure` — the single owner of failure families,
    retry safety and `:reached-model?` for everything svar transports. This
    namespace owns WORDING, plus the handful of failures svar cannot see (its
    typed empty-content and stream-watchdog outcomes, gateway tool-field
@@ -17,7 +17,7 @@
    heuristics here."
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.svar.internal.failure :as failure]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.util :as util]))
 
@@ -249,13 +249,13 @@
 
 (defn svar-classification
   "svar's canonical verdict for `err`: `{:category :retryable? :reached-model?
-   :request-id :status …}` from `svar.internal.failure/classify`.
+   :request-id :status …}` from `svar.core/classify-failure`.
 
    Vis presents, svar classifies. Reading this instead of re-implementing it is
    what keeps the two layers from disagreeing about whether the model ever saw
    the request — and svar, not vis, owns the retry ladder that follows."
   [err]
-  (failure/classify (->classifiable err)))
+  (svar/classify-failure (->classifiable err)))
 
 (defn unanswered-request?
   "True when Svar says nothing reached the model: a canonical pre-response
@@ -370,7 +370,7 @@
 (defn pre-output-stream-abort?
   "True when one of svar's TYPED stream watchdogs fired: `ttft` (no response
    header), `idle` (no bytes) or `semantic` (no model progress) —
-   `failure/STREAM_WATCHDOG_ERROR_TYPES`, the single source of which types those
+   `svar/STREAM_WATCHDOG_ERROR_TYPES`, the single source of which types those
    are. Dispatches on typed `ex-data`, NEVER on message text.
 
    The type is only half a retry verdict; the caller owns the other half (did
@@ -381,7 +381,7 @@
    has no second candidate when the caller pinned provider AND model. Vis is
    then the only layer left that can retry at all."
   [err]
-  (contains? failure/STREAM_WATCHDOG_ERROR_TYPES
+  (contains? svar/STREAM_WATCHDOG_ERROR_TYPES
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
 (def CONTEXT_OVERFLOW_TYPES

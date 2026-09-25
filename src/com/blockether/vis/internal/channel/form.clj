@@ -13,7 +13,7 @@
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
   (:require [clojure.string :as str]
-            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.python.format :as pyfmt]
             [com.blockether.vis.internal.util :as util]))
 
@@ -87,7 +87,7 @@
          (or (:llm-model form) "unknown")
 
          tokens
-         #(long (svar-router/count-tokens model %))
+         #(long (svar/count-tokens model %))
 
          scope
          (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))

@@ -1285,7 +1285,7 @@
 ;; report fail `provider-limits/::limit-row`.
 ;;
 ;; base-url/api-style/default-models in `:preset` flow through
-;; `config/known-provider-base-url` into svar's router, so a pure-Python provider
+;; `catalog/base-url` into svar's router, so a pure-Python provider
 ;; actually serves model calls once the user configures it.
 
 (defn- as-str [v] (when (some? v) (str v)))
@@ -1419,7 +1419,7 @@
    snake_case, the same as every other wire surface. Every OTHER preset key —
    `extra_body`, `responses_path`, `context`, `llm_headers` — is named and passed
    through verbatim, exactly the extra preset keys
-   `config/registered-provider-metadata` merges into svar for a first-party
+   `catalog/template` merges over svar's catalog for a first-party
    provider."
   {:base-url as-str :api-style as-api-style :default-models as-strs :is-hidden as-bool})
 

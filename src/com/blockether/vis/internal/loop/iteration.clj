@@ -6,8 +6,7 @@
    from empty replies, stream failures, exhausted output budgets, rejected
    credentials and context overflow within their retry budgets."
   (:require [clojure.string :as str]
-            [com.blockether.svar.internal.llm :as svar-llm]
-            [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
@@ -780,9 +779,8 @@
             provider-network)
           ask-result-raw
           ;; Svar forwards query-id; its request-id belongs to the upstream HTTP request.
-          (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                             :query-id (:request-id request-context)
-                                             :iteration iteration-position)]
+          (svar/with-log-context
+            {:query-id (:request-id request-context) :iteration iteration-position}
             ;; Svar remains the owner of provider classification and retries.
             (try (transcript/ask-code-with-first-output-timeout! environment
                                                                  resolved-model
@@ -1519,7 +1517,7 @@
   ([base-messages trailer-iters summaries replay-target model budget-fn
     {:keys [count-messages-fn reason]}]
    (let [count-messages-fn
-         (or count-messages-fn #(svar-router/count-messages model %))
+         (or count-messages-fn #(svar/count-messages model %))
 
          universe
          (into []
@@ -1664,7 +1662,7 @@
    input is included once. Rewrites and changed tools/account/model invalidate usage."
   [history provider model prompt-cache-context & [message-token-counter]]
   (let [count-messages
-        (or message-token-counter svar-router/count-messages)
+        (or message-token-counter svar/count-messages)
 
         measured
         (measured-request-estimator history provider model prompt-cache-context count-messages)]
@@ -1697,7 +1695,7 @@
            canonical-base-messages-fn canonical-trailer-iters budget-tokens last-after-tokens
            count-messages-fn reason]}]
   (let [count-messages-fn
-        (or count-messages-fn #(svar-router/count-messages model %))
+        (or count-messages-fn #(svar/count-messages model %))
 
         before-tokens
         (count-messages-fn (or request-messages
@@ -1760,7 +1758,7 @@
    This is not an overflow retry and does not consume its bounded rescue budget.
    If immutable input cannot fit, leave the request for normal preflight to reject."
   [{:keys [request-messages model budget-tokens count-messages-fn] :as opts}]
-  (let [count-messages-fn (or count-messages-fn #(svar-router/count-messages model %))]
+  (let [count-messages-fn (or count-messages-fn #(svar/count-messages model %))]
     (when (and (number? budget-tokens)
                (pos? (long budget-tokens))
                (>= (long (count-messages-fn request-messages)) (long budget-tokens)))
@@ -1791,12 +1789,12 @@
                                                                  turn-input-tokens
                                                                  (loop-router/context-fold-budget
                                                                    (:max-input-tokens overflow))))
-          (let [before-tokens (svar-router/count-messages model
-                                                          (or request-messages
-                                                              (into (vec base-messages)
-                                                                    (transcript/conversation-suffix
-                                                                      trailer-iters
-                                                                      replay-target))))
+          (let [before-tokens (svar/count-messages model
+                                                   (or request-messages
+                                                       (into (vec base-messages)
+                                                             (transcript/conversation-suffix
+                                                               trailer-iters
+                                                               replay-target))))
                 budget (overflow-fold-budget {:reported-tokens (:input-tokens overflow)
                                               :reported-limit (:max-input-tokens overflow)
                                               :margin (nth CONTEXT_OVERFLOW_MARGINS (dec attempt))
