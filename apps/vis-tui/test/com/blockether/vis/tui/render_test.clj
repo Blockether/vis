@@ -1728,10 +1728,7 @@
           (expect (some? code-row))
           (expect (some? failed-row))
           (expect (= expanded? (some? detail-row)))
-          (expect (= (get-in
-                       (shared-theme/theme id)
-                       [:palette
-                        (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])
+          (expect (= (get-in (shared-theme/theme id) [:palette :code-block-bg])
                      (get-in frame [code-row 20 :bg])))
           (doseq [row [(dec failed-row) failed-row (inc failed-row)]]
             (expect (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
@@ -1746,7 +1743,7 @@
 (defdescribe
   code-result-paper-test
   (it
-    "keeps normal Code and Result on transcript paper in dark themes without changing light themes"
+    "paints Code and nested Result on their themed code surface"
     (try
       (doseq [id
               (shared-theme/available-theme-ids)
@@ -1801,9 +1798,7 @@
               (row-for "VISIBLE_STDOUT")
 
               expected-bg
-              (get-in (shared-theme/theme id)
-                      [:palette
-                       (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])]
+              (get-in (shared-theme/theme id) [:palette :code-block-bg])]
 
           (expect (nil? (:error captured)))
           (expect (some? code-row))
@@ -1818,7 +1813,7 @@
 (defdescribe
   activity-code-paper-test
   (it
-    "keeps Activity alongside Code without changing light theme surfaces"
+    "paints Activity content on the same themed code surface"
     (try
       (doseq [id (shared-theme/available-theme-ids)]
         (t/apply-theme! (keyword id))
@@ -1844,10 +1839,7 @@
               lines (str/split-lines (cap/frame-text captured))
               row-for (fn [needle]
                         (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-              expected-bg
-              (get-in (shared-theme/theme id)
-                      [:palette
-                       (if (= :dark (:mode (shared-theme/theme id))) :terminal-bg :code-block-bg)])]
+              expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
 
           (expect (nil? (:error captured)))
           (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]

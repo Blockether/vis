@@ -474,9 +474,7 @@
                     labels (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
                     positions (mapv row-of labels)
                     text (str/join "\n" lines)
-                    neutral-code-bg (if (= :dark (:mode theme/default-theme))
-                                      theme/terminal-bg
-                                      theme/code-block-bg)]
+                    code-bg theme/code-block-bg]
 
                 (is (= (cell-grid html cols 50) grid))
                 (is (every? some? positions))
@@ -498,7 +496,7 @@
                          (.getForegroundColor ^com.googlecode.lanterna.TextCharacter
                                               (get-in grid [y x])))))
                 (doseq [y (range (row-of "CODE") (inc (long (row-of "ACTIVITY"))))]
-                  (is (= neutral-code-bg
+                  (is (= code-bg
                          (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
                                               (get-in grid [y 2])))))
                 (doseq [[label row open?]
@@ -515,8 +513,8 @@
                     ;; Expanding Code must retain a single filled band, including Result
                     ;; and the blank row above each disclosure.
                     (is (str/blank? (nth lines (dec row))))
-                    (is (= neutral-code-bg (background-at (dec row))))
-                    (is (= neutral-code-bg (background-at row)))
+                    (is (= code-bg (background-at (dec row))))
+                    (is (= code-bg (background-at row)))
                     (is (= :toggle-details (:kind hit)))
                     (is (= (not open?) (:collapsed? hit)))))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))

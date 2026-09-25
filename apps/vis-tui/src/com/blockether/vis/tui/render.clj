@@ -1675,18 +1675,12 @@
                    (or seg-start-char char-pos)
                    (or seg-start-col col-pos))))))))
 
-(defn- neutral-code-bg
-  "Dark transcripts keep neutral Code, Result and Activity on their usual paper;
-   light themes retain the distinct code surface. Status-tinted bands stay distinct."
-  []
-  (if (= :dark (:mode t/default-theme)) t/terminal-bg t/code-block-bg))
-
 (defn- result-row-bg
   "Nested Result rows share the Code background, including their padding.
    Standalone results retain their own band; interactive hover takes precedence."
   [meta hovered?]
   (cond hovered? t/link-chrome-hover-bg
-        (:code-result? meta) (neutral-code-bg)
+        (:code-result? meta) t/code-block-bg
         :else t/result-bg))
 
 (defn- code-row-bg
@@ -2236,7 +2230,7 @@
                       ;; column. An iteration's prose sits flush with the answer and the
                       ;; bubble's name, not padded like a user bubble: one left edge for
                       ;; everything Vis says, whether it lands before a call or after it.
-                      bg-color (if (:activity-content? meta) (neutral-code-bg) bg-color)
+                      bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
                       fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
                       trace-inset (if (:trace-inset? meta) 2 0)
                       content-col (long (or (:activity-content-col meta) 0))
@@ -2282,7 +2276,7 @@
                   ;; Pre-fill the answer zone for every line type.
                   (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y fill-iw 1))
                   (when (:activity-content? meta)
-                    (p/set-bg! g (neutral-code-bg))
+                    (p/set-bg! g t/code-block-bg)
                     (p/fill-rect! g bx y bubble-w 1))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
@@ -2511,7 +2505,7 @@
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
-                          band-bg (neutral-code-bg)
+                          band-bg t/code-block-bg
                           band-fg t/code-block-fg
                           tone-fg (case (:status-tone meta)
                                     :running
@@ -2748,7 +2742,7 @@
                                         (= :toggle-details (:kind meta))
                                         (= abs-row
                                            (:row (:bounds (.hovered interactions/hit-map)))))
-                          row-bg (code-row-bg meta hovered? (neutral-code-bg))
+                          row-bg (code-row-bg meta hovered? t/code-block-bg)
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
@@ -2811,7 +2805,7 @@
                     ;; marker. Paint optional payload instead of swallowing it.
                     (str/starts-with? line code-pad-marker)
                     (let [raw (subs line 1)
-                          bg (neutral-code-bg)]
+                          bg t/code-block-bg]
 
                       (p/set-colors! g t/code-block-fg bg)
                       (p/fill-rect! g fbx y fill-iw 1)
