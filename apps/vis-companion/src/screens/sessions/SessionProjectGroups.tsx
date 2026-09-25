@@ -1,6 +1,7 @@
 /** One project's band, its session rows, and how that project is paged. */
 
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -22,6 +23,7 @@ import {
 } from '../../components/SessionList';
 import {
   HEADER_TRAIL,
+  EditableNameField,
   HeaderActions,
   HeaderTally,
   LIST_MARK,
@@ -86,10 +88,8 @@ type MenuStep =
   | { kind: 'sessions' }
   | { kind: 'new' }
   | { kind: 'group'; id: string }
-  | { kind: 'rename'; id: string }
   | { kind: 'delete'; id: string }
   | { kind: 'colour'; id: string }
-  | { kind: 'move'; sid: string };
 
 /** One group as a band paints it: the gateway's row, or what a row itself said. */
 type GroupBandView = {
@@ -149,7 +149,7 @@ function NameForm({
   /** What is being typed, for a reader who cannot see the field: `Group name`. */
   label: string;
   value: string;
-  /** The verb on the commit: `Create`, `Rename`. */
+  /** The verb on the commit: `Create`. */
   commit: string;
   isBusy: boolean;
   onChange: (value: string) => void;
@@ -294,6 +294,108 @@ function SetHeader({
   );
 }
 
+/** A group's name becomes a field in its own band, without opening another sheet. */
+function GroupNameField({
+  name,
+  onRename,
+  onCancel,
+}: {
+  name: string;
+  onRename: (name: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const saving = useRef(false);
+  const skipBlur = useRef(false);
+  const selectOnFocus = useRef(true);
+  const commit = async () => {
+    if (saving.current) return;
+    const next = draft.trim();
+    if (!next) {
+      setError('A group name cannot be empty.');
+      inputRef.current?.focus();
+      return;
+    }
+    if (next === name.trim()) {
+      onCancel();
+      return;
+    }
+    saving.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await onRename(next);
+      onCancel();
+    } catch (cause) {
+      setError(
+        cause instanceof GatewayError && cause.status === 409
+          ? 'This project already has a group with that name.'
+          : 'That did not reach the machine. Try again.',
+      );
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="flex min-w-0 flex-1 flex-col justify-center py-1.5">
+      <EditableNameField
+        ref={inputRef}
+        autoFocus
+        aria-busy={busy}
+        aria-label={`Rename ${name}`}
+        autoCapitalize="sentences"
+        autoCorrect="off"
+        face="font-mono text-body font-medium text-white"
+        fit="track"
+        readOnly={busy}
+        value={draft}
+        onFocus={(event) => {
+          if (!selectOnFocus.current) return;
+          selectOnFocus.current = false;
+          const field = event.currentTarget;
+          const end = field.value.length;
+          if (!hasHardwarePointer()) {
+            field.setSelectionRange(end, end);
+            return;
+          }
+          field.setSelectionRange(0, end, 'backward');
+          requestAnimationFrame(() => {
+            if (inputRef.current === field) field.scrollLeft = 0;
+          });
+        }}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setError('');
+        }}
+        onBlur={() => {
+          if (skipBlur.current) {
+            skipBlur.current = false;
+            return;
+          }
+          void commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void commit();
+          }
+          if (event.key === 'Escape' && !busy) {
+            event.preventDefault();
+            skipBlur.current = true;
+            onCancel();
+          }
+        }}
+      />
+      {error && <span role="status" className="font-mono text-meta text-err">{error}</span>}
+    </span>
+  );
+}
+
 /**
  * One group's own band, inside its project's list.
  *
@@ -308,16 +410,22 @@ function GroupBand({
   isOpen,
   isFirst,
   hasVisibleRows,
+  isRenaming,
   onToggle,
   onActions,
+  onRename,
+  onCancelRename,
 }: {
   name: string;
   color: string | null;
   isOpen: boolean;
   isFirst: boolean;
   hasVisibleRows: boolean;
+  isRenaming: boolean;
   onToggle: () => void;
   onActions: (anchor: HTMLElement) => void;
+  onRename: (name: string) => Promise<void>;
+  onCancelRename: () => void;
 }) {
   // The set header supplies the first top edge. A group with visible rows closes
   // its own heading; otherwise the next group or set supplies that boundary.
@@ -332,14 +440,17 @@ function GroupBand({
         aria-expanded={isOpen}
         aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name}`}
         onClick={onToggle}
-        className="flex min-w-0 flex-1 items-center gap-0 py-1.5 pl-3 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+        className={`flex min-w-0 items-center gap-0 py-1.5 pl-3 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white ${isRenaming ? '' : 'flex-1'}`}
       >
         {/* The child fold sits beside the leading rail; its name lines up with the project title. */}
         <span className={LIST_MARK}>
           <ChevronIcon open={isOpen} className="size-3 -translate-x-1.5 text-dialog-hint" />
         </span>
-        <span className="min-w-0 truncate font-mono text-body font-medium text-white">{name}</span>
+        {!isRenaming && (
+          <span className="min-w-0 truncate font-mono text-body font-medium text-white">{name}</span>
+        )}
       </button>
+      {isRenaming && <GroupNameField name={name} onRename={onRename} onCancel={onCancelRename} />}
       <HeaderActions align="center">
         <IconButton
           label={`Actions for ${name}`}
@@ -1133,9 +1244,8 @@ export const ProjectGroup = memo(function ProjectGroup({
     setSelection({ scope: selectionScope, ids: visibleIds.slice(Math.min(from, end), Math.max(from, end) + 1) });
     return true;
   };
-  // ONE SHEET, wherever it was opened from: the project's ⋮ lists its groups, a band's
-  // own ⋮ opens that group's verbs, and naming a group is a STEP inside it. A step is
-  // left the way it was entered (`MenuBack`), never out to blank paper.
+  // Group names edit in their bands; the sheet holds only actions that need a choice.
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ at: MenuPosition; step: MenuStep } | null>(null);
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
@@ -1198,8 +1308,32 @@ export const ProjectGroup = memo(function ProjectGroup({
       return moved;
     };
   }, [rowActions.commands.archive]);
-  const fileSession = (session: Session, gid: string | null, back: MenuStep | 'close') =>
-    void attempt(() => assignGroup(session, gid), back);
+  // The row's Move action expands its destinations right under that row, never over the list.
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveFailure, setMoveFailure] = useState<string | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const moving = useRef(false);
+  const moveChoicesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (movingId) moveChoicesRef.current?.querySelector('button')?.focus();
+  }, [movingId]);
+  const moveSession = async (session: Session, gid: string | null) => {
+    if (moving.current) return;
+    moving.current = true;
+    setMoveBusy(true);
+    setMoveFailure(null);
+    try {
+      await assignGroup(session, gid);
+      setGroupsRead((read) => read + 1);
+      setMovingId(null);
+    } catch {
+      setMoveFailure('That did not reach the machine. Try again.');
+      requestAnimationFrame(() => moveChoicesRef.current?.querySelector('button')?.focus());
+    } finally {
+      moving.current = false;
+      setMoveBusy(false);
+    }
+  };
   // One session's row, wherever it stands: inside a group's area, or under the
   // project itself with everything nobody filed. A drop onto either area runs the
   // same filing verb as the row's `Move to...` action.
@@ -1245,20 +1379,23 @@ export const ProjectGroup = memo(function ProjectGroup({
       dropping.current = false;
     }
   };
-  // Every row in these bands can be filed, so the list's own verbs carry one more: the
-  // sheet opens under the strip's button, on the session that strip belongs to.
+  // The row's own verb opens inline choices only when there is a group to choose.
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
       archive: archiveSession,
-      moveToGroup: (session, _conn, anchor) => openMenu(anchor, { kind: 'move', sid: session.id }),
+      ...(bands.length > 0 && {
+        moveToGroup: (session: Session) => {
+          if (moving.current) return;
+          setMoveFailure(null);
+          setMovingId((held) => (held === session.id ? null : session.id));
+        },
+      }),
     }),
-    [archiveSession, openMenu, rowActions.commands],
+    [archiveSession, bands.length, rowActions.commands],
   );
-  // THE ONLY GROUP THIS PROJECT HAS IS THE ONE THE ROW IS ALREADY UNDER, so the sheet
-  // would offer that band and nothing else. The strip carries the one filing that is
-  // left instead, and runs it in the press that was made. A machine that refuses leaves
-  // the row where it stands, exactly as a refused drop onto a band does.
+  // The project's only group is the one this row is under, so there is no other
+  // destination to choose: Ungroup acts directly. A refused move leaves the row put.
   const ungroupSession = useCallback(
     (session: Session) =>
       void (async () => {
@@ -1287,26 +1424,64 @@ export const ProjectGroup = memo(function ProjectGroup({
           cancel: rowActions.deletion.cancel,
         }
       : null;
+    const isMoving = movingId === session.id;
     return (
-      // DRAG IS THE LIST'S OWN MOVE: the row carries its session id and a group's
-      // area takes the drop, so filing by hand needs no menu at all.
-      <SessionRow
-        key={session.id}
-        session={session}
-        paper="set-sessions"
-        group={groupById.get(typeof session.group_id === 'string' ? session.group_id : '') ?? null}
-        draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
-        conn={conn}
-        match={matches?.get(session.id) ?? null}
-        needle={needle}
-        commands={soleGroup ? soleGroupCommands : rowCommands}
-        deletion={deletion}
-        isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
-        isSelected={selectedSet.has(session.id)}
-        onSelectionClick={(event) => onSelectionClick(session.id, event)}
-        dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
-        isDraggable={session.group_id ? !isGroupRevealing : !isSessionRevealing}
-      />
+      <Fragment key={session.id}>
+        <SessionRow
+          session={session}
+          paper="set-sessions"
+          group={groupById.get(typeof session.group_id === 'string' ? session.group_id : '') ?? null}
+          draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
+          conn={conn}
+          match={matches?.get(session.id) ?? null}
+          needle={needle}
+          commands={soleGroup ? soleGroupCommands : rowCommands}
+          deletion={deletion}
+          isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
+          isSelected={selectedSet.has(session.id)}
+          onSelectionClick={(event) => onSelectionClick(session.id, event)}
+          dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
+          isDraggable={!isMoving && (session.group_id ? !isGroupRevealing : !isSessionRevealing)}
+        />
+        {isMoving && (
+          <div
+            ref={moveChoicesRef}
+            role="group"
+            aria-label={`Move ${rowTitle(session)} to group`}
+            className="max-h-56 overflow-y-auto border-y border-edge bg-set-groups pl-4 pr-2"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !moveBusy) {
+                event.preventDefault();
+                setMovingId(null);
+              }
+            }}
+            onBlur={(event) => {
+              if (!moving.current && !event.currentTarget.contains(event.relatedTarget)) {
+                setMovingId(null);
+              }
+            }}
+          >
+            {bands.filter((band) => band.id !== session.group_id).map((band) => (
+              <MenuItem
+                key={band.id}
+                title={band.name}
+                icon={<Swatch color={band.color} />}
+                disabled={moveBusy}
+                onSelect={() => void moveSession(session, band.id)}
+              />
+            ))}
+            {session.group_id && (
+              <MenuItem
+                title="Take out of its group"
+                icon={<ProjectsIcon className="size-3.5" />}
+                disabled={moveBusy}
+                onSelect={() => void moveSession(session, null)}
+              />
+            )}
+            {moveFailure && <p role="status" className="px-3 py-2 font-mono text-meta text-err">{moveFailure}</p>}
+          </div>
+        )}
+      </Fragment>
     );
   };
 
@@ -1571,8 +1746,17 @@ export const ProjectGroup = memo(function ProjectGroup({
                         isOpen={isBandOpen}
                         isFirst={index === 0}
                         hasVisibleRows={isBandOpen && held.length > 0}
+                        isRenaming={renamingGroupId === band.id}
                         onToggle={() => foldGroup(band.id, !isBandOpen)}
                         onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                        onRename={async (name) => {
+                          const changed = await getClient(conn).updateSessionGroup(band.id, { name });
+                          setGroups((current) =>
+                            current.map((group) => (group.id === changed.id ? changed : group)),
+                          );
+                          setGroupsRead((read) => read + 1);
+                        }}
+                        onCancelRename={() => setRenamingGroupId(null)}
                       />
                       {isBandOpen && held.map(row)}
                     </SessionDropArea>
@@ -1695,71 +1879,12 @@ export const ProjectGroup = memo(function ProjectGroup({
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
-            if (step.kind === 'move') {
-              const session = painted.find((one) => one.id === step.sid);
-              // The row left the page while its sheet was open: say so, rather than
-              // offering a verb with nothing behind it.
-              if (!session) return <MenuNote>That session is gone.</MenuNote>;
-              return (
-                <>
-                  <MenuBack
-                    label={`Back to groups in ${project}`}
-                    onBack={() => goTo({ kind: 'root' })}
-                  >
-                    Move {rowTitle(session)}
-                  </MenuBack>
-                  {bands.length === 0 ? (
-                    <MenuNote>Nothing in this project is grouped yet.</MenuNote>
-                  ) : (
-                    bands.map((band) => (
-                      <MenuItem
-                        key={band.id}
-                        title={band.name}
-                        icon={<Swatch color={band.color} />}
-                        badge={session.group_id === band.id ? 'filed' : undefined}
-                        onSelect={() => fileSession(session, band.id, 'close')}
-                      />
-                    ))
-                  )}
-                  {session.group_id ? (
-                    <MenuItem
-                      title="Take out of its group"
-                      icon={<ProjectsIcon className="size-3.5" />}
-                      onSelect={() => fileSession(session, null, 'close')}
-                    />
-                  ) : null}
-                  {failure && <MenuNote>{failure}</MenuNote>}
-                </>
-              );
-            }
             const band = bands.find((one) => one.id === step.id);
             // The group was deleted under the sheet, or by another client of the
             // machine: the step says so instead of offering verbs with nothing behind them.
             if (!band) return <MenuNote>That group is gone.</MenuNote>;
             const here: MenuStep = { kind: 'group', id: band.id };
             const bandArchived = band.archived;
-            if (step.kind === 'rename')
-              return (
-                <>
-                  <MenuBack label={`Back to ${band.name}`} onBack={() => goTo(here)}>
-                    Rename {band.name}
-                  </MenuBack>
-                  <NameForm
-                    label="New name"
-                    value={typed}
-                    commit="Rename"
-                    isBusy={isBusy}
-                    onChange={setTyped}
-                    onCommit={() =>
-                      void attempt(
-                        () => getClient(conn).updateSessionGroup(band.id, { name: typed.trim() }),
-                        here,
-                      )
-                    }
-                  />
-                  {failure && <MenuNote>{failure}</MenuNote>}
-                </>
-              );
             // DELETING ASKS. A group is a folder to some people and a batch of work to
             // others, so both answers are offered and the destructive one is second, in
             // the app's red behind the bin. Like the verbs this step was chosen from, it
@@ -1855,8 +1980,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                   title="Rename group"
                   icon={<PencilIcon className="size-3.5" />}
                   onSelect={() => {
-                    setTyped(band.name);
-                    goTo({ kind: 'rename', id: band.id });
+                    setMenu(null);
+                    setRenamingGroupId(band.id);
                   }}
                 />
                 <MenuItem

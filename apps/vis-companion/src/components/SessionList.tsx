@@ -94,11 +94,8 @@ export type SessionRowCommands = {
    * has nothing of its own to put away, so the band that paints it passes no verb.
    */
   archive?: (session: Session, conn: GatewayConn, away: boolean) => Promise<Session>;
-  /**
-   * File the session into a group, or take it out of one. OPTIONAL: only a grouped
-   * project list offers it, and the anchor is the element the menu hangs under.
-   */
-  moveToGroup?: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
+  /** File this session through inline group choices in its project list, when available. */
+  moveToGroup?: (session: Session, conn: GatewayConn) => void;
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
@@ -449,9 +446,8 @@ export const SessionRow = memo(function SessionRow({
         },
       ]
     : [];
-  // THE ROW'S FILING VERB, and there is at most one of it. A project with somewhere else
-  // to put this session opens its sheet under the strip; when the only group it has is
-  // the one this row is already under, there is nothing to ask and the verb takes it out.
+  // THE ROW'S FILING VERB opens choices below this row when another group could take it.
+  // When the only group is the one it already belongs to, Ungroup acts directly.
   const filing: SwipeAction[] = commands.ungroup
     ? [
         {
@@ -468,7 +464,7 @@ export const SessionRow = memo(function SessionRow({
             label: 'Move to...',
             name: 'Move',
             icon: <FolderPlusIcon className="size-4" />,
-            onSelect: (anchor: HTMLElement) => commands.moveToGroup?.(session, conn, anchor),
+            onSelect: () => commands.moveToGroup?.(session, conn),
           },
         ]
       : [];
