@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.loop.accounting :as accounting]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.errors :as loop-errors]
@@ -2153,11 +2154,6 @@
         initial-extra-body
         (loop-router/provider-extra-body extra-body)
 
-        root-cost-multiplier
-        (loop-router/fast-mode-cost-multiplier extra-body
-                                               turn-features
-                                               (:provider initial-resolved-model))
-
         initial-prompt-cache-context
         (transcript/resolved-prompt-cache-context environment
                                                   initial-resolved-model
@@ -2285,19 +2281,23 @@
         initial-messages
         (:messages @message-base-atom)
 
-        ;; Context pressure uses the latest single-call input, not cumulative turn billing. On
-        ;; the first iteration, seed it from the session's latest persisted request.
-        usage-atom
-        (atom {:input-tokens 0
-               :output-tokens 0
-               :reasoning-tokens 0
-               :reasoning-reported? false
-               :cached-tokens 0
-               :cache-creation-tokens 0
-               :last-iter-input 0
-               :last-iter-reasoning 0
-               :previous-request-input (long (or (:last-request-tokens previous-usage) 0))
-               :iter-count 0})
+        ;; Token totals and accrued cost of this turn, folded by `loop.accounting`.
+        ;; Context pressure uses the latest single-call input, not cumulative turn
+        ;; billing. On the first iteration, seed it from the session's latest
+        ;; persisted request.
+        accounting-atom
+        (atom (accounting/initial-usage previous-usage))
+
+        ;; Every response is priced by the model and provider that ACTUALLY served
+        ;; it (svar may fall back mid-turn; the health gate can make
+        ;; selected≠actual), so a turn served by a free local model never bills at
+        ;; the selected model's rates. The turn's resolved route prices responses
+        ;; that name none, and the whole turn when no response was priced.
+        turn-pricing
+        (accounting/pricing effective-model
+                            (:provider initial-resolved-model)
+                            extra-body
+                            turn-features)
 
         ;; Svar owns the metric, including route/scope isolation, the rolling window,
         ;; and freshness. Vis retains only the latest wire-ready snapshot for this turn.
@@ -2310,156 +2310,6 @@
             (let [wire-status (wire/->wire status)]
               (reset! prompt-cache-status-atom wire-status)
               (transcript/stamp-prompt-cache-status! (:ctx-atom environment) status))))
-
-        ;; Running SUM of per-iteration cost maps, each priced by the model
-        ;; that ACTUALLY served that iteration (svar may fall back mid-turn;
-        ;; the health gate can make selected≠actual). nil until the first
-        ;; priced iteration; a turn served entirely by an unpriced local
-        ;; model stays nil and finalize-cost falls back to the root-model
-        ;; estimate (which prices to nothing for the same reason). Without
-        ;; this, a turn served by a free local model was billed at the
-        ;; SELECTED model's pricing (e.g. gemma-on-lmstudio at Opus rates).
-        accrued-cost-atom
-        (atom nil)
-
-        accumulate-usage!
-        (fn [api-usage]
-          (when api-usage
-            (swap! usage-atom
-              (fn [acc]
-                (let [iter-in
-                      (long (or (:input-tokens api-usage) 0))
-
-                      iter-reason
-                      (get-in api-usage [:output-tokens-details :reasoning])]
-
-                  (cond-> (-> acc
-                              (update :input-tokens + iter-in)
-                              (update :output-tokens + (or (:output-tokens api-usage) 0))
-                              (update :cached-tokens
-                                      +
-                                      (or (get-in api-usage [:input-tokens-details :cache-read]) 0))
-                              (update :cache-creation-tokens
-                                      +
-                                      (or (get-in api-usage [:input-tokens-details :cache-write])
-                                          0))
-                              ;; Per-iter snapshots: overwrite, not accumulate.
-                              (assoc :last-iter-input iter-in)
-                              (assoc :last-iter-reasoning iter-reason)
-                              (update :iter-count inc))
-                    (some? iter-reason)
-                    (-> (update :reasoning-tokens + (long iter-reason))
-                        (assoc :reasoning-reported? true))))))))
-
-        ;; Per-iteration token + cost projection. The schema's
-        ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
-        ;; carry one row per iteration so a future `vis-agent report`
-        ;; caller can sum or break down cost without re-walking
-        ;; provider envelopes. Returns nil when the call surfaced no
-        ;; usage (e.g. iteration-level error before a response
-        ;; landed), in which case the persistance layer leaves the
-        ;; columns NULL.
-        iteration-token-cost
-        (fn iteration-token-cost ([api-usage] (iteration-token-cost api-usage nil nil))
-          ([api-usage actual-model actual-provider] (when api-usage
-                                                      (let
-                                                        [in
-                                                         (long (or (:input-tokens api-usage) 0))
-
-                                                         out
-                                                         (long (or (:output-tokens api-usage) 0))
-
-                                                         reas
-                                                         (get-in api-usage
-                                                                 [:output-tokens-details
-                                                                  :reasoning])
-
-                                                         cach
-                                                         (long (or (get-in api-usage
-                                                                           [:input-tokens-details
-                                                                            :cache-read])
-                                                                   0))
-
-                                                         cache-created
-                                                         (long (or (get-in api-usage
-                                                                           [:input-tokens-details
-                                                                            :cache-write])
-                                                                   0))
-
-                                                         ;; Canonicalize `estimate-cost`, persist `total_cost`, and price the model
-                                                         ;; that actually served the call. Use the resolved model only when routing data is absent.
-                                                         served-provider
-                                                         (or actual-provider
-                                                             (:llm-provider api-usage)
-                                                             (:provider api-usage)
-                                                             (:provider initial-resolved-model))
-
-                                                         cost-map
-                                                         (loop-router/estimate-token-cost
-                                                           (or (some-> actual-model
-                                                                       str
-                                                                       not-empty)
-                                                               effective-model)
-                                                           in
-                                                           out
-                                                           {:api-usage api-usage
-                                                            :cost-multiplier
-                                                            (loop-router/fast-mode-cost-multiplier
-                                                              extra-body
-                                                              turn-features
-                                                              served-provider)})
-
-                                                         total
-                                                         (when (map? cost-map)
-                                                           (get cost-map "total_cost"))]
-
-                                                        (when (map? cost-map)
-                                                          (swap! accrued-cost-atom
-                                                            #(loop-router/merge-cost-maps
-                                                               (or % {})
-                                                               cost-map)))
-                                                        {:tokens (cond-> {"input" in
-                                                                          "output" out
-                                                                          "cached" cach
-                                                                          "cache_created"
-                                                                          cache-created}
-                                                                   (some? reas)
-                                                                   (assoc "reasoning" (long reas)))
-                                                         :cost-usd (when (number? total)
-                                                                     (double total))}))))
-
-        finalize-cost
-        (fn []
-          (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens
-                        cache-creation-tokens reasoning-reported?]}
-                @usage-atom
-
-                total-tokens
-                (+ (long input-tokens) (long output-tokens))
-
-                ;; Prefer the SUM of per-iteration costs (each priced
-                ;; by its actual serving model) over re-estimating the
-                ;; whole turn at the root model's rates — a turn that
-                ;; fell back mid-way (or was served entirely by a free
-                ;; local model while a paid model was selected) must
-                ;; not bill at the selected model's pricing.
-                cost
-                (or @accrued-cost-atom
-                    (loop-router/estimate-token-cost effective-model
-                                                     input-tokens
-                                                     output-tokens
-                                                     {:cached-tokens cached-tokens
-                                                      :cache-creation-tokens cache-creation-tokens
-                                                      :cost-multiplier root-cost-multiplier}))]
-
-            {:tokens (cond-> {"input" input-tokens
-                              "output" output-tokens
-                              "cached" cached-tokens
-                              "cache_created" cache-creation-tokens
-                              "total" total-tokens}
-                       reasoning-reported?
-                       (assoc "reasoning" reasoning-tokens))
-             :cost cost}))
 
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
         ;; from svar's stream callback. It fires dozens of times per
@@ -2477,12 +2327,7 @@
             (try (hook-fn payload)
                  (catch Exception e
                    (tel/log! {:level :warn :data (loop-errors/format-exception-short e)}
-                             log-message)))))
-
-        iteration-cache-created-tokens
-        (fn [token-cost]
-          (let [cache-created (long (or (get-in token-cost [:tokens "cache_created"]) 0))]
-            (when (pos? cache-created) cache-created)))]
+                             log-message)))))]
 
     ;; Turn-start state.
     ;;
@@ -2543,7 +2388,7 @@
                                        :status-id (loop-router/status->id :cancelled)
                                        :trace trace
                                        :iteration-count iteration}
-                                      (finalize-cost))]
+                                      (accounting/turn-cost @accounting-atom turn-pricing))]
 
                     result))
               goal-halt (merge goal-halt
@@ -2553,7 +2398,7 @@
                                           (:answer goal-halt))
                                 :trace trace
                                 :iteration-count iteration}
-                               (finalize-cost))
+                               (accounting/turn-cost @accounting-atom turn-pricing))
               (not (agents/claim-iteration! environment))
               (merge
                 {:status :error
@@ -2562,7 +2407,7 @@
                  "Subagent stopped: cancelled, iteration budget exhausted, or active-team capacity reached. Retry when capacity is available."
                  :trace trace
                  :iteration-count iteration}
-                (finalize-cost))
+                (accounting/turn-cost @accounting-atom turn-pricing))
               :else
               (let
                 [route-change (agents/routing-change environment routing-pref-at-turn-start)
@@ -2842,13 +2687,11 @@
                                                   (loop-router/turn-served-model environment)
                                                   pre-resolved-model
                                                   @request-budget-atom)]
-                                     (transcript/stamp-utilization!
-                                       (:ctx-atom environment)
-                                       (ctx-engine/utilization
-                                         input
-                                         window
-                                         (+ (long (:input-tokens @usage-atom)) (long input))
-                                         (loop-router/context-fold-budget window))))))
+                                     (transcript/stamp-utilization! (:ctx-atom environment)
+                                                                    (accounting/pending-utilization
+                                                                      @accounting-atom
+                                                                      input
+                                                                      window)))))
                                :on-chunk (fn [chunk]
                                            (when (provider-output-chunk? chunk)
                                              (reset! provider-output-started? true)
@@ -2992,23 +2835,23 @@
                                             "Retrying provider stream before code execution")
                                   ::retry-stream-recovery)
                                 :else
-                                (if-let [recovery (context-overflow-recovery!
-                                                    {:error e
-                                                     :output-started? provider-output-started?
-                                                     :recovery-state context-recovery-state
-                                                     :ctx-atom (:ctx-atom environment)
-                                                     :turn-input-tokens (:input-tokens @usage-atom)
-                                                     :request-messages @effective-messages-atom
-                                                     :base-messages (:messages attempt-base)
-                                                     :trailer-iters visible-attempt-trailer
-                                                     :summaries attempt-summaries
-                                                     :canonical-base-messages-fn
-                                                     (when (:resumed? attempt-base)
-                                                       canonical-messages)
-                                                     :canonical-trailer-iters attempt-trailer
-                                                     :replay-target replay-target
-                                                     :model (or (:name resolved-model)
-                                                                (:model resolved-model))})]
+                                (if-let [recovery
+                                         (context-overflow-recovery!
+                                           {:error e
+                                            :output-started? provider-output-started?
+                                            :recovery-state context-recovery-state
+                                            :ctx-atom (:ctx-atom environment)
+                                            :turn-input-tokens (:input-tokens @accounting-atom)
+                                            :request-messages @effective-messages-atom
+                                            :base-messages (:messages attempt-base)
+                                            :trailer-iters visible-attempt-trailer
+                                            :summaries attempt-summaries
+                                            :canonical-base-messages-fn
+                                            (when (:resumed? attempt-base) canonical-messages)
+                                            :canonical-trailer-iters attempt-trailer
+                                            :replay-target replay-target
+                                            :model (or (:name resolved-model)
+                                                       (:model resolved-model))})]
                                   (do
                                     (install-projection! recovery)
                                     (tel/log!
@@ -3105,7 +2948,7 @@
                                              :status-id (loop-router/status->id :cancelled)
                                              :trace trace
                                              :iteration-count iteration}
-                                            (finalize-cost))]
+                                            (accounting/turn-cost @accounting-atom turn-pricing))]
 
                           result))
                     (let [llm-provider-error (llm-provider-error-context iteration
@@ -3123,9 +2966,12 @@
                           err-iteration-id
                           (persistance/db-store-iteration!
                             (:db-info environment)
-                            (let [tc (iteration-token-cost err-api-usage
-                                                           (:name resolved-model)
-                                                           (:provider resolved-model))]
+                            (let [tc (accounting/response-cost turn-pricing
+                                                               err-api-usage
+                                                               (:name resolved-model)
+                                                               (:provider resolved-model))
+                                  _ (swap! accounting-atom accounting/add-cost tc)]
+
                               (cond-> {:session-turn-id session-turn-id
                                        :council-input council-input
                                        :council-publications (:council-publications
@@ -3154,7 +3000,7 @@
                                            true :trace
                                            (vec (get-in iteration-error-data
                                                         [:data :routed/trace]))))
-                                       :cache-created-tokens (iteration-cache-created-tokens tc)}
+                                       :cache-created-tokens (accounting/cache-created-tokens tc)}
                                 tc
                                 (assoc :tokens
                                   (:tokens tc) :cost-usd
@@ -3192,7 +3038,7 @@
                                           :status-id (loop-router/status->id :error)
                                           :trace trace'
                                           :iteration-count (inc (long iteration))}
-                                         (finalize-cost))]
+                                         (accounting/turn-cost @accounting-atom turn-pricing))]
 
                           result)
                         (recur (assoc loop-state
@@ -3203,7 +3049,7 @@
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace (store-trace! trace-store trace-entry)))))))
                   (let [_ (note-prompt-cache-status! (:prompt-cache iteration-result))
-                        _ (accumulate-usage! (:api-usage iteration-result))
+                        _ (swap! accounting-atom accounting/add-usage (:api-usage iteration-result))
                         ;; The provider that ACCEPTED the request re-enters routing, never
                         ;; the pre-call guess: a turn rescued on a peer used to re-admit the
                         ;; dead credential and the next iteration re-probed it (issue #114).
@@ -3223,19 +3069,14 @@
                         ;; context delta. Stamping at the next loop head made the
                         ;; next model request read usage from TWO requests ago.
                         _ (when-let [ca (:ctx-atom environment)]
-                            (let [u @usage-atom
-                                  window (loop-router/iteration-context-limit
+                            (let [window (loop-router/iteration-context-limit
                                            max-context-tokens
                                            (loop-router/turn-served-model environment)
                                            pre-resolved-model
                                            @request-budget-atom)]
-
                               (transcript/stamp-utilization!
                                 ca
-                                (ctx-engine/utilization (:last-iter-input u)
-                                                        window
-                                                        (:input-tokens u)
-                                                        (loop-router/context-fold-budget window)))))
+                                (accounting/measured-utilization @accounting-atom window))))
                         ;; …and when the pin is the credential that died, the SESSION
                         ;; follows the rescue: the picker chip stops naming a provider
                         ;; this session cannot reach, and the next turn no longer re-pins
@@ -3319,9 +3160,11 @@
                           ;; routed metadata), not the pre-resolved root — a
                           ;; fallback iteration must not bill at the selected
                           ;; model's rates.
-                          (let [tc (iteration-token-cost (:api-usage iteration-result)
-                                                         (:llm-model iteration-result)
-                                                         (:llm-provider iteration-result))
+                          (let [tc (accounting/response-cost turn-pricing
+                                                             (:api-usage iteration-result)
+                                                             (:llm-model iteration-result)
+                                                             (:llm-provider iteration-result))
+                                _ (swap! accounting-atom accounting/add-cost tc)
                                 served (loop-router/resolve-model-info
                                          (:router environment)
                                          (:llm-provider iteration-result)
@@ -3376,7 +3219,7 @@
                                                                      iteration-result)
                                      :prompt-cache-continuity (:prompt-cache-continuity
                                                                 iteration-result)
-                                     :cache-created-tokens (iteration-cache-created-tokens tc)}
+                                     :cache-created-tokens (accounting/cache-created-tokens tc)}
                               tc
                               (assoc :tokens
                                 (:tokens tc) :cost-usd
@@ -3427,7 +3270,7 @@
                                   :status-id (loop-router/status->id :error)
                                   :trace (conj trace (assoc trace-entry :error python-error))
                                   :iteration-count (inc (long iteration))}
-                                 (finalize-cost))
+                                 (accounting/turn-cost @accounting-atom turn-pricing))
                           (transcript/attach-llm-routing-summary pre-resolved-model
                                                                  iteration-result))
                       final-result
@@ -3466,19 +3309,12 @@
                           (-> (merge {:answer (:answer final-result)
                                       :trace (conj trace trace-entry)
                                       :iteration-count (inc (long iteration))
-                                      :utilization (let [u @usage-atom
-                                                         req (if (pos? (long (:iter-count u)))
-                                                               (long (:last-iter-input u))
-                                                               (long (:previous-request-input u)))]
-
-                                                     (ctx-engine/with-prompt-cache-status
-                                                       (ctx-engine/utilization
-                                                         req
-                                                         effective-context-limit
-                                                         (:input-tokens u)
-                                                         effective-fold-budget)
-                                                       @prompt-cache-status-atom))}
-                                     (finalize-cost))
+                                      :utilization (accounting/turn-utilization
+                                                     @accounting-atom
+                                                     effective-context-limit
+                                                     effective-fold-budget
+                                                     @prompt-cache-status-atom)}
+                                     (accounting/turn-cost @accounting-atom turn-pricing))
                               (transcript/attach-llm-routing-summary pre-resolved-model
                                                                      iteration-result)
                               (assoc :prompt-cache-completion
@@ -3532,19 +3368,12 @@
                                           :status-id (loop-router/status->id status)
                                           :trace (conj trace trace-entry)
                                           :iteration-count (inc (long iteration))
-                                          :utilization
-                                          (let [u @usage-atom
-                                                req (if (pos? (long (:iter-count u)))
-                                                      (long (:last-iter-input u))
-                                                      (long (:previous-request-input u)))]
-
-                                            (ctx-engine/with-prompt-cache-status
-                                              (ctx-engine/utilization req
-                                                                      effective-context-limit
-                                                                      (:input-tokens u)
-                                                                      effective-fold-budget)
-                                              @prompt-cache-status-atom))}
-                                         (finalize-cost))
+                                          :utilization (accounting/turn-utilization
+                                                         @accounting-atom
+                                                         effective-context-limit
+                                                         effective-fold-budget
+                                                         @prompt-cache-status-atom)}
+                                         (accounting/turn-cost @accounting-atom turn-pricing))
                                   (transcript/attach-llm-routing-summary pre-resolved-model
                                                                          iteration-result)))
                             ;; Transparent auto-continue: re-invoke so a mid-task
