@@ -21,6 +21,7 @@
     [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.gateway.state :as gateway-state]
     [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.loop.accounting :as accounting]
     [com.blockether.vis.internal.loop.compaction :as compaction]
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.errors :as loop-errors]
@@ -6911,6 +6912,32 @@
                :env [:env 2]
                :routing {:provider :anthropic}}]
              @sent))))))
+
+(defdescribe
+  halted-turn-test
+  "Before each iteration the loop asks `halted-turn` whether the turn stops there."
+  (let [halted-turn
+        @#'iteration/halted-turn
+
+        turn-for
+        (fn [env cancelled?]
+          {:environment env
+           :cancel-atom (atom cancelled?)
+           :goal-at-turn-start nil
+           :accounting-atom (atom (accounting/initial-usage nil))
+           :turn-pricing (accounting/pricing "gpt-x" :openai nil nil)})]
+
+    (it "ends a cancelled turn with its trace and iteration count"
+        (let [env (loop-env/create-environment ::router {:db :memory})]
+          (try (let [result (halted-turn (turn-for env true) {:iteration 2 :trace [:step]})]
+                 (expect (= :cancelled (:status result)))
+                 (expect (= [:step] (:trace result)))
+                 (expect (= 2 (:iteration-count result))))
+               (finally (loop-env/dispose-environment! env)))))
+    (it "answers nil so the loop runs the iteration"
+        (let [env (loop-env/create-environment ::router {:db :memory})]
+          (try (expect (nil? (halted-turn (turn-for env false) {:iteration 0 :trace []})))
+               (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
   stream-watchdog-terminal-error-test
