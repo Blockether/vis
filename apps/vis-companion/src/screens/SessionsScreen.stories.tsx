@@ -399,7 +399,10 @@ export const NarrowRail: Story = {
     };
     const checkEdges = async () => {
       const box = scroller.getBoundingClientRect();
-      for (const band of screen.querySelectorAll('[data-project-root] > div > header')) {
+      const bands = screen.querySelectorAll('[data-project-root] > header');
+      // Count the bands so a changed structure cannot leave this check matching nothing.
+      await expect(bands).toHaveLength(screen.querySelectorAll('[data-project-root]').length);
+      for (const band of bands) {
         await expect(band.getBoundingClientRect().left).toBe(box.left);
         await expect(Math.round(band.getBoundingClientRect().right - box.left)).toBe(
           scroller.clientWidth,
