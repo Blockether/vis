@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - The gateway formats Python code for the TUI and the companion with a built-in
-  formatter that produces the same result as `ruff format`. Vis no longer bundles
-  the native ruff library, which makes the native binary smaller.
+  formatter that lays out code the way `ruff format` does. Code with formatter
+  suppression comments such as `fmt: off` is shown as written. Vis no longer
+  bundles the native ruff library, which makes the native binary smaller.
 
 ## [v0.2.29] - 2026-09-25
 
