@@ -372,6 +372,9 @@ ActivityBlock: TypeAlias = (
 
 
 _ActivitySummaryFormat: TypeAlias = Literal["inline", "markdown"]
+_ActivityVerdict: TypeAlias = Literal["passed", "failed"]
+_SymbolTag: TypeAlias = Literal["observation", "mutation", "verification", "external"]
+_SYMBOL_TAGS = get_args(_SymbolTag)
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,10 +433,16 @@ class ActivityPresentation(ActivitySection):
     this extension and Python form. Vis shows one current outcome while retaining
     distinct details, errors and every invocation in history. Omit it for
     independent calls; a handle is not a label, tool argument or return value.
+
+    Set ``verdict`` when the call finished but reports on checks: ``"failed"`` for
+    failing tests or lint findings, ``"passed"`` when every check passed. Vis pins a
+    failed verdict in the settled turn's digest until a later run of the same tool
+    passes.
     """
 
     sections: tuple[ActivitySection, ...] = ()
     handle_id: str | None = field(default=None, kw_only=True)
+    verdict: _ActivityVerdict | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         ActivitySection.__post_init__(self)
@@ -458,6 +467,8 @@ class ActivityPresentation(ActivitySection):
                 raise ValueError(
                     "Activity handle_id must be one nonblank line of at most 512 UTF-8 bytes"
                 )
+        if self.verdict is not None and self.verdict not in get_args(_ActivityVerdict):
+            raise ValueError("Activity verdict must be passed or failed")
 
     def to_wire(self) -> dict[str, Any]:
         value = ActivitySection.to_wire(self)
@@ -465,6 +476,8 @@ class ActivityPresentation(ActivitySection):
             value["sections"] = [section.to_wire() for section in self.sections]
         if self.handle_id is not None:
             value["handle_id"] = self.handle_id
+        if self.verdict is not None:
+            value["verdict"] = self.verdict
         return value
 
 
@@ -1286,8 +1299,10 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None, *, qualified_name=None
         raise ValueError(
             f"vis.Symbol name must be a public Python identifier, got {public_name!r}"
         )
-    if tag not in ("observation", "mutation"):
-        raise ValueError(f"vis.Symbol tag must be observation or mutation, got {tag!r}")
+    if tag not in _SYMBOL_TAGS:
+        raise ValueError(
+            f"vis.Symbol tag must be one of {', '.join(_SYMBOL_TAGS)}, got {tag!r}"
+        )
     doc = inspect.getdoc(fn)
     if not doc or not doc.strip():
         raise ValueError(
@@ -1361,7 +1376,7 @@ class _MethodDecorator(Protocol):
 def method(
     fn: _Method,
     *,
-    tag: Literal["observation", "mutation"] = "observation",
+    tag: _SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _Method: ...
@@ -1371,7 +1386,7 @@ def method(
 def method(
     fn: None = None,
     *,
-    tag: Literal["observation", "mutation"] = "observation",
+    tag: _SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _MethodDecorator: ...
@@ -1380,7 +1395,7 @@ def method(
 def method(
     fn: _Method | None = None,
     *,
-    tag: Literal["observation", "mutation"] = "observation",
+    tag: _SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _Method | _MethodDecorator:
@@ -1388,7 +1403,10 @@ def method(
 
     Args:
         fn: Method to annotate; omit it to use `@method(...)`.
-        tag: `"observation"` for reads or `"mutation"` for state-changing work.
+        tag: What the method does, as Activity reports it: `"observation"` reads,
+            `"mutation"` changes local state, `"verification"` checks work (tests,
+            lint, CI status) and `"external"` reaches people or systems beyond the
+            session (messages, publications, remote hosts).
         is_hidden: Hide the method from discovery without removing the callable.
         activity: This method's human-facing presentation. Declare it on each
             exported method, not on the containing object namespace.
@@ -1418,8 +1436,10 @@ def method(
     assert tool.contract["members"][0]["name"] == "greeter.hello"
     ```
     """
-    if tag not in ("observation", "mutation"):
-        raise ValueError(f"vis.method tag must be observation or mutation, got {tag!r}")
+    if tag not in _SYMBOL_TAGS:
+        raise ValueError(
+            f"vis.method tag must be one of {', '.join(_SYMBOL_TAGS)}, got {tag!r}"
+        )
     _activity_spec(activity)
 
     def _mark(actual: _Method) -> _Method:
@@ -1526,7 +1546,7 @@ class Symbol:
         fn: Function, or an object whose public methods form a namespace.
         name: Override the function name; required for objects and must then be
             a public Python identifier.
-        tag: Default operation classification: `"observation"` or `"mutation"`.
+        tag: Default operation classification, one of the `method` tags.
         is_hidden: Hide the symbol from discovery without removing the callable.
         activity: Human-facing presentation for a function; declare one on every
             exported callable. For an object, leave this unset and put an Activity
@@ -1547,7 +1567,7 @@ class Symbol:
 
     fn: Callable[..., Any] | object
     name: str | None = None
-    tag: Literal["observation", "mutation"] = "observation"
+    tag: _SymbolTag = "observation"
     is_hidden: bool = False
     activity: Activity | None = None
 
@@ -1578,8 +1598,8 @@ class Symbol:
             return _symbol_spec(
                 self.fn, self.name, self.tag, self.is_hidden, self.activity
             )
-        if self.tag not in ("observation", "mutation"):
-            raise ValueError("vis.Symbol tag must be observation or mutation")
+        if self.tag not in _SYMBOL_TAGS:
+            raise ValueError(f"vis.Symbol tag must be one of {', '.join(_SYMBOL_TAGS)}")
         if self.activity is not None:
             raise ValueError(
                 "declare object Activity on each vis.method(), not its namespace"
@@ -1657,7 +1677,7 @@ class ToolSpec:
 
     version: int
     name: str
-    tag: Literal["observation", "mutation"]
+    tag: _SymbolTag
     description: str
     signature: str
     parameters: tuple[ParameterSpec, ...]

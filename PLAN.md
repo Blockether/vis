@@ -1,3 +1,88 @@
+# Less-noise settled turns
+
+Collapse a finished turn's trace into one digest row that still surfaces what needs attention.
+
+## Context
+
+At clean main `a3f67ab06`, a settled turn paints every step (thinking, folded code and Activity per
+form), so an eight-step turn costs about 100 terminal rows before the answer. Amp's "less noise"
+row is the model. Activity rows already carry `signal`, `state`, `resources`, diff evidence and
+`result_summary`; the tool tag vocabulary is closed to `observation | mutation`, so the contract's
+`verification` signal is unreachable and nothing marks work that leaves the machine.
+
+Owners: `packages/vis-contract/resources/vis-contract/schema/{activity,symbol,gateway}.json` and
+`contract/activity.clj`; `internal/activity/` (new digest beside the reducer);
+`internal/extension/core.clj` and `packages/vis-agent/src/blockether/vis/extension.py` (tags);
+`internal/gateway/state.clj` (`transcript-turn`, `turn-terminal-payload`); `apps/vis-tui`
+(`chat.clj` hydration, `render.clj` `trace-render-entries`, toggles); `apps/vis-companion`
+(`lib/activity.ts`, `ChatContent`/`IterationTrace`); `resources/vis-docs/`. Language extensions in
+`vis-lang-clojure`/`vis-lang-python` declare their own tags.
+
+Rejected: computing the digest in each client (TUI and Companion would drift); parsing shell
+commands to detect tests or pushes; persisting a digest column (needs a migration; a read-time
+projection covers old sessions); reusing the `turn-summary`/`meta-summary` names (taken).
+
+## 1. Contract: signals and digest
+
+- Rationale: one schema-owned vocabulary for tags, signals and the digest, consumed by every surface.
+- Data: add `verification` and `external` tags (symbol/gateway schemas), `external` signal, `$defs/digest`.
+- Acceptance criteria: Clojure registration derives allowed tags from `symbol.json`; the Python SDK
+  accepts and types the new tags; contract fixtures validate; docs explain each tag.
+- Unknowns: none blocking; `generic` stays an Activity-only fallback.
+
+## 2. Engine digest and transport
+
+- Rationale: one pure projection gives both clients identical numbers and attention rows.
+- Data: complete per-form projections (history pages past the first window) in turn order.
+- Acceptance criteria: counts per exact operation, edited files with diff totals, verification
+  verdicts, external actions, resolved failures as retries, unresolved failed/cancelled rows as
+  attention, omitted rows counted; attached to settled transcript turns and terminal events.
+  Tests cover success, resolved and open failure, cancel, empty, omitted, grouped and handle rows.
+- Unknowns: verdict of verification tools whose failing checks still return successfully.
+
+## 3. TUI
+
+- Rationale: the terminal is where the noise hurts most.
+- Data: digest from transcript turns and terminal events; existing band and Activity row painters.
+- Acceptance criteria: settled turns show one band row, pinned attention rows, then the answer;
+  the band and expand-all open today's trace; a toggle restores always-expanded turns; live turns
+  unchanged. Render tests at narrow and wide widths; documentation screenshot.
+- Unknowns: toggle naming beside existing TUI toggles.
+
+## 4. Companion
+
+- Rationale: identical digest on mobile and web.
+- Data: the same wire digest; schema-derived limits.
+- Acceptance criteria: collapsed row with the same wording, attention rows, expansion; vitest and
+  stories; typecheck and lint clean.
+- Unknowns: where settled trace disclosure lives in `ChatContent`.
+
+## 5. Producers, docs and delivery
+
+- Rationale: the digest is only as good as the tags tools declare.
+- Data: core tools (`council.publish` external); language extensions' test and lint tools.
+- Acceptance criteria: user guide and extension docs updated; affected Clojure, Python and
+  Companion checks pass; commits pushed in every touched repository and reported.
+- Unknowns: whether a language extension can declare new tags without breaking older Vis hosts.
+
+## Plan state
+
+1. Done. `verification` and `external` tags, the `external` signal and `$defs/digest` are in the
+   contract; Clojure registration derives tags from `symbol.json`; the SDK types the tags and
+   `ActivityPresentation.verdict`.
+2. Done. `internal/activity/digest.clj` projects settled turns; `gateway/state.clj` attaches the
+   digest to transcript turns and terminal events. A check's own `verdict` answers the open
+   question about failing checks that return successfully.
+3. Done except the screenshot: band row, pinned attention rows, expansion and the
+   `Expand finished turns` toggle, with render tests. The gallery screenshots come from a staged
+   session without a capture script, so they were not retaken.
+4. Done: folded turn in `ChatContent`, the `Expand finished turns` setting, Vitest coverage and the
+   `Components/Assistant message` story.
+5. Done in source: docs, `council.publish` as `external`. `vis-lang-interface` sends verdicts for
+   lint and test runs; `vis-lang-python` and `vis-lang-clojure` tag them `verification` when the
+   host accepts the tag and keep `observation` on older hosts. Their releases and the `vis.yml`
+   pins stay with the maintainer.
+
 # Tool correctness and efficiency audit
 
 Fix reproduced tool defects before adding more prompt instructions.

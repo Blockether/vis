@@ -2193,5 +2193,161 @@
         "by_classification": {}
       }
     }
+  },
+  {
+    "name": "external signal",
+    "valid": true,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "gh_watch",
+          "presenter": "generic",
+          "signal": "external",
+          "state": "succeeded",
+          "summary": "Watched run 42",
+          "duration_ms": 1200,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "run 42 completed"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 1,
+        "by_classification": {
+          "external": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "presentation-verdict",
+    "valid": true,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "presentation-rejects-unknown-verdict",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "flaky"
+          }
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "sections-reject-verdict",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "sections": [
+              {
+                "headline": "unit",
+                "summary": "1 failed",
+                "content": [],
+                "verdict": "failed"
+              }
+            ]
+          }
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
   }
 ]

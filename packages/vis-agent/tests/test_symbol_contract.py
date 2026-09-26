@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args, get_type_hints
 
 import blockether.vis.extension as vis
 import pytest
@@ -318,6 +318,27 @@ def test_nested_namespace_contract_uses_public_names_and_method_tags():
     assert method["name"] == "store.items.put"
     assert method["tag"] == "mutation"
     assert [item["name"] for item in method["parameters"]] == ["value"]
+
+
+@pytest.mark.parametrize("tag", ["verification", "external"])
+def test_method_tags_cover_checks_and_work_beyond_the_session(tag):
+    from blockether.vis import _contracts
+
+    class Tools:
+        @vis.method(tag=tag)
+        def act(self) -> bool:
+            """Run one tagged action."""
+            return True
+
+    contract = vis.Symbol(Tools(), name="tools").contract
+    assert contract["members"][0]["tag"] == tag
+    assert _contracts.validate("symbol", "declaration", contract) == contract
+    tags = _contracts.definition("symbol", "callable")["properties"]["tag"]["enum"]
+    assert list(get_args(get_type_hints(vis.method)["tag"])) == tags
+    with pytest.raises(
+        ValueError, match="observation, mutation, verification, external"
+    ):
+        vis.method(tag="write")
 
 
 def test_contract_matches_the_canonical_schema():

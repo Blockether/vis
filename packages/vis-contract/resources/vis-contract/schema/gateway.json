@@ -1741,7 +1741,9 @@
                     "tag": {
                       "enum": [
                         "observation",
-                        "mutation"
+                        "mutation",
+                        "verification",
+                        "external"
                       ]
                     },
                     "hidden": {

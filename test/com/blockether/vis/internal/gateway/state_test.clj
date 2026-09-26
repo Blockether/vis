@@ -1573,7 +1573,7 @@
                                                              rows)
                        #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                  (zipmap ids (repeat [])))
-                       #'state/transcript-turn (fn [_db _att row]
+                       #'state/transcript-turn (fn [_db _sid _att row]
                                                  (swap! hydrated conj (:id row))
                                                  {:turn_id (:id row)})}
         (fn []
@@ -1626,7 +1626,7 @@
                          (ns-resolve 'com.blockether.vis.internal.gateway.state
                                      'TRANSCRIPT_PAGE_MAX_BYTES)
                          (delay 2000)
-                         #'state/transcript-turn (fn [_db _att row]
+                         #'state/transcript-turn (fn [_db _sid _att row]
                                                    (swap! hydrated conj (:id row))
                                                    {:turn_id (:id row)
                                                     :text (apply str (repeat 900 "x"))})}
@@ -1669,7 +1669,7 @@
                          (ns-resolve 'com.blockether.vis.internal.gateway.state
                                      'TRANSCRIPT_PAGE_MAX_BYTES)
                          (delay 100)
-                         #'state/transcript-turn (fn [_db _att row]
+                         #'state/transcript-turn (fn [_db _sid _att row]
                                                    {:turn_id (:id row)
                                                     :text (apply str (repeat 900 "x"))})}
           (fn []
@@ -1706,7 +1706,7 @@
                                #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                          (zipmap ids (repeat [])))
                                #'state/transcript-turn
-                               (fn [_db _att row]
+                               (fn [_db _sid _att row]
                                  {:turn_id (:id row)
                                   :request_kind kind
                                   :content [{:type "prose"
@@ -4393,7 +4393,7 @@
                                               'TRANSCRIPT_PAGE_MAX_BYTES)
                                   (delay 180)
                                   #'state/transcript-turn
-                                  (fn [_db _att row]
+                                  (fn [_db _sid _att row]
                                     {:turn_id (:id row) :payload (apply str (repeat 100 "x"))})}
                    (fn []
                      (let [newest
@@ -5721,6 +5721,89 @@
              (expect (= "failed" (:status (get-in @registry [sid :turns tid])))))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
 
+(def ^:private digest-first-page
+  {:state :succeeded
+   :counts {:running 0 :succeeded 0 :failed 1 :cancelled 0}
+   :rows [{:id "1"
+           :sequence 1
+           :operation "patch"
+           :presenter :patch
+           :signal :mutation
+           :state :failed
+           :summary "Patch src/a.clj"
+           :error-summary "Stale anchor"
+           :resources []
+           :evidence []}]
+   :omitted {:rows 0 :by-classification {}}
+   :history {:id "history-1" :revision 1 :total 2 :after 0 :next-after 1}})
+
+(def ^:private digest-later-page
+  (assoc digest-first-page
+    :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+    :rows [{:id "2"
+            :sequence 2
+            :operation "patch"
+            :presenter :patch
+            :signal :mutation
+            :state :succeeded
+            :summary "Patch src/a.clj"
+            :resources [{:type :file :id "src/a.clj"}]
+            :evidence [{:kind :diff
+                        :text "src/a.clj"
+                        :lines []
+                        :additions 2
+                        :deletions 1
+                        :modifications 0
+                        :is-truncated false
+                        :is-redacted false}]}]
+    :history {:id "history-1" :revision 1 :total 2 :after 1 :next-after nil}))
+
+(defn- with-digest-history
+  [pages f]
+  (with-redefs-fn {#'persistance/db-list-session-turn-iterations
+                   (fn [_ _]
+                     [{:id "iter-1" :forms [{:activity digest-first-page}]}])
+                   #'persistance/db-list-iterations-attachments-meta (fn [_ _]
+                                                                       {})
+                   #'persistance/db-activity-page (fn [_ sid aid opts]
+                                                    (swap! pages conj [sid aid opts])
+                                                    digest-later-page)}
+    f))
+
+(defdescribe
+  settled-turn-activity-digest-test
+  "A settled turn carries one engine-composed Activity digest over every page of its
+   forms' histories, in the transcript and on the terminal event; a turn in flight has none."
+  (it "summarizes every history page of a settled turn"
+      (let [pages (atom [])]
+        (with-digest-history
+          pages
+          (fn []
+            (let [digest
+                  (:digest
+                    (#'state/transcript-turn ::db "sid-1" {} {:id "turn-1" :status "success"}))]
+              (expect (= "2 mutations · 1 file +2 −1 · 1 retry" (:summary digest)))
+              (expect (= 1 (:retries digest)))
+              (expect (= [] (:attention digest)))
+              (expect (= [["sid-1" "history-1" {:after 1}]] @pages)))))))
+  (it "leaves a turn in flight without a digest"
+      (with-digest-history
+        (atom [])
+        (fn []
+          (expect (not (contains?
+                         (#'state/transcript-turn ::db "sid-1" {} {:id "turn-1" :status "running"})
+                         :digest))))))
+  (it "ships the digest with the terminal event"
+      (with-digest-history (atom [])
+                           (fn []
+                             (expect (= "2 mutations · 1 file +2 −1 · 1 retry"
+                                        (get-in (#'state/turn-terminal-payload
+                                                 "sid-digest"
+                                                 (str (java.util.UUID/randomUUID))
+                                                 "completed"
+                                                 {})
+                                                [:digest :summary])))))))
+
 (defdescribe
   attachment-listing-is-lean-and-filtered-test
   "Artifacts are DESCRIBED cheaply and FETCHED lazily. The list a human is shown
@@ -5751,7 +5834,7 @@
                                                                              {"iter-1" rows})}
           (fn []
             (let [turn
-                  (#'state/transcript-turn ::db {} {:id "turn-1" :position 1})
+                  (#'state/transcript-turn ::db "sid-1" {} {:id "turn-1" :position 1})
 
                   atts
                   (:attachments (first (:iterations turn)))]

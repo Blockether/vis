@@ -43,7 +43,23 @@
 ;; Tool-result contract
 (def ^:private max-trace-frames 12)
 
-(declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
+(def op-tags
+  "Closed set of operation tags a tool can declare, owned by the symbol contract
+   (`symbol.json`, `callable.tag`). Activity reports the tag as each row's signal:
+
+     :observation    reads state without changing it - cat, ls, grep, lookups
+     :mutation       changes local state - files, processes, REPLs, drafts
+     :verification   checks work - tests, lint, CI status
+     :external       reaches people or systems beyond this session - messages,
+                     publications, remote hosts, external services
+
+   Channels that want to color tools by tag look it up themselves; the engine
+   never carries presentation in the tool envelope."
+  (set (map keyword
+            (get-in (contract-document/schema-document "symbol")
+                    ["$defs" "callable" "properties" "tag" "enum"]))))
+
+(declare op-tag op-keyword->tag op-keyword->batch-hint tool-call-name)
 
 (defn- optional-field? [m k pred] (or (not (contains? m k)) (pred (get m k))))
 
@@ -406,7 +422,7 @@
     (optional-field? x :ext.symbol/contract #(contract-document/valid-json? "symbol" "callable" %))
     (optional-field? x :ext.symbol/raw? boolean?)
     (optional-field? x :ext.symbol/hidden? boolean?)
-    (optional-field? x :ext.symbol/tag #{:observation :mutation})
+    (optional-field? x :ext.symbol/tag op-tags)
     (optional-field? x :ext.symbol/presenter keyword?)
     (optional-field? x
                      :ext.symbol/activity
@@ -718,7 +734,7 @@
    channel renderer; raw helpers do not render. Used by both the
    var-based public API and the test-friendly direct-args form below.
 
-   Opts may carry `:tag :observation | :mutation`. When present,
+   Opts may carry `:tag` from `op-tags`. When present,
    `register-extension!` walks the symbol vec and auto-populates the
    global op-keyword -> tag index so call-sites don't need an
    out-of-band registration step per symbol."
@@ -899,9 +915,10 @@
     (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
       (throw (ex-info "Invalid Python Activity declaration" {:type :extension/invalid-activity})))
     (symbol-entry {:symbol sym :fn invoke :doc (str (get spec "doc")) :arglists [argv]}
-                  (cond-> {:tag (get {"observation" :observation "mutation" :mutation}
-                                     (get spec "tag")
-                                     :observation)
+                  (cond-> {:tag (or (some-> (get spec "tag")
+                                            keyword
+                                            op-tags)
+                                    :observation)
                            :contract contract}
                     (get spec "hidden")
                     (assoc :hidden? true)
@@ -1133,7 +1150,7 @@
 
 (defn- validate-symbol-op-tags!
   "Fail closed: every observed extension tool MUST carry an inline
-   `:tag :observation | :mutation` on its `vis/symbol` opts map.
+   `:tag` from `op-tags` on its `vis/symbol` opts map.
    Raw helpers (`:raw? true`) are exempt. `register-extension!`
    walks the symbol vec at registration time and populates the
    global op-keyword -> tag index automatically."
@@ -1150,8 +1167,9 @@
                                  "' symbol '"
                                  (:ext.symbol/symbol sym-entry)
                                  "' is missing mandatory `:tag` on "
-                                 "its (vis/symbol ...) opts map. Declare `:tag :observation` "
-                                 "or `:tag :mutation` inline. (op-keyword for reference: "
+                                 "its (vis/symbol ...) opts map. Declare one of "
+                                 (str/join ", " (map #(str "`:tag " % "`") (sort op-tags)))
+                                 " inline. (op-keyword for reference: "
                                  (pr-str op)
                                  ".)")
                             {:type :extension/missing-op-tag
@@ -2809,25 +2827,9 @@
     (register-fn! environment ext))
   environment)
 
-(def op-tags
-  "Closed set of operation tags a tool can declare. The two values
-   map to the observation/mutation half of the OODA loop. The prior
-   granular enum collapses into these two:
-
-     :observation   reads state without changing it — cat,
-                           ls, exists?, locators, rg, env
-                           queries, registry lookups
-
-     :mutation      mutates state — patch, write, append,
-                           mkdir, touch, delete, move, copy.
-
-   Channels that want to color tools by tag look it up themselves;
-   the engine never carries presentation in the tool envelope."
-  #{:observation :mutation})
-
 (defonce ^:private op-keyword->tag
-  ;; Inverse index from canonical op-keyword to its `:observation` /
-  ;; `:mutation` tag. Populated as a side-effect of `register-extension!`
+  ;; Inverse index from canonical op-keyword to its `op-tags` tag.
+  ;; Populated as a side-effect of `register-extension!`
   ;; from each symbol entry's inline `:ext.symbol/tag` — the sym-entry
   ;; stays the source of truth; this atom is just a cheap lookup for
   ;; sites (e.g. `envelope-of`) that have an op keyword but no sym-entry
@@ -2849,10 +2851,9 @@
   [op-keyword]
   (if-let [tag (get @op-keyword->tag op-keyword)]
     tag
-    (anomaly/incorrect! (str "Unregistered extension op "
-                             (pr-str op-keyword)
-                             " has no mandatory observation/mutation tag")
-                        {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
+    (anomaly/incorrect!
+      (str "Unregistered extension op " (pr-str op-keyword) " has no mandatory tag")
+      {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
 
 (defn op-tag-index
   "Read-only snapshot of the canonical op-keyword -> tag map. Lets

@@ -5537,16 +5537,16 @@
       (when (pos? left) (str left " " (if (= 1 left) "activity" "activities"))))))
 
 (defn- activity-cost-text
-  "WHAT THE ITERATION COST, in the three kinds the wire classifies and no fourth.
+  "WHAT THE ITERATION COST, in the four kinds the wire classifies and no fifth.
 
    The web says this in `activityCostParts` and the two surfaces must read the same:
-   what CHANGED the repository, what only looked at it, what checked it. `generic` is
-   none of them and stays uncounted, because \"something else happened\" is not a
-   number anyone can act on.
+   what CHANGED the repository, what only looked at it, what checked it and what
+   reached outside the machine. `generic` is none of them and stays uncounted, because
+   \"something else happened\" is not a number anyone can act on.
 
    `0 mutations` always prints. Whether this iteration changed anything is the one
    question a receipt is asked, and it is about the rows that are NOT there, so no row
-   on the axis can answer it; the other two kinds speak only when they happened. Rows
+   on the axis can answer it; the other kinds speak only when they happened. Rows
    the ENGINE dropped still count, or a receipt showing four of ten calls would report
    the cost of four."
   ^String [activity]
@@ -5571,7 +5571,10 @@
         (tally "observation")
 
         checks
-        (tally "verification")]
+        (tally "verification")
+
+        external
+        (tally "external")]
 
     (str/join " · "
               (cond-> [(noun (tally "mutation") "mutation")]
@@ -5579,7 +5582,10 @@
                 (conj (noun observations "observation"))
 
                 (pos? (long checks))
-                (conj (noun checks "check"))))))
+                (conj (noun checks "check"))
+
+                (pos? (long external))
+                (conj (noun external "external action"))))))
 
 (defn- activity-status-text
   "The honest execution sentence: the calls this form made, and the state word ONLY
@@ -8775,6 +8781,73 @@
                           (str/includes? answer explanation)))))
                trace))))
 
+(defn- turn-digest-entries
+  "A FINISHED TURN, FOLDED: the engine's one-line digest, the outcomes that still need
+   the reader, then the answer. The row is a disclosure: pressing it, expand-all or the
+   `Expand finished turns` setting opens the full trace beneath it. A turn that called
+   no tool keeps its trace, because the digest would have nothing to count."
+  [digest trace-entries content-w settings {:keys [session-id session-turn-id detail-expansions]}]
+  (if (or (nil? digest)
+          (empty? trace-entries)
+          (zero? (long (or (:operations digest) 0)))
+          (get settings :expand-finished-turns false))
+    trace-entries
+    (let [node-id
+          (detail-node-id {:session-turn-id session-turn-id :section :trace :kind :digest})
+
+          open?
+          (detail-expanded? detail-expansions session-id node-id false)
+
+          width
+          (max 1 (dec (long content-w)))
+
+          attention
+          (vec (:attention digest))
+
+          states
+          (set (map activity-row-state attention))
+
+          tone
+          (cond (or (contains? states :failed)
+                    (contains? states :cancelled)
+                    (some #(= "failed" (str (get-in % [:presentation :verdict]))) attention))
+                :error
+                (contains? states :running) :running
+                :else nil)
+
+          summary
+          {:line (str execution-summary-marker
+                      (ellipsize-cols (str (if open? "▾ " "▸ ") (:summary digest)) width))
+           :meta {:kind :toggle-details
+                  :session-id (str session-id)
+                  :node-id node-id
+                  :collapsed? (not open?)
+                  :status-tone tone
+                  :trace-inset? true}}
+
+          ;; The pinned rows are ordinary Activity rows, so each still opens its own
+          ;; evidence. Only the band header is dropped: the digest row already names it.
+          pinned
+          (when (and (not open?) (seq attention))
+            (->> (activity-detail-entries
+                   {:node-id (str node-id ":attention")
+                    :activity-rows attention
+                    :activity-omitted
+                    (max 0 (- (long (or (:attention-total digest) 0)) (count attention)))
+                    :activity-sources [{:rows attention}]
+                    :activity-expanded? (fn [item-key default-open?]
+                                          (or (= "#band" item-key)
+                                              (detail-expanded? detail-expansions
+                                                                session-id
+                                                                (str node-id ":attention:" item-key)
+                                                                default-open?)))}
+                   width
+                   session-id)
+                 rest
+                 (mapv #(update % :meta assoc :trace-inset? true))))]
+
+      (vec (concat [{:line "" :meta nil} summary] (if open? trace-entries pinned))))))
+
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -8814,6 +8887,13 @@
                                :session-turn-id (:session-turn-id opts)
                                :detail-expansions (:detail-expansions opts)
                                :suppress-trace? suppress-trace?})
+
+        ;; A finished turn folds to its digest until the reader opens it; runs that
+        ;; ended during the bubble stay visible below either shape.
+        trace-entries
+        (if suppress-trace?
+          trace-entries
+          (turn-digest-entries (:digest opts) trace-entries content-w settings opts))
 
         trace-entries
         (into (vec trace-entries) (run-row-entries unplaced-runs content-w (:session-id opts)))
@@ -8960,7 +9040,10 @@
       (:tail-lines opts)
       ;; A run that FINISHED during this bubble adds a row to it, so the
       ;; rail is part of what the cached render is OF.
-      (:runs opts)]
+      (:runs opts)
+      ;; The digest folds a finished turn unless the reader expands every turn.
+      (System/identityHashCode (:digest opts))
+      (boolean (get settings :expand-finished-turns false))]
      #(format-answer-with-thinking-data* answer
                                          trace
                                          bubble-w

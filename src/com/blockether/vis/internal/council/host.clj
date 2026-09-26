@@ -150,7 +150,7 @@
          :result
          "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, kind, content, author_session_id, created_at, source, ping}` plus root `title`, host `source_ref`, and optional `reply_required`, `replies` or `reply_to`. Replies report `{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`; thread summaries: `{thread_id, kind, title, author_session_id, created_at}`."}))
     [[#'members 'council.members :observation ["group_id"]]
-     [#'publish 'council.publish :mutation
+     [#'publish 'council.publish :external
       ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]
       ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
      [#'read 'council.read :observation ["group_id" "thread_id" "after" "limit"]]

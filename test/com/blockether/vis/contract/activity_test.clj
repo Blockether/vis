@@ -57,6 +57,12 @@
     (is (= valid (boolean (activity/from-wire projection))) name)
     (when valid (is (= projection (wire/->wire (activity/from-wire projection))) name))))
 
+(deftest shared-activity-digest-admission-test
+  (doseq [{:strs [name valid digest]}
+          (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-digest.json")))]
+    (is (= valid (boolean (activity/digest-from-wire digest))) name)
+    (when valid (is (= digest (wire/->wire (activity/digest-from-wire digest))) name))))
+
 (deftest shared-operation-groups-test
   ;; Regression #201: extension labels must agree with Companion without changing receipts.
   (doseq [{:strs [name projection groups]}

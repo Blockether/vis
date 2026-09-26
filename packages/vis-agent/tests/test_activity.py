@@ -44,6 +44,16 @@ def test_activity_presentation_links_a_bounded_handle_without_changing_content()
             vis.ActivityPresentation("Compare", "Running", handle_id=invalid)
 
 
+def test_activity_presentation_reports_a_check_verdict():
+    failing = vis.ActivityPresentation(
+        "Run tests", "1 passed, 1 failed", verdict="failed"
+    )
+    assert failing.to_wire()["verdict"] == "failed"
+    assert "verdict" not in vis.ActivityPresentation("Run tests", "2 passed").to_wire()
+    with pytest.raises(ValueError, match="verdict"):
+        vis.ActivityPresentation("Run tests", "2 passed", verdict="green")
+
+
 def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
     class Checks:
         @vis.method(activity=vis.Activity(presenter="tests"))

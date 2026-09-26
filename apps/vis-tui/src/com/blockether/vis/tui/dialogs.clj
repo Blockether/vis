@@ -3066,7 +3066,12 @@
     :type :toggle
     :label "Show Python code and results"
     :description
-    "Show source code and raw results before Activity. Turn off to show only Activity."}])
+    "Show source code and raw results before Activity. Turn off to show only Activity."}
+   {:key :expand-finished-turns
+    :type :toggle
+    :label "Expand finished turns"
+    :description
+    "Show every step of a finished turn instead of its one-line summary and open problems."}])
 
 (declare titleize-label)
 

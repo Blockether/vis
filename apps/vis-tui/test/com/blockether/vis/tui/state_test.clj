@@ -642,22 +642,29 @@
         (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
         (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))
-        (expect (true? (get-in @state/app-db [:settings :show-python-code])))))
+        (expect (true? (get-in @state/app-db [:settings :show-python-code])))
+        (expect (false? (get-in @state/app-db [:settings :expand-finished-turns])))))
   (it "loads the persisted app theme"
       (with-redefs [vis/load-config-raw (fn []
-                                          {"theme_name" "vis-dark" "show_python_code" false})]
+                                          {"theme_name" "vis-dark"
+                                           "show_python_code" false
+                                           "expand_finished_turns" true})]
         (state/init!)
         (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
-        (expect (false? (get-in @state/app-db [:settings :show-python-code])))))
+        (expect (false? (get-in @state/app-db [:settings :show-python-code])))
+        (expect (true? (get-in @state/app-db [:settings :expand-finished-turns])))))
   (it "writes only the app-owned theme and transcript preferences"
       (let [written (atom nil)]
         (with-redefs [vis/update-machine-config! (fn [f]
                                                    (reset! written (f {"vision_memory"
                                                                        {"working_eye" {}}})))]
-          (#'state/persist-settings! {:theme-name :vis-dark :show-python-code false})
-          (expect
-            (= {"vision_memory" {"working_eye" {}} "theme_name" "vis-dark" "show_python_code" false}
-               @written)))))
+          (#'state/persist-settings!
+           {:theme-name :vis-dark :show-python-code false :expand-finished-turns true})
+          (expect (= {"vision_memory" {"working_eye" {}}
+                      "theme_name" "vis-dark"
+                      "show_python_code" false
+                      "expand_finished_turns" true}
+                     @written)))))
   (it "reports a failed preference save instead of silently accepting it"
       (let [notifications (atom [])]
         (with-redefs [vis/update-machine-config! (fn [_]
@@ -6289,3 +6296,97 @@
       (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 0 nil [{:id "r2"}])
                        {:after 0 :revision 4 :query "patch"}])
       (expect (= (scroll/parked 42) (:scroll @state/app-db)))))
+
+;; The gateway's terminal event carries the settled turn's digest, but the blocking
+;; worker may settle the answer before or after that event arrives.
+(defdescribe
+  turn-digest-settle-test
+  (let [ev
+        (fn [k]
+          (-> #'state/event-registry
+              deref
+              deref
+              (get k)
+              :fn))
+
+        digest
+        {:summary "1 mutation"
+         :operations 1
+         :retries 0
+         :groups []
+         :attention []
+         :attention-total 0
+         :omitted 0}
+
+        loading
+        {:active-tab-id :main
+         :session {:id "s1"}
+         :loading? true
+         :gateway-turn-id "turn-1"
+         :live-turn-client-id "c1"
+         :input {}
+         :messages [{:role :user :text "hi" :client-turn-id "c1"}
+                    {:role :assistant :pending? true :client-turn-id "c1"}]
+         :progress {:iterations []}
+         :scroll scroll/follow}
+
+        terminal
+        [:sync-turn-terminal :main
+         {:turn-id "turn-1" :client-id "c1" :status "completed" :digest digest}]
+
+        received
+        (fn [db session-turn-id]
+          (:db ((ev :message-received)
+                 db
+                 [:message-received :main [:ast {} [:p {} [:span {} "Done."]]]
+                  {:client-turn-id "c1" :session-turn-id session-turn-id}])))
+
+        answer
+        (fn [db]
+          (last (:messages db)))]
+
+    (it "parks the digest until the worker settles the answer"
+        (let [synced
+              (:db ((ev :sync-turn-terminal) loading terminal))
+
+              settled
+              (received synced "turn-1")]
+
+          (expect (= {:turn-id "turn-1" :digest digest} (:turn-digest synced)))
+          (expect (:pending? (answer synced)))
+          (expect (not (:pending? (answer settled))))
+          (expect (= digest (:digest (answer settled))))))
+    (it "gives a late digest to the answer the worker already settled"
+        (let [settled
+              (assoc loading
+                :loading? false
+                :messages [{:role :user :text "hi" :client-turn-id "c1"}
+                           {:role :assistant :text "Done." :session-turn-id "turn-1"}])
+
+              synced
+              (:db ((ev :sync-turn-terminal) settled terminal))]
+
+          (expect (= digest (:digest (answer synced))))
+          (expect (nil? (:turn-digest synced)))))
+    (it "never gives one turn's digest to another"
+        (let [synced (:db ((ev :sync-turn-terminal) loading terminal))]
+          (expect (nil? (:digest (answer (received synced "turn-2")))))))
+    (it "settles the digest with the answer when only the terminal event arrives"
+        (let [synced
+              ((ev :sync-turn-terminal) loading terminal)
+
+              [_ workspace-id pending]
+              (some #(when (= :settle-turn-terminal-later (first %)) %) (:fx synced))
+
+              settle
+              ((ev :settle-turn-terminal) (:db synced) [:settle-turn-terminal workspace-id pending])
+
+              [_ dispatched]
+              (first (:fx settle))
+
+              settled
+              (:db ((ev :message-received) (:db settle) dispatched))]
+
+          (expect (= :message-received (first dispatched)))
+          (expect (not (:pending? (answer settled))))
+          (expect (= digest (:digest (answer settled))))))))

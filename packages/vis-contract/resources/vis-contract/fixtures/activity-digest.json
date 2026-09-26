@@ -1,0 +1,771 @@
+[
+  {
+    "name": "a failing check stays pinned",
+    "valid": true,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "an external action without changes",
+    "valid": true,
+    "digest": {
+      "summary": "0 mutations · 1 external action",
+      "operations": 1,
+      "retries": 0,
+      "groups": [
+        {
+          "operation": "gh_watch",
+          "label": "Watch",
+          "signal": "external",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "run 42 completed"
+        }
+      ],
+      "attention": [],
+      "attention_total": 0,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects an unowned field",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0,
+      "turn_id": "t-1"
+    }
+  },
+  {
+    "name": "rejects a group that counted nothing",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 0,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects an unknown verdict",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "flaky",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects more attention rows than the cap",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-5",
+          "sequence": 5,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-6",
+          "sequence": 6,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-7",
+          "sequence": 7,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-8",
+          "sequence": 8,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        },
+        {
+          "id": "call-9",
+          "sequence": 9,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 9,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects a blank summary",
+    "valid": false,
+    "digest": {
+      "summary": "  ",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects partial changes",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "result",
+              "text": "FAILED test_parse"
+            }
+          ],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  },
+  {
+    "name": "rejects a malformed attention row",
+    "valid": false,
+    "digest": {
+      "summary": "1 mutation · 1 file +12 −3 · 2 checks, 1 failing · 1 retry",
+      "operations": 4,
+      "retries": 1,
+      "changes": {
+        "files": 1,
+        "additions": 12,
+        "deletions": 3
+      },
+      "groups": [
+        {
+          "operation": "patch",
+          "label": "Edit",
+          "signal": "mutation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "Edited src/app.py"
+        },
+        {
+          "operation": "grep",
+          "label": "Search",
+          "signal": "observation",
+          "count": 1,
+          "failed": 0,
+          "state": "succeeded",
+          "summary": "3 matches"
+        },
+        {
+          "operation": "run_tests",
+          "label": "Tests",
+          "signal": "verification",
+          "count": 2,
+          "failed": 1,
+          "state": "succeeded",
+          "verdict": "failed",
+          "summary": "3 passed, 1 failed"
+        }
+      ],
+      "attention": [
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "3 passed, 1 failed",
+          "duration_ms": 900,
+          "resources": [],
+          "presentation": {
+            "headline": "Ran tests",
+            "summary": "3 passed, 1 failed",
+            "content": [],
+            "verdict": "failed"
+          }
+        }
+      ],
+      "attention_total": 1,
+      "omitted": 0
+    }
+  }
+]

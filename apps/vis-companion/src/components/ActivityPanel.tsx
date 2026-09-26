@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
 import { BandLabel, BandTally, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
+  ActivityDigest,
   ActivityProjection,
   ActivityResource,
   ActivityRow,
@@ -15,6 +16,7 @@ import {
   activityCopyText,
   activityHistoryCopyText,
   argumentGroups,
+  digestAttentionActivity,
   operationGroups,
   mergeActivity,
   type OperationGroup,
@@ -97,14 +99,15 @@ export interface ActivityCostPart {
 /**
  * WHAT THE ITERATION COST THE REPOSITORY, and the whole of what a closed band says.
  *
- * Three kinds and no fourth: these are the three the wire classifies and the
- * three a reader budgets differently — what CHANGED the repository, what only
- * looked at it, what checked it. `generic` is none of them and stays uncounted,
- * because "something else happened" is not a number anyone can act on.
+ * Four kinds and no fifth: these are the four the wire classifies and the
+ * four a reader budgets differently — what CHANGED the repository, what only
+ * looked at it, what checked it, and what reached OUTSIDE the machine. `generic`
+ * is none of them and stays uncounted, because "something else happened" is not
+ * a number anyone can act on.
  *
  * `0 mutations` always prints. "Did this iteration change anything" is the one
  * question a closed invocation is asked, and it is about the rows that are NOT
- * there, so no row on the axis can answer it. The other two print only when they
+ * there, so no row on the axis can answer it. The other three print only when they
  * happened, because their zero is a fact the page already shows.
  *
  * The rows the engine's own bound DROPPED are counted here from
@@ -113,8 +116,8 @@ export interface ActivityCostPart {
  * can say `+6 more` but never what the six WERE.
  *
  * Colour repeats each noun and never carries it — mutations in the accent, reads
- * in the theme's cool ink, checks in the margin's own — so a reader who cannot
- * separate two hues loses nothing.
+ * in the theme's cool ink, checks in the margin's own, external actions in the
+ * theme's special ink — so a reader who cannot separate two hues loses nothing.
  */
 export function activityCostParts(activity?: ActivityProjection): readonly ActivityCostPart[] {
   const dropped: Record<string, number> = activity?.omitted.by_classification ?? {};
@@ -124,6 +127,7 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
   const noun = (amount: number, word: string) => `${amount} ${word}${amount === 1 ? '' : 's'}`;
   const observations = tally('observation');
   const checks = tally('verification');
+  const external = tally('external');
   return [
     { text: noun(tally('mutation'), 'mutation'), tone: 'text-accent-ink' },
     ...(observations
@@ -135,6 +139,9 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
         ]
       : []),
     ...(checks ? [{ text: noun(checks, 'check'), tone: '' }] : []),
+    ...(external
+      ? [{ text: noun(external, 'external action'), tone: 'text-code-syntax-special' }]
+      : []),
   ];
 }
 
@@ -1184,6 +1191,21 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
         </li>
       )}
     </ol>
+  );
+}
+
+/**
+ * WHAT A FOLDED TURN STILL OWES THE READER: the digest's attention rows, drawn as the
+ * ordinary chronology they are, so each still opens its own evidence. There is no band
+ * header, because the digest row above already says what these rows are.
+ */
+export function ActivityAttention({ digest }: { digest: ActivityDigest }) {
+  const activity = useMemo(() => digestAttentionActivity(digest), [digest]);
+  if (!activity.rows.length) return null;
+  return (
+    <section className="isolate min-w-0" aria-label="Needs attention" data-activity-attention>
+      <ActivityThread activity={activity} />
+    </section>
   );
 }
 

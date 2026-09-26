@@ -967,7 +967,34 @@
                   {"type" "turn.cancelled"
                    "turn_id" "t3"
                    "request_kind" "user"
-                   "subagent" false}]))))))
+                   "subagent" false}]))))
+    (it "carries the settled turn's digest in engine spelling"
+        (let [digest {"summary" "1 mutation"
+                      "operations" 1
+                      "retries" 0
+                      "groups" []
+                      "attention" []
+                      "attention_total" 0
+                      "omitted" 0}]
+          (expect (= {:summary "1 mutation"
+                      :operations 1
+                      :retries 0
+                      :groups []
+                      :attention []
+                      :attention-total 0
+                      :omitted 0}
+                     (:digest (g->c {"type" "turn.completed"
+                                     "turn_id" "t1"
+                                     "status" "completed"
+                                     "digest" digest}))))
+          (expect (= "1 mutation"
+                     (get-in (g->c {"type" "turn.failed" "turn_id" "t2" "digest" digest})
+                             [:digest :summary])))
+          (expect (not (contains? (g->c {"type" "turn.cancelled"
+                                         "turn_id" "t3"
+                                         "digest" (dissoc digest "summary")})
+                                  :digest))
+                  "a digest outside the contract is dropped")))))
 
 (it "rehydrates a structured iteration error for the transient retry row"
     (let [g->c
@@ -1058,6 +1085,34 @@
                      (expect (str/includes? staged filename))
                      (expect (str/includes? (:text user) filename))
                      (expect (not (str/includes? (:text user) "vis-image")))))))
+
+;; A reopened session folds its settled turns exactly like the live settle path.
+(defdescribe settled-turn-digest-history-test
+             (it "restores the digest of a settled turn on its answer"
+                 (let [digest
+                       {"summary" "1 mutation"
+                        "operations" 1
+                        "retries" 0
+                        "groups" []
+                        "attention" []
+                        "attention_total" 0
+                        "omitted" 0}
+
+                       answer
+                       (fn [turn-digest]
+                         (->> (@#'chat/turns->messages
+                               [{"turn_id" "t1"
+                                 "status" "completed"
+                                 "request" "fix it"
+                                 "content" [{"id" "b1" "type" "markdown" "text" "Done."}]
+                                 "digest" turn-digest}])
+                              (filter #(= :assistant (:role %)))
+                              first))]
+
+                   (expect (= "1 mutation" (get-in (answer digest) [:digest :summary])))
+                   (expect (= 0 (get-in (answer digest) [:digest :attention-total])))
+                   (expect (not (contains? (answer (dissoc digest "summary")) :digest))
+                           "a digest outside the contract is dropped"))))
 
 (defdescribe explicit-turn-attachment-test
              (it "passes explicit inline attachments to the canonical gateway request"

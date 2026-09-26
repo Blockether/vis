@@ -463,7 +463,7 @@
   [answer trace wall-ms
    {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count
            duration-ms tokens cost confidence session-turn-id turn-position timestamp status
-           client-turn-id slash]}]
+           client-turn-id slash digest]}]
   (->
     (chat/assistant-message (vec (or answer [])) (or timestamp (java.util.Date.)))
     (cond->
@@ -516,7 +516,46 @@
       (assoc :client-turn-id client-turn-id)
 
       slash
-      (assoc :slash? true))))
+      (assoc :slash? true)
+
+      digest
+      (assoc :digest digest))))
+
+(defn- attach-turn-digest
+  "Give the settled bubble of `turn-id` the digest its terminal event carried. The
+   blocking worker may settle the bubble after that event, so an unsettled turn parks
+   the digest in the tab's one `:turn-digest` slot for `with-parked-digest`."
+  [workspace turn-id digest]
+  (if (or (nil? digest) (nil? turn-id))
+    workspace
+    (let [tid
+          (str turn-id)
+
+          idx
+          (first (keep-indexed (fn [idx message]
+                                 (when (and (= :assistant (:role message))
+                                            (not (pending-assistant-message? message))
+                                            (= tid
+                                               (some-> (:session-turn-id message)
+                                                       str)))
+                                   idx))
+                               (:messages workspace)))]
+
+      (if idx
+        (assoc-in workspace [:messages idx :digest] digest)
+        (assoc workspace :turn-digest {:turn-id tid :digest digest})))))
+
+(defn- with-parked-digest
+  "Completion options with the digest a terminal event parked for the same turn."
+  [workspace completion]
+  (let [{:keys [turn-id digest]} (:turn-digest workspace)]
+    (cond-> completion
+      (and digest
+           (nil? (:digest completion))
+           (= turn-id
+              (some-> (:session-turn-id completion)
+                      str)))
+      (assoc :digest digest))))
 
 (defn- replace-pending-assistant
   "Replace only the pending assistant slot owned by this completion. An
@@ -766,7 +805,9 @@
 
 (def default-settings
   "Per-user terminal preferences stored by the standalone app."
-  {:theme-name (keyword shared-theme/default-theme-id) :show-python-code true})
+  {:theme-name (keyword shared-theme/default-theme-id)
+   :show-python-code true
+   :expand-finished-turns false})
 
 (defn- load-persisted-settings
   []
@@ -774,14 +815,17 @@
     (normalize-settings (merge default-settings
                                (when (map? raw)
                                  {:theme-name (get raw "theme_name")
-                                  :show-python-code (get raw "show_python_code" true)})))))
+                                  :show-python-code (get raw "show_python_code" true)
+                                  :expand-finished-turns (true? (get raw
+                                                                     "expand_finished_turns"))})))))
 
 (defn- persist-settings!
   [settings]
-  (let [{:keys [theme-name show-python-code]} (normalize-settings settings)]
+  (let [{:keys [theme-name show-python-code expand-finished-turns]} (normalize-settings settings)]
     (try (vis/update-machine-config! #(assoc %
                                         "theme_name" (name theme-name)
-                                        "show_python_code" show-python-code))
+                                        "show_python_code" show-python-code
+                                        "expand_finished_turns" (boolean expand-finished-turns)))
          (catch Throwable _
            (vis/notify!
              "Terminal preferences could not be saved; changes apply only to this session."
@@ -4992,13 +5036,22 @@
                         :loading-after? (boolean (and (:loading? target) (not accepted?)))}]]
 
                   (if-not accepted?
-                    {:db db :fx [diagnostic]}
+                    ;; The blocking worker may have settled the bubble already; the
+                    ;; digest still belongs to it.
+                    {:db (cond-> db
+                           (and workspace-id (:digest chunk))
+                           (update-tab workspace-id
+                                       #(attach-turn-digest % turn-id (:digest chunk))))
+                     :fx [diagnostic]}
                     {:db (update-tab db
                                      workspace-id
                                      (fn [workspace]
                                        (cond-> (clear-active-turn-state workspace)
                                          idx
-                                         (assoc-in [:messages idx :terminal-pending] terminal))))
+                                         (assoc-in [:messages idx :terminal-pending] terminal)
+
+                                         :always
+                                         (attach-turn-digest turn-id (:digest chunk)))))
                      :fx (cond-> [diagnostic]
                            idx
                            (conj [:settle-turn-terminal-later workspace-id terminal]))}))))
@@ -5029,7 +5082,8 @@
                   :request-kind (:request-kind terminal)
                   :subagent (:subagent terminal)
                   :terminal-sync? true
-                  :terminal-trace (:trace terminal)})]
+                  :terminal-trace (:trace terminal)
+                  :digest (:digest terminal)})]
 
       (cond (nil? idx) {:db db}
             ;; A resend started during the grace period. Settle only the old bubble;
@@ -6040,7 +6094,7 @@
                                                                           :terminal-pending
                                                                           :trace]))
                                                   nil
-                                                  completion))
+                                                  (with-parked-digest workspace completion)))
                                     :scroll (scroll/settle (:scroll workspace)))
                 :else
                 (let [trace
@@ -6115,7 +6169,10 @@
                           (vec (or answer []))
 
                           response
-                          (completion-response content trace wall-ms completion)
+                          (completion-response content
+                                               trace
+                                               wall-ms
+                                               (with-parked-digest workspace completion))
 
                           messages'
                           (replace-pending-assistant (:messages workspace) response)

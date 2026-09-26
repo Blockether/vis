@@ -2,7 +2,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   activityCopyText,
+  activityDigestFromWire,
   activityHistoryCopyText,
+  digestAttentionActivity,
   mergeActivity,
   argumentGroups,
   operationGroups,
@@ -11,9 +13,12 @@ import {
   ACTIVITY_SIGNALS,
   ACTIVITY_STATES,
   ACTIVITY_TEXT_FORMATS,
+  ACTIVITY_VERDICTS,
+  type ActivityDigest,
 } from './activity';
 import contract from '../../../../packages/vis-contract/resources/vis-contract/schema/activity.json';
 import cases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json';
+import digestCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-digest.json';
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
 import copyCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-copy.json';
@@ -565,4 +570,35 @@ describe('complete retained Activity copy', () => {
       expect(load).toHaveBeenCalledTimes(during ? 1 : 0);
     },
   );
+});
+
+describe('a settled turn digest read off the wire', () => {
+  it('uses the canonical verdicts', () => {
+    expect(ACTIVITY_VERDICTS).toEqual(contract.$defs.verdict.enum);
+  });
+
+  for (const sample of digestCases) {
+    it(`portable digest: ${sample.name}`, () => {
+      expect(activityDigestFromWire(sample.digest)).toEqual(sample.valid ? sample.digest : null);
+    });
+  }
+
+  it('keys attention rows by their place in the digest and counts what the cap left out', () => {
+    const digest = activityDigestFromWire(digestCases[0].digest) as ActivityDigest;
+    const [check] = digest.attention;
+    // Two steps each numbered their own first call `call-3`.
+    const receipt = digestAttentionActivity({
+      ...digest,
+      attention: [check, { ...check, sequence: 1, state: 'failed' }],
+      attention_total: 5,
+    });
+    expect(receipt.rows.map(({ id, sequence }) => ({ id, sequence }))).toEqual([
+      { id: '0:call-3', sequence: 0 },
+      { id: '1:call-3', sequence: 1 },
+    ]);
+    expect(receipt.counts).toEqual({ running: 0, succeeded: 1, failed: 1, cancelled: 0 });
+    expect(receipt.state).toBe('failed');
+    expect(receipt.omitted).toEqual({ rows: 3, by_classification: {} });
+    expect(digest.attention[0].id).toBe('call-3');
+  });
 });

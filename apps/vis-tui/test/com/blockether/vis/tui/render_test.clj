@@ -7094,6 +7094,12 @@ h = 8"
       (doseq [label ["Patched" "Searched" "Ran tests"]]
         (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
+  (it "counts the calls that reached outside the machine, dropped rows included"
+      (let [cost @#'render/activity-cost-text]
+        (expect (= "0 mutations · 1 observation · 2 external actions"
+                   (cost {:rows [{:signal "observation"} {:signal "external"}]
+                          :omitted {:rows 1 :by-classification {:external 1}}})))
+        (expect (= "1 mutation" (cost {:rows [{:signal "mutation"} {:signal "generic"}]})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"
@@ -10315,3 +10321,183 @@ print(paths)"
         (let [{:keys [error targets]} (painted)]
           (expect (nil? error))
           (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))
+
+;; A settled turn used to reprint every program, result and Activity band it ran, so
+;; its answer sat below a wall of finished work. It now folds to the engine's digest
+;; and the problems that remain, until the reader opens it.
+(defdescribe
+  turn-digest-test
+  (let [row
+        (fn [id sequence operation presenter signal state summary & {:as extra}]
+          (merge {"id" id
+                  "sequence" sequence
+                  "operation" operation
+                  "presenter" presenter
+                  "signal" signal
+                  "state" state
+                  "summary" summary
+                  "resources" []
+                  "evidence" []}
+                 extra))
+
+        failing
+        (activity-contract/digest-from-wire
+          {"summary" "1 mutation · 1 file +2 −0 · 1 check, 1 failing"
+           "operations" 3
+           "retries" 0
+           "changes" {"files" 1 "additions" 2 "deletions" 0}
+           "groups" [{"operation" "patch"
+                      "label" "Patched"
+                      "signal" "mutation"
+                      "count" 1
+                      "failed" 0
+                      "state" "succeeded"
+                      "summary" "src/app.clj"}
+                     {"operation" "run_tests"
+                      "label" "Ran tests"
+                      "signal" "verification"
+                      "count" 1
+                      "failed" 1
+                      "state" "failed"
+                      "verdict" "failed"
+                      "summary" "3 passed, 1 failed"}]
+           "attention" [(row "c"
+                             3 "run_tests"
+                             "tests" "verification"
+                             "failed" "3 passed, 1 failed"
+                             "error_summary" "expected 1, got 2")]
+           "attention_total" 1
+           "omitted" 0})
+
+        passing
+        (assoc failing
+          :summary "1 mutation · 1 file +2 −0 · 1 check, passing"
+          :attention []
+          :attention-total 0)
+
+        trace
+        [{:forms
+          [{:code "print(1)"
+            :stdout "ok"
+            :success? true
+            :duration-ms 1200
+            :activity
+            {:state "failed"
+             :counts {:running 0 :succeeded 2 :failed 1 :cancelled 0}
+             :rows [{:id "a" :operation "patch" :signal "mutation" :summary "" :state "succeeded"}
+                    {:id "b" :operation "grep" :signal "observation" :summary "" :state "succeeded"}
+                    {:id "c"
+                     :operation "run_tests"
+                     :signal "verification"
+                     :summary "3 passed, 1 failed"
+                     :state "failed"}]
+             :omitted {:rows 0 :by-classification {}}}}]}]
+
+        layout
+        (fn [width settings expansions digest]
+          (render/format-answer-with-thinking-data "Done."
+                                                   trace
+                                                   width
+                                                   settings
+                                                   nil
+                                                   false
+                                                   {:session-id "s1"
+                                                    :session-turn-id "turn-1"
+                                                    :detail-expansions expansions
+                                                    :digest digest}))
+
+        rendered
+        (fn [width settings expansions digest]
+          (render/invalidate-cache!)
+          (layout width settings expansions digest))
+
+        visible
+        (fn [result]
+          (mapv (comp strip-sentinels strip-ansi) (:lines result)))
+
+        text
+        (fn [result]
+          (str/join "\n" (visible result)))
+
+        summary-row
+        (fn [result]
+          (first (keep (fn [[line meta]]
+                         (when (str/includes? line "1 mutation") {:line line :meta meta}))
+                       (map vector (visible result) (:line-meta result)))))]
+
+    (it "folds the finished turn into its summary and the problems that remain"
+        (doseq [width [40 120]]
+          (let [result (rendered width nil {} failing)
+                {:keys [line meta]} (summary-row result)
+                body (text result)]
+
+            (expect (str/includes? line "▸ 1 mutation"))
+            (expect (= :toggle-details (:kind meta)))
+            (expect (true? (:collapsed? meta)))
+            (expect (= :error (:status-tone meta)) "a failing check colors the summary")
+            (expect (str/includes? body "3 passed, 1 failed"))
+            (expect (str/includes? body "expected 1, got 2") "the failure keeps its evidence")
+            (expect (not (str/includes? body "CODE")))
+            (expect (not (str/includes? body "ACTIVITY")))
+            (expect (< (.indexOf ^String body "1 mutation")
+                       (.indexOf ^String body "expected 1, got 2")
+                       (.indexOf ^String body "Done.")))
+            (expect (every? #(<= (long (p/display-width %)) (- (long width) 4)) (visible result))
+                    (str "every row fits a " width "-column bubble")))))
+    (it "opens every step beneath the summary"
+        (let [node-id
+              (:node-id (:meta (summary-row (rendered 120 nil {} failing))))
+
+              result
+              (rendered 120 nil {["s1" node-id] true} failing)
+
+              {:keys [line meta]}
+              (summary-row result)
+
+              body
+              (text result)]
+
+          (expect (str/includes? line "▾ 1 mutation"))
+          (expect (false? (:collapsed? meta)))
+          (expect (< (.indexOf ^String body "1 mutation")
+                     (.indexOf ^String body "CODE")
+                     (.indexOf ^String body "ACTIVITY")
+                     (.indexOf ^String body "Done.")))
+          (expect (str/includes?
+                    (text (rendered 120 nil {:vis.channel-tui/expand-all-details? true} failing))
+                    "print(1)")
+                  "a full copy includes every step")))
+    (it "shows every step without a summary when Expand finished turns is on"
+        (let [body (text (rendered 120 {:expand-finished-turns true} {} failing))]
+          (expect (not (str/includes? body "1 mutation")))
+          (expect (str/includes? body "CODE"))
+          (expect (str/includes? body "ACTIVITY"))))
+    (it "keeps a passing turn to its one-line summary"
+        (let [result
+              (rendered 120 nil {} passing)
+
+              body
+              (text result)]
+
+          (expect (str/includes? body "▸ 1 mutation · 1 file +2 −0 · 1 check, passing"))
+          (expect (nil? (:status-tone (:meta (summary-row result)))))
+          (expect (not (str/includes? body "run_tests")))
+          (expect (not (str/includes? body "CODE")))))
+    (it "keeps the trace of a turn that ran no operation"
+        (let [body (text (rendered 120 nil {} (assoc passing :operations 0)))]
+          (expect (not (str/includes? body "1 mutation")))
+          (expect (str/includes? body "CODE"))))
+    (it "lays out again when the digest or the setting changes"
+        (render/invalidate-cache!)
+        (let [plain
+              (text (layout 120 nil {} nil))
+
+              folded
+              (text (layout 120 nil {} failing))
+
+              expanded
+              (text (layout 120 {:expand-finished-turns true} {} failing))]
+
+          (expect (not (str/includes? plain "1 mutation")))
+          (expect (str/includes? folded "▸ 1 mutation"))
+          (expect (not (str/includes? expanded "1 mutation")))))))

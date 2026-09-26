@@ -23,9 +23,14 @@ import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
 import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
-import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
-import { mergeActivity, type ActivityProjection } from '../lib/activity';
-import { usePythonCodeShown } from '../lib/transcript-display';
+import { ActivityAttention, ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
+import {
+  activityDigestFromWire,
+  mergeActivity,
+  type ActivityDigest,
+  type ActivityProjection,
+} from '../lib/activity';
+import { useFinishedTurnsExpanded, usePythonCodeShown } from '../lib/transcript-display';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
@@ -2609,6 +2614,27 @@ const TraceSegment = memo(function TraceSegment({
 
 const NO_LIVE_VIEWS: LiveViewModel[] = [];
 
+/** Activity attachment IDs resolve only against this turn's own iterations. */
+function iterationAttachment(
+  iterations: TranscriptIteration[],
+  client?: GatewayClient,
+  sid?: string,
+): (id: string) => ReactNode {
+  return (id) => {
+    const attachment = iterations
+      .flatMap((iteration) =>
+        (iteration.attachments ?? []).map((item) => ({
+          ...item,
+          iteration_id: item.iteration_id ?? iteration.id,
+        })),
+      )
+      .find((item) => item.attachment_id === id);
+    return attachment && client && sid ? (
+      <AttachmentRail client={client} sid={sid} attachments={[attachment]} />
+    ) : null;
+  };
+}
+
 export const IterationTrace = memo(function IterationTrace({
   iterations,
   answered = NOTHING_ANSWERED,
@@ -2737,21 +2763,7 @@ export const IterationTrace = memo(function IterationTrace({
   );
   if (!segments.length && !unmatchedViews.length) return null;
   return (
-    <ActivityAttachmentContext.Provider
-      value={(id) => {
-        const attachment = iterations
-          .flatMap((iteration) =>
-            (iteration.attachments ?? []).map((item) => ({
-              ...item,
-              iteration_id: item.iteration_id ?? iteration.id,
-            })),
-          )
-          .find((item) => item.attachment_id === id);
-        return attachment && client && sid ? (
-          <AttachmentRail client={client} sid={sid} attachments={[attachment]} />
-        ) : null;
-      }}
-    >
+    <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
       <div ref={rootRef} className="mb-2.5 grid gap-2.5">
         {rampDone && hidden > 0 && (
           <LoadMore
@@ -3623,6 +3635,71 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   );
 }
 
+/**
+ * A FINISHED TURN, FOLDED: the engine's one-line digest, the outcomes that still need the
+ * reader, then the answer. The row is a disclosure: pressing it opens the whole trace beneath
+ * it, and the `Expand finished turns` setting opens every finished turn. The trace mounts on
+ * the first press and then stays, so what the reader opened inside it survives folding the
+ * turn again. Live views stay below a folded turn: a server the turn started can still be
+ * running after the turn has ended.
+ */
+function FoldedTurn({
+  digest,
+  iterations,
+  client,
+  sid,
+  liveViews,
+  children,
+}: {
+  digest: ActivityDigest;
+  iterations: TranscriptIteration[];
+  client?: GatewayClient;
+  sid?: string;
+  liveViews?: LiveViewModel[];
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const failing = digest.attention.some(
+    (row) =>
+      row.state === 'failed' ||
+      row.state === 'cancelled' ||
+      row.presentation?.verdict === 'failed',
+  );
+  return (
+    <>
+      <div className={`grid min-w-0 gap-1 ${open ? '' : 'mb-2.5'}`} data-turn-digest>
+        <Disclosure
+          tone="chronology"
+          density="comfortable"
+          isOpen={open}
+          onClick={() => {
+            setOpen((value) => !value);
+            setMounted(true);
+          }}
+        >
+          <span className={`min-w-0 break-words ${failing ? 'text-err' : ''}`}>
+            {digest.summary}
+          </span>
+        </Disclosure>
+        {!open && (
+          <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
+            <ActivityAttention digest={digest} />
+          </ActivityAttachmentContext.Provider>
+        )}
+        {!open && client && sid && liveViews?.length ? (
+          <LiveView views={liveViews} client={client} sid={sid} />
+        ) : null}
+      </div>
+      {mounted && (
+        <div className="mt-1" hidden={!open}>
+          {children}
+        </div>
+      )}
+    </>
+  );
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   agentName = 'Vis',
@@ -3700,6 +3777,29 @@ export const AssistantMessage = memo(function AssistantMessage({
   // arming it cannot change the height it was armed with.
   const paintSkip = useMeasuredPaintSkip(streaming);
 
+  // A finished turn folds to the engine's digest of it; the turn being written never does,
+  // and neither does a turn whose trace has nothing to fold.
+  const expandFinished = useFinishedTurnsExpanded();
+  const digest = useMemo(
+    () => (streaming ? null : activityDigestFromWire(turn.digest)),
+    [streaming, turn.digest],
+  );
+  const folding =
+    !expandFinished && digest && digest.operations > 0 && (turn.iterations?.length ?? 0) > 0
+      ? digest
+      : null;
+  const trace = (
+    <IterationTrace
+      iterations={turn.iterations ?? []}
+      answered={answered}
+      live={streaming}
+      whole={whole}
+      client={client}
+      sid={sid}
+      liveViews={liveViews}
+    />
+  );
+
   return (
     <article
       className="flow-root mt-4 w-full"
@@ -3733,15 +3833,19 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       </div>
       <div className="min-w-0 [&>:first-child]:mt-0">
-        <IterationTrace
-          iterations={turn.iterations ?? []}
-          answered={answered}
-          live={streaming}
-          whole={whole}
-          client={client}
-          sid={sid}
-          liveViews={liveViews}
-        />
+        {folding ? (
+          <FoldedTurn
+            digest={folding}
+            iterations={turn.iterations ?? []}
+            client={client}
+            sid={sid}
+            liveViews={liveViews}
+          >
+            {trace}
+          </FoldedTurn>
+        ) : (
+          trace
+        )}
         {/* Desktop messages share the reading scale with the composer and session title.
             Controls and tool payloads stay compact; touch keeps its existing density. */}
         {(blocks.length > 0 || fallback || emptyStatus) && (

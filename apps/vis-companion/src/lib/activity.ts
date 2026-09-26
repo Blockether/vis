@@ -23,6 +23,8 @@ const PAGE_BYTE_TARGET = activitySchema.$defs.projection.properties.history['x-v
 const RESOURCE_LIMIT = activitySchema.$defs.row.properties.resources.maxItems;
 const SUMMARY_BYTE_LIMIT = activitySchema.$defs.section.properties.summary['x-vis-max-bytes'];
 const HANDLE_LIMIT = activitySchema.$defs.handle_id;
+const DIGEST_GROUP_LIMIT = activitySchema.$defs.digest.properties.groups.maxItems;
+const DIGEST_ATTENTION_LIMIT = activitySchema.$defs.digest.properties.attention.maxItems;
 
 type RowSchema = {
   properties: Record<string, { items?: { $ref: string } }>;
@@ -124,6 +126,8 @@ function optionalText(value: unknown): string | undefined {
 export const ACTIVITY_PRESENTERS = activitySchema.$defs.presenter.enum as readonly ActivityPresenter[];
 export const ACTIVITY_SIGNALS = activitySchema.$defs.signal.enum as readonly ActivitySignal[];
 export const ACTIVITY_STATES = activitySchema.$defs.state.enum as readonly ActivityState[];
+/** A check's own outcome, which can fail inside a call that itself succeeded. */
+export const ACTIVITY_VERDICTS = activitySchema.$defs.verdict.enum as readonly ActivityVerdict[];
 /**
  * How a row's own words are to be READ. Absent means literal: a path, a glob or a command
  * must never be re-read as markup, so the engine DECLARES the format per field and the
@@ -143,8 +147,9 @@ export type ActivityPresenter =
   | 'format'
   | 'list';
 export type ActivityTextFormat = 'inline' | 'markdown';
-export type ActivitySignal = 'generic' | 'observation' | 'mutation' | 'verification';
+export type ActivitySignal = 'generic' | 'observation' | 'mutation' | 'verification' | 'external';
 export type ActivityState = 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type ActivityVerdict = 'passed' | 'failed';
 
 export interface ActivityResource {
   type: string;
@@ -283,6 +288,7 @@ export interface ActivitySection {
 export interface ActivityPresentation extends ActivitySection {
   sections?: ActivitySection[];
   handle_id?: string;
+  verdict?: ActivityVerdict;
 }
 
 function validHandleId(value: unknown): value is string {
@@ -302,8 +308,10 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       'sections',
       'summary_format',
       'handle_id',
+      'verdict',
     ]) ||
-    (raw.handle_id !== undefined && !validHandleId(raw.handle_id))
+    (raw.handle_id !== undefined && !validHandleId(raw.handle_id)) ||
+    (raw.verdict !== undefined && !activityEnum(raw.verdict, ACTIVITY_VERDICTS))
   )
     return null;
   const sections = raw.sections === undefined ? [] : raw.sections;
@@ -316,7 +324,7 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       !hasExactKeys(
         section,
         ['headline', 'summary', 'content'],
-        index === 0 ? ['sections', 'summary_format', 'handle_id'] : ['summary_format'],
+        index === 0 ? ['sections', 'summary_format', 'handle_id', 'verdict'] : ['summary_format'],
       )
     )
       return null;
@@ -800,6 +808,165 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     omitted: {
       rows: omittedRows,
       by_classification: Object.fromEntries(omittedEntries) as Record<string, number>,
+    },
+  };
+}
+
+/** One kind of call a finished turn made, counted: `run_tests ×3`, one of them failing. */
+export interface ActivityDigestGroup {
+  operation: string;
+  label: string;
+  signal: ActivitySignal;
+  count: number;
+  failed: number;
+  state: ActivityState;
+  verdict?: ActivityVerdict;
+  summary: string;
+}
+
+/**
+ * A FINISHED TURN IN ONE LINE, composed by the engine from every operation the turn ran.
+ *
+ * `summary` is painted verbatim: the engine already decided what changed, what was checked
+ * and what reached outside the machine, so no client recounts it. `attention` holds the
+ * outcomes that still need the reader — ordinary Activity rows, capped by the contract —
+ * and `attention_total` counts them before the cap.
+ */
+export interface ActivityDigest {
+  summary: string;
+  operations: number;
+  retries: number;
+  changes?: { files: number; additions: number; deletions: number };
+  groups: ActivityDigestGroup[];
+  attention: ActivityRow[];
+  attention_total: number;
+  omitted: number;
+}
+
+function activityDigestGroupFromWire(value: unknown): ActivityDigestGroup | null {
+  const raw = record(value);
+  if (
+    !raw ||
+    !hasExactKeys(
+      raw,
+      ['operation', 'label', 'signal', 'count', 'failed', 'state', 'summary'],
+      ['verdict'],
+    )
+  )
+    return null;
+  const operation = optionalText(raw.operation);
+  const label = optionalText(raw.label);
+  const signal = activityEnum(raw.signal, ACTIVITY_SIGNALS);
+  const count = activityCount(raw.count);
+  const failed = activityCount(raw.failed);
+  const state = activityEnum(raw.state, ACTIVITY_STATES);
+  const verdict =
+    raw.verdict === undefined ? undefined : activityEnum(raw.verdict, ACTIVITY_VERDICTS);
+  if (
+    !operation ||
+    !label ||
+    !signal ||
+    !count ||
+    failed === null ||
+    !state ||
+    verdict === null ||
+    typeof raw.summary !== 'string'
+  )
+    return null;
+  return {
+    operation,
+    label,
+    signal,
+    count,
+    failed,
+    state,
+    ...(verdict ? { verdict } : {}),
+    summary: raw.summary,
+  };
+}
+
+/** A settled turn's digest, or null when the wire value breaks the contract anywhere. */
+export function activityDigestFromWire(value: unknown): ActivityDigest | null {
+  const raw = record(value);
+  if (
+    !raw ||
+    !hasExactKeys(
+      raw,
+      ['summary', 'operations', 'retries', 'groups', 'attention', 'attention_total', 'omitted'],
+      ['changes'],
+    ) ||
+    !Array.isArray(raw.groups) ||
+    raw.groups.length > DIGEST_GROUP_LIMIT ||
+    !Array.isArray(raw.attention) ||
+    raw.attention.length > DIGEST_ATTENTION_LIMIT
+  )
+    return null;
+  let changes: ActivityDigest['changes'];
+  if (raw.changes !== undefined) {
+    const shape = record(raw.changes);
+    if (!shape || !hasExactKeys(shape, ['files', 'additions', 'deletions'])) return null;
+    const [files, additions, deletions] = [shape.files, shape.additions, shape.deletions].map(
+      activityCount,
+    );
+    if (files === null || additions === null || deletions === null) return null;
+    changes = { files, additions, deletions };
+  }
+  const summary = optionalText(raw.summary);
+  const operations = activityCount(raw.operations);
+  const retries = activityCount(raw.retries);
+  const attentionTotal = activityCount(raw.attention_total);
+  const omitted = activityCount(raw.omitted);
+  const groups = raw.groups.map(activityDigestGroupFromWire);
+  const attention = raw.attention.map((row) => activityRowFromWire(row));
+  if (
+    !summary ||
+    operations === null ||
+    retries === null ||
+    attentionTotal === null ||
+    omitted === null ||
+    groups.some((group) => group === null) ||
+    attention.some((row) => row === null)
+  )
+    return null;
+  return {
+    summary,
+    operations,
+    retries,
+    ...(changes ? { changes } : {}),
+    groups: groups as ActivityDigestGroup[],
+    attention: attention as ActivityRow[],
+    attention_total: attentionTotal,
+    omitted,
+  };
+}
+
+/**
+ * The digest's attention rows as one inline receipt the Activity chronology can paint.
+ *
+ * The rows come from different steps, whose row IDs are unique only within their own
+ * step, so each is keyed again by its place in the digest, and its sequence becomes that
+ * place: the engine already listed them in the order they happened. What the cap left
+ * out is counted, never invented.
+ */
+export function digestAttentionActivity(digest: ActivityDigest): ActivityProjection {
+  const keyed = (row: ActivityRow, scope: number): ActivityRow => ({
+    ...row,
+    id: `${scope}:${row.id}`,
+    ...(row.children ? { children: row.children.map((child) => keyed(child, scope)) } : {}),
+  });
+  const rows = digest.attention.map((row, index) => ({ ...keyed(row, index), sequence: index }));
+  const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
+  for (const row of rows) if (row.state !== 'idle') counts[row.state] += 1;
+  const state =
+    (['running', 'failed', 'cancelled', 'succeeded'] as const).find((state) => counts[state] > 0) ??
+    'idle';
+  return {
+    state,
+    counts,
+    rows,
+    omitted: {
+      rows: Math.max(0, digest.attention_total - rows.length),
+      by_classification: {},
     },
   };
 }

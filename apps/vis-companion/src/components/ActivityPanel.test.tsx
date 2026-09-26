@@ -841,6 +841,19 @@ describe('what the iteration cost', () => {
       }).map((part) => part.text),
     ).toEqual(['6 mutations', '2 observations']);
   });
+
+  it('counts the calls that reached outside the machine, dropped rows included', () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+    const parts = activityCostParts({
+      ...projection,
+      rows: [{ ...first, signal: 'external' as const }, ...rest],
+      omitted: { rows: 1, by_classification: { external: 1 } },
+    });
+
+    expect(parts.map((part) => part.text)).toEqual(['0 mutations', '1 check', '2 external actions']);
+    expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
+  });
 });
 
 describe('the axis is built from the closed vocabulary', () => {

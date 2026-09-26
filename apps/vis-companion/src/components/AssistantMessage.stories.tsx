@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import { AssistantMessage, UserMessage } from './ChatContent';
+import digestCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-digest.json';
+import type { TranscriptTurn } from '../lib/types';
 
 const response = `## Walidacja strategii
 
@@ -245,5 +247,84 @@ export const TurnHeaders: Story = {
       expect(stamp.bottom).toBeLessThanOrEqual(bounds.bottom + 1);
       expect(getComputedStyle(time.parentElement!).opacity).toBe('1');
     }
+  },
+};
+
+const [failingDigest] = digestCases.filter((sample) => sample.valid).map((sample) => sample.digest);
+
+const foldedTurn = {
+  turn_id: 'folded-turn',
+  position: 7,
+  status: 'completed',
+  iterations: [
+    {
+      id: 'iteration-1',
+      position: 1,
+      forms: [
+        {
+          source: 'run_tests()',
+          activity: {
+            state: 'succeeded',
+            counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
+            rows: failingDigest.attention,
+            omitted: { rows: 0, by_classification: {} },
+          },
+        },
+      ],
+    },
+  ],
+  content: [{ id: 'answer', type: 'prose', markdown: 'The parser still fails one test.' }],
+  digest: failingDigest,
+} as unknown as TranscriptTurn;
+
+// A finished turn folds to the engine's digest: one row, the failing check pinned beneath it,
+// then the answer. Pressing the row opens the whole trace in place of the pinned outcomes.
+export const FoldedFinishedTurn: Story = {
+  render: () => (
+    <div className="space-y-6">
+      {[280, 720].map((width) => (
+        <section key={width} data-width={width} style={{ width, maxWidth: '100%' }}>
+          <AssistantMessage turn={foldedTurn} />
+        </section>
+      ))}
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const sections = [...canvasElement.querySelectorAll<HTMLElement>('[data-width]')];
+    expect(sections).toHaveLength(2);
+    for (const section of sections) {
+      const scope = within(section);
+      const row = scope.getByRole('button', { name: failingDigest.summary });
+      const attention = section.querySelector('[data-activity-attention]')!;
+      const answer = scope.getByText('The parser still fails one test.');
+
+      expect(row).toHaveAttribute('aria-expanded', 'false');
+      expect(attention).toBeVisible();
+      expect(attention).toHaveTextContent('3 passed, 1 failed');
+      expect(answer).toBeVisible();
+      expect(section.querySelector('[data-activity-axis]')).toBeNull();
+      // The summary wraps inside the column instead of widening it, and the order holds:
+      // digest, pinned outcome, answer.
+      const bounds = section.getBoundingClientRect();
+      expect(row.getBoundingClientRect().right).toBeLessThanOrEqual(bounds.right + 1);
+      expect(attention.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        row.getBoundingClientRect().bottom - 1,
+      );
+      expect(answer.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        attention.getBoundingClientRect().bottom - 1,
+      );
+    }
+
+    const [narrow, wide] = sections;
+    await userEvent.click(within(narrow).getByRole('button', { name: failingDigest.summary }));
+    expect(within(narrow).getByRole('button', { name: failingDigest.summary })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(narrow.querySelector('[data-activity-axis]')).toBeVisible();
+    expect(narrow.querySelector('[data-activity-attention]')).toBeNull();
+    // Each turn folds on its own: the other width keeps its digest.
+    expect(wide.querySelector('[data-activity-attention]')).toBeVisible();
+    expect(wide.querySelector('[data-activity-axis]')).toBeNull();
   },
 };

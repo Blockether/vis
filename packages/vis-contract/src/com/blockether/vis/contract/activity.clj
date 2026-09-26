@@ -28,6 +28,10 @@
 (def diff-line-byte-limit
   (get-in schema ["$defs" "diff_line" "properties" "text" "x-vis-truncate-bytes"]))
 
+(def digest-group-limit (get-in schema ["$defs" "digest" "properties" "groups" "maxItems"]))
+
+(def digest-attention-limit (get-in schema ["$defs" "digest" "properties" "attention" "maxItems"]))
+
 (defn valid-handle-id?
   "Opaque, bounded identity for receipts belonging to one live operation."
   [value]
@@ -98,6 +102,11 @@
   (when (and (document/valid-json? "activity" "projection" value) (valid-projection? value))
     (wire/->engine value)))
 
+(defn digest-from-wire
+  "Valid settled-turn digest in engine spelling, or nil."
+  [value]
+  (when (document/valid-json? "activity" "digest" value) (wire/->engine value)))
+
 (defn- first-invocation-id
   [row]
   (:id (if (and (seq (:children row)) (or (:handle-id row) (= "shell" (:operation row))))
@@ -125,11 +134,18 @@
               {:id (first-invocation-id (first members)) :rows members}))
           (distinct (map group-key ordered)))))
 
+(defn operation-label
+  "Canonical label for a known operation; otherwise the first nonblank presentation
+   headline among `rows` in the order given, falling back to the operation name."
+  [operation rows]
+  (or (get-in schema ["$defs" "row" "properties" "operation" "x-vis-group-labels" operation])
+      (first (remove str/blank? (map (comp :headline :presentation) rows)))
+      operation))
+
 (defn operation-groups
-  "One group per exact operation across the block, ordered by first entry.
-   Known operations use canonical labels; otherwise use the first nonblank presentation
-   headline in invocation order, falling back to the operation name when none is present.
-   Preserve member order and shell evidence, with the first invocation as disclosure identity."
+  "One group per exact operation across the block, ordered by first entry, labelled by
+   `operation-label` in invocation order. Preserve member order and shell evidence, with
+   the first invocation as disclosure identity."
   [rows]
   (let [ordered
         (sort-by :sequence rows)
@@ -138,18 +154,9 @@
         (group-by :operation ordered)]
 
     (mapv (fn [operation]
-            (let [members
-                  (get grouped operation)
-
-                  row
-                  (first members)]
-
-              {:id (first-invocation-id row)
-               :label (or (get-in schema
-                                  ["$defs" "row" "properties" "operation" "x-vis-group-labels"
-                                   operation])
-                          (first (remove str/blank? (map (comp :headline :presentation) members)))
-                          operation)
+            (let [members (get grouped operation)]
+              {:id (first-invocation-id (first members))
+               :label (operation-label operation members)
                :rows members}))
           (distinct (map :operation ordered)))))
 

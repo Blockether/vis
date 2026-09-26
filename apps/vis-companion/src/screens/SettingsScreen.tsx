@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GatewayConn, SpeechPrefs, ThemePref } from '../lib/types';
 import { applyTheme } from '../lib/theme';
-import { usePythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
+import {
+  setFinishedTurnsExpanded,
+  setPythonCodeShown,
+  useFinishedTurnsExpanded,
+  usePythonCodeShown,
+} from '../lib/transcript-display';
 import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
 import { speechOutput } from '../lib/speech';
 import { MinusIcon, PlusIcon } from '../components/icons';
@@ -71,6 +76,7 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const showPythonCode = usePythonCodeShown();
+  const expandFinishedTurns = useFinishedTurnsExpanded();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
@@ -269,21 +275,39 @@ export function SettingsDialog({
             )}
 
             <SettingsPanel title="Transcript">
-              <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
-                <div className="min-w-0 space-y-1">
-                  <Text as="p" variant="label">
-                    Show Python code and results
-                  </Text>
-                  <Text as="p" variant="description">
-                    Show source code and raw results before Activity. Turn off to show only
-                    Activity.
-                  </Text>
+              <div className="divide-y divide-dialog-edge">
+                <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                  <div className="min-w-0 space-y-1">
+                    <Text as="p" variant="label">
+                      Show Python code and results
+                    </Text>
+                    <Text as="p" variant="description">
+                      Show source code and raw results before Activity. Turn off to show only
+                      Activity.
+                    </Text>
+                  </div>
+                  <Switch
+                    label="Show Python code and results"
+                    isOn={showPythonCode}
+                    onClick={() => setPythonCodeShown(!showPythonCode)}
+                  />
                 </div>
-                <Switch
-                  label="Show Python code and results"
-                  isOn={showPythonCode}
-                  onClick={() => setPythonCodeShown(!showPythonCode)}
-                />
+                <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                  <div className="min-w-0 space-y-1">
+                    <Text as="p" variant="label">
+                      Expand finished turns
+                    </Text>
+                    <Text as="p" variant="description">
+                      Show every step of a finished turn instead of its one-line summary and
+                      open problems.
+                    </Text>
+                  </div>
+                  <Switch
+                    label="Expand finished turns"
+                    isOn={expandFinishedTurns}
+                    onClick={() => setFinishedTurnsExpanded(!expandFinishedTurns)}
+                  />
+                </div>
               </div>
             </SettingsPanel>
             <SettingsPanel title="Theme">

@@ -21,8 +21,12 @@ enough for a text result; a frozen dataclass helps when several fields have
 different meanings.
 
 Keep reads separate from mutations. Mark state-changing tools with
-`tag="mutation"`, or `@vis.method(tag="mutation")` on a namespace method. The tag
-describes the operation; it does not grant permission or enforce a policy.
+`tag="mutation"`, or `@vis.method(tag="mutation")` on a namespace method. Mark
+tools that check work, such as tests and lint, with `tag="verification"`, and
+tools that reach people or systems outside the session with `tag="external"`.
+Vis uses the tag to summarize a finished turn; see
+[Report checks and outside effects](extension-api.md#report-checks-and-outside-effects).
+The tag describes the operation; it does not grant permission or enforce a policy.
 Validate domain constraints in the implementation and raise a useful exception
 when they fail. Type annotations describe the API; they do not validate calls.
 

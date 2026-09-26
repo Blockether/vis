@@ -349,6 +349,14 @@ Activities show actions and their results in the conversation. Use
 device. You can send a follow-up or stop a task while it runs; see
 [Controlling a session](queue-and-cancel.md).
 
+When a turn finishes, Vis folds its steps into one summary line, such as
+`2 mutations · 2 files +40 −12 · 6 observations · 2 checks, passing`. Problems
+that still need you stay listed under that line: a change, check or outside
+action that failed or was cancelled, and a check that found failures. Select the
+line to show every step, and select it again to fold the turn. To always see
+every step, turn on **Expand finished turns** in Settings. The terminal and each
+app keep their own choice.
+
 ### Keep useful work when you return
 
 Return to a session to continue its conversation. Reusable helper definitions

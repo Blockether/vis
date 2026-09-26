@@ -23,7 +23,8 @@
         "generic",
         "observation",
         "mutation",
-        "verification"
+        "verification",
+        "external"
       ]
     },
     "state": {
@@ -34,6 +35,13 @@
         "succeeded",
         "failed",
         "cancelled"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed"
       ]
     },
     "text_format": {
@@ -912,6 +920,9 @@
         },
         "handle_id": {
           "$ref": "#/$defs/handle_id"
+        },
+        "verdict": {
+          "$ref": "#/$defs/verdict"
         }
       },
       "required": [
@@ -925,6 +936,121 @@
       "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
       "maxLength": 256,
       "x-vis-max-bytes": 512
+    },
+    "digest_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "label": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "signal": {
+          "$ref": "#/$defs/signal"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "verdict": {
+          "$ref": "#/$defs/verdict"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "label",
+        "signal",
+        "count",
+        "failed",
+        "state",
+        "summary"
+      ]
+    },
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "operations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "additions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "files",
+            "additions",
+            "deletions"
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest_group"
+          },
+          "maxItems": 32
+        },
+        "attention": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/row"
+          },
+          "maxItems": 8
+        },
+        "attention_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "summary",
+        "operations",
+        "retries",
+        "groups",
+        "attention",
+        "attention_total",
+        "omitted"
+      ]
     }
   },
   "$ref": "#/$defs/projection"

@@ -83,8 +83,10 @@ vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity
 ```
 
 `name=None` uses a function's name; set `name` explicitly for an object namespace.
-`tag` is `observation` or `mutation`. `is_hidden=True` removes a callable from
-model-facing discovery but does not make it inaccessible or authorize its use.
+`tag` is `observation`, `mutation`, `verification` or `external`; see
+[Report checks and outside effects](#report-checks-and-outside-effects).
+`is_hidden=True` removes a callable from model-facing discovery but does not
+make it inaccessible or authorize its use.
 Every exported callable needs a nonblank docstring and an explicit activity
 presentation. `activity=None` leaves only engine execution evidence; it does not
 create a result view. Do not rely on this omission for a finished extension.
@@ -396,6 +398,44 @@ text. Optional `revision` pins either request to the version you read; a changed
 revision returns 409. An export interrupted by a concurrent change is marked
 incomplete and must be retried. Old receipts that already lost records retain
 their original omission warning; the missing data cannot be reconstructed.
+
+### Report checks and outside effects
+
+The `tag` on a tool tells Vis what kind of work each call did. When a turn ends,
+Vis folds its steps into one summary line, such as
+`2 mutations · 2 files +40 −12 · 6 observations · 2 checks, 1 failing`, and the
+tags decide where each call is counted:
+
+| Tag | Use it for |
+|---|---|
+| `observation` | Reads that change nothing, such as searches and status queries. |
+| `mutation` | Changes to local state, such as writing files or starting a process. |
+| `verification` | Checks of the work, such as tests, lint and CI status. |
+| `external` | Work that reaches people or systems outside the session, such as messages, publications and remote hosts. |
+
+A check can finish without an error and still find problems: a test run that
+reports two failures did its job. Set `verdict` on the top-level
+`ActivityPresentation` to say what the check found:
+
+```python
+vis.ActivityPresentation(
+    "Run tests",
+    "38 passed, 2 failed",
+    verdict="failed",
+)
+```
+
+`verdict` is `"passed"` or `"failed"`; sections do not accept it. Leave it out
+for calls that check nothing.
+
+Below the summary line, the folded turn keeps the outcomes that still need the
+reader: a change, check or external action that failed, was cancelled or is
+still running, and a check whose verdict is `"failed"`. A failed read is not
+listed. A later call of the same operation settles an earlier outcome: the latest
+run of a check, or a call that covers the same resources. When that later call
+passes, the summary counts the earlier failure as a retry instead of listing it.
+Like `mutation`, the other tags describe the operation; they grant no permission
+and enforce no policy.
 
 ## Prompts and discovery
 
