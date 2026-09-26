@@ -445,7 +445,7 @@
         (expect (string/includes? (get view "summary") "Filters differ by directory"))
         (expect (= "Pattern: AGENTS.md · 0 shown directories · 0 matching files"
                    (get-in view ["sections" 0 "summary"])))
-        (expect (= "Unfiltered · 0 directories · 3 files" (get-in view ["sections" 1 "summary"])))))
+        (expect (= "Unfiltered · 0 directories · 2 files" (get-in view ["sections" 1 "summary"])))))
   (it "shows the pattern before the path for a single filtered directory"
       (let [ctx
             (sandbox)

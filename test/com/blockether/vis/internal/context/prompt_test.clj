@@ -1049,9 +1049,9 @@
         (doseq [shim (filter :shim/docs shims)]
           (expect (not (str/includes? text (subs (:shim/docs shim) 0 40)))
                   (str (:shim/name shim) " pushes its pulled page into every request")))
-        ;; 1.5k → 1.55k: the frozen SDK path clarification; → 1.8k for the
-        ;; third, first-party decision shim name. Its long docs must remain pull-only.
-        (expect (< (count text) 1800)))))
+        ;; 1.5k → 1.55k: user report — a session read `blockether.vis.__file__` as proof the
+        ;; import was broken, so the frozen SDK's missing on-disk path is named here.
+        (expect (< (count text) 1550)))))
 
 (defdescribe
   project-instructions-hoist-test

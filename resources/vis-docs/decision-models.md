@@ -9,9 +9,9 @@ when a human should review the result before relying on it.
 The `assets-pack` release keeps the existing voice assets and adds pinned FP32
 inference bundles, complete checkpoints and offline training dependencies for Laya
 and both GLiNER2.5 decision models. Downloads are explicit; starting a gateway
-never downloads weights. Inside Vis Python, a small first-party client reads and
-infers without installing the full Python SDK or any third-party packages. Install
-the full `vis-agent` SDK separately for training, upload, aliases and remote clients.
+never downloads weights. You call decision models from Python through the
+[`vis-agent` SDK](python-sdk.md). Its lightweight client works without PyTorch, and the
+training extras are optional.
 
 ## Download the baseline
 
@@ -47,38 +47,45 @@ gateway](gateway-service.md#connect-from-another-machine). Only the gateway need
 inference bundle. It will refuse a missing model instead of downloading one during a
 request.
 
-## Ask from Vis Python
+## Ask from Python
 
-Once the gateway machine has the inference bundle, you can ask typed questions in a
-`python_execution` block without installing a Python package into the sandbox:
+Decision models are available only through the `vis-agent` Python SDK. Install it in
+the Python environment that calls the gateway, such as your app or the project
+interpreter used by the `py` extension REPL. `python_execution` blocks do not include a
+decisions client.
+
+Configure `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` as described in the [Python SDK
+gateway guide](python-sdk.md#connect-to-a-gateway-and-run-a-task), and do not put the
+token in code or logs. Once the gateway machine has the inference bundle, you can ask
+typed questions:
 
 ```python
-import vis_decisions
+import os
 
-print(vis_decisions.models())  # Known versions and their installed/resident states.
-answer = vis_decisions.infer(
-    model="laya-typed-decisions",
-    state="A damaged item needs a refund",
-    questions={
-        "intent": {"type": "choice", "instructions": "Choose a request", "criteria": ["refund", "repair"]},
-        "urgency": {"type": "score", "instructions": "Rate urgency", "criteria": ["low", "medium", "high"]},
-        "refundable": {"type": "noul", "instructions": "Can the item be refunded?"},
-    },
-)
-print(answer["answers"], answer["routing"]["model"])
+from blockether.vis.decisions import Decisions
+from blockether.vis.engine import GatewayClient
+
+with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as gateway:
+    decisions = Decisions(gateway)
+    print(decisions.list_models())  # Installed and in-memory states; nothing is downloaded.
+    answer = decisions.infer(
+        model="laya-typed-decisions",
+        state="A damaged item needs a refund",
+        questions={
+            "intent": {"type": "choice", "instructions": "Choose a request", "criteria": ["refund", "repair"]},
+            "urgency": {"type": "score", "instructions": "Rate urgency", "criteria": ["low", "medium", "high"]},
+            "refundable": {"type": "noul", "instructions": "Can the item be refunded?"},
+        },
+    )
+    print(answer["answers"], answer["routing"]["model"])
 ```
 
-`vis_decisions.model("laya-typed-decisions")` reads one model's status. These calls use
-Vis' existing gateway connection and authentication. They do not download a model or
-install a dependency. An uninstalled model raises `vis_decisions.DecisionGatewayError`
-with `status == 409`; download the model explicitly with the CLI above. The baseline
-`act_probability` in an answer is a diagnostic score, not authorization to act.
-
-The separate `py` extension REPL uses your project's Python interpreter, not the
-`python_execution` sandbox. To call Decisions there or from an external Python app,
-install the full `vis-agent` SDK in that environment and use the `Decisions` and
-`GatewayClient` example below. Only install `[decisions-training]` when you need local
-training or export; neither installation downloads model weights automatically.
+These calls do not download a model or install a dependency. An uninstalled model
+raises `blockether.vis.engine.GatewayError` with `status == 409`; download the model
+explicitly with the CLI above. The baseline `act_probability` in an answer is a
+diagnostic score, not authorization to act. Only install `[decisions-training]` when you
+need local training or export; neither installation downloads model weights
+automatically.
 
 ## Train locally with the Python SDK
 

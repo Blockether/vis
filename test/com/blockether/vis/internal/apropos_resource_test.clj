@@ -289,16 +289,13 @@ def __vis_harvest__(modules, names):
                          (when-let [[_ stem] (re-matches #"(shim_.*)\.clj" (.getName file))]
                            (symbol (str "com.blockether.vis.internal.foundation."
                                         (str/replace stem "_" "-"))))))
-                 set)
+                 set)]
 
-            expected
-            (conj expected 'com.blockether.vis.internal.decisions.shim)]
-
-        (expect (= 3 (count expected)))
+        (expect (= 2 (count expected)))
         (expect (= expected listed))))
   (it "makes every pack that lends a shim name its own document resource"
       (let [entries (shim-entries)]
-        (expect (= 3 (count entries)))
+        (expect (= 2 (count entries)))
         (doseq [{:keys [register apropos]} entries]
           (expect (string? apropos) register)
           (expect (some? (io/resource apropos)) apropos)
@@ -311,8 +308,8 @@ def __vis_harvest__(modules, names):
             names
             (map :name entries)]
 
-        (expect (= 3 (count (registered-shims))))
-        (expect (= 11 (count entries)))
+        (expect (= 2 (count (registered-shims))))
+        (expect (= 6 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))

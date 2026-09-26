@@ -469,11 +469,8 @@
 
           code
           (str
-            "import blockether.vis.extension as sdk\n"
-            "import vis_decisions\n" "import inspect, subprocess\n"
+            "import blockether.vis.extension as sdk\n" "import inspect, subprocess\n"
             "assert 'label' in inspect.signature(sdk.ActivityProgress).parameters\n"
-            "assert hasattr(vis_decisions, 'infer') and hasattr(vis_decisions, 'models')\n"
-            "assert 'torch' not in sys.modules and 'blockether.vis.decisions' not in sys.modules\n"
             "assert sdk.ActivityProgress('Inspect SDK', value=1, total=2).value == 1\n"
             "prototype = sdk.Extension(name='native-prototype', description='Local declaration')\n"
             "for operation in [lambda: sdk.register_extension(prototype), "

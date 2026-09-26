@@ -4,8 +4,6 @@
                    :register com.blockether.vis.internal.foundation.shim-attach/register!}
                   {:apropos "META-INF/vis/apropos/shim-ls.edn"
                    :register com.blockether.vis.internal.foundation.shim-ls/register!}
-                  {:apropos "META-INF/vis/apropos/shim-decisions.edn"
-                   :register com.blockether.vis.internal.decisions.shim/register!}
                   com.blockether.vis.internal.foundation.mcp.core/register!
                   com.blockether.vis.internal.foundation.harness.core/register!
                   com.blockether.vis.internal.provider.vendor.alibaba/register!
