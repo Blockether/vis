@@ -19,3 +19,15 @@
   "Render current job state without a replay cursor."
   ^String [^String event-name job]
   (str "event: " event-name "\ndata: " (wire/json-str job) "\n\n"))
+
+(def HEARTBEAT_MS 15000)
+
+(def sse-headers
+  "Response headers of EVERY SSE endpoint. `no-transform` + `X-Accel-Buffering`
+   are the point: intermediaries (Cloudflare tunnels, nginx) BUFFER a streaming
+   body unless told not to, and a buffered stream delivers nothing until
+   disconnect — which reads as \"streaming dead until refresh\" in any proxied
+   client."
+  {"Content-Type" "text/event-stream"
+   "Cache-Control" "no-cache, no-transform"
+   "X-Accel-Buffering" "no"})

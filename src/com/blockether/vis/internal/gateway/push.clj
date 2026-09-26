@@ -26,7 +26,7 @@
       host, and an APNs `BadDeviceToken`/`Unregistered` verdict evicts the
       device so a stale token cannot accumulate.
 
-   The wire surface lives in `gateway.server` (`/v1/devices`); this namespace
+   The wire surface lives in `gateway.server.devices` (`/v1/devices`); this namespace
    knows nothing about Ring."
   (:require [babashka.http-client :as http]
             [clojure.edn :as edn]

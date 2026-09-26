@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.council.core :as council]
             ;; Registers the `draft_backend` experimental toggle this test pins.
             [com.blockether.vis.internal.foundation.drafts]
-            [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.server.settings :as settings-api]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.gateway.agents-test :as agent-http]
             [com.blockether.vis.internal.gateway.improve-test :as improve-http]
@@ -39,7 +39,7 @@
       (is (not (contract/contribution-valid? (assoc spec :experimental? "yes"))))))
   (is (not (some #(= "improve_mode" (:id %)) (toggles/visible-toggles))))
   (let [groups
-        (get (json/read-json (:body (#'server/list-settings-handler {}))) "groups")
+        (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
 
         rows
         (get (first (filter #(= "experimental" (get % "id")) groups)) "toggles")]

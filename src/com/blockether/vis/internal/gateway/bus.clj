@@ -834,7 +834,7 @@
 
    `sid` is passed in and never re-derived from the file name: this process
    registers, looks up and mirrors a session under ONE key (the gateway registry
-   is UUID-keyed, `server/path-sid`), and a String lookalike parsed out of
+   is UUID-keyed, `server.http/path-sid`), and a String lookalike parsed out of
    `<sid>.ndjson` made `state/ingest-mirrored-event!`'s registry lookup miss —
    silently discarding every live event of a turn running in a sibling process."
   [sid ^File f]

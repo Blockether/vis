@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.push :as push]
+            [com.blockether.vis.internal.gateway.server.views :as views-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.view.core :as hi]
@@ -214,7 +215,7 @@
 ;; or encoding slip cannot hide behind a green in-process test.
 
 (defn- rv
-  "Resolve a (private) handler var in the gateway server namespace."
+  "Resolve a (private) var in the gateway server namespace."
   [sym]
   (requiring-resolve (symbol "com.blockether.vis.internal.gateway.server" (name sym))))
 
@@ -227,7 +228,8 @@
 (defn- view-action-response
   "Apply one action through the exact shared HTTP handler the Companion calls."
   [sid view-id action]
-  ((rv 'view-action-handler) {:path-params {:sid sid :view-id view-id} :body (body-stream action)}))
+  (#'views-api/view-action-handler
+   {:path-params {:sid sid :view-id view-id} :body (body-stream action)}))
 
 (deftest the-app-answers-a-parked-run-over-http-test
   (gw-hi/install!)
@@ -246,7 +248,7 @@
     (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "a phone that starts cold still finds the open form, snake_case"
            (let [response
-                 ((rv 'list-input-views-handler) {:path-params {:sid sid}})
+                 (#'views-api/list-input-views-handler {:path-params {:sid sid}})
 
                  request
                  (first (get (json-body response) "requests"))]
@@ -279,7 +281,8 @@
              (is (= "submit" (get body "action")))
              (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
          (testing "a settled request is gone from the snapshot and answerable no more"
-           (is (empty? (get (json-body ((rv 'list-input-views-handler) {:path-params {:sid sid}}))
+           (is (empty? (get (json-body (#'views-api/list-input-views-handler
+                                        {:path-params {:sid sid}}))
                             "requests")))
            (is (= 404 (:status (view-action-response sid rid {:action "cancel"})))))
          (finally (hi/cancel! rid "cleanup")))))
@@ -420,10 +423,10 @@
           (fn [path]
             (match-by-path router path))]
 
-      (is (= @(rv 'list-input-views-handler)
+      (is (= @#'views-api/list-input-views-handler
              (get-in (match (str "/v1/sessions/" sid "/views/input")) [:data :get :handler])))
       (let [m (match (str "/v1/sessions/" sid "/views/" encoded "/actions"))]
-        (is (= @(rv 'view-action-handler) (get-in m [:data :post :handler])))
+        (is (= @#'views-api/view-action-handler (get-in m [:data :post :handler])))
         (testing "and hand the shared handler the View id it acts on"
           (is (= sid (str (get-in m [:path-params :sid]))))
           (is (= rid (get-in m [:path-params :view-id]))))))))
@@ -443,39 +446,40 @@
                                    :session-id sid
                                    :fields [{:id "note" :type "plaintext" :label "Note"}])))]
 
-    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (testing "a malformed body is a 400 — never a 500, never a settled run"
-           (doseq [body [{:action "submit" :values "text"} {:action "submit" :values [1 2]}
-                         {:action "submit" :values 42} {:action "submit" :values nil}
-                         {:values {"note" "missing action"}} {:action "unknown"} nil]]
-             (is (= 400 (:status (view-action-response sid rid body)))))
-           (is (= 400 (:status ((rv 'view-action-handler) {:path-params {:sid sid :view-id rid}}))))
-           (is (= 400
-                  (:status ((rv 'view-action-handler)
-                             {:path-params {:sid sid :view-id rid}
-                              :body (java.io.ByteArrayInputStream. (.getBytes "not json"
-                                                                              "UTF-8"))}))))
-           (is (some? (gw-hi/input-view-of sid rid))))
-         (testing "a structured value is rejected, not stringified into the answer"
-           (let [body (json-body
-                        (view-action-response sid rid {:action "submit" :values {"note" {"a" 1}}}))]
-             (is (false? (get body "is_accepted")))
-             (is (= "must be text" (get-in body ["errors" "note"])))
-             (is (some? (gw-hi/input-view-of sid rid)))))
-         (testing "the escaped id still routes, and the same handler answers it"
-           (let [match ((requiring-resolve 'reitit.core/match-by-path)
-                         ((rv 'router) "token" [])
-                         (str "/v1/sessions/" sid "/views/req%2Fone%20two/actions"))]
-             (is (= rid (get-in match [:path-params :view-id])))
-             (is (= @(rv 'view-action-handler) (get-in match [:data :post :handler])))
-             (is (true? (get (json-body ((rv 'view-action-handler)
-                                          {:path-params (:path-params match)
-                                           :body (body-stream {:action "submit"
-                                                               :values {"note" "typed"}})}))
-                             "is_accepted")))))
-         (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
-                (deref answer 2000 ::stuck)))
-         (finally (hi/cancel! rid)))))
+    (try
+      (is (await-true #(some? (gw-hi/input-view-of sid rid))))
+      (testing "a malformed body is a 400 — never a 500, never a settled run"
+        (doseq [body [{:action "submit" :values "text"} {:action "submit" :values [1 2]}
+                      {:action "submit" :values 42} {:action "submit" :values nil}
+                      {:values {"note" "missing action"}} {:action "unknown"} nil]]
+          (is (= 400 (:status (view-action-response sid rid body)))))
+        (is (= 400
+               (:status (#'views-api/view-action-handler {:path-params {:sid sid :view-id rid}}))))
+        (is (= 400
+               (:status (#'views-api/view-action-handler
+                         {:path-params {:sid sid :view-id rid}
+                          :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
+        (is (some? (gw-hi/input-view-of sid rid))))
+      (testing "a structured value is rejected, not stringified into the answer"
+        (let [body (json-body
+                     (view-action-response sid rid {:action "submit" :values {"note" {"a" 1}}}))]
+          (is (false? (get body "is_accepted")))
+          (is (= "must be text" (get-in body ["errors" "note"])))
+          (is (some? (gw-hi/input-view-of sid rid)))))
+      (testing "the escaped id still routes, and the same handler answers it"
+        (let [match ((requiring-resolve 'reitit.core/match-by-path)
+                      ((rv 'router) "token" [])
+                      (str "/v1/sessions/" sid "/views/req%2Fone%20two/actions"))]
+          (is (= rid (get-in match [:path-params :view-id])))
+          (is (= @#'views-api/view-action-handler (get-in match [:data :post :handler])))
+          (is (true? (get (json-body (#'views-api/view-action-handler
+                                      {:path-params (:path-params match)
+                                       :body (body-stream {:action "submit"
+                                                           :values {"note" "typed"}})}))
+                          "is_accepted")))))
+      (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
+             (deref answer 2000 ::stuck)))
+      (finally (hi/cancel! rid)))))
 
 (deftest a-storm-of-answers-settles-a-parked-run-exactly-once-test
   (gw-hi/install!)
@@ -728,7 +732,7 @@
                [{:op "append" :node-id "tail" :lines (mapv #(str "line " %) (range 1 21))}])
              (testing "a phone that starts cold reads the CURRENT picture, not a stream it missed"
                (let [response
-                     ((rv 'list-live-views-handler) {:path-params {:sid sid}})
+                     (#'views-api/list-live-views-handler {:path-params {:sid sid}})
 
                      answered
                      (first (get (json-body response) "views"))]
@@ -739,18 +743,18 @@
                  (is (= sid (get answered "session_id")))
                  (is (= ["tail"] (mapv #(get % "id") (get answered "nodes"))))))
              (testing "and scrolls back through output whose patches it never received"
-               (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id}
-                                        :query-params {"node" "tail" "from" "5" "limit" "3"}}))]
+               (let [body (json-body (#'views-api/live-view-log-handler
+                                      {:path-params {:sid sid :view-id view-id}
+                                       :query-params {"node" "tail" "from" "5" "limit" "3"}}))]
                  (is (= "tail" (get body "node_id")))
                  (is (= 5 (get body "from")))
                  (is (= 20 (get body "total")))
                  (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
              (testing "search pages use match offsets and retain original line numbers"
-               (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id}
-                                        :query-params
-                                        {"node" "tail" "query" "LINE 1" "from" "1" "limit" "2"}}))]
+               (let [body (json-body (#'views-api/live-view-log-handler
+                                      {:path-params {:sid sid :view-id view-id}
+                                       :query-params
+                                       {"node" "tail" "query" "LINE 1" "from" "1" "limit" "2"}}))]
                  (is (= 11 (get body "matched")))
                  (is (= 20 (get body "total")))
                  (is (= [10 11] (get body "line_numbers")))
@@ -772,15 +776,15 @@
              (testing "a view that already ended answers 404 instead of pretending to stop again"
                (is (= 404 (:status (view-action-response sid view-id {:action "interrupt"})))))
              (testing "and its record still answers, which is what makes a finished log readable"
-               (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id}
-                                        :query-params {"node" "tail"}}))]
+               (let [body (json-body (#'views-api/live-view-log-handler
+                                      {:path-params {:sid sid :view-id view-id}
+                                       :query-params {"node" "tail"}}))]
                  (is (= 20 (get body "total")))
                  (is (= 20 (count (get body "lines"))))))
              (testing "a closed record remains searchable"
-               (let [body (json-body ((rv 'live-view-log-handler)
-                                       {:path-params {:sid sid :view-id view-id}
-                                        :query-params {"node" "tail" "query" "LINE 20"}}))]
+               (let [body (json-body (#'views-api/live-view-log-handler
+                                      {:path-params {:sid sid :view-id view-id}
+                                       :query-params {"node" "tail" "query" "LINE 20"}}))]
                  (is (= ["line 20"] (get body "lines")))
                  (is (= [20] (get body "line_numbers")))
                  (is (= 1 (get body "matched")))))
@@ -971,7 +975,7 @@
             (match-by-path router path))
 
           action-handler
-          (rv 'view-action-handler)
+          #'views-api/view-action-handler
 
           action-match
           (match (str "/v1/sessions/" sid "/views/" view-id "/actions"))]

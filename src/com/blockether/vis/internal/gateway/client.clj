@@ -2351,7 +2351,7 @@
 
 (def ^:private sse-idle-timeout-ms
   "Close the client SSE stream when NOTHING — not even the daemon's ~15s
-   heartbeat frame (gateway.server/HEARTBEAT_MS) — has arrived for this long.
+   heartbeat frame (gateway.server.transport.sse/HEARTBEAT_MS) — has arrived for this long.
    A wedged / half-dead daemon (GC pause, deadlock, dead heartbeat over a
    half-open TCP) otherwise leaves `.readLine` parked FOREVER (OS TCP keepalive
    is ~2h), silently freezing the turn. Closing the body `InputStream` kicks

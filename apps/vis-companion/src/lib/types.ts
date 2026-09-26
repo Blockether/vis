@@ -1,5 +1,5 @@
 // Wire shapes served by the vis gateway (see
-// src/com/blockether/vis/internal/gateway/server.clj). Only the fields the
+// src/com/blockether/vis/internal/gateway/server/). Only the fields the
 // companion reads are typed; unknown fields are preserved but ignored.
 
 // Type-only, so it is erased at compile time and the `activity` -> `types`

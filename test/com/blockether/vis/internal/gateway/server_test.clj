@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require
-    [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+    [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing thrown?]]
     [babashka.http-client :as http]
     [clojure.java.io :as io]
     [clojure.string :as str]
@@ -19,6 +19,19 @@
     [com.blockether.vis.internal.gateway.client :as client]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
     [com.blockether.vis.internal.gateway.server :as server]
+    [com.blockether.vis.internal.gateway.server.council :as council-api]
+    [com.blockether.vis.internal.gateway.server.fs :as fs-api]
+    [com.blockether.vis.internal.gateway.server.http :as gw-http]
+    [com.blockether.vis.internal.gateway.server.instance :as instance]
+    [com.blockether.vis.internal.gateway.server.mcp :as mcp-api]
+    [com.blockether.vis.internal.gateway.server.projects :as projects-api]
+    [com.blockether.vis.internal.gateway.server.providers :as providers-api]
+    [com.blockether.vis.internal.gateway.server.sessions :as sessions-api]
+    [com.blockether.vis.internal.gateway.server.settings :as settings-api]
+    [com.blockether.vis.internal.gateway.server.speech :as speech-api]
+    [com.blockether.vis.internal.gateway.server.transcripts :as transcripts-api]
+    [com.blockether.vis.internal.gateway.server.turns :as turns-api]
+    [com.blockether.vis.internal.gateway.server.views :as views-api]
     [com.blockether.vis.internal.gateway.state :as state]
     [com.blockether.vis.internal.gateway.view :as gw-view]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -56,7 +69,7 @@
         (atom [])
 
         handler
-        (ns-resolve 'com.blockether.vis.internal.gateway.server 'suggest-handler)]
+        #'sessions-api/suggest-handler]
 
     (with-redefs [state/soul
                   (fn [id]
@@ -126,7 +139,7 @@
         (is (= "application/json" (get-in response [:headers "Content-Type"])))
         (is (= {"events" [event]} (wire/parse-json (:body response))))))))
 
-(defn- server-state [] @(rv 'server-state))
+(defn- server-state [] instance/server-state)
 
 (defn- with-server-state!
   [m f]
@@ -201,16 +214,81 @@
         (with-redefs [gateway-contract/error-body (fn [type message extra]
                                                     (reset! seen [type message extra])
                                                     {"contract_error" true})]
-          ((rv 'error-response) 409 :example/problem "cannot continue" :detail 7))]
+          (gw-http/error-response 409 :example/problem "cannot continue" :detail 7))]
 
     (is (= 409 (:status response)))
     (is (= "application/json" (get-in response [:headers "Content-Type"])))
     (is (= {"contract_error" true} (wire/parse-json (:body response))))
     (is (= [:example/problem "cannot continue" {:detail 7}] @seen))))
 
-(deftest gateway-router-compiles-with-project-action-routes
-  (testing "static project actions do not conflict with the dynamic project-id route"
-    (is (some? ((rv 'router) "test-token" [])))))
+(deftest gateway-router-reaches-every-contract-route
+  (let [match-by-path
+        (requiring-resolve 'reitit.core/match-by-path)
+
+        router
+        ((rv 'router) "test-token" [])]
+
+    (testing "each contract route answers its own path with a handler for every method"
+      (doseq [{:keys [path operations]}
+              gateway-contract/route-table
+
+              :let [match
+                    (match-by-path router
+                                   (-> path
+                                       (str/replace #"/:[^/]+" "/value-1")
+                                       (str/replace #"/\*[^/]+" "/nested/value")))]]
+
+        (is (= path (:template match)) path)
+        (doseq [method (keys operations)]
+          (is (some? (get-in match [:data method :handler])) (str (name method) " " path)))))
+    (testing "a fixed segment wins over the path parameter it conflicts with"
+      (doseq [path ["/v1/improve/review" "/v1/improve/settings" "/v1/projects/overview"]]
+        (is (= path (:template (match-by-path router path))))))))
+
+(deftest built-in-routes-refuse-to-drift-from-the-contract
+  (let [built-in-routes
+        (rv 'built-in-routes)
+
+        handlers
+        @(rv 'route-handlers)
+
+        drift
+        (fn [handler-maps]
+          (try (built-in-routes handler-maps)
+               nil
+               (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+
+    (testing "the shipped handler maps bind every contract operation exactly once"
+      (is (= (count gateway-contract/route-table) (count (built-in-routes handlers)))))
+    (testing "an operation the contract does not declare"
+      (is (= [[:get "/v1/not-in-contract"]]
+             (:undeclared (drift (conj handlers {[:get "/v1/not-in-contract"] identity}))))))
+    (testing "a contract operation left without a handler"
+      (is (= [[:get "/healthz"]]
+             (:unbound (drift [(dissoc (apply merge handlers) [:get "/healthz"])])))))
+    (testing "an operation bound in two handler maps"
+      (is (= [[:get "/healthz"]]
+             (:repeated (drift (conj handlers {[:get "/healthz"] identity}))))))))
+
+(deftest contributed-routes-cannot-shadow-contract-routes
+  (let [router
+        (rv 'router)
+
+        contribution
+        (fn [path]
+          {:routes (fn [_token]
+                     [[path {:get (constantly {:status 204})}]])})]
+
+    (testing "a contributed route beside the contract routes compiles and matches"
+      (is (= "/ext/example/ping"
+             (:template ((requiring-resolve 'reitit.core/match-by-path)
+                          (router "test-token" [(contribution "/ext/example/ping")])
+                          "/ext/example/ping")))))
+    (testing "a contributed route with the same path as a contract route fails the build"
+      (is (thrown? clojure.lang.ExceptionInfo (router "test-token" [(contribution "/healthz")]))))
+    (testing "a contributed fixed path under a contract path parameter fails the build"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (router "test-token" [(contribution "/v1/projects/mine")]))))))
 
 (deftest contributed-browser-routes-bypass-api-protocol-headers-only-where-declared
   (let [calls
@@ -257,7 +335,7 @@
         deleted
         (atom nil)]
 
-    (with-redefs-fn {(rv 'body-json) (constantly body)
+    (with-redefs-fn {#'gw-http/body-json (constantly body)
                      #'mcp-core/gateway-servers (constantly {"servers" [{"name" "filesystem"
                                                                          "transport" "stdio"
                                                                          "enabled" true
@@ -277,26 +355,27 @@
                      (fn [name _spec]
                        {"name" name "is_connected" true "tools" [{"name" "list_files"}]})}
       (fn []
-        (let [listed (wire/parse-json (:body ((rv 'mcp-servers-handler) {})))]
-          (is (= 200 (:status ((rv 'mcp-servers-handler) {}))))
+        (let [listed (wire/parse-json (:body (#'mcp-api/mcp-servers-handler {})))]
+          (is (= 200 (:status (#'mcp-api/mcp-servers-handler {}))))
           (is (= "filesystem" (get-in listed ["servers" 0 "name"])))
           (is (nil? (get-in listed ["servers" 0 "env"]))))
-        (is (= 200 (:status ((rv 'save-mcp-server-handler) {}))))
+        (is (= 200 (:status (#'mcp-api/save-mcp-server-handler {}))))
         (is (= ["filesystem" {"transport" "stdio" "command" "npx"}] @saved))
         (is (= 200
-               (:status ((rv 'set-mcp-server-enabled-handler)
-                          {:path-params {:name "filesystem"}}))))
+               (:status (#'mcp-api/set-mcp-server-enabled-handler
+                         {:path-params {:name "filesystem"}}))))
         (is (= ["filesystem" true] @enabled))
-        (is (= 200 (:status ((rv 'delete-mcp-server-handler) {:path-params {:name "filesystem"}}))))
+        (is (= 200
+               (:status (#'mcp-api/delete-mcp-server-handler {:path-params {:name "filesystem"}}))))
         (is (= "filesystem" @deleted))
-        (is (= 200 (:status ((rv 'test-mcp-server-handler) {}))))))))
+        (is (= 200 (:status (#'mcp-api/test-mcp-server-handler {}))))))))
 
 (deftest mcp-management-refuses-hand-written-servers-test
   (testing "a server declared in a user config file answers 409, never a silent success"
     (let [refuse (fn [name]
                    (throw (ex-info "declared in a hand-written config file"
                                    {:type :mcp/not-managed :server name})))]
-      (with-redefs-fn {(rv 'body-json) (constantly {"enabled" false})
+      (with-redefs-fn {#'gw-http/body-json (constantly {"enabled" false})
                        #'mcp-core/set-gateway-server-enabled! (fn [name _enabled]
                                                                 (refuse name))
                        #'mcp-core/delete-gateway-server! (fn [name]
@@ -304,9 +383,9 @@
                        #'mcp-core/save-gateway-server! (fn [name _spec]
                                                          (refuse name))}
         (fn []
-          (doseq [handler ['set-mcp-server-enabled-handler 'delete-mcp-server-handler
-                           'save-mcp-server-handler]]
-            (let [response ((rv handler) {:path-params {:name "team"}})]
+          (doseq [handler [#'mcp-api/set-mcp-server-enabled-handler
+                           #'mcp-api/delete-mcp-server-handler #'mcp-api/save-mcp-server-handler]]
+            (let [response (handler {:path-params {:name "team"}})]
               (is (= 409 (:status response)))
               (is (= "not-managed"
                      (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))))
@@ -324,16 +403,15 @@
          "model" "claude-opus-5"
          "reasoning_default" "deep"}]
 
-    (with-redefs-fn {(rv 'body-json) (constantly body)
+    (with-redefs-fn {#'gw-http/body-json (constantly body)
                      #'state/submit-turn! (fn [actual opts]
                                             (reset! submitted [actual opts])
                                             {:turn {:turn_id "turn-1"}})}
-      #(let [response ((rv 'submit-turn-handler) {:path-params {:sid (str sid)}})] (is
-                                                                                     (=
-                                                                                       202
-                                                                                       (:status
-                                                                                         response)))
-         (is (= sid (first @submitted))) (is (= "anthropic" (get-in @submitted [1 :provider])))
+      #(let [response (#'turns-api/submit-turn-handler {:path-params {:sid (str sid)}})]
+         (is (= 202 (:status response))) (is (= sid (first @submitted))) (is (= "anthropic"
+                                                                                (get-in
+                                                                                  @submitted
+                                                                                  [1 :provider])))
          (is (= "claude-opus-5" (get-in @submitted [1 :model])))))))
 
 (deftest binary-upload-is-resolved-at-turn-submit
@@ -351,22 +429,22 @@
                                             (reset! submitted opts)
                                             {:turn {:turn_id "turn-1"}})}
       #(let [uploaded
-             ((rv 'upload-attachment-handler)
-               {:path-params {:sid (str sid)}
-                :query-params {"filename" "shot.png" "media_type" "image/png"}
-                :headers {"content-length" (str (alength body-bytes))}
-                :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
+             (#'turns-api/upload-attachment-handler
+              {:path-params {:sid (str sid)}
+               :query-params {"filename" "shot.png" "media_type" "image/png"}
+               :headers {"content-length" (str (alength body-bytes))}
+               :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
              (get (wire/parse-json (:body uploaded)) "upload_id") response
-             ((rv 'submit-turn-handler)
-               {:path-params {:sid (str sid)}
-                :body (java.io.ByteArrayInputStream.
-                        (.getBytes (wire/json-str {:request "inspect"
-                                                   :attachments [{:upload_id upload-id
-                                                                  :filename "shot.png"
-                                                                  :reference "[IMAGE #3]"
-                                                                  :media_type "image/png"
-                                                                  :size (alength body-bytes)}]})
-                                   "UTF-8"))}) attachment (first (:attachments @submitted))]
+             (#'turns-api/submit-turn-handler
+              {:path-params {:sid (str sid)}
+               :body (java.io.ByteArrayInputStream.
+                       (.getBytes (wire/json-str {:request "inspect"
+                                                  :attachments [{:upload_id upload-id
+                                                                 :filename "shot.png"
+                                                                 :reference "[IMAGE #3]"
+                                                                 :media_type "image/png"
+                                                                 :size (alength body-bytes)}]})
+                                  "UTF-8"))}) attachment (first (:attachments @submitted))]
          (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= "shot.png"
                                                                                 (:filename
                                                                                   attachment)))
@@ -396,21 +474,21 @@
                                                 (wire/canonical (:attached @prepared)))}
       (fn []
         (let [uploaded
-              ((rv 'upload-attachment-handler)
-                {:path-params {:sid (str sid)}
-                 :query-params {"filename" "notes.md" "media_type" "text/plain"}
-                 :body (java.io.ByteArrayInputStream. payload)})
+              (#'turns-api/upload-attachment-handler
+               {:path-params {:sid (str sid)}
+                :query-params {"filename" "notes.md" "media_type" "text/plain"}
+                :body (java.io.ByteArrayInputStream. payload)})
 
               upload-id
               (get (wire/parse-json (:body uploaded)) "upload_id")
 
               response
-              ((rv 'submit-turn-handler)
-                {:path-params {:sid (str sid)}
-                 :body (java.io.ByteArrayInputStream.
-                         (.getBytes (wire/json-str {:request "Read these notes"
-                                                    :attachments [{:upload_id upload-id}]})
-                                    "UTF-8"))})
+              (#'turns-api/submit-turn-handler
+               {:path-params {:sid (str sid)}
+                :body (java.io.ByteArrayInputStream.
+                        (.getBytes (wire/json-str {:request "Read these notes"
+                                                   :attachments [{:upload_id upload-id}]})
+                                   "UTF-8"))})
 
               attachment
               (first (:attached @prepared))]
@@ -423,8 +501,8 @@
           (is (= (.encodeToString (java.util.Base64/getEncoder) payload) (:base64 attachment)))
           (is (attachments/hidden-from-model? attachment))
           (let [downloaded
-                ((rv 'turn-attachments-handler)
-                  {:path-params {:sid (str sid) :tid "turn-markdown"}})
+                (#'turns-api/turn-attachments-handler
+                 {:path-params {:sid (str sid) :tid "turn-markdown"}})
 
                 returned
                 (get-in (wire/parse-json (:body downloaded)) ["attachments" 0])]
@@ -458,18 +536,18 @@
                                             (reset! submitted opts)
                                             {:turn {:turn_id "turn-audio"}})}
       #(let [uploaded
-             ((rv 'upload-attachment-handler)
-               {:path-params {:sid (str sid)}
-                :query-params {"filename" "memo.m4a" "media_type" "audio/mp4"}
-                :headers {"content-length" (str (alength body-bytes))}
-                :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
+             (#'turns-api/upload-attachment-handler
+              {:path-params {:sid (str sid)}
+               :query-params {"filename" "memo.m4a" "media_type" "audio/mp4"}
+               :headers {"content-length" (str (alength body-bytes))}
+               :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
              (get (wire/parse-json (:body uploaded)) "upload_id") response
-             ((rv 'submit-turn-handler)
-               {:path-params {:sid (str sid)}
-                :body (java.io.ByteArrayInputStream.
-                        (.getBytes (wire/json-str {:request "listen"
-                                                   :attachments [{:upload_id upload-id}]})
-                                   "UTF-8"))}) attachment (first (:attachments @submitted))]
+             (#'turns-api/submit-turn-handler
+              {:path-params {:sid (str sid)}
+               :body (java.io.ByteArrayInputStream.
+                       (.getBytes (wire/json-str {:request "listen"
+                                                  :attachments [{:upload_id upload-id}]})
+                                  "UTF-8"))}) attachment (first (:attachments @submitted))]
          (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= 2 @calls))
          (is (= "ready words" (:transcription attachment)))))))
 
@@ -492,11 +570,11 @@
                                           (swap! calls conj [:all actual])
                                           [])}
       #(do (is (= 200
-                  (:status ((rv 'list-turns-handler)
-                             (assoc request :query-params {"status" "queued"})))))
+                  (:status (#'turns-api/list-turns-handler
+                            (assoc request :query-params {"status" "queued"})))))
            (is (= [[:queued sid]] @calls))
            (reset! calls [])
-           (is (= 200 (:status ((rv 'list-turns-handler) request))))
+           (is (= 200 (:status (#'turns-api/list-turns-handler request))))
            (is (= [[:all sid]] @calls))))))
 
 ;; Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: a client that
@@ -512,9 +590,9 @@
     (with-redefs-fn {#'state/soul (constantly {:id sid})
                      #'state/list-queued-turns (constantly [{:turn_id "waiting"}])
                      #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
-      #(let [body (:body ((rv 'list-turns-handler) request))] (is (str/includes?
-                                                                    body
-                                                                    "\"queue_paused\""))
+      #(let [body (:body (#'turns-api/list-turns-handler request))] (is (str/includes?
+                                                                          body
+                                                                          "\"queue_paused\""))
          (is (str/includes? body "\"turn_failed\""))))))
 
 (deftest soul-handler-optionally-includes-queued-turns
@@ -533,7 +611,8 @@
                                                  (swap! calls conj actual)
                                                  [{:turn_id "queued-1"}])
                      #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
-      #(do (let [response ((rv 'soul-handler) (assoc request :query-params {"include" "queued"}))]
+      #(do (let [response (#'sessions-api/soul-handler
+                           (assoc request :query-params {"include" "queued"}))]
              (is (= 200 (:status response)))
              (is (re-find #"\"id\"" (:body response)))
              (is (re-find #"\"queued_turns\"" (:body response)))
@@ -543,13 +622,13 @@
            (reset! calls [])
            (doseq [plain-request [request
                                   (assoc request :query-params {"include" "anything-else"})]]
-             (let [response ((rv 'soul-handler) plain-request)]
+             (let [response (#'sessions-api/soul-handler plain-request)]
                (is (= 200 (:status response)))
                (is (not (re-find #"\"queued_turns\"" (:body response))))))
            (is (empty? @calls))
-           (let [response ((rv 'soul-handler)
-                            {:path-params {:sid (str (random-uuid))}
-                             :query-params {"include" "queued"}})]
+           (let [response (#'sessions-api/soul-handler
+                           {:path-params {:sid (str (random-uuid))}
+                            :query-params {"include" "queued"}})]
              (is (= 404 (:status response))))
            (is (empty? @calls))))))
 
@@ -600,7 +679,7 @@
                                              ((rv 'maybe-stop-when-idle!))
                                              (Thread/sleep 80)
                                              (is (zero? @stops))
-                                             (swap! @(rv 'server-state) assoc :clients {})
+                                             (swap! instance/server-state assoc :clients {})
                                              ((rv 'maybe-stop-when-idle!))
                                              (is (wait-until #(= 1 @stops)))))))))
 
@@ -888,7 +967,7 @@
         (System/currentTimeMillis)
 
         ttl
-        (long @(rv 'CLIENT_LEASE_TTL_MS))
+        (long instance/CLIENT_LEASE_TTL_MS)
 
         compact
         (rv 'compact-client-leases)]
@@ -1020,13 +1099,13 @@
                             (fn []
                               (is (= ["http://192.168.0.1:7890" "http://100.109.18.77:7890"
                                       "http://127.0.0.1:7890"]
-                                     ((rv 'reachable-addresses) {:scheme :http})))))
+                                     (#'views-api/reachable-addresses {:scheme :http})))))
         (with-server-state!
           {:host "0.0.0.0" :port 7890}
           (fn []
             (is
               (= ["http://100.109.18.77:7890" "http://127.0.0.1:7890"]
-                 ((rv 'reachable-addresses) {:scheme :http}))
+                 (#'views-api/reachable-addresses {:scheme :http}))
               "the router this machine routes through is not an address it answers on (#277)")))))))
 
 (deftest reachable-addresses-end-with-loopback-for-a-client-on-this-machine
@@ -1047,12 +1126,12 @@
           {:host "0.0.0.0" :port 7890}
           (fn []
             (is (= ["http://100.109.18.77:7890" "http://192.168.0.150:7890" "http://127.0.0.1:7890"]
-                   ((rv 'reachable-addresses) {:scheme :http}))
+                   (#'views-api/reachable-addresses {:scheme :http}))
                 "loopback comes last: it is the fallback, not the route to advertise")))
         (with-server-state!
           {:host "192.168.0.150" :port 7890}
           (fn []
-            (is (= ["http://192.168.0.150:7890"] ((rv 'reachable-addresses) {:scheme :http}))
+            (is (= ["http://192.168.0.150:7890"] (#'views-api/reachable-addresses {:scheme :http}))
                 "a concrete bind serves that address alone, loopback included")))))))
 
 (deftest capabilities-advertise-gateway-voice-and-attachment-contract
@@ -1061,7 +1140,7 @@
       nil
       (fn []
         (let [response
-              ((rv 'capabilities-handler) {})
+              (#'views-api/capabilities-handler {})
 
               body
               (wire/parse-json (:body response))]
@@ -1101,7 +1180,7 @@
                         :transcribe (constantly "hi")
                         :model-state (constantly {:state :ready})}
                        (fn []
-                         (let [body (-> ((rv 'capabilities-handler) {})
+                         (let [body (-> (#'views-api/capabilities-handler {})
                                         :body
                                         wire/parse-json)]
                            (is (true? (get-in body ["features" "voice" "enabled"])))
@@ -1139,16 +1218,16 @@
                          "the transcript")}
           (fn []
             (let [accepted
-                  ((rv 'voice-handler) {:path-params {:sid sid} :body (wav-body)})
+                  (#'speech-api/voice-handler {:path-params {:sid sid} :body (wav-body)})
 
                   job
                   (wire/parse-json (:body accepted))
 
                   poll
                   (fn []
-                    (wire/parse-json (:body ((rv 'voice-job-handler)
-                                              {:request-method :get
-                                               :path-params {:sid sid :job-id (get job "id")}}))))]
+                    (wire/parse-json (:body (#'speech-api/voice-job-handler
+                                             {:request-method :get
+                                              :path-params {:sid sid :job-id (get job "id")}}))))]
 
               (testing "the upload is answered immediately with a job, not a transcript"
                 (is (= 202 (:status accepted)))
@@ -1168,13 +1247,13 @@
                   (is (= "the transcript" (get done "text")))))
               (testing "a collected job can be forgotten, and an unknown one is a 404"
                 (is (= 200
-                       (:status ((rv 'voice-job-handler)
-                                  {:request-method :delete
-                                   :path-params {:sid sid :job-id (get job "id")}}))))
+                       (:status (#'speech-api/voice-job-handler
+                                 {:request-method :delete
+                                  :path-params {:sid sid :job-id (get job "id")}}))))
                 (is (= 404
-                       (:status ((rv 'voice-job-handler)
-                                  {:request-method :get
-                                   :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
+                       (:status (#'speech-api/voice-job-handler
+                                 {:request-method :get
+                                  :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
 
 (defn- sse-jobs
   "Every `data:` payload of an SSE body, parsed, in the order it was written."
@@ -1208,13 +1287,13 @@
                          "the transcript")}
           (fn []
             (let [job-id
-                  (get (wire/parse-json (:body ((rv 'voice-handler)
-                                                 {:path-params {:sid sid} :body (wav-body)})))
+                  (get (wire/parse-json (:body (#'speech-api/voice-handler
+                                                {:path-params {:sid sid} :body (wav-body)})))
                        "id")
 
                   response
-                  ((rv 'voice-job-events-handler)
-                    {:request-method :get :path-params {:sid sid :job-id job-id}})
+                  (#'speech-api/voice-job-events-handler
+                   {:request-method :get :path-params {:sid sid :job-id job-id}})
 
                   out
                   (java.io.ByteArrayOutputStream.)
@@ -1264,9 +1343,9 @@
                     (is (= "the transcript" (get final "text"))))))
               (testing "a job nobody submitted is refused before a stream is opened"
                 (is (= 404
-                       (:status ((rv 'voice-job-events-handler)
-                                  {:request-method :get
-                                   :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
+                       (:status (#'speech-api/voice-job-events-handler
+                                 {:request-method :get
+                                  :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
 
 ;; A job frame used to be recognisable only by the SHAPE of its JSON: the event
 ;; name was hand-written at the one place that emitted it and no client was ever
@@ -1284,7 +1363,7 @@
       ;; a client must never mistake this stream for a resumable one.
       (is (not (str/includes? frame "id:")))))
   (testing "capabilities tell a client the name instead of leaving it to guess"
-    (let [voice (-> ((rv 'capabilities-handler) {})
+    (let [voice (-> (#'views-api/capabilities-handler {})
                     :body
                     wire/parse-json
                     (get-in ["features" "voice"]))]
@@ -1307,29 +1386,29 @@
           (with-only-engine! nil
                              (fn []
                                (is (= 501
-                                      (:status ((rv 'voice-handler)
-                                                 {:path-params {:sid sid} :body (wav-body)})))))))
+                                      (:status (#'speech-api/voice-handler
+                                                {:path-params {:sid sid} :body (wav-body)})))))))
         (with-only-engine!
           {:id :fake-engine :transcribe (constantly "hi") :model-state (constantly {:state :ready})}
           (fn []
             (testing "naming an engine nobody registered is the CALLER's 400"
               (is (= 400
-                     (:status ((rv 'voice-handler)
-                                {:path-params {:sid sid}
-                                 :query-params {"engine" "whisper-server"}
-                                 :body (wav-body)})))))
+                     (:status (#'speech-api/voice-handler
+                               {:path-params {:sid sid}
+                                :query-params {"engine" "whisper-server"}
+                                :body (wav-body)})))))
             (testing "a body that is not RIFF/WAVE never reaches the engine"
               (is (= 400
-                     (:status ((rv 'voice-handler)
-                                {:path-params {:sid sid}
-                                 :body (java.io.ByteArrayInputStream. (byte-array 64))})))))))
+                     (:status (#'speech-api/voice-handler
+                               {:path-params {:sid sid}
+                                :body (java.io.ByteArrayInputStream. (byte-array 64))})))))))
         (testing "an engine that is still preparing answers 425 with its own state"
           (with-only-engine! {:id :downloading
                               :transcribe (constantly "hi")
                               :model-state (constantly {:state :downloading :progress 42})}
                              (fn []
-                               (let [response ((rv 'voice-handler)
-                                                {:path-params {:sid sid} :body (wav-body)})
+                               (let [response (#'speech-api/voice-handler
+                                               {:path-params {:sid sid} :body (wav-body)})
                                      body (wire/parse-json (:body response))]
 
                                  (is (= 425 (:status response)))
@@ -1389,7 +1468,7 @@
   (with-only-speech-engine!
     (speaking-engine)
     (fn []
-      (let [speech (-> ((rv 'capabilities-handler) {})
+      (let [speech (-> (#'views-api/capabilities-handler {})
                        :body
                        wire/parse-json
                        (get-in ["features" "speech"]))]
@@ -1411,7 +1490,7 @@
   (testing "a gateway that cannot speak says so instead of half-advertising it"
     (with-only-speech-engine! nil
                               (fn []
-                                (let [speech (-> ((rv 'capabilities-handler) {})
+                                (let [speech (-> (#'views-api/capabilities-handler {})
                                                  :body
                                                  wire/parse-json
                                                  (get-in ["features" "speech"]))]
@@ -1496,11 +1575,11 @@
           (speaking-engine)
           (fn []
             (let [line "Ready when you are."
-                  response ((rv 'speech-handler)
-                             (merge {:request-method :post :path-params {:sid sid}}
-                                    ;; padded on purpose: a client that appends a newline must not
-                                    ;; make the engine speak the whitespace
-                                    (json-body {:text (str "  " line "\n") :voice "alba"})))
+                  response (#'speech-api/speech-handler
+                            (merge {:request-method :post :path-params {:sid sid}}
+                                   ;; padded on purpose: a client that appends a newline must not
+                                   ;; make the engine speak the whitespace
+                                   (json-body {:text (str "  " line "\n") :voice "alba"})))
                   spoken (body-bytes (:body response))]
 
               (is (= 200 (:status response)))
@@ -1529,9 +1608,8 @@
           (speaking-engine release)
           (fn []
             (let [accepted
-                  ((rv 'speech-handler)
-                    (merge {:request-method :post :path-params {:sid sid}}
-                           (json-body {:text line})))
+                  (#'speech-api/speech-handler
+                   (merge {:request-method :post :path-params {:sid sid}} (json-body {:text line})))
 
                   job
                   (wire/parse-json (:body accepted))
@@ -1540,8 +1618,8 @@
                   (get job "id")
 
                   response
-                  ((rv 'speech-job-events-handler)
-                    {:request-method :get :path-params {:sid sid :job-id job-id}})
+                  (#'speech-api/speech-job-events-handler
+                   {:request-method :get :path-params {:sid sid :job-id job-id}})
 
                   out
                   (java.io.ByteArrayOutputStream.)
@@ -1589,8 +1667,8 @@
                   (is (pos? (get-in final ["audio" "bytes"])))
                   (is (not (str/includes? (str body) "audio_path"))))
                 (testing "the audio route serves exactly the bytes the engine wrote"
-                  (let [audio ((rv 'speech-job-audio-handler)
-                                {:request-method :get :path-params {:sid sid :job-id job-id}})]
+                  (let [audio (#'speech-api/speech-job-audio-handler
+                               {:request-method :get :path-params {:sid sid :job-id job-id}})]
                     (is (= 200 (:status audio)))
                     (is (= "audio/wav" (get-in audio [:headers "Content-Type"])))
                     (is (java.util.Arrays/equals (body-bytes (:body audio)) (spoken-wav line)))))
@@ -1598,14 +1676,14 @@
                   (let [path (speech/job-audio-path job-id)]
                     (is (.isFile (io/file path)))
                     (is (= 200
-                           (:status ((rv 'speech-job-handler)
-                                      {:request-method :delete
-                                       :path-params {:sid sid :job-id job-id}}))))
+                           (:status (#'speech-api/speech-job-handler
+                                     {:request-method :delete
+                                      :path-params {:sid sid :job-id job-id}}))))
                     (is (not (.isFile (io/file path))))
                     (is (= 404
-                           (:status ((rv 'speech-job-audio-handler)
-                                      {:request-method :get
-                                       :path-params {:sid sid :job-id job-id}}))))))))))))))
+                           (:status (#'speech-api/speech-job-audio-handler
+                                     {:request-method :get
+                                      :path-params {:sid sid :job-id job-id}}))))))))))))))
 
 (deftest a-job-belongs-to-one-direction-and-the-other-route-does-not-know-it
   ;; Both directions share one store. A client asking the speech routes about a
@@ -1615,31 +1693,29 @@
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
         (speech/reset-jobs!)
-        (with-only-engine! {:id :fake-engine
-                            :label "Fake"
-                            :transcribe (constantly "hi")
-                            :model-state (constantly {:state :ready})}
-                           (fn []
-                             (let [job-id (get (wire/parse-json (:body ((rv 'voice-handler)
-                                                                         {:path-params {:sid sid}
-                                                                          :body (wav-body)})))
-                                               "id")
-                                   speech (fn [handler method]
-                                            (:status ((rv handler)
-                                                       {:request-method method
-                                                        :path-params {:sid sid :job-id job-id}})))]
+        (with-only-engine!
+          {:id :fake-engine
+           :label "Fake"
+           :transcribe (constantly "hi")
+           :model-state (constantly {:state :ready})}
+          (fn []
+            (let [job-id (get (wire/parse-json (:body (#'speech-api/voice-handler
+                                                       {:path-params {:sid sid} :body (wav-body)})))
+                              "id")
+                  speech (fn [handler method]
+                           (:status (handler {:request-method method
+                                              :path-params {:sid sid :job-id job-id}})))]
 
-                               (is (= 404 (speech 'speech-job-handler :get)))
-                               (is (= 404 (speech 'speech-job-events-handler :get)))
-                               (is (= 404 (speech 'speech-job-audio-handler :get)))
-                               (is (= 404 (speech 'speech-job-handler :delete)))
-                               (testing "and the job is still there, on its own route"
-                                 (is (some? (speech/job job-id)))
-                                 (is (= 200
-                                        (:status ((rv 'voice-job-handler)
-                                                   {:request-method :get
-                                                    :path-params {:sid sid
-                                                                  :job-id job-id}}))))))))))))
+              (is (= 404 (speech #'speech-api/speech-job-handler :get)))
+              (is (= 404 (speech #'speech-api/speech-job-events-handler :get)))
+              (is (= 404 (speech #'speech-api/speech-job-audio-handler :get)))
+              (is (= 404 (speech #'speech-api/speech-job-handler :delete)))
+              (testing "and the job is still there, on its own route"
+                (is (some? (speech/job job-id)))
+                (is (= 200
+                       (:status (#'speech-api/voice-job-handler
+                                 {:request-method :get
+                                  :path-params {:sid sid :job-id job-id}}))))))))))))
 
 (deftest speech-refusals-name-the-reason-instead-of-failing-late
   (let [sid (str (random-uuid))]
@@ -1649,22 +1725,22 @@
           (with-only-speech-engine!
             nil
             (fn []
-              (let [response ((rv 'speech-handler)
-                               (merge {:request-method :post :path-params {:sid sid}}
-                                      (json-body {:text "hello"})))]
+              (let [response (#'speech-api/speech-handler
+                              (merge {:request-method :post :path-params {:sid sid}}
+                                     (json-body {:text "hello"})))]
                 (is (= 501 (:status response)))
                 (is (str/includes? (get-in (wire/parse-json (:body response)) ["error" "message"])
                                    "speech synthesis"))))))
         (with-only-speech-engine!
           (speaking-engine)
           (fn []
-            (let [say
-                  (fn say ([text] (say text nil)) ([text query] ((rv 'speech-handler)
-                                                                  (merge {:request-method :post
-                                                                          :path-params {:sid sid}}
-                                                                    (when query {:query-params
-                                                                                 query})
-                                                                    (json-body {:text text})))))]
+            (let [say (fn say ([text] (say text nil)) ([text query] (#'speech-api/speech-handler
+                                                                     (merge {:request-method :post
+                                                                             :path-params {:sid
+                                                                                           sid}}
+                                                                       (when query {:query-params
+                                                                                    query})
+                                                                       (json-body {:text text})))))]
               (testing "naming an engine nobody registered is the CALLER's 400"
                 (is (= 400 (:status (say "hello" {"engine" "elevenlabs"})))))
               (testing "nothing to say is refused before the engine is ever woken"
@@ -1672,7 +1748,7 @@
               (testing "a runaway line is refused rather than synthesized for minutes"
                 (is (= 413 (:status (say (apply str (repeat 21000 "x")))))))
               (testing "capabilities publish ONE boolean: this machine HAS an engine that speaks"
-                (is (true? (-> ((rv 'capabilities-handler) {})
+                (is (true? (-> (#'views-api/capabilities-handler {})
                                :body
                                wire/parse-json
                                (get-in ["features" "speech" "is_enabled"]))))))))
@@ -1682,9 +1758,9 @@
              :synthesize (constantly "/tmp/vis-never-written.wav")
              :model-state (constantly {:state :downloading :progress 42})}
             (fn []
-              (let [response ((rv 'speech-handler)
-                               (merge {:request-method :post :path-params {:sid sid}}
-                                      (json-body {:text "hello"})))
+              (let [response (#'speech-api/speech-handler
+                              (merge {:request-method :post :path-params {:sid sid}}
+                                     (json-body {:text "hello"})))
                     body (wire/parse-json (:body response))]
 
                 (is (= 425 (:status response)))
@@ -1723,7 +1799,7 @@
                     (conj (vec extra) {:name "/rename" :doc "Rename"}))]
 
       (let [response
-            ((rv 'slashes-handler) {:path-params {:sid (str sid)}})
+            (#'sessions-api/slashes-handler {:path-params {:sid (str sid)}})
 
             body
             (wire/parse-json (:body response))]
@@ -1758,7 +1834,8 @@
                     [{:name "/python-echo" :doc "Echo"}])]
 
       (let [response
-            ((rv 'slashes-handler) {:path-params {:sid (str sid)} :query-params {"channel" "tui"}})
+            (#'sessions-api/slashes-handler
+             {:path-params {:sid (str sid)} :query-params {"channel" "tui"}})
 
             body
             (wire/parse-json (:body response))]
@@ -1770,7 +1847,7 @@
 (deftest slashes-handler-refuses-an-unknown-session
   (let [sid (java.util.UUID/randomUUID)]
     (with-redefs [state/session-workspace-info (constantly nil)]
-      (is (= 404 (:status ((rv 'slashes-handler) {:path-params {:sid (str sid)}})))))))
+      (is (= 404 (:status (#'sessions-api/slashes-handler {:path-params {:sid (str sid)}})))))))
 
 (deftest wrap-auth-accepts-gateway-secret-header
   (testing "a token-gated gateway authenticates the internal client's X-Vis-Gateway-Secret"
@@ -1918,7 +1995,7 @@
                                           "UTF-8"))
 
         query-long
-        (rv 'query-long)
+        gw-http/query-long
 
         seen
         (atom nil)
@@ -1930,7 +2007,7 @@
                            (fn [_sid opts]
                              (reset! seen opts)
                              {:turns [] :total 0 :offset 0 :has-more false})}
-            #(let [r ((rv 'transcript-handler) (q qs))] [(:status r) @seen])))]
+            #(let [r (#'transcripts-api/transcript-handler (q qs))] [(:status r) @seen])))]
 
     (testing "ring hands back a VECTOR for a repeated param, so parsing must not throw"
       (is (= ["1" "2"] (get-in (q "limit=1&limit=2") [:query-params "limit"])))
@@ -2453,10 +2530,10 @@
                                           ["line-1"])}
         (fn []
           (let [stop
-                ((rv 'resource-stop-handler) req)
+                (#'sessions-api/resource-stop-handler req)
 
                 logs
-                ((rv 'resource-logs-handler) req)]
+                (#'sessions-api/resource-logs-handler req)]
 
             (testing "each handler answers 200 and threads the exact slash-embedding rid through"
               (is (= 200 (:status stop)))
@@ -2480,8 +2557,8 @@
                                           (reset! touched true)
                                           nil)}
         (fn []
-          (is (= 404 (:status ((rv 'resource-stop-handler) req))))
-          (is (= 404 (:status ((rv 'resource-logs-handler) req))))
+          (is (= 404 (:status (#'sessions-api/resource-stop-handler req))))
+          (is (= 404 (:status (#'sessions-api/resource-logs-handler req))))
           (is (false? @touched)))))))
 
 (deftest resource-rid-survives-router-as-query-param
@@ -2523,20 +2600,21 @@
   (testing "settings rows expose the canonical string id unchanged"
     (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
     (is (= "server_test_toggle"
-           (:id ((rv 'toggle-json) (toggles/toggle-spec "server_test_toggle"))))))
+           (:id (#'settings-api/toggle-json (toggles/toggle-spec "server_test_toggle"))))))
   (testing "the settings mutation endpoint rejects keyword-like, namespaced, and kebab ids"
     (doseq [id [":server_test_toggle" "vis/server_test_toggle" "server-test-toggle"]]
       (is (= 400
-             (:status ((rv 'set-setting-handler) {:query-params {"id" id "action" "toggle"}}))))))
+             (:status (#'settings-api/set-setting-handler
+                       {:query-params {"id" id "action" "toggle"}}))))))
   (testing "a canonical but unknown string id remains a distinct 404"
     (is (= 404
-           (:status ((rv 'set-setting-handler)
-                      {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
+           (:status (#'settings-api/set-setting-handler
+                     {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
 
 (deftest get-setting-handler-serves-hidden-rows-test
   (testing "reasoning_level is readable by id even though the settings list hides it"
     (let [response
-          ((rv 'get-setting-handler) {:path-params {:id "reasoning_level"}})
+          (#'settings-api/get-setting-handler {:path-params {:id "reasoning_level"}})
 
           row
           (wire/parse-json (:body response))]
@@ -2547,16 +2625,18 @@
       (is (seq (get row "choices")))
       (is (string? (get row "value")))))
   (testing "a non-canonical id is a 400 and an unknown one a 404"
-    (is (= 400 (:status ((rv 'get-setting-handler) {:path-params {:id "reasoning-level"}}))))
-    (is (= 404 (:status ((rv 'get-setting-handler) {:path-params {:id "unknown_toggle"}}))))))
+    (is (= 400
+           (:status (#'settings-api/get-setting-handler {:path-params {:id "reasoning-level"}}))))
+    (is (= 404
+           (:status (#'settings-api/get-setting-handler {:path-params {:id "unknown_toggle"}}))))))
 
 (deftest settings-change-refreshes-cached-extension-bindings-test
   (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
   (toggles/set-enabled! "server_test_toggle" false)
   (let [synced (atom 0)]
     (with-redefs [loop-env/sync-cached-extension-symbols! #(swap! synced inc)]
-      (let [response ((rv 'set-setting-handler)
-                       {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
+      (let [response (#'settings-api/set-setting-handler
+                      {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
         (is (= 200 (:status response))))
       (is (= 1 @synced)))
     (toggles/set-enabled! "server_test_toggle" false)))
@@ -2570,7 +2650,8 @@
                                                   :hidden-count (if show-all? 0 4)})}
       (fn []
         (let [resp
-              ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
+              (#'providers-api/provider-models-handler
+               {:path-params {:provider-id "anthropic-coding-plan"}})
 
               body
               (wire/parse-json (:body resp))]
@@ -2579,9 +2660,9 @@
           (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get body "models")))
           (is (= 4 (get body "hidden_count"))))
         (let [resp
-              ((rv 'provider-models-handler)
-                {:path-params {:provider-id "anthropic-coding-plan"}
-                 :query-params {"show_all" "true"}})
+              (#'providers-api/provider-models-handler
+               {:path-params {:provider-id "anthropic-coding-plan"}
+                :query-params {"show_all" "true"}})
 
               body
               (wire/parse-json (:body resp))]
@@ -2616,33 +2697,33 @@
                                                @wrote)}
         (fn []
           (testing "a configured provider is accepted"
-            (let [resp ((rv 'set-session-model-handler)
-                         (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
+            (let [resp (#'sessions-api/set-session-model-handler
+                        (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
               (is (= 200 (:status resp)))
               (is (= ["zai-coding-plan" "glm-5.2"] @wrote))))
           (testing "a model outside vis.yml is fine — the live catalog offers more"
             (is (= 200
-                   (:status ((rv 'set-session-model-handler)
-                              (body {:provider "zai-coding-plan" :model "glm-live-preview"})))))
+                   (:status (#'sessions-api/set-session-model-handler
+                             (body {:provider "zai-coding-plan" :model "glm-live-preview"})))))
             (is (= ["zai-coding-plan" "glm-live-preview"] @wrote)))
           (testing "a provider the picker offers but vis.yml does not configure is accepted"
             (reset! wrote nil)
             (is (= 200
-                   (:status ((rv 'set-session-model-handler)
-                              (body {:provider "openai-codex" :model "gpt-5.4"})))))
+                   (:status (#'sessions-api/set-session-model-handler
+                             (body {:provider "openai-codex" :model "gpt-5.4"})))))
             (is (= ["openai-codex" "gpt-5.4"] @wrote)))
           (testing "an unknown provider is a 400 and writes NOTHING"
             (reset! wrote :untouched)
-            (let [resp ((rv 'set-session-model-handler)
-                         (body {:provider "not-on-this-gateway" :model "x"}))]
+            (let [resp (#'sessions-api/set-session-model-handler
+                        (body {:provider "not-on-this-gateway" :model "x"}))]
               (is (= 400 (:status resp)))
               (is (= "unknown-provider" (get-in (wire/parse-json (:body resp)) ["error" "type"])))
               (is (= :untouched @wrote))))
           (testing "blank/omitted provider still clears or pins by model alone"
             (reset! wrote nil)
             (is (= 200
-                   (:status ((rv 'set-session-model-handler)
-                              (body {:provider "  " :model "glm-5.2"})))))
+                   (:status (#'sessions-api/set-session-model-handler
+                             (body {:provider "  " :model "glm-5.2"})))))
             (is (= [nil "glm-5.2"] @wrote))))))))
 
 (deftest router-handler-assembles-string-keyed-fleet-with-status
@@ -2664,7 +2745,7 @@
          {:provider-id :anthropic-coding-plan :status :ok :static {} :dynamic {:limits []}})}
       (fn []
         (let [resp
-              ((rv 'router-handler) {})
+              (#'providers-api/router-handler {})
 
               provs
               (get (wire/parse-json (:body resp)) "providers")
@@ -2718,7 +2799,7 @@
                 (constantly {})]
 
     (let [response
-          ((rv 'router-handler) {})
+          (#'providers-api/router-handler {})
 
           rows
           (get (wire/parse-json (:body response)) "providers")
@@ -2764,7 +2845,7 @@
                :responses-path "/responses"
                :models [{:name "gpt-6-astra"}]} ["openai-text"]]
              [{:id :openai :models [{:name "gpt-4o"}]} [nil]] [{:id :openai-codex :models []} []]]]
-      (let [row (wire/->wire ((rv 'router-provider-entry) provider nil nil true))
+      (let [row (wire/->wire (#'providers-api/router-provider-entry provider nil nil true))
             details (get row "model_details")]
 
         (is (= expected (mapv #(get % "verbosity_style") details)))
@@ -2801,7 +2882,7 @@
                 (System/currentTimeMillis)
 
                 resp
-                ((rv 'router-handler) {})
+                (#'providers-api/router-handler {})
 
                 elapsed
                 (- (System/currentTimeMillis) t0)
@@ -2832,7 +2913,7 @@
 
         patch!
         (fn [m]
-          ((rv 'router-default-handler) (body m)))]
+          (#'providers-api/router-default-handler (body m)))]
 
     (with-redefs [providers/picker-fleet
                   (constantly fleet)
@@ -3120,9 +3201,9 @@
           (atom [])]
 
       (with-redefs-fn
-        {(rv 'body-json) (constantly {"flow_id" "f-1"
-                                      "input" "https://cb.example.test/?code=abc"
-                                      "callback_mode" "app"})
+        {#'gw-http/body-json (constantly {"flow_id" "f-1"
+                                          "input" "https://cb.example.test/?code=abc"
+                                          "callback_mode" "app"})
          #'mcp-core/kill-gateway-server! (fn [name]
                                            (swap! calls conj [:kill name])
                                            {"name" name "is_killed" true})
@@ -3145,49 +3226,49 @@
                                                   {"server" name "is_authorized" false})}
         (fn []
           (let [params {:path-params {:name "remote"}}]
-            (is (= 200 (:status ((rv 'kill-mcp-server-handler) params))))
-            (is (= 200 (:status ((rv 'start-mcp-server-handler) params))))
+            (is (= 200 (:status (#'mcp-api/kill-mcp-server-handler params))))
+            (is (= 200 (:status (#'mcp-api/start-mcp-server-handler params))))
             ;; The flow crosses the wire snake_cased, and the id is the ONLY handle
             ;; a client ever holds: the verifier and the token stay in the daemon.
-            (let [started (wire/parse-json (:body ((rv 'mcp-auth-start-handler) params)))]
+            (let [started (wire/parse-json (:body (#'mcp-api/mcp-auth-start-handler params)))]
               (is (= "f-1" (get started "flow_id")))
               (is (= "pkce" (get started "kind")))
               (is (nil? (get started "code_verifier"))))
             (is (= "ok"
-                   (get (wire/parse-json (:body ((rv 'mcp-auth-complete-handler) params)))
+                   (get (wire/parse-json (:body (#'mcp-api/mcp-auth-complete-handler params)))
                         "status")))
-            (is (= 200 (:status ((rv 'mcp-auth-poll-handler) params))))
-            (is (= 200 (:status ((rv 'mcp-auth-cancel-handler) params))))
-            (is (= 200 (:status ((rv 'mcp-auth-logout-handler) params))))
+            (is (= 200 (:status (#'mcp-api/mcp-auth-poll-handler params))))
+            (is (= 200 (:status (#'mcp-api/mcp-auth-cancel-handler params))))
+            (is (= 200 (:status (#'mcp-api/mcp-auth-logout-handler params))))
             (is (= [[:kill "remote"] [:start "remote"] [:auth-start "remote" {:callback-mode "app"}]
                     [:auth-complete "f-1" "https://cb.example.test/?code=abc"] [:auth-poll "f-1"]]
                    @calls))))))))
 
 (deftest mcp-oauth-flow-errors-map-to-status-test
   (testing "a missing flow id is 400 and an expired one 404 — never a 500"
-    (with-redefs-fn {(rv 'body-json) (constantly {})}
+    (with-redefs-fn {#'gw-http/body-json (constantly {})}
       (fn []
-        (is (= 400 (:status ((rv 'mcp-auth-poll-handler) {:path-params {:name "remote"}}))))))
-    (with-redefs-fn {(rv 'body-json) (constantly {"flow_id" "gone"})
+        (is (= 400 (:status (#'mcp-api/mcp-auth-poll-handler {:path-params {:name "remote"}}))))))
+    (with-redefs-fn {#'gw-http/body-json (constantly {"flow_id" "gone"})
                      #'mcp-core/poll-gateway-server-auth!
                      (fn [flow-id]
                        (throw (ex-info "Unknown or expired MCP auth flow"
                                        {:type :mcp/oauth-flow-not-found :flow-id flow-id})))}
       (fn []
-        (let [response ((rv 'mcp-auth-poll-handler) {:path-params {:name "remote"}})]
+        (let [response (#'mcp-api/mcp-auth-poll-handler {:path-params {:name "remote"}})]
           (is (= 404 (:status response)))
           (is (= "oauth-flow-not-found"
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
 (deftest mcp-validation-errors-preserve-the-original-failure-test
   (doseq [type [:mcp/http-error :mcp/oauth-required :mcp/protocol :mcp/unknown]]
-    (with-redefs-fn {(rv 'body-json) (constantly {"name" "remote" "server" {}})
+    (with-redefs-fn {#'gw-http/body-json (constantly {"name" "remote" "server" {}})
                      #'mcp-core/test-gateway-server!
                      (fn [& _]
                        (throw (ex-info "MCP remote HTTP 401 on initialize"
                                        {:type type :body "private upstream response"})))}
       (fn []
-        (let [response ((rv 'test-mcp-server-handler) {})
+        (let [response (#'mcp-api/test-mcp-server-handler {})
               body (wire/parse-json (:body response))]
 
           (is (= 400 (:status response)))
@@ -3354,7 +3435,7 @@
                                                                ["claude-sonnet-5"]}])}
     (fn []
       (let [presets
-            (get (wire/parse-json (:body ((rv 'provider-presets-handler) {}))) "presets")
+            (get (wire/parse-json (:body (#'providers-api/provider-presets-handler {}))) "presets")
 
             [local oauth]
             presets]
@@ -3376,7 +3457,7 @@
 
         post!
         (fn [m]
-          ((rv 'add-provider-handler) (json-body m)))]
+          (#'providers-api/add-provider-handler (json-body m)))]
 
     (with-redefs-fn {#'catalog/template (fn [pid]
                                           (when (= :lmstudio pid)
@@ -3425,7 +3506,7 @@
   (with-redefs [providers/managed? #(= :extension-owned %)]
     (with-stub-fleet! [{:id :extension-owned :models []} {:id :own-key :models []}]
                       (fn []
-                        (let [response ((rv 'router-handler) {})
+                        (let [response (#'providers-api/router-handler {})
                               rows (get (wire/parse-json (:body response)) "providers")]
 
                           (is (= 200 (:status response)))
@@ -3436,7 +3517,8 @@
                 (fn [& _]
                   (throw (ex-info "Provider is managed by its extension and cannot be removed."
                                   {:type :provider/managed :provider-id :extension-owned})))]
-    (let [response ((rv 'remove-provider-handler) {:path-params {:provider-id "extension-owned"}})
+    (let [response (#'providers-api/remove-provider-handler
+                    {:path-params {:provider-id "extension-owned"}})
           payload (wire/parse-json (:body response))]
 
       (is (= 409 (:status response)))
@@ -3453,7 +3535,8 @@
         (with-stub-fleet!
           [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
           (fn []
-            (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "lmstudio"}})
+            (let [resp (#'providers-api/remove-provider-handler
+                        {:path-params {:provider-id "lmstudio"}})
                   payload (wire/parse-json (:body resp))]
 
               (is (= 200 (:status resp)))
@@ -3463,7 +3546,8 @@
             (testing "removing what is not configured is not an error"
               ;; `is_removed` reports the outcome, not the mechanism: a name the
               ;; fleet never carried is already gone.
-              (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "ghost"}})]
+              (let [resp (#'providers-api/remove-provider-handler
+                          {:path-params {:provider-id "ghost"}})]
                 (is (= 200 (:status resp)))
                 (is (true? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
 
@@ -3516,7 +3600,7 @@
                                                          nil)}
       (fn []
         (testing "POST /v1/providers"
-          (let [resp ((rv 'add-provider-handler) (json-body {:id "lmstudio"}))]
+          (let [resp (#'providers-api/add-provider-handler (json-body {:id "lmstudio"}))]
             (is (= 200 (:status resp)))
             (is (= ["zai-coding-plan"]
                    (mapv #(get % "id") (get (wire/parse-json (:body resp)) "providers")))
@@ -3525,13 +3609,13 @@
               "the live catalog is pulled off-thread, never inside this answer"))
         (testing "DELETE /v1/providers/:provider-id"
           (is (= 200
-                 (:status ((rv 'remove-provider-handler)
-                            {:path-params {:provider-id "lmstudio"}})))))
+                 (:status (#'providers-api/remove-provider-handler
+                           {:path-params {:provider-id "lmstudio"}})))))
         (is (zero? @probes) "no fleet mutation may wait on a provider's network")
         (is (= 4 @cached)
             "every row still carries its status and limits, from what is already known")
         (testing "GET /v1/router is the read that still asks live"
-          (is (= 200 (:status ((rv 'router-handler) {}))))
+          (is (= 200 (:status (#'providers-api/router-handler {}))))
           (is (= 2 @probes)))))))
 
 (deftest a-provider-recheck-also-refreshes-its-catalog
@@ -3546,7 +3630,8 @@
                      #'providers/configured-providers (constantly [{:id :opencode-go}])
                      #'providers/provider-status (constantly {:is-authenticated true})}
       (fn []
-        (let [resp ((rv 'provider-status-handler) {:path-params {:provider-id "opencode-go"}})]
+        (let [resp (#'providers-api/provider-status-handler
+                    {:path-params {:provider-id "opencode-go"}})]
           (is (= 200 (:status resp)))
           (is (true? (get-in (wire/parse-json (:body resp)) ["status" "is_authenticated"])))
           (is (= [[:opencode-go :gateway]] @asked)))))))
@@ -3575,7 +3660,7 @@
                                                                   :session_count (count sids)}))
 
         handler
-        (rv 'delete-project-handler)]
+        #'projects-api/delete-project-handler]
 
     (with-redefs-fn {#'state/delete-project! stub}
       (fn []
@@ -3679,19 +3764,19 @@
                                                                    str)})}
       (fn []
         (let [list-groups
-              (rv 'list-session-groups-handler)
+              #'projects-api/list-session-groups-handler
 
               create-group
-              (rv 'create-session-group-handler)
+              #'projects-api/create-session-group-handler
 
               delete-group
-              (rv 'delete-session-group-handler)
+              #'projects-api/delete-session-group-handler
 
               assign-group
-              (rv 'set-session-group-handler)
+              #'projects-api/set-session-group-handler
 
               create-session
-              (rv 'create-session-handler)]
+              #'sessions-api/create-session-handler]
 
           (testing
             "groups belong to ONE project: without a project or a root there is nothing to list"
@@ -3825,8 +3910,8 @@
 
         fetch
         (fn [idx]
-          ((rv 'attachment-bytes-handler)
-            {:path-params {:sid (str (random-uuid)) :iid iid :idx (str idx)}}))]
+          (#'turns-api/attachment-bytes-handler
+           {:path-params {:sid (str (random-uuid)) :iid iid :idx (str idx)}}))]
 
     (with-redefs-fn {#'state/iteration-attachments (constantly rows)}
       (fn []
@@ -3870,10 +3955,10 @@
         (str "/v1/sessions/" sid "/iterations/" iid "/attachments")]
 
     (testing "POST of a revision reaches the append handler"
-      (is (= @(rv 'append-attachment-handler)
+      (is (= @#'turns-api/append-attachment-handler
              (get-in (match-by-path router path) [:data :post :handler]))))
     (testing "and the bytes of one version are still read back beside it"
-      (is (= @(rv 'attachment-bytes-handler)
+      (is (= @#'turns-api/attachment-bytes-handler
              (get-in (match-by-path router (str path "/0")) [:data :get :handler]))))))
 
 ;; Regression, same report: saving an annotated note must file it under its OWN
@@ -3894,15 +3979,15 @@
          "base64" (.encodeToString (java.util.Base64/getEncoder)
                                    (.getBytes "# Release plan\n" "UTF-8"))}]
 
-    (with-redefs-fn {(rv 'body-json) (constantly body)
-                     (rv 'path-sid) (constantly "session-owner")
+    (with-redefs-fn {#'gw-http/body-json (constantly body)
+                     #'gw-http/path-sid (constantly "session-owner")
                      #'state/revise-iteration-attachment!
                      (fn [sid iteration-id attachment]
                        (is (= "session-owner" sid))
                        (reset! seen [iteration-id attachment])
                        {:index 1 :filename "PLAN.md" :version 2})}
       (fn []
-        (let [response ((rv 'append-attachment-handler) {:path-params {:iid iid}})]
+        (let [response (#'turns-api/append-attachment-handler {:path-params {:iid iid}})]
           (is (= 201 (:status response)))
           (is (= 2 (get (wire/parse-json (:body response)) "version")))
           (let [[iteration-id attachment] @seen]
@@ -3914,16 +3999,17 @@
 (deftest human-attachment-revision-refusals-have-client-statuses
   (doseq [[reason status] [[:attachment/not-found 404] [:attachment/read-only 403]
                            [:attachment/invalid-revision 400]]]
-    (with-redefs-fn {(rv 'body-json) (constantly {"filename" "note.md"
-                                                  "media_type" "text/markdown"
-                                                  "base64" "bm90ZQ=="})
-                     (rv 'path-sid) (constantly "session-owner")
+    (with-redefs-fn {#'gw-http/body-json (constantly {"filename" "note.md"
+                                                      "media_type" "text/markdown"
+                                                      "base64" "bm90ZQ=="})
+                     #'gw-http/path-sid (constantly "session-owner")
                      #'state/revise-iteration-attachment! (fn [& _]
                                                             (throw (ex-info "Revision refused"
                                                                             {:type reason})))}
       (fn []
         (is (= status
-               (:status ((rv 'append-attachment-handler) {:path-params {:iid "iteration"}}))))))))
+               (:status (#'turns-api/append-attachment-handler
+                         {:path-params {:iid "iteration"}}))))))))
 
 ;; The session-creation UX picks a workspace root by RECOGNITION, so the gateway
 ;; has to be able to show the machine's own folders. `/v1/fs` is that surface and
@@ -3961,8 +4047,8 @@
         (spit (fs-child root "alpha" ".git" "HEAD") "ref: refs/heads/main\n")
 
         listing
-        (wire/parse-json (:body ((rv 'browse-fs-handler)
-                                  {:query-params {"path" (.getAbsolutePath root)}})))
+        (wire/parse-json (:body (#'fs-api/browse-fs-handler
+                                 {:query-params {"path" (.getAbsolutePath root)}})))
 
         entries
         (get listing "entries")]
@@ -3988,13 +4074,15 @@
         (is (nil? (get beta "branch")))))
     (testing "`~` and a blank path both mean the gateway user's home, never the phone's"
       (is (= (System/getProperty "user.home")
-             (get (wire/parse-json (:body ((rv 'browse-fs-handler) {:query-params {"path" "~"}})))
+             (get (wire/parse-json (:body (#'fs-api/browse-fs-handler
+                                           {:query-params {"path" "~"}})))
                   "path")))
       (is (= (System/getProperty "user.home")
-             (get (wire/parse-json (:body ((rv 'browse-fs-handler) {:query-params {}}))) "path"))))
+             (get (wire/parse-json (:body (#'fs-api/browse-fs-handler {:query-params {}})))
+                  "path"))))
     (testing "a path that is not a directory is refused by name"
-      (let [response ((rv 'browse-fs-handler)
-                       {:query-params {"path" (.getAbsolutePath (fs-child root "readme.txt"))}})]
+      (let [response (#'fs-api/browse-fs-handler
+                      {:query-params {"path" (.getAbsolutePath (fs-child root "readme.txt"))}})]
         (is (= 404 (:status response)))
         (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
 
@@ -4003,7 +4091,8 @@
         (fs-temp-root)
 
         made
-        ((rv 'create-directory-handler) (json-body {:path (.getAbsolutePath root) :name "gamma"}))
+        (#'fs-api/create-directory-handler
+         (json-body {:path (.getAbsolutePath root) :name "gamma"}))
 
         body
         (wire/parse-json (:body made))]
@@ -4016,18 +4105,18 @@
       (is (.isDirectory (fs-child root "gamma"))))
     (testing "creating it twice is not an error: the folder asked for exists"
       (is (= 201
-             (:status ((rv 'create-directory-handler)
-                        (json-body {:path (.getAbsolutePath root) :name "gamma"}))))))
+             (:status (#'fs-api/create-directory-handler
+                       (json-body {:path (.getAbsolutePath root) :name "gamma"}))))))
     (testing "a name is ONE segment — a picker that accepts `a/../b` writes outside what it showed"
       (doseq [name ["a/b" ".." "." "  " "x\\y"]]
-        (let [response ((rv 'create-directory-handler)
-                         (json-body {:path (.getAbsolutePath root) :name name}))]
+        (let [response (#'fs-api/create-directory-handler
+                        (json-body {:path (.getAbsolutePath root) :name name}))]
           (is (= 400 (:status response)) (str "refuses " (pr-str name)))
           (is (= "invalid-request" (get-in (wire/parse-json (:body response)) ["error" "type"]))))))
     (testing "a parent that does not exist is a 404, not a silent mkdir -p"
-      (let [response ((rv 'create-directory-handler)
-                       (json-body {:path (.getAbsolutePath (fs-child root "nowhere"))
-                                   :name "delta"}))]
+      (let [response (#'fs-api/create-directory-handler
+                      (json-body {:path (.getAbsolutePath (fs-child root "nowhere"))
+                                  :name "delta"}))]
         (is (= 404 (:status response)))
         (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
 
@@ -4041,8 +4130,8 @@
                     (fn [channel opts]
                       (reset! seen [channel opts])
                       {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
-        (let [response ((rv 'list-sessions-handler)
-                         {:query-params {"limit" "20" "root" "/Users/dev/vis"}})
+        (let [response (#'sessions-api/list-sessions-handler
+                        {:query-params {"limit" "20" "root" "/Users/dev/vis"}})
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
@@ -4057,7 +4146,7 @@
                       (fn [channel opts]
                         (reset! seen [channel opts])
                         {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
-          ((rv 'list-sessions-handler) {:query-params {}})
+          (#'sessions-api/list-sessions-handler {:query-params {}})
           (is (nil? (:root (second @seen))))))
       ;; Regression, user report (paraphrased: "the No project header says one session and
       ;; the pager under it says 128 pages"): `?root=` is a cut of its own - the sessions no
@@ -4067,9 +4156,9 @@
                       (fn [channel opts]
                         (reset! seen [channel opts])
                         {:sessions [] :total 0 :limit 13 :next-cursor nil :has-more false})]
-          (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
-                                               {:query-params
-                                                {"limit" "13" "root" "" "grouped" "aside"}})))]
+          (let [body (wire/parse-json (:body (#'sessions-api/list-sessions-handler
+                                              {:query-params
+                                               {"limit" "13" "root" "" "grouped" "aside"}})))]
             (is (= "" (:root (second @seen))))
             (is (= 13 (:limit (second @seen))))
             (is (= "" (get body "root"))))))
@@ -4078,7 +4167,7 @@
                       (fn [channel opts]
                         (reset! seen [channel opts])
                         {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
-          ((rv 'list-sessions-handler) {:query-params {"dirty" "s-1, s-2 ,,"}})
+          (#'sessions-api/list-sessions-handler {:query-params {"dirty" "s-1, s-2 ,,"}})
           ;; Blanks and stray commas are not ids, and an absent overlay is a set,
           ;; never nil: the gateway must not have to ask whether a device answered.
           (is (= #{"s-1" "s-2"} (:dirty (second @seen)))))))))
@@ -4111,7 +4200,7 @@
                         state/projects-overview
                         (constantly value)]
 
-            ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
+            (#'sessions-api/list-sessions-handler {:query-params {"limit" "20"}})))
 
         first-answer
         (answer overview)
@@ -4132,8 +4221,8 @@
                     (fn [& _]
                       (throw (ex-info "tail recomputed overview" {})))]
 
-        (let [response ((rv 'list-sessions-handler)
-                         {:query-params {"limit" "20" "after" "2:-4000:a"}})]
+        (let [response (#'sessions-api/list-sessions-handler
+                        {:query-params {"limit" "20" "after" "2:-4000:a"}})]
           (is (= 200 (:status response)))
           (is (nil? (get (wire/parse-json (:body response)) "overview"))))))))
 
@@ -4152,7 +4241,7 @@
                                                     :limit 20
                                                     :next-cursor nil
                                                     :has-more false})]
-            ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
+            (#'sessions-api/list-sessions-handler {:query-params {"limit" "20"}})))
 
         quiet
         (answer [])
@@ -4181,8 +4270,8 @@
                                               :next-cursor "2:-3000:b"
                                               :has-more true})]
       (testing "`after` is handed down and the next cursor comes back"
-        (let [response ((rv 'list-sessions-handler)
-                         {:query-params {"limit" "20" "after" "2:-4000:a"}})
+        (let [response (#'sessions-api/list-sessions-handler
+                        {:query-params {"limit" "20" "after" "2:-4000:a"}})
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
@@ -4207,15 +4296,16 @@
           ;; nothing for a client to detect.
           (is (nil? (get-in response [:headers "X-Vis-Sessions-Order"])))))
       (testing "a cursor that is present but not a cursor is a 400, never the head of the list"
-        (let [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "nope"}})]
+        (let [response (#'sessions-api/list-sessions-handler
+                        {:query-params {"limit" "20" "after" "nope"}})]
           (is (= 400 (:status response)))
           (is (= "invalid-window" (get-in (wire/parse-json (:body response)) ["error" "type"])))))
       (testing "the window a client asked for is part of its validator"
         (let [etag (fn [after]
-                     (get-in ((rv 'list-sessions-handler)
-                               {:query-params (cond-> {"limit" "20"}
-                                                after
-                                                (assoc "after" after))})
+                     (get-in (#'sessions-api/list-sessions-handler
+                              {:query-params (cond-> {"limit" "20"}
+                                               after
+                                               (assoc "after" after))})
                              [:headers "ETag"]))]
           (is (not= (etag nil) (etag "2:-4000:a"))))))))
 
@@ -4242,14 +4332,14 @@
                                               :next-cursor nil
                                               :has-more false})]
       (testing "`grouped=aside` reaches the store and its shelves come back on the wire"
-        (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
-                                             {:query-params {"limit" "20" "grouped" "aside"}})))]
+        (let [body (wire/parse-json (:body (#'sessions-api/list-sessions-handler
+                                            {:query-params {"limit" "20" "grouped" "aside"}})))]
           (is (= "aside" (:grouped (second @seen))))
           (is (= ["filed"] (mapv #(get % "id") (get body "grouped"))))
           (is (= ["loose"] (mapv #(get % "id") (get body "sessions"))))))
       (testing "a caller that does not ask for them gets the list it always got"
-        (let [body (wire/parse-json (:body ((rv 'list-sessions-handler)
-                                             {:query-params {"limit" "20"}})))]
+        (let [body (wire/parse-json (:body (#'sessions-api/list-sessions-handler
+                                            {:query-params {"limit" "20"}})))]
           (is (nil? (:grouped (second @seen))))
           (is (nil? (get body "grouped")))))
       ;; A project with a wall of bands would paint every shelf on the first read, so
@@ -4266,14 +4356,14 @@
                                                         :offset (:offset opts)
                                                         :has-more true})]
 
-          ((rv 'list-sessions-handler)
-            {:query-params
-             {"limit" "20" "grouped" "aside" "root" "/repo" "group_limit" "2" "group_offset" "4"}})
+          (#'sessions-api/list-sessions-handler
+           {:query-params
+            {"limit" "20" "grouped" "aside" "root" "/repo" "group_limit" "2" "group_offset" "4"}})
           (is (= [pid {:archived :exclude :limit 2 :offset 4}] @asked))
           (is (= ["g3" "g4"] (:group-ids (second @seen))))))
       (testing "and a read that names no band window still gets every shelf"
-        ((rv 'list-sessions-handler)
-          {:query-params {"limit" "20" "grouped" "aside" "root" "/repo"}})
+        (#'sessions-api/list-sessions-handler
+         {:query-params {"limit" "20" "grouped" "aside" "root" "/repo"}})
         (is (nil? (:group-ids (second @seen))))))))
 
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
@@ -4286,10 +4376,10 @@
                     (reset! seen [channel opts])
                     {:sessions [] :awaiting [] :total 0 :limit 2 :next-cursor nil :has-more false})]
       (testing "a project's tab set is a CUT of this ordering, not a client-side filter"
-        ((rv 'list-sessions-handler) {:query-params {"project_id" "p1"}})
+        (#'sessions-api/list-sessions-handler {:query-params {"project_id" "p1"}})
         (is (= "p1" (:project-id (second @seen)))))
       (testing "and so is the session a short id names"
-        ((rv 'list-sessions-handler) {:query-params {"id_prefix" "aa11" "limit" "2"}})
+        (#'sessions-api/list-sessions-handler {:query-params {"id_prefix" "aa11" "limit" "2"}})
         (is (= ["aa11" 2] [(:id-prefix (second @seen)) (:limit (second @seen))]))))))
 
 ;; Regression, this Vis session (paraphrased: "why does opening the picker download every
@@ -4306,17 +4396,17 @@
                                               :next-cursor nil
                                               :has-more false})]
       (testing "no window and no cut is the HEAD window, never every session in the store"
-        ((rv 'list-sessions-handler) {:query-params {}})
+        (#'sessions-api/list-sessions-handler {:query-params {}})
         (is (= 20 (:limit (second @seen)))))
       (testing "a read that named its own limit keeps it"
-        ((rv 'list-sessions-handler) {:query-params {"limit" "5"}})
+        (#'sessions-api/list-sessions-handler {:query-params {"limit" "5"}})
         (is (= 5 (:limit (second @seen)))))
       (testing "the rows a set of ids names are a CUT, so the question bounds the answer"
-        ((rv 'list-sessions-handler) {:query-params {"ids" "aa11,bb33"}})
+        (#'sessions-api/list-sessions-handler {:query-params {"ids" "aa11,bb33"}})
         (is (= #{"aa11" "bb33"} (:ids (second @seen))))
         (is (nil? (:limit (second @seen)))))
       (testing "and so is a project, which is bounded by the project"
-        ((rv 'list-sessions-handler) {:query-params {"project_id" "p1"}})
+        (#'sessions-api/list-sessions-handler {:query-params {"project_id" "p1"}})
         (is (nil? (:limit (second @seen))))))))
 
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
@@ -4382,15 +4472,15 @@
       (cloning-speaker store)
       (fn []
         (let [upload (fn [query clip]
-                       ((rv 'speech-voices-handler)
-                         {:request-method :post
-                          :query-params query
-                          :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
+                       (#'speech-api/speech-voices-handler
+                        {:request-method :post
+                         :query-params query
+                         :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
               listed (fn []
-                       ((rv 'speech-voices-handler) {:request-method :get}))
+                       (#'speech-api/speech-voices-handler {:request-method :get}))
               forget (fn [id]
-                       ((rv 'speech-voice-handler)
-                         {:request-method :delete :path-params {:voice-id id}}))]
+                       (#'speech-api/speech-voice-handler
+                        {:request-method :delete :path-params {:voice-id id}}))]
 
           (testing "the upload IS the voice: bytes in, catalogue entry out"
             (let [response (upload {"name" "My Own" "lang" "en-GB" "text" "what the clip says"}
@@ -4418,10 +4508,10 @@
       (with-only-speech-engine!
         (speaking-engine)
         (fn []
-          (let [response ((rv 'speech-voices-handler)
-                           {:request-method :post
-                            :query-params {"name" "My Own"}
-                            :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
+          (let [response (#'speech-api/speech-voices-handler
+                          {:request-method :post
+                           :query-params {"name" "My Own"}
+                           :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
             (is (= 409 (:status response)))
             (is (= "voice-import-unsupported"
                    (get-in (wire/parse-json (:body response)) ["error" "type"])))
@@ -4430,8 +4520,8 @@
 
 (deftest speech-tts-refusals-are-client-errors
   (let [response
-        ((rv 'voice-import-failure)
-          (ex-info "That file is not a recording" {:type :speech-tts/clip-not-wav}))
+        (#'speech-api/voice-import-failure
+         (ex-info "That file is not a recording" {:type :speech-tts/clip-not-wav}))
 
         body
         (wire/parse-json (:body response))]
@@ -4457,46 +4547,46 @@
         (with-only-engine! nil
                            (fn []
                              (is (= [501 "engine-unavailable" true]
-                                    (refusal ((rv 'voice-handler)
-                                               {:path-params {:sid sid} :body (wav-body)}))))))
+                                    (refusal (#'speech-api/voice-handler
+                                              {:path-params {:sid sid} :body (wav-body)}))))))
         (with-only-engine!
           {:id :fake-engine :transcribe (constantly "hi") :model-state (constantly {:state :ready})}
           (fn []
             (is (= [400 "unknown-engine" true]
-                   (refusal ((rv 'voice-handler)
-                              {:path-params {:sid sid}
-                               :query-params {"engine" "whisper-server"}
-                               :body (wav-body)}))))
+                   (refusal (#'speech-api/voice-handler
+                             {:path-params {:sid sid}
+                              :query-params {"engine" "whisper-server"}
+                              :body (wav-body)}))))
             (is (= [400 "invalid-audio" true]
-                   (refusal ((rv 'voice-handler)
-                              {:path-params {:sid sid}
-                               :body (java.io.ByteArrayInputStream. (byte-array 64))}))))
-            (doseq [handler ['voice-job-handler 'voice-job-events-handler
-                             'speech-job-audio-handler]]
+                   (refusal (#'speech-api/voice-handler
+                             {:path-params {:sid sid}
+                              :body (java.io.ByteArrayInputStream. (byte-array 64))}))))
+            (doseq [handler [#'speech-api/voice-job-handler #'speech-api/voice-job-events-handler
+                             #'speech-api/speech-job-audio-handler]]
               (is (= [404 "job-not-found" true]
-                     (refusal ((rv handler)
-                                {:request-method :get :path-params {:sid sid :job-id "vj_nope"}})))
+                     (refusal (handler {:request-method :get
+                                        :path-params {:sid sid :job-id "vj_nope"}})))
                   (str handler)))))
         (with-only-speech-engine!
           (assoc (speaking-engine) :forget-voice (constantly false))
           (fn []
             (let [say (fn [text]
-                        ((rv 'speech-handler)
-                          (merge {:request-method :post :path-params {:sid sid}}
-                                 (json-body {:text text}))))]
+                        (#'speech-api/speech-handler
+                         (merge {:request-method :post :path-params {:sid sid}}
+                                (json-body {:text text}))))]
               (is (= [400 "invalid-request" true] (refusal (say "   "))))
               (is (= [413 "text-too-long" true] (refusal (say (apply str (repeat 21000 "x")))))))
             (is (= [404 "voice-not-found" true]
-                   (refusal ((rv 'speech-voice-handler)
-                              {:request-method :delete :path-params {:voice-id "nobody"}}))))))
+                   (refusal (#'speech-api/speech-voice-handler
+                             {:request-method :delete :path-params {:voice-id "nobody"}}))))))
         (is (= [500 "synthesis-failed" true]
-               (refusal ((rv 'speech-failure-response) (ex-info "engine crashed" {})))))
+               (refusal (#'speech-api/speech-failure-response (ex-info "engine crashed" {})))))
         (is (= [500 "voice-import-failed" true]
-               (refusal ((rv 'voice-import-failure) (ex-info "disk full" {})))))))
+               (refusal (#'speech-api/voice-import-failure (ex-info "disk full" {})))))))
     (with-redefs [state/soul (constantly nil)]
       (is (= [404 "session-not-found" true]
-             (refusal ((rv 'speech-job-handler)
-                        {:request-method :get :path-params {:sid sid :job-id "sj_nope"}})))))))
+             (refusal (#'speech-api/speech-job-handler
+                       {:request-method :get :path-params {:sid sid :job-id "sj_nope"}})))))))
 
 (deftest decisions-route-requires-an-explicit-model
   (let [app
@@ -4983,13 +5073,13 @@
         ((rv 'router) "token" [])]
 
     (testing "the machine's own catalogue is listed, added to and pruned"
-      (is (= @(rv 'speech-voices-handler)
+      (is (= @#'speech-api/speech-voices-handler
              (get-in (match-by-path router "/v1/speech/voices") [:data :get :handler])))
-      (is (= @(rv 'speech-voices-handler)
+      (is (= @#'speech-api/speech-voices-handler
              (get-in (match-by-path router "/v1/speech/voices") [:data :post :handler])))
-      (is (= @(rv 'speech-voice-handler)
+      (is (= @#'speech-api/speech-voice-handler
              (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler])))
-      (is (= @(rv 'speech-voice-sample-handler)
+      (is (= @#'speech-api/speech-voice-sample-handler
              (get-in (match-by-path router "/v1/speech/voices/mine/sample") [:data :get :handler])))
       ;; hearing a voice is not a session's business either: a preview must never have
       ;; to invent a session id to reach POST /v1/sessions/:sid/speech
@@ -4998,9 +5088,9 @@
     (testing "and which model each direction uses is a fact about the machine too"
       ;; A gateway with no session open still has to answer "is the model here yet" - the
       ;; settings screen asks before any conversation exists.
-      (is (= @(rv 'voice-model-handler)
+      (is (= @#'speech-api/voice-model-handler
              (get-in (match-by-path router "/v1/voice/model") [:data :get :handler])))
-      (is (= @(rv 'speech-model-handler)
+      (is (= @#'speech-api/speech-model-handler
              (get-in (match-by-path router "/v1/speech/model") [:data :get :handler]))))
     (testing "and nothing serves them under a session"
       (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/voices"))))
@@ -5022,10 +5112,10 @@
     (with-only-speech-engine! engine
                               (fn []
                                 (let [response
-                                      ((rv 'speech-model-handler)
-                                        {:request-method :post
-                                         :query-params {"voice_id" "ryan"
-                                                        "is_license_accepted" "true"}})
+                                      (#'speech-api/speech-model-handler
+                                       {:request-method :post
+                                        :query-params {"voice_id" "ryan"
+                                                       "is_license_accepted" "true"}})
 
                                       body
                                       (wire/parse-json (:body response))]
@@ -5039,15 +5129,16 @@
         (str (random-uuid))
 
         refusals
-        [['speech-voices-handler {:request-method :get}]
-         ['speech-voices-handler
+        [[#'speech-api/speech-voices-handler {:request-method :get}]
+         [#'speech-api/speech-voices-handler
           {:request-method :post
            :query-params {"name" "Mine"}
            :body (java.io.ByteArrayInputStream. (byte-array 0))}]
-         ['speech-voice-handler {:request-method :delete :path-params {:voice-id "mine"}}]
-         ['speech-model-handler {:request-method :get}]
-         ['voice-model-handler {:request-method :get}]
-         ['speech-handler
+         [#'speech-api/speech-voice-handler
+          {:request-method :delete :path-params {:voice-id "mine"}}]
+         [#'speech-api/speech-model-handler {:request-method :get}]
+         [#'speech-api/voice-model-handler {:request-method :get}]
+         [#'speech-api/speech-handler
           (merge {:request-method :post :path-params {:sid sid}} (json-body {:text "hello"}))]]]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
@@ -5060,7 +5151,7 @@
               :transcribe
               nil
               (fn []
-                (let [features (-> ((rv 'capabilities-handler) {})
+                (let [features (-> (#'views-api/capabilities-handler {})
                                    :body
                                    wire/parse-json
                                    (get "features"))]
@@ -5068,7 +5159,7 @@
                   (is (false? (get-in features ["voice" "enabled"])))
                   (is (false? (get-in features ["speech" "is_enabled"]))))
                 (doseq [[handler request] refusals]
-                  (let [response ((rv handler) request)]
+                  (let [response (handler request)]
                     (is (= 501 (:status response)) (str handler))
                     (is (str/includes? (get-in (wire/parse-json (:body response))
                                                ["error" "message"])
@@ -5093,8 +5184,8 @@
 
         patch-session
         (fn [body]
-          ((rv 'patch-session-handler)
-            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+          (#'sessions-api/patch-session-handler
+           (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
 
     (testing "starring answers the soul carrying the rank the gateway allocated"
       (with-redefs-fn {#'state/set-favorite! (favorite-setter 7)}
@@ -5142,8 +5233,8 @@
 
         patch-session
         (fn [body]
-          ((rv 'patch-session-handler)
-            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+          (#'sessions-api/patch-session-handler
+           (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
 
     (testing "archiving answers the soul carrying the stamp the gateway wrote"
       (with-redefs-fn {#'state/set-archived! (archive-setter 1717)}
@@ -5186,7 +5277,7 @@
                         (fn [channel opts]
                           (reset! seen [channel opts])
                           {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
-            ((rv 'list-sessions-handler) {:query-params params})))]
+            (#'sessions-api/list-sessions-handler {:query-params params})))]
 
     (testing
       "no parameter is the ACTIVE list, so a client that never heard of the archive is unchanged"
@@ -5201,7 +5292,7 @@
       (with-redefs [state/list-sessions-page (fn [& _]
                                                (throw (ex-info "windowed an unknown archive view"
                                                                {})))]
-        (let [response ((rv 'list-sessions-handler) {:query-params {"archived" "yes"}})]
+        (let [response (#'sessions-api/list-sessions-handler {:query-params {"archived" "yes"}})]
           (is (= 400 (:status response)))
           (is (= "invalid-archived"
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
@@ -5228,8 +5319,8 @@
 
         patch-group
         (fn [body]
-          ((rv 'patch-session-group-handler)
-            (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
+          (#'projects-api/patch-session-group-handler
+           (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
 
     (testing "archiving a group answers the group carrying the stamp the gateway wrote"
       (with-redefs-fn store
@@ -5262,7 +5353,8 @@
                       (fn [channel opts]
                         (reset! seen [channel opts])
                         {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
-          ((rv 'list-sessions-handler) {:query-params {"group_id" (str gid) "archived" "only"}})
+          (#'sessions-api/list-sessions-handler
+           {:query-params {"group_id" (str gid) "archived" "only"}})
           (is (= (str gid) (:group-id (second @seen))))
           (is (= :only (:archived (second @seen)))))))))
 
@@ -5287,15 +5379,15 @@
 
         submit
         (fn []
-          ((rv 'submit-turn-handler)
-            (merge {:request-method :post :path-params {:sid sid}}
-                   (json-body {:request "keep working"}))))
+          (#'turns-api/submit-turn-handler
+           (merge {:request-method :post :path-params {:sid sid}}
+                  (json-body {:request "keep working"}))))
 
         pin
         (fn []
-          ((rv 'set-session-model-handler)
-            (merge {:request-method :patch :path-params {:sid sid}}
-                   (json-body {:model "glm-5.2"}))))]
+          (#'sessions-api/set-session-model-handler
+           (merge {:request-method :patch :path-params {:sid sid}}
+                  (json-body {:model "glm-5.2"}))))]
 
     (testing "a turn aimed at an archived session is refused, and nothing is queued"
       (with-redefs-fn refuses
@@ -5338,8 +5430,8 @@
                                                   {:turns [] :total 0 :offset 0 :has-more false}))
         (fn []
           (is (= 200
-                 (:status ((rv 'transcript-handler)
-                            {:path-params {:sid sid} :query-params {}})))))))))
+                 (:status (#'transcripts-api/transcript-handler
+                           {:path-params {:sid sid} :query-params {}})))))))))
 
 ;; A session still WORKING cannot be put away: the turn would keep running with nothing
   ;; in any list naming it, and cancelling it behind a swipe verb would be worse. The group
@@ -5357,13 +5449,13 @@
 
         patch-session
         (fn [body]
-          ((rv 'patch-session-handler)
-            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))
+          (#'sessions-api/patch-session-handler
+           (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))
 
         patch-group
         (fn [body]
-          ((rv 'patch-session-group-handler)
-            (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
+          (#'projects-api/patch-session-group-handler
+           (merge {:request-method :patch :path-params {:gid (str gid)}} (json-body body))))]
 
     (testing "a session with work in flight refuses the archive and is never stamped"
       (with-redefs-fn {#'state/session-working? (constantly true)
@@ -5428,7 +5520,7 @@
                              :choices ["quick" "deep"]
                              :default "quick"})
   (let [call
-        (rv 'set-setting-handler)
+        #'settings-api/set-setting-handler
 
         body
         (fn [json]
@@ -5692,7 +5784,7 @@
         (atom 0)
 
         handlers
-        (mapv (rv 'council-handler) [:publish :wake])]
+        (mapv #'council-api/council-handler [:publish :wake])]
 
     (with-redefs [state/council-operation! (fn [& _]
                                              (swap! calls inc)
@@ -5708,7 +5800,7 @@
       (is (zero? @calls)))))
 
 (deftest council-unexpected-failure-is-not-client-error-test
-  (let [handler ((rv 'council-handler) :members)]
+  (let [handler (#'council-api/council-handler :members)]
     (doseq [data [{} {:error :unexpected-storage-failure}]]
       (let [error (ex-info "fixture persistence unavailable" data)]
         (with-redefs [state/council-operation! (fn [& _]
@@ -5730,7 +5822,7 @@
         (random-uuid)
 
         handler
-        (rv 'session-alert-handler)
+        #'sessions-api/session-alert-handler
 
         alert
         (fn [query]
@@ -5793,11 +5885,11 @@
         (atom [])
 
         handler
-        (rv 'open-file-handler)
+        #'fs-api/open-file-handler
 
         answer
         (fn [body outcome & {:keys [session workspace] :or {session sid workspace (.getPath root)}}]
-          (with-redefs-fn {(rv 'body-json) (constantly body)
+          (with-redefs-fn {#'gw-http/body-json (constantly body)
                            #'state/soul (fn [id]
                                           (when (= session id) {"id" (str id)}))
                            #'state/session-workspace-info (fn [id]
@@ -5868,7 +5960,7 @@
         (ungranted-test-file)
 
         handler
-        (rv 'read-file-handler)
+        #'fs-api/read-file-handler
 
         answer
         (fn [query & {:keys [session workspace] :or {session sid workspace (.getPath root)}}]
@@ -5992,10 +6084,10 @@
         (atom [])
 
         preview-handler
-        (rv 'read-file-handler)
+        #'fs-api/read-file-handler
 
         open-handler
-        (rv 'open-file-handler)
+        #'fs-api/open-file-handler
 
         request-base
         {:path-params {:sid (str sid)}}
@@ -6006,7 +6098,7 @@
 
         open
         (fn [path]
-          (with-redefs-fn {(rv 'body-json) (constantly {"path" path})}
+          (with-redefs-fn {#'gw-http/body-json (constantly {"path" path})}
             #(open-handler request-base)))
 
         lines
@@ -6148,7 +6240,7 @@
                        {:session_id (str s) :reader "local" :seen_answers 4 :is_unread false})}
       (fn []
         (let [handler
-              (rv 'mark-session-read-handler)
+              #'sessions-api/mark-session-read-handler
 
               params
               {:path-params {:sid (str sid)}}]
@@ -6173,6 +6265,6 @@
     (with-redefs-fn {#'state/soul (constantly nil)}
       (fn []
         (is (= 404
-               (:status ((rv 'mark-session-read-handler)
-                          (merge {:path-params {:sid (str (java.util.UUID/randomUUID))}}
-                                 (json-body {}))))))))))
+               (:status (#'sessions-api/mark-session-read-handler
+                         (merge {:path-params {:sid (str (java.util.UUID/randomUUID))}}
+                                (json-body {}))))))))))

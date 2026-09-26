@@ -2,7 +2,8 @@
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.gateway.server]
+            [com.blockether.vis.internal.gateway.server.devices]
+            [com.blockether.vis.internal.gateway.server.instance]
             [com.blockether.vis.contract.wire :as wire]))
 
 (deftest machine-order-is-durable-and-independent-of-request-order
@@ -13,10 +14,10 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
 
         handler
-        (ns-resolve 'com.blockether.vis.internal.gateway.server 'machine-order-handler)
+        (ns-resolve 'com.blockether.vis.internal.gateway.server.devices 'machine-order-handler)
 
         identity
-        (ns-resolve 'com.blockether.vis.internal.gateway.server 'gateway-instance-id)
+        (ns-resolve 'com.blockether.vis.internal.gateway.server.instance 'gateway-instance-id)
 
         request
         (fn [ids]

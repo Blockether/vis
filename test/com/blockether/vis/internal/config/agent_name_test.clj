@@ -6,6 +6,8 @@
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.server.sessions :as sessions-api]
+            [com.blockether.vis.internal.gateway.server.settings :as settings-api]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.workspace.git :as git]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
@@ -71,7 +73,7 @@
             (is (= "Ada" (config/agent-name (.getPath project))))
             (is (= "Ada" (get (state/soul sid) "agent_name")))
             (is (= "Ada" (get (state/session-workspace-info sid) "agent_name")))
-            (let [response (#'server/soul-handler {:path-params {:sid (str sid)}})]
+            (let [response (#'sessions-api/soul-handler {:path-params {:sid (str sid)}})]
               (is (= 200 (:status response)))
               (is (str/includes? (:body response) "\"agent_name\":\"Ada\"")))
             (is (str/starts-with? (prompt/build-system-prompt {:workspace-root (.getPath project)})
@@ -92,7 +94,7 @@
                                #'state/append-event! (fn [& args]
                                                        (swap! events conj args))}
                 (fn []
-                  (is (= 200 (:status (#'server/set-setting-handler request))))))
+                  (is (= 200 (:status (#'settings-api/set-setting-handler request))))))
               (is (= 2 (count @events)))
               (is (every? #(= ["session.agent_name_updated" {:agent-name "Grace"} {:store? false}]
                               (vec (rest %)))
@@ -107,17 +109,18 @@
               (is (str/includes? (.toString out "UTF-8") "\"agent_name\":\"Grace\"")))
             (is (str/starts-with? (prompt/build-system-prompt {:workspace-root (.getPath project)})
                                   "You are Grace."))
-            (is (str/includes? (:body (#'server/get-setting-handler
+            (is (str/includes? (:body (#'settings-api/get-setting-handler
                                        {:path-params {:id "agent_name"}}))
                                "\"value\":\"Grace\""))
-            (is (str/includes? (:body (#'server/list-settings-handler {})) "\"id\":\"agent_name\""))
+            (is (str/includes? (:body (#'settings-api/list-settings-handler {}))
+                               "\"id\":\"agent_name\""))
             (doseq [value [nil "" "   " "Ada\nOther" 42 (apply str (repeat 81 "a"))]]
               (is (= 400
-                     (:status (#'server/set-setting-handler
+                     (:status (#'settings-api/set-setting-handler
                                {:query-params
                                 {"id" "agent_name" "action" "value" "value" value}})))))
             (is (= 400
-                   (:status (#'server/set-setting-handler
+                   (:status (#'settings-api/set-setting-handler
                              {:query-params {"id" "agent_name" "action" "toggle"}}))))
             (is (= "Grace" (state/session-agent-name sid)))
             (with-redefs [config/load-config-raw (constantly {"system_prompt" {"text"

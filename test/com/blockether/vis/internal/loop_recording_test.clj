@@ -4,7 +4,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.audio-transcribe :as at]
             [com.blockether.vis.internal.context.prompt :as prompt]
-            [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.server.turns :as turns-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.iteration :as iteration]
@@ -86,7 +86,7 @@
                       (constantly db)]
 
           (let [uploaded
-                (#'server/upload-attachment-handler
+                (#'turns-api/upload-attachment-handler
                  {:path-params {:sid (str sid)}
                   :query-params {"filename" "meeting.m4a" "media_type" "audio/mp4"}
                   :headers {"content-length" "5"}
@@ -96,7 +96,7 @@
                 (get (wire/parse-json (:body uploaded)) "upload_id")
 
                 accepted
-                (#'server/submit-turn-handler
+                (#'turns-api/submit-turn-handler
                  {:path-params {:sid (str sid)}
                   :body (java.io.ByteArrayInputStream.
                           (.getBytes (wire/json-str {:request "Summarize this"
@@ -181,7 +181,7 @@
               (persistence/db-set-session-prompt-cache-state! db state-id {:without-recording true})
 
               response
-              (#'server/turn-attachments-handler
+              (#'turns-api/turn-attachments-handler
                {:path-params {:sid (str sid) :tid (str tid)}
                 :query-params {"transcription_only" "true"}})
 
@@ -281,7 +281,7 @@
                     (fn [rows]
                       (mapv #(assoc % :transcription "second words") rows))]
 
-        (#'server/turn-attachments-handler
+        (#'turns-api/turn-attachments-handler
          {:path-params {:sid (str sid) :tid (str tid)}
           :query-params {"transcription_only" "true"}}))
       (let [saved (persistence/db-list-turn-attachments db tid)]

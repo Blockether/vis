@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.util :as util])
@@ -13,7 +14,7 @@
 (defn- with-server
   [run]
   (let [state-atom
-        @(ns-resolve 'com.blockether.vis.internal.gateway.server 'server-state)
+        instance/server-state
 
         before
         @state-atom
@@ -101,9 +102,9 @@
         (swap! state-atom update-in [:clients "owner"] assoc :pid 42 :last-seen-at expired)
         (with-redefs [discovery/pid-alive-cached? #(= 42 %)]
           ;; A long application callback cannot pump the stdio pipe itself.
-          (is (true? (#'server/live-client? "owner")))
+          (is (true? (instance/live-client? "owner")))
           (is (= expired (get-in @state-atom [:clients "owner" :last-seen-at])))
           (swap! state-atom assoc-in [:clients "owner" :pid] 43)
-          (is (not (#'server/live-client? "owner")))
+          (is (not (instance/live-client? "owner")))
           (swap! state-atom update-in [:clients "owner"] dissoc :pid)
-          (is (not (#'server/live-client? "owner"))))))))
+          (is (not (instance/live-client? "owner"))))))))

@@ -5634,7 +5634,7 @@
    nil when the string is not a cursor.
 
    Public because the SERVER refuses an unparsable `?after=` with a 400 rather than
-   silently answering the head of the list (`server/list-sessions-handler`);
+   silently answering the head of the list (`server.sessions/list-sessions-handler`);
    `list-sessions-page` takes the wire string and treats anything else as no cursor
    at all, so it stays total.
 

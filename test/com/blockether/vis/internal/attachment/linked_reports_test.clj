@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.attachment.linked-reports :as reports]
             [com.blockether.vis.internal.gateway.server]
+            [com.blockether.vis.internal.gateway.server.turns]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -92,7 +93,7 @@
 
           (let [handler
                 ((ns-resolve 'com.blockether.vis.internal.gateway.server 'wrap-auth)
-                  @(ns-resolve 'com.blockether.vis.internal.gateway.server
+                  @(ns-resolve 'com.blockether.vis.internal.gateway.server.turns
                                'attachment-bytes-handler)
                   "report-fixture-token"
                   [])

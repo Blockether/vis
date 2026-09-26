@@ -3,7 +3,7 @@
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.event :as event]
-            [com.blockether.vis.internal.gateway.server]
+            [com.blockether.vis.internal.gateway.server.transcripts]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -47,7 +47,7 @@
                                                    :error (ex-info "Tail failure" {}))))
     (:invocation-id inv)))
 
-(defn- handler [symbol] (ns-resolve 'com.blockether.vis.internal.gateway.server symbol))
+(defn- handler [symbol] (ns-resolve 'com.blockether.vis.internal.gateway.server.transcripts symbol))
 
 (defdescribe
   activity-history-routes-test
