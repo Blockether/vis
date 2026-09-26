@@ -44,7 +44,7 @@ import {
   sessionIsArchived,
   sessionIsLive,
   sessionNeedsInput,
-  sessionWasInterrupted,
+  sessionWasStopped,
   timeLabel,
 } from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
@@ -331,14 +331,14 @@ export const SessionRow = memo(function SessionRow({
   // OWN gateway client, which this list only hears about on its next poll — and
   // until then the badge sat on the very conversation the reader was looking at.
   const unread = isOpen ? 0 : unreadTurnCount(session);
-  // STOPPED: the newest turn was cut off — the operator cancelled it, or the
-  // gateway died mid-answer and swept it on its next start. Gated on the unread
-  // mark on purpose, so the flag is BOUNDED: it reports something you have not
+  // STOPPED: the newest turn failed, was cancelled, or was swept after a
+  // gateway died mid-answer. The gateway owns each persisted verdict. Gated on the
+  // unread mark so the flag is BOUNDED: it reports something you have not
   // seen, and opening the session retires it exactly the way it retires "new".
   // Ungated it would sit on the row until that session's next turn, which for an
   // abandoned session never comes. STOPPED takes the status mark for itself, ahead
   // of the NEW that mark would otherwise carry, so a cut-off row never says both.
-  const stopped = !live && sessionWasInterrupted(session) && unread > 0;
+  const stopped = !live && sessionWasStopped(session) && unread > 0;
   const isPutAway = sessionIsArchived(session) || group?.archived_at != null;
   const status = statusLabel(session, stopped, hasUnsent, unread, isPutAway);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
@@ -1155,7 +1155,7 @@ export function sessionSearchText(session: Session): string {
     session.workspace?.root,
     session.status,
     sessionNeedsInput(session) ? 'input needed waiting human' : '',
-    sessionWasInterrupted(session) ? 'stopped interrupted' : '',
+    sessionWasStopped(session) ? 'stopped interrupted failed' : '',
     sessionIsLive(session) ? 'live running' : 'idle',
   ]
     .filter(Boolean)

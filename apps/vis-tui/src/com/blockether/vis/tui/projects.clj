@@ -153,7 +153,9 @@
           (let [n (long (or (get session "awaiting_input_count") 1))]
             (if (> n 1) (str "INPUT NEEDED ×" n) "INPUT NEEDED"))
           live? "LIVE"
-          (and (true? (get session "was_interrupted")) (pos? unread)) "STOPPED"
+          (and (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
+               (pos? unread))
+          "STOPPED"
           (pos? unread) (if (> unread 1) (str "NEW ×" unread) "NEW")
           (= "suspended" (get session "status")) "WAITING"
           dirty? "DIRTY"

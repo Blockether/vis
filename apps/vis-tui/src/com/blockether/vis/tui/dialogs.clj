@@ -5183,7 +5183,9 @@
         ;; (`SessionList`): it reports a run that was cut off and not yet read,
         ;; instead of sitting on an abandoned session for good.
         stopped?
-        (and (not live?) (true? (get session "was_interrupted")) (pos? unread))
+        (and (not live?)
+             (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
+             (pos? unread))
 
         gid
         (not-empty (str (get session "group_id")))

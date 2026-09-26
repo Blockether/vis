@@ -65,6 +65,31 @@ describe('a session whose last turn was cut off', () => {
     expect(screen.getByText('IDLE')).toBeInTheDocument();
   });
 
+  // Vis session 32bcc713: a Python timeout failed the turn without cancellation.
+  // The unread error must be visible as STOPPED, not an ordinary NEW answer.
+  it('marks an unread failed turn as STOPPED', async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({
+              id: 's-failed',
+              turn_count: 3,
+              answer_count: 2,
+              was_failed: true,
+              is_unread: true,
+              unread_answers: 1,
+            }),
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+
+    expect(await screen.findByText('STOPPED')).toBeInTheDocument();
+    expect(screen.queryByText('NEW')).not.toBeInTheDocument();
+  });
+
   it('leaves a live session alone, whatever its last settled turn did', async () => {
     const view = renderSessionsScreen({
       machines: [

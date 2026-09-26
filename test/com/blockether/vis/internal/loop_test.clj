@@ -3074,7 +3074,24 @@
                                                                "print(40 + 2)"
                                                                :env
                                                                environment)))))))
-             (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil))))))))
+             (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
+  ;; Vis session 32bcc713: asyncio.sleep outlived the eval wall, retired Python and
+  ;; ended the active turn. A timed-out sleep must leave the same context usable.
+  (it "unwinds a long asyncio sleep without retiring the context"
+      (tpc/with-own
+        [pc {}]
+        (let [environment {:python-context-retired-atom (atom false)}]
+          (try
+            (#'python-exec/run-python-code pc "import asyncio" :env environment)
+            (let [result
+                  (binding [rt/*eval-timeout-ms* 350]
+                    (#'python-exec/run-python-code pc "await asyncio.sleep(5)" :env environment))]
+              (expect (true? (:timeout? result)))
+              (expect (false? @(:python-context-retired-atom environment)))
+              (expect (= "ready\n"
+                         (:stdout
+                           (#'python-exec/run-python-code pc "print('ready')" :env environment)))))
+            (finally (env/dispose-python-context! pc)))))))
 
 (defdescribe
   retired-python-follow-up-test

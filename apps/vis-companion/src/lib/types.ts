@@ -129,13 +129,13 @@ export interface Session {
    */
   awaiting_input_count?: number;
   /**
-   * The session's NEWEST turn ended without finishing — the operator cancelled it,
-   * or a gateway died with it running and the next start swept it. The gateway owns
-   * this verdict off its store; never infer it from `status`, which is registry-only
-   * and therefore says "idle" for exactly these sessions after a restart. It clears
-   * itself as soon as a later turn settles.
+   * The newest turn was cancelled, or a gateway died mid-answer and swept it.
+   * The gateway reads this from its store, not the registry-only `status`, which
+   * can say "idle" after a restart. A later turn clears the verdict.
    */
   was_interrupted?: boolean;
+  /** The newest turn failed (including a local runtime failure), rather than finishing. */
+  was_failed?: boolean;
   /** In-flight facts and same-response gateway clock for clock-safe attachment. */
   running_request?: string;
   running_request_kind?: RequestKind;

@@ -2070,6 +2070,7 @@ function sessionViewFingerprint(session: Session): string {
     session.is_unread,
     session.unread_answers,
     session.was_interrupted,
+    session.was_failed,
     session.modified_at,
     session.created_at,
     session.project_id,

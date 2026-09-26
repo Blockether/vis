@@ -1499,7 +1499,8 @@
          {"id" "waiting" "title" "Suspended" "status" "suspended"}
          {"id" "a1" "title" nil "turn_count" 1}
          {"id" "archived" "title" "Archived" "archived_at" "2026-09-24T00:00:00Z"}
-         {"id" "idle" "title" "Quiet"}]
+         {"id" "idle" "title" "Quiet"}
+         {"id" "failed" "title" "Failed run" "was_failed" true "is_unread" true "unread_answers" 1}]
 
         db
         (-> (fixture-db)
@@ -1509,7 +1510,8 @@
         entries
         (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
 
-    (is (= ["INPUT NEEDED ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"]
+    (is (= ["INPUT NEEDED ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"
+            "STOPPED"]
            (mapv :status entries)))
     (is (= "Keep this draft" (:label (nth entries 5))))
     (is (true? (:favorite? (nth entries 3))))

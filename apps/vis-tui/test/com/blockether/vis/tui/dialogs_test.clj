@@ -2743,6 +2743,11 @@
 
       (expect (= "⨯ stopped" (:status (row cut))))
       (expect (true? (:stopped? (row cut))))
+      (let [failed (-> cut
+                       (dissoc "was_interrupted")
+                       (assoc "was_failed" true))]
+        (expect (= "⨯ stopped" (:status (row failed))))
+        (expect (true? (:stopped? (row failed)))))
       ;; Bounded by the read mark, exactly as the app bounds it: an interrupted
       ;; run the reader has already seen is an ordinary idle session.
       (expect (= "3 turns" (:status (row (dissoc cut "unread_answers")))))

@@ -1787,11 +1787,9 @@
 (def ^:private human-answer-expression
   "1 per HUMAN turn that has SETTLED, read at its newest state version.
 
-   Settled INCLUDES `interrupted`: a turn the operator cancelled, and a turn a
-   dead process left `:running` until the next start swept it
-   (`db-sweep-orphaned-running-turns!`). Both are terminal and both leave
-   something in front of the reader, so a watermark that skipped them left a
-   session killed mid-answer counting exactly like one already read."
+   Settled includes errors and interruptions (cancellation or an orphan swept on
+   restart). Both leave something for the reader, so a watermark that skips them
+   hides the stopped turn in the session list."
   [:sum
    [:case
     [:and [:= :ts.request_kind "user"]
@@ -1799,52 +1797,45 @@
       {:select [1]
        :from [[:session_turn_state :answer]]
        :where [:and [:= :answer.session_turn_soul_id :ts.id]
-               [:in :answer.status (mapv normalize-status [:success :failed :interrupted])]
+               [:in :answer.status (mapv normalize-status [:success :error :interrupted])]
                [:= :answer.version
                 {:select [[[:max :latest_answer.version]]]
                  :from [[:session_turn_state :latest_answer]]
                  :where [:= :latest_answer.session_turn_soul_id :ts.id]}]]}]] 1 :else 0]])
 
-(def ^:private latest-turn-interrupted-expression
-  "1 when the session's NEWEST human turn ended INTERRUPTED.
+(def ^:private latest-turn-status-expression
+  "The newest human turn's persisted status, including failures and interruptions.
 
-   The verdict has to come off the STORE. The gateway's in-memory registry is
-   empty precisely after the restart that produced the interruption, so the last
-   turn `soul` can read there is nil and every swept session reports itself idle.
-   Newest by `created_at`, tie-broken by `position`, and read at that turn's
-   HIGHEST state version so a retried turn answers with the attempt the
-   transcript shows rather than a superseded one."
-  [:case
-   [:= (normalize-status :interrupted)
-    {:select [:final.status]
-     :from [[:session_turn_soul :last_turn]]
-     :join [[:session_state :last_turn_state] [:= :last_turn_state.id :last_turn.session_state_id]
-            [:session_turn_state :final] [:= :final.session_turn_soul_id :last_turn.id]]
-     :where [:and [:= :last_turn_state.session_soul_id :ss.session_soul_id]
-             [:= :last_turn.request_kind "user"]
-             [:= :final.version
-              {:select [[[:max :final_version.version]]]
-               :from [[:session_turn_state :final_version]]
-               :where [:= :final_version.session_turn_soul_id :last_turn.id]}]]
-     :order-by [[:last_turn.created_at :desc] [:last_turn.position :desc]]
-     :limit 1}] 1 :else 0])
+   Read the highest state version so a retried turn answers with the attempt in
+   the transcript. The gateway registry loses this verdict on restart."
+  {:select [:final.status]
+   :from [[:session_turn_soul :last_turn]]
+   :join [[:session_state :last_turn_state] [:= :last_turn_state.id :last_turn.session_state_id]
+          [:session_turn_state :final] [:= :final.session_turn_soul_id :last_turn.id]]
+   :where [:and [:= :last_turn_state.session_soul_id :ss.session_soul_id]
+           [:= :last_turn.request_kind "user"]
+           [:= :final.version
+            {:select [[[:max :final_version.version]]]
+             :from [[:session_turn_state :final_version]]
+             :where [:= :final_version.session_turn_soul_id :last_turn.id]}]]
+   :order-by [[:last_turn.created_at :desc] [:last_turn.position :desc]]
+   :limit 1})
 
 (defn- turn-stats-row
   [row]
-  {:turn-count (long (or (:n row) 0))
-   :answer-count (long (or (:answers row) 0))
-   :latest-turn-interrupted? (pos? (long (or (:interrupted row) 0)))
-   :latest-turn-at (->date (:latest row))})
+  (let [status (:last_status row)]
+    {:turn-count (long (or (:n row) 0))
+     :answer-count (long (or (:answers row) 0))
+     :latest-turn-interrupted? (= (normalize-status :interrupted) status)
+     :latest-turn-failed? (= (normalize-status :error) status)
+     :latest-turn-at (->date (:latest row))}))
 
 (defn db-session-turn-stats
-  "Counts, clocks, and the newest turn's verdict. answer-count counts SETTLED
-   human turns - done, failed, or interrupted by a cancel or by a dead process -
-   excluding Council, still-running turns and superseded retries.
-   latest-turn-interrupted? says whether the NEWEST human turn is one of those
-   interrupted ones: the only fact that separates a session the gateway killed
-   from one that simply went idle. turn-count remains the transcript freshness
-   count. The all-session arity uses one grouped query, never N+1 transcript
-   reads."
+  "Counts, clocks, and the newest turn's verdict. answer-count counts settled
+   human turns (done, error, or interrupted), excluding Council, in-flight turns
+   and superseded retries. The newest human turn's persisted status distinguishes
+   failed and interrupted runs from ordinary idle sessions. The all-session arity
+   uses one grouped query, never N+1 transcript reads."
   ([db-info]
    (if (ds db-info)
      (into {}
@@ -1853,7 +1844,7 @@
            (query! db-info
                    {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
                              [human-answer-expression :answers]
-                             [latest-turn-interrupted-expression :interrupted]
+                             [latest-turn-status-expression :last_status]
                              [[:max :ts.created_at] :latest]]
                     :from [[:session_turn_soul :ts]]
                     :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
@@ -1863,7 +1854,7 @@
    (when (and (ds db-info) session-id)
      (when-let [row (query-one! db-info
                                 {:select [[[:count :ts.id] :n] [human-answer-expression :answers]
-                                          [latest-turn-interrupted-expression :interrupted]
+                                          [latest-turn-status-expression :last_status]
                                           [[:max :ts.created_at] :latest]]
                                  :from [[:session_turn_soul :ts]]
                                  :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]

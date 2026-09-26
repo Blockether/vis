@@ -3045,7 +3045,23 @@
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "s-idle")))]
-        (expect (false? (get row "was_interrupted")))))
+        (expect (false? (get row "was_interrupted")))
+        (expect (false? (get row "was_failed")))))
+  ;; Vis session 32bcc713: a failed turn must not disappear into an idle row.
+  (it "carries a failed turn's verdict independently of interruption"
+      (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "s-failed" :channel :api :title "t"})
+                                 #'lp/db-info (constantly :db)
+                                 #'persistance/db-session-turn-stats
+                                 (constantly
+                                   {:turn-count 3 :answer-count 3 :latest-turn-failed? true})
+                                 #'bus/live-turn-id (constantly nil)
+                                 #'bus/session-waiting? (constantly false)
+                                 #'smodel/pending-pref (constantly [false nil])}
+                  (fn []
+                    (state/soul "s-failed")))]
+        (expect (true? (get row "was_failed")))
+        (expect (false? (get row "was_interrupted")))
+        (expect (= "idle" (get row "status")))))
   ;; ALWAYS present, like `favorite_rank`: a client merging this row onto a cached one
   ;; has to see the mark taken away, not merely not-mentioned.
   (it "stays on the row even when the store has nothing to say"
@@ -3058,7 +3074,9 @@
                   (fn []
                     (state/soul "s-bare")))]
         (expect (contains? row "was_interrupted"))
-        (expect (false? (get row "was_interrupted"))))))
+        (expect (false? (get row "was_interrupted")))
+        (expect (contains? row "was_failed"))
+        (expect (false? (get row "was_failed"))))))
 
 ;; The human's ARCHIVE behaves like the star: the gateway owns it, every client reads the
 ;; same stamp, and the row CARRIES the field even when it is empty - a client merging this
@@ -6368,9 +6386,9 @@
   [seeds opts]
   (with-redefs-fn {#'lp/db-info (constantly ::db)
                    #'lp/projects (constantly [])
-                   #'persistance/db-session-turn-stats (constantly
-                                                         {"read1" {:turn-count 4 :answer-count 3}
-                                                          "filed1" {:turn-count 2 :answer-count 2}})
+                   #'persistance/db-session-turn-stats
+                   (constantly {"read1" {:turn-count 4 :answer-count 3 :latest-turn-failed? true}
+                                "filed1" {:turn-count 2 :answer-count 2}})
                    #'lp/session-read-marks (constantly {"read1" 1})
                    #'lp/seed-session-read-marks! (fn [reader marks]
                                                    (swap! seeds conj [reader marks])
@@ -6397,7 +6415,9 @@
 
                    (expect (= 3 (get row "answer_count")))
                    (expect (= 2 (get row "unread_answers")))
-                   (expect (true? (get row "is_unread")))))
+                   (expect (true? (get row "is_unread")))
+                   (expect (true? (get row "was_failed")))
+                   (expect (false? (get row "was_interrupted")))))
              (it "reads a conversation nobody has met as READ, and remembers the sight"
                  (let [seeds
                        (atom [])

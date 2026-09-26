@@ -5194,7 +5194,26 @@
         (vis/db-store-session-turn!
           s
           {:parent-session-id sid :user-request "retried" :status :success})
-        (expect (false? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid)))))))
+        (expect (false? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid))))))
+  ;; Vis session 32bcc713: a Python timeout retired the environment and failed the
+  ;; turn, but the session list only recognized cancellation as a stopped run.
+  (it
+    "marks a failed newest turn as stopped until the next turn settles"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})]
+
+      (vis/db-store-session-turn! s
+                                  {:parent-session-id sid :user-request "timed out" :status :error})
+      (let [stats (persistance/db-session-turn-stats s sid)]
+        (expect (= 1 (:answer-count stats)))
+        (expect (true? (:latest-turn-failed? stats)))
+        (expect (false? (:latest-turn-interrupted? stats))))
+      (vis/db-store-session-turn! s
+                                  {:parent-session-id sid :user-request "resumed" :status :success})
+      (expect (false? (:latest-turn-failed? (persistance/db-session-turn-stats s sid)))))))
 
 ;; Regression, this Vis session (paraphrased: "the same conversation is NEW on
 ;; one surface and read on another"): every client kept a private watermark, so

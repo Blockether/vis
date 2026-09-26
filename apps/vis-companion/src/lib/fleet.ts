@@ -348,13 +348,9 @@ export function sessionInputCount(session: Session): number {
   return sessionNeedsInput(session) ? 1 : 0;
 }
 
-/**
- * Did this session's last turn get cut off? A cancel, or a gateway that died
- * mid-answer and swept the turn on its next start. Paired with an unread mark it
- * is what tells the reader a session stopped rather than finished.
- */
-export function sessionWasInterrupted(session: Session): boolean {
-  return session.was_interrupted === true;
+/** Did the newest turn end early? The gateway owns both persisted verdicts. */
+export function sessionWasStopped(session: Session): boolean {
+  return session.was_interrupted === true || session.was_failed === true;
 }
 
 /** Bands of the list order, best first. Every row is in exactly one. */
