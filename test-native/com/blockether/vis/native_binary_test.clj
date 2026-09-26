@@ -1018,7 +1018,10 @@
 
                         (expect finished? "A Python timeout must not wedge the linked agent")
                         (expect (= 0 exit) output)
-                        (expect (some #(str/includes? % "Timeout") tools) (pr-str tools))
+                        (expect (some #(and (str/includes? % "Time limit reached")
+                                            (str/includes? % "Python state is kept."))
+                                      tools)
+                                (pr-str tools))
                         (expect (some #(str/includes? % "NATIVE_INTERRUPT_RECOVERED 42") tools)
                                 (pr-str tools))
                         (expect (str/includes? output "NATIVE_INTERRUPT_COMPLETE") output))
@@ -1028,7 +1031,7 @@
 (defdescribe
   native-python-hang-evidence-test
   (it
-    "saves Python and JVM evidence before retiring a GIL-stuck native worker and finishes the turn"
+    "saves Python and JVM evidence before restarting a GIL-stuck native worker and finishes the turn"
     (let [dir
           (temp-dir "vis-native-hang")
 
@@ -1059,7 +1062,7 @@
       (try
         (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
           (fn []
-            (let [{:keys [server port]} (start-stub-provider! "NATIVE_HANG_UNEXPECTED_REPLAY")]
+            (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_HANG_RESTART_COMPLETE")]
               (try
                 (overlay! dir port)
                 ;; Exercise the production five-minute block timeout and failed interrupt.
@@ -1075,13 +1078,18 @@
                       ;; `~/.vis/logs/<UTC date>/pyext-*`, and the hang report is written
                       ;; beside that worker's own log.
                       reports (->> (file-seq (io/file dir ".vis/logs"))
-                                   (filter #(= "hang.edn" (.getName ^File %))))]
+                                   (filter #(= "hang.edn" (.getName ^File %))))
+                      tools (->> @asked
+                                 (mapcat #(get (json/read-json (:body %)) "messages"))
+                                 (filter #(= "tool" (get % "role")))
+                                 (map #(str (get % "content"))))]
 
                   (expect finished? "A GIL-held worker must not wedge the linked agent")
-                  (expect (= 1 exit) output)
+                  (expect (= 0 exit) output)
                   (expect (.isFile pid-file) "The fixture must enter its native GIL-holding call")
-                  (expect (str/includes? output "Python environment was retired") output)
-                  (expect (= 1 @calls) "A retired interpreter must not replay or continue the turn")
+                  (expect (some #(str/includes? % "Vis restarted Python") tools) (pr-str tools))
+                  (expect (= 2 @calls) "The turn must go on once, without replaying the block")
+                  (expect (str/includes? output "NATIVE_HANG_RESTART_COMPLETE") output)
                   (expect (= 1 (count reports)) "Retirement must preserve one diagnostic report")
                   (when-let [^File report-file (first reports)]
                     (let [report (edn/read-string (slurp report-file))
@@ -1116,6 +1124,71 @@
                                              (.orElse nil)
                                              .isAlive))
                                 "The diagnosed worker must be retired before the turn finishes")))))
+                (finally (.stop server 0))))))
+        (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-python-repair-test
+  (it
+    "repairs an unbalanced Python block before it runs and explains a block it cannot repair"
+    (let [dir
+          (temp-dir "vis-native-repair")
+
+          original-stream
+          @#'stream-body
+
+          original-whole
+          @#'whole-body
+
+          calls
+          (atom 0)
+
+          fixtures
+          ["xs = [1, 2\nprint('NATIVE_REPAIR', len(xs))" "x = (1 + 2\ny = 3 3"]
+
+          reply
+          (fn [stream? text]
+            (let [n (swap! calls inc)]
+              (if-let [code (get fixtures (dec n))]
+                (python-tool-body code n stream?)
+                ((if stream? original-stream original-whole) text))))]
+
+      (try
+        (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+          (fn []
+            (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_REPAIR_COMPLETE")]
+              (try
+                (overlay! dir port)
+                ;; The repair engine is Java code from the parinferish jar; only the
+                ;; linked image proves that it runs there.
+                (let [{:keys [finished? exit output]}
+                      (run-binary dir
+                                  [(.getAbsolutePath (require-binary))
+                                   (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                   (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                   "Run the supplied Python fixtures and finish."]
+                                  180)
+                      tools (->> @asked
+                                 (mapcat #(get (json/read-json (:body %)) "messages"))
+                                 (filter #(= "tool" (get % "role")))
+                                 (map #(str (get % "content"))))]
+
+                  (expect finished? output)
+                  (expect (= 0 exit) output)
+                  (expect (some #(and (str/includes? % "Vis repaired this block before running it.")
+                                      (str/includes? % "NATIVE_REPAIR 2"))
+                                tools)
+                          (pr-str tools))
+                  (expect
+                    (some
+                      #(and
+                         (str/includes?
+                           %
+                           "Vis could not repair the unbalanced quotes or brackets in this block:")
+                         (str/includes? % "'(' is never closed"))
+                      tools)
+                    (pr-str tools))
+                  (expect (str/includes? output "NATIVE_REPAIR_COMPLETE") output))
                 (finally (.stop server 0))))))
         (finally (delete-tree! dir))))))
 
