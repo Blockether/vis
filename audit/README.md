@@ -30,7 +30,7 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 53 unique, across 4 `deps.edn` modules (root + siblings).
+- **Direct dependency coordinates:** 54 unique, across 4 `deps.edn` modules (root + siblings).
 - **Total direct jar size:** ~108 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
@@ -139,6 +139,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.9` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/parinferish` | `0.2.0` | MIT | 61 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.180` | Apache-2.0 | 833 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:9a5c0121a07af7529de8f1dff46ca2d8c4c352b2` | MIT | source checkout | Blockether (in-house) |
@@ -206,7 +207,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 |---|---|
 | EPL-1.0 | 16 |
 | Apache-2.0 | 14 |
-| MIT | 12 |
+| MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |

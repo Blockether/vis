@@ -18,6 +18,8 @@
         ;; Imaging over a Rust cdylib with embedded fonts, replacing AWT/Java2D/ImageIO/jsvg:
         ;; no headless bootstrap, no fontconfig. `java.desktop` still loads, for mic capture.
         com.blockether/imaging {:mvn/version "0.1.10"}
+        ;; Repairs unbalanced quotes and brackets in a Python block before it runs.
+        com.blockether/parinferish {:mvn/version "0.2.0"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/svar {:mvn/version "0.7.180"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that

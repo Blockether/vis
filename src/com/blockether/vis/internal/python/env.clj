@@ -28,11 +28,11 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.parinferish.python :as python-repair]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -1568,12 +1568,20 @@
    Two retries is normal recovery; the third is a loop."
   3)
 
-(defn- diagnosis-hint
-  "The sentence a `parse-diagnose` answer carries, whatever shape it came in."
-  [d]
-  (cond (string? d) (not-empty (str/trim d))
-        (map? d) (not-empty (str/trim (str (or (:hint d) (:message d) ""))))
-        :else nil))
+(def ^:private listed-messages "Fixes or problems a note lists before it counts the rest." 5)
+
+(defn- message-lines
+  "The `:message` of each of the first `items`, one indented line each, then a
+   count of the rest."
+  [items]
+  (let [shown
+        (take listed-messages items)
+
+        more
+        (- (count items) (count shown))]
+
+    (str (str/join (map #(str "  " (:message %) "\n") shown))
+         (when (pos? more) (str "  and " more " more\n")))))
 
 ;; =============================================================================
 ;; Running one block
@@ -1656,7 +1664,8 @@
    `:phase` is `:python/syntax` for a parse failure, `:python/host` when a host
    tool is what failed, else `:python/runtime`; `:line`/`:column` come from the
    guest position when there is one. Syntax hints identify invalid non-ASCII
-   characters and — through `parse-diagnose` — unbalanced quotes or brackets."
+   characters and the unbalanced quotes or brackets the block's repair could not
+   fix."
   [session ^String raised code]
   (let [base
         (-> (str raised)
@@ -1694,15 +1703,10 @@
         non-ascii?
         (boolean (and syntax? (re-find #"invalid character" base)))
 
-        quote-hint
-        (when (and syntax? (not non-ascii?))
-          (diagnosis-hint (try (parse-diagnose/diagnose-quote-balance code)
-                               (catch Throwable _ nil))))
-
-        bracket-hint
-        (when (and syntax? (not non-ascii?) (not quote-hint))
-          (diagnosis-hint (try (parse-diagnose/diagnose-bracket-balance code)
-                               (catch Throwable _ nil))))
+        delimiter-problems
+        (when (and (or syntax? indent?) (not non-ascii?))
+          (try (python-repair/diagnose (str code) {:error-line (first pos)})
+               (catch Throwable _ nil)))
 
         ;; The confinement refuses in the interpreter itself, naming the operation
         ;; and whether it wanted to WRITE — the one denial the model can act on.
@@ -1726,8 +1730,10 @@
                            "a smart em-dash, en-dash, curly quote, or multiplication sign that you "
                            "meant as prose. Replace it with plain ASCII, or move that whole line "
                            "into a `#` comment. Original parser error: ")
-              quote-hint (str quote-hint " Original parser error: ")
-              bracket-hint (str bracket-hint " Original parser error: ")
+              (seq delimiter-problems)
+              (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
+                   (message-lines delimiter-problems)
+                   "Close each string and bracket where it belongs. Original parser error: ")
               denied-root?
               (str "Sandbox policy denied "
                    (if denied-write? "file-write" "file-read")
@@ -1798,11 +1804,8 @@
              non-ascii?
              (assoc :non-ascii-in-code? true)
 
-             quote-hint
-             (assoc :unbalanced-quote? true)
-
-             bracket-hint
-             (assoc :unbalanced-bracket? true)
+             (seq delimiter-problems)
+             (assoc :unbalanced-delimiters? true)
 
              denied-root?
              (assoc :sandbox-denied? true)
@@ -1818,16 +1821,51 @@
              (map? tool-data)
              (merge tool-data))}))
 
-(defn- empty-block-error
-  "Op-error when `code` has NO top-level statements — only comments or
-   whitespace. A parse failure is NOT empty: it falls through so the run
-   surfaces the precise syntax error instead."
+(defn- parse-block
+  "What the session's parser makes of `code`: `{:forms n}`, its count of
+   top-level statements, or `{:refused message}`, the error it raised instead."
   [session code]
-  (when (zero? (long (try (count-top-level-forms session code) (catch Throwable _ -1))))
+  (try {:forms (count-top-level-forms session code)}
+       (catch Throwable t {:refused (str (ex-message t))})))
+
+(defn- empty-block-error
+  "Op-error when the block `parsed` to NO top-level statements — only comments
+   or whitespace. A parse failure is NOT empty: it falls through so the run
+   surfaces the precise syntax error instead."
+  [parsed]
+  (when (= 0 (:forms parsed))
     {:message (str "Empty block — nothing to execute. The code is only comments or "
                    "whitespace, so this iteration produces no evidence. Write at least "
                    "one statement, and print() what you want back.")
      :data {:phase :python/empty-block :empty-block? true}}))
+
+(defn- repair-block
+  "The repair of `code` that the session's parser accepts, as `{:code :fixes}`,
+   or nil.
+
+   Only a block Python `refused` with a syntax error is repaired, and only its
+   quotes and brackets change: parinferish closes a string or bracket left open,
+   drops or swaps a stray closer and splits statements glued onto one line. The
+   repaired source must still parse to at least one statement."
+  [session code ^String refused]
+  (when (re-find #"^(?:vis-python:\s+)?(?:SyntaxError|IndentationError|TabError)\b" refused)
+    (let [{:keys [text changed? clean? fixes]}
+          (try (python-repair/repair (str code)
+                                     {:error-line (first (syntax-error-position refused))})
+               (catch Throwable _ nil))]
+      (when (and changed? clean? (pos? (long (:forms (parse-block session text) 0))))
+        {:code text :fixes fixes}))))
+
+(defn- repair-note
+  "What a repaired block's output opens with: the error Python refused the
+   written block with and the fixes that made it run, so the model can check the
+   result and write balanced code next time."
+  [^String refused fixes printed?]
+  (str "Vis repaired this block before running it. Python refused it with "
+       (str/replace refused #"^vis-python:\s+" "")
+       "\n"
+       (message-lines fixes)
+       (when printed? "Output of the repaired block:\n")))
 
 (defn run-python-block
   "Run one Python `code` block in `session` as ONE whole-block coroutine,
@@ -1840,6 +1878,11 @@
    so `print()` is the only way anything comes back. Either outcome may carry
    `:attachments`, the artifacts the block produced.
 
+   A block Python refuses for unbalanced quotes or brackets runs repaired when
+   the repair parses. That outcome also carries `:auto-repaired true` and the
+   `:repaired-source` that ran, and its `:stdout` opens with a note naming the
+   parser error and the fixes.
+
    The runtime AST-wraps the block in an `async def`, auto-settles every bare
    tool-call statement at every depth and drives it as a single coroutine.
 
@@ -1851,29 +1894,41 @@
     (throw (ex-info (str "python session " session " was disposed")
                     {:type :vis/session-disposed :session session})))
   (begin-block-stdout! session)
-  (if-let [err (empty-block-error session code)]
-    (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
-    (let [sink (atom [])]
-      (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
-        ;; The doors run on the interpreter's own threads, so the bindings above
-        ;; travel to them explicitly - see `python-host/conveying`.
-        (python-host/conveying session
-                               (let [outcome (or (read-json (py-run-block session code)) {})
-                                     _ (discard-block-stdout! session)
-                                     out (not-empty (str/trim-newline (str (:stdout outcome))))
-                                     raised (:error outcome)
-                                     attachments (mpl-capture/drain sink)]
+  (let [parsed (parse-block session code)]
+    (if-let [err (empty-block-error parsed)]
+      (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
+      (let [sink (atom [])
+            repair (some->> (:refused parsed)
+                            (repair-block session code))
+            source (or (:code repair) code)]
 
-                                 (when-not raised (clear-block-failures! session))
-                                 (cond-> {}
-                                   (and out (not (str/blank? out)))
-                                   (assoc :stdout (str (:stdout outcome)))
+        (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
+          ;; The doors run on the interpreter's own threads, so the bindings above
+          ;; travel to them explicitly - see `python-host/conveying`.
+          (python-host/conveying
+            session
+            (let [outcome (or (read-json (py-run-block session source)) {})
+                  _ (discard-block-stdout! session)
+                  out (not-empty (str/trim-newline (str (:stdout outcome))))
+                  printed? (and out (not (str/blank? out)))
+                  raised (:error outcome)
+                  attachments (mpl-capture/drain sink)]
 
-                                   raised
-                                   (assoc :error (map-python-error session raised code))
+              (when-not raised (clear-block-failures! session))
+              (cond-> {}
+                (or printed? repair)
+                (assoc :stdout
+                  (str (when repair (repair-note (:refused parsed) (:fixes repair) printed?))
+                       (when printed? (:stdout outcome))))
 
-                                   attachments
-                                   (assoc :attachments attachments))))))))
+                repair
+                (merge {:auto-repaired true :repaired-source source})
+
+                raised
+                (assoc :error (map-python-error session raised source))
+
+                attachments
+                (assoc :attachments attachments)))))))))
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 

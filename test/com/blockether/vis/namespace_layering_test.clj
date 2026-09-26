@@ -72,9 +72,7 @@
    command-line entrypoints. A namespace requires its own layer or lower ones only:
    a lower layer that must call a higher one exposes a slot the wiring fills."
   '[;; Leaf primitives any layer may use.
-    [base
-     [util error import paths content format parse-diagnose system-trust jfr activity
-      config.toggles]]
+    [base [util error import paths content format system-trust jfr activity config.toggles]]
     ;; The session store and the attachment blobs it persists.
     [persistance [persistance attachment.core attachment.storage attachment.image-convert]]
     ;; Merged configuration and the catalogs it reads.

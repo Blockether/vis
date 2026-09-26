@@ -32,13 +32,9 @@
   python-syntax-diagnostics-test
   ;; Regression: a multiline fold summary was misclassified as a prose reply.
   (it "reports the parser error for an unterminated fold summary"
-      (let [code
-            (str "print(fold_session(\"-t2/i34\", \"Summary with several ordinary words.\n"
-                 "Next line\"))")
-
-            error
-            (:error (ep/run-python-block (py-ctx) code "t1/i1"))]
-
+      (let [error (classify
+                    (str "print(fold_session(\"-t2/i34\", \"Summary with several ordinary words.\n"
+                         "Next line\"))"))]
         (expect (= :python/syntax (get-in error [:data :phase])))
         (expect (= 1 (get-in error [:data :line])))
         (expect (str/includes? (:message error) "unterminated string literal"))
@@ -134,11 +130,52 @@
                       (expect (= "still running" (out later)))))))
 
 (defdescribe
-  no-auto-repair-test
-  "Auto-repair and fabrication/glued detection were REMOVED (2026-06-21). A reply
-   that fails to split is NOT salvaged — it errors as a plain SyntaxError and the
-   model resends clean code. With ONE `code` argument per tool call
-   the block-concat causes don't arise; :auto-repaired is always nil."
+  auto-repair-test
+  "A block Python refuses for unbalanced quotes or brackets runs repaired by
+   parinferish when the repair parses. Its output opens with a note naming the
+   parser error and every fix. A repair that cannot make the block parse leaves
+   it unrun, and the error names the delimiters that are wrong."
+  (it "closes a bracket, runs the repaired block and discloses the fix"
+      (let [r (ep/run-python-block (py-ctx) "xs = [1, 2\nprint(len(xs))")]
+        (expect (nil? (:error r)))
+        (expect (true? (:auto-repaired r)))
+        (expect (= "xs = [1, 2]\nprint(len(xs))" (:repaired-source r)))
+        (expect (= (str "Vis repaired this block before running it. Python refused it with "
+                        "SyntaxError: '[' was never closed (<unknown>, line 1)\n"
+                        "  line 1: added ']' at column 11 to close '[' from line 1\n"
+                        "Output of the repaired block:\n" "2")
+                   (out r)))))
+  (it
+    "triple-quotes a string that continues onto the next line"
+    (let [r (ep/run-python-block (py-ctx) "summary = \"First line.\nSecond line\"\nprint(summary)")]
+      (expect (nil? (:error r)))
+      (expect (true? (:auto-repaired r)))
+      (expect (str/ends-with? (out r) "Output of the repaired block:\nFirst line.\nSecond line"))))
+  (it "discloses the repair when the repaired block raises"
+      (let [r (ep/run-python-block (py-ctx) "raise ValueError(\"boom\"")]
+        (expect (true? (:auto-repaired r)))
+        (expect (str/includes? (out r) "added ')'"))
+        (expect (not (str/includes? (out r) "Output of the repaired block")))
+        (expect (= :python/runtime (get-in r [:error :data :phase])))
+        (expect (str/includes? (get-in r [:error :message]) "ValueError: boom"))))
+  (it "names the delimiters it could not repair"
+      (let [r (ep/run-python-block (py-ctx) "x = (1 + 2\ny = 3 3")]
+        (expect (nil? (:auto-repaired r)))
+        (expect (nil? (:stdout r)))
+        (expect (= :python/syntax (get-in r [:error :data :phase])))
+        (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))
+        (expect (str/starts-with?
+                  (get-in r [:error :message])
+                  (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
+                       "  line 1, column 5: '(' is never closed\n")))
+        (expect (str/includes? (get-in r [:error :message])
+                               "Original parser error: SyntaxError")))))
+
+(defdescribe
+  no-false-repair-test
+  "Auto-repair changes only quotes and brackets. A block whose delimiters balance
+   but still does not parse — glued statements, a parroted transcript tail —
+   errors as a plain SyntaxError, and clean Python runs untouched."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
       (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
         (expect (not (contains? r :result)))

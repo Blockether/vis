@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - The TUI colors Python code blocks and `python` fences with a built-in
   highlighter for keywords, definitions, types, strings, numbers and comments.
+- When a Python block does not parse because a quote or bracket does not
+  balance, Vis repairs it with parinferish and runs the repaired code if Python
+  accepts it. The block's output starts with a note that names Python's error
+  and each fix, and the block is marked as repaired. When the repair cannot make
+  the block parse, the error lists the quotes and brackets that are wrong.
 
 ### Changed
 - The gateway formats Python code for the TUI and the companion with a built-in
