@@ -10,8 +10,10 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import { flushSync } from 'react-dom';
 import type { Prepared, WordFragments } from '@kitlangton/justice';
 import { engine } from '../lib/justice';
+import { readerOwnsScroll } from '../lib/reader-gesture';
 
 type InlineProps = { children?: ReactNode; node?: { tagName?: string } };
 type InlineContent = {
@@ -22,6 +24,11 @@ type InlineContent = {
   code: boolean;
   /** Ascending offsets inside inline code where a line may end. */
   breaks: number[];
+  /**
+   * The text and the markup that decides how it measures. A render that repeats it
+   * keeps its composition, even though every child element is new.
+   */
+  signature: string;
 };
 const INLINE_TAGS = new Set(['a', 'strong', 'em', 'del', 's', 'code', 'span', 'button']);
 const LITERAL_STYLE: CSSProperties = { whiteSpace: 'pre', wordSpacing: 0, letterSpacing: 0 };
@@ -42,10 +49,22 @@ const CODE_BREAKS = [
  */
 const MAX_GAP = 5;
 
+/** Attributes that may change how inline markup measures; callbacks and parser nodes cannot. */
+function shapeOf(props: object): string {
+  let shape = '';
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'children') continue;
+    if (key === 'style' || ['string', 'number', 'boolean'].includes(typeof value))
+      shape += ` ${key}=${JSON.stringify(value)}`;
+  }
+  return shape;
+}
+
 /** Only inline prose participates; block structure and hard breaks remain native. */
 function inlineContent(children: ReactNode): InlineContent | null {
   let text = '';
   let measured = '';
+  let shape = '';
   let rich = false;
   let code = false;
   const candidates: [offset: number, rank: number][] = [];
@@ -58,6 +77,7 @@ function inlineContent(children: ReactNode): InlineContent | null {
             for (const match of source.matchAll(pattern))
               candidates.push([text.length + match.index + match[0].length, rank]);
         text += source;
+        shape += `#${source.length}`;
         // Keep UTF-16 offsets identical while joining code between its chosen breaks.
         measured += literal
           ? source.replace(/[ \t\r\n\f]/g, '\u00a0').replace(/[-‐]/g, '‑')
@@ -69,7 +89,10 @@ function inlineContent(children: ReactNode): InlineContent | null {
       if (part.type !== Fragment && (!tag || !INLINE_TAGS.has(tag))) return false;
       rich ||= part.type !== Fragment;
       code ||= tag === 'code';
-      return visit(part.props.children, literal || tag === 'code');
+      shape += `<${tag ?? ''}${shapeOf(part.props)}>`;
+      if (!visit(part.props.children, literal || tag === 'code')) return false;
+      shape += '</>';
+      return true;
     });
   if (!visit(children)) return null;
   const words = [...measured.matchAll(/[^ \t\r\n\f]+/g)];
@@ -104,7 +127,7 @@ function inlineContent(children: ReactNode): InlineContent | null {
     .slice(0, 128)
     .map(([offset]) => offset)
     .sort((a, b) => a - b);
-  return { children, text, measured, rich, code, breaks };
+  return { children, text, measured, rich, code, breaks, signature: `${shape}\u0000${text}` };
 }
 
 /** Slice the React-owned inline tree, retaining links, styles and event handlers. */
@@ -305,7 +328,17 @@ type ProseLine = {
   wordSpacing: number;
   tracking: number;
 };
-type Composition = { content: InlineContent; lines: ProseLine[]; spaceFont: CSSProperties };
+/**
+ * Lines stay valid for every render that repeats the signature they were composed for.
+ * Each composition mounts its own line nodes: Chrome can keep a space collapsed after
+ * the text around it is rewritten in place, leaving a justified line short of its column.
+ */
+type Composition = {
+  id: number;
+  signature: string;
+  lines: ProseLine[];
+  spaceFont: CSSProperties;
+};
 
 /**
  * A width arrives as a BURST — the desk rail riding off its seam, a window dragged by
@@ -314,43 +347,346 @@ type Composition = { content: InlineContent; lines: ProseLine[]; spaceFont: CSSP
  */
 const SETTLE_MS = 80;
 
-const nearby = new Map<Element, () => void>();
-let nearbyObserver: IntersectionObserver | null = null;
+/**
+ * Prose is composed while it is still this many scroller heights away, so it is
+ * already justified when it scrolls into view. The transcript keeps the same
+ * neighbourhood laid out; further prose stays native until the reader comes near.
+ */
+const LOOKAHEAD = 1;
 
-function disconnectNearbyObserver() {
-  if (nearby.size) return;
-  nearbyObserver?.disconnect();
-  nearbyObserver = null;
-}
+/**
+ * Composing can change a paragraph's height. Below the reader that moves nothing they
+ * see; above them it moves every line on screen unless the scroll moves by the same
+ * amount, and moving it while a gesture or its momentum owns the scroll would stop or
+ * fight that gesture. Prose above the reader therefore waits until the scroller is this
+ * quiet, and is then composed in place.
+ */
+const REST_MS = 150;
 
-/** One observer wakes only paragraphs approaching the viewport, not the entire transcript. */
-function observeNearby(element: Element, compose: () => void): () => void {
-  if (!nearbyObserver) {
-    nearbyObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const wake = nearby.get(entry.target);
-          if (!wake) continue;
-          nearby.delete(entry.target);
-          nearbyObserver?.unobserve(entry.target);
-          wake();
-        }
-        disconnectNearbyObserver();
-      },
-      { rootMargin: `${window.innerHeight}px 0px` },
-    );
+/** Prose that is not on screen yet never takes more than this from one frame. */
+const FRAME_BUDGET_MS = 6;
+
+type Paragraph = {
+  element: HTMLElement;
+  /** The scroller whose view decides nearness, or `null` for the page. */
+  root: Element | null;
+  /** Within the look-ahead, as the placement or the observer last saw it. */
+  near: boolean;
+  /** Its content, width or fonts changed since it was last composed. */
+  stale: boolean;
+  observed: boolean;
+  disposed: boolean;
+  compose: () => void;
+  fontsChanged: () => void;
+  isSelected: () => boolean;
+};
+
+type View = { top: number; bottom: number };
+type Spot = { above: boolean; distance: number; reach: number; bottom: number };
+
+const paragraphs = new Map<Element, Paragraph>();
+/** Registered by the current commit, placed after all of its layout effects. */
+const placing = new Set<Paragraph>();
+/** Near and stale: composed by `pump`, nearest to the reader first. */
+const waiting = new Set<Paragraph>();
+/** Left as they stand while a native selection covers them. */
+const held = new Set<Paragraph>();
+const scrollers = new WeakMap<Element, Element | null>();
+const observers = new Map<Element | null, { observer: IntersectionObserver; size: number }>();
+let fontSet: FontFaceSet | null = null;
+let awaitedFonts: FontFaceSet | null = null;
+let placementQueued = false;
+let frame = 0;
+let restTimer = 0;
+let lastScrollAt = Number.NEGATIVE_INFINITY;
+/** The last pump left prose above the reader until the scroller rests. */
+let holding = false;
+let compositions = 0;
+
+/** The nearest vertical scroller, cached per parent as the transcript's paint skip does. */
+function scrollerOf(element: Element): Element | null {
+  const parent = element.parentElement;
+  if (!parent) return null;
+  const known = scrollers.get(parent);
+  if (known !== undefined) return known;
+  let scroller: Element | null = null;
+  for (let node: Element | null = parent; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === 'auto' || overflow === 'scroll') {
+      scroller = node;
+      break;
+    }
   }
-  nearby.set(element, compose);
-  nearbyObserver.observe(element);
-  return () => {
-    nearby.delete(element);
-    nearbyObserver?.unobserve(element);
-    disconnectNearbyObserver();
-  };
+  scrollers.set(parent, scroller);
+  return scroller;
 }
 
-/** Compose opening prose before paint; React keeps ownership of all visible text. */
+/**
+ * Where a paragraph stands against what the reader sees of its scroller: its gap to
+ * that view (0 while any of it is inside), whether it starts above the view, where a
+ * new height would move everything below it, and where it ends.
+ */
+function locate(paragraph: Paragraph, views: Map<Element | null, View>): Spot {
+  const visible = { above: false, distance: 0, reach: 0, bottom: 0 };
+  // Without an observer nothing could wake a distant paragraph: treat all as visible.
+  if (typeof IntersectionObserver !== 'function') return visible;
+  try {
+    const rect = paragraph.element.getBoundingClientRect();
+    let view = views.get(paragraph.root);
+    if (!view) {
+      const bounds = paragraph.root?.getBoundingClientRect();
+      view = bounds
+        ? { top: bounds.top, bottom: bounds.bottom }
+        : { top: 0, bottom: window.innerHeight };
+      views.set(paragraph.root, view);
+    }
+    if (![rect.top, rect.bottom, view.top, view.bottom].every(Number.isFinite)) return visible;
+    const reach = (view.bottom - view.top) * LOOKAHEAD;
+    const bottom = rect.bottom;
+    if (rect.top < view.top)
+      return { above: true, distance: Math.max(0, view.top - rect.bottom), reach, bottom };
+    return { above: false, distance: Math.max(0, rect.top - view.bottom), reach, bottom };
+  } catch {
+    // Measurement is unavailable; composing falls back to native text.
+    return visible;
+  }
+}
+
+/** Whether the browser itself keeps the reader's lines in place in this scroller. */
+function anchorsItself(root: Element | null): boolean {
+  if (typeof CSS === 'undefined' || !CSS.supports?.('overflow-anchor', 'auto')) return false;
+  const scroller = root ?? document.scrollingElement;
+  return !!scroller && getComputedStyle(scroller).overflowAnchor !== 'none';
+}
+
+/**
+ * Prose composed above the view moves everything below it by its change in height.
+ * Scroll by the same amount, so the lines the reader sees stay where they were. The
+ * lowest such paragraph carries every change above it in where its bottom now stands.
+ */
+function keepPlace(root: Element | null, paragraph: Paragraph, bottom: number) {
+  if (anchorsItself(root)) return;
+  try {
+    const shift = paragraph.element.getBoundingClientRect().bottom - bottom;
+    if (!shift || !Number.isFinite(shift)) return;
+    if (root) root.scrollTop += shift;
+    else window.scrollBy(0, shift);
+  } catch {
+    // Without a measurement the place cannot be kept; the composition still stands.
+  }
+}
+
+function compose(list: Paragraph[]) {
+  if (!list.length) return;
+  // Commit every line before the browser paints the native text they replace.
+  flushSync(() => {
+    for (const paragraph of list) {
+      waiting.delete(paragraph);
+      paragraph.compose();
+    }
+  });
+}
+
+/**
+ * Runs once after each commit that mounts or changes prose: after every layout effect,
+ * including the one that scrolls a screen to where it opens, and still before paint.
+ * Only prose that this paint shows is composed here; `pump` composes the rest near it.
+ */
+function place() {
+  placementQueued = false;
+  const views = new Map<Element | null, View>();
+  const visible: Paragraph[] = [];
+  for (const paragraph of placing) {
+    if (paragraph.disposed) continue;
+    paragraph.root = scrollerOf(paragraph.element);
+    const spot = locate(paragraph, views);
+    paragraph.near = spot.distance <= spot.reach;
+    if (spot.distance === 0) visible.push(paragraph);
+    else if (paragraph.near) waiting.add(paragraph);
+    observe(paragraph);
+  }
+  placing.clear();
+  compose(visible);
+  if (waiting.size) schedulePump();
+}
+
+/** One observer per scroller follows every paragraph in and out of its look-ahead. */
+function observe(paragraph: Paragraph) {
+  if (typeof IntersectionObserver !== 'function') {
+    paragraph.near = true;
+    return;
+  }
+  let entry = observers.get(paragraph.root);
+  if (!entry) {
+    // Inside a scroller the page viewport cannot see ahead: the scroller clips its
+    // children, so only the scroller itself can be the root of the look-ahead.
+    const observer = new IntersectionObserver(nearby, {
+      root: paragraph.root,
+      rootMargin: `${LOOKAHEAD * 100}% 0px`,
+    });
+    entry = { observer, size: 0 };
+    observers.set(paragraph.root, entry);
+  }
+  entry.size++;
+  entry.observer.observe(paragraph.element);
+  paragraph.observed = true;
+}
+
+function nearby(entries: IntersectionObserverEntry[]) {
+  for (const entry of entries) {
+    const paragraph = paragraphs.get(entry.target);
+    if (!paragraph) continue;
+    paragraph.near = entry.isIntersecting;
+    if (paragraph.near && paragraph.stale) waiting.add(paragraph);
+  }
+  if (waiting.size) schedulePump();
+}
+
+/** Ask for a composition; a paragraph out of reach waits until it comes near. */
+function request(paragraph: Paragraph) {
+  if (paragraph.disposed) return;
+  paragraph.stale = true;
+  if (!paragraph.near) return;
+  waiting.add(paragraph);
+  schedulePump();
+}
+
+function schedulePump() {
+  if (!frame) frame = requestAnimationFrame(pump);
+}
+
+/**
+ * Compose waiting prose nearest to the reader first, within one frame's budget. Prose
+ * on screen or below it is composed at once; prose above it waits for the scroller to
+ * rest, and is then composed without moving the lines the reader sees.
+ */
+function pump() {
+  frame = 0;
+  window.clearTimeout(restTimer);
+  const rest = !readerOwnsScroll() && performance.now() - lastScrollAt >= REST_MS;
+  const views = new Map<Element | null, View>();
+  const ready: [paragraph: Paragraph, spot: Spot][] = [];
+  holding = false;
+  for (const paragraph of waiting) {
+    if (paragraph.disposed || !paragraph.near || !paragraph.stale) {
+      waiting.delete(paragraph);
+      continue;
+    }
+    const spot = locate(paragraph, views);
+    if (spot.above && !rest) holding = true;
+    else ready.push([paragraph, spot]);
+  }
+  ready.sort((a, b) => a[1].distance - b[1].distance);
+  const started = performance.now();
+  let taken = 0;
+  /** Per scroller, the lowest paragraph composed above the view and where it ended. */
+  const anchors = new Map<Element | null, [paragraph: Paragraph, bottom: number]>();
+  if (ready.length) {
+    flushSync(() => {
+      for (const [paragraph, spot] of ready) {
+        // Prose on screen is never deferred; the rest shares one frame's budget.
+        if (taken && spot.distance > 0 && performance.now() - started > FRAME_BUDGET_MS) break;
+        taken++;
+        waiting.delete(paragraph);
+        paragraph.compose();
+        const lowest = anchors.get(paragraph.root);
+        if (spot.above && (!lowest || spot.bottom > lowest[1]))
+          anchors.set(paragraph.root, [paragraph, spot.bottom]);
+      }
+    });
+  }
+  for (const [root, [paragraph, bottom]] of anchors) keepPlace(root, paragraph, bottom);
+  if (taken < ready.length) schedulePump();
+  if (holding) restTimer = window.setTimeout(schedulePump, REST_MS);
+}
+
+function scrolled() {
+  lastScrollAt = performance.now();
+  // Prose held above the reader may have scrolled into view or below it meanwhile.
+  if (holding) schedulePump();
+}
+
+function windowResized() {
+  for (const paragraph of paragraphs.values()) request(paragraph);
+}
+
+/** Only paragraphs a selection held are refitted, once it no longer covers them. */
+function selectionChanged() {
+  for (const paragraph of held) {
+    if (paragraph.isSelected()) continue;
+    held.delete(paragraph);
+    request(paragraph);
+  }
+}
+
+function fontsLoaded() {
+  for (const paragraph of paragraphs.values()) paragraph.fontsChanged();
+}
+
+function watchFonts() {
+  const set = document.fonts ?? null;
+  if (set !== fontSet) {
+    fontSet?.removeEventListener('loadingdone', fontsLoaded);
+    set?.addEventListener('loadingdone', fontsLoaded);
+    fontSet = set;
+  }
+  // A resolved ready promise does not mean the already-loaded face changed.
+  if (!set || set.status === 'loaded' || awaitedFonts === set) return;
+  awaitedFonts = set;
+  void set.ready.then(() => {
+    if (awaitedFonts !== set) return;
+    awaitedFonts = null;
+    fontsLoaded();
+  });
+}
+
+function register(paragraph: Paragraph): () => void {
+  if (!paragraphs.size) {
+    window.addEventListener('resize', windowResized);
+    window.addEventListener('scroll', scrolled, { capture: true, passive: true });
+    document.addEventListener('selectionchange', selectionChanged);
+  }
+  paragraphs.set(paragraph.element, paragraph);
+  watchFonts();
+  placing.add(paragraph);
+  if (!placementQueued) {
+    placementQueued = true;
+    queueMicrotask(place);
+  }
+  return () => unregister(paragraph);
+}
+
+function unregister(paragraph: Paragraph) {
+  paragraph.disposed = true;
+  if (paragraphs.get(paragraph.element) === paragraph) paragraphs.delete(paragraph.element);
+  placing.delete(paragraph);
+  waiting.delete(paragraph);
+  held.delete(paragraph);
+  const entry = paragraph.observed ? observers.get(paragraph.root) : undefined;
+  if (entry) {
+    entry.observer.unobserve(paragraph.element);
+    if (--entry.size === 0) {
+      entry.observer.disconnect();
+      observers.delete(paragraph.root);
+    }
+  }
+  if (paragraphs.size) return;
+  window.removeEventListener('resize', windowResized);
+  window.removeEventListener('scroll', scrolled, { capture: true });
+  document.removeEventListener('selectionchange', selectionChanged);
+  fontSet?.removeEventListener('loadingdone', fontsLoaded);
+  fontSet = null;
+  awaitedFonts = null;
+  cancelAnimationFrame(frame);
+  frame = 0;
+  window.clearTimeout(restTimer);
+  holding = false;
+}
+
+/**
+ * Justify inline prose while React keeps ownership of all visible text. Prose on screen
+ * is composed before it is first painted, and prose near it before it scrolls into view.
+ */
 export function JustifiedProse({
   as: Tag = 'p',
   children,
@@ -364,41 +700,27 @@ export function JustifiedProse({
 }) {
   const ref = useRef<HTMLParagraphElement & HTMLLIElement>(null);
   const content = useMemo(() => (enabled ? inlineContent(children) : null), [children, enabled]);
+  const signature = content?.signature ?? null;
   const [composition, setComposition] = useState<Composition | null>(null);
 
+  // Keyed by the signature: a parent render that repeats the same prose with new
+  // elements keeps its lines and measurements instead of measuring everything again.
   useLayoutEffect(() => {
     const element = ref.current;
     if (
       !element ||
       !engine ||
       content === null ||
+      signature === null ||
       typeof Intl.Segmenter !== 'function' ||
       typeof ResizeObserver !== 'function'
     )
       return;
-    let disposed = false;
-    let frame = 0;
     let prepared: Prepared | undefined;
     let fontKey = '';
     let lastWidth = 0;
-    // Keep the opening viewport synchronous. Distant paragraphs remain native and
-    // accessible until the shared observer reaches them ahead of scrolling.
-    let bounds: DOMRect | null = null;
-    if (typeof IntersectionObserver === 'function') {
-      try {
-        bounds = element.getBoundingClientRect();
-      } catch {
-        // Measurement is unavailable; compose() already falls back to native text.
-      }
-    }
-    const margin = window.innerHeight;
-    let active =
-      !bounds ||
-      !Number.isFinite(bounds.top) ||
-      !Number.isFinite(bounds.bottom) ||
-      (bounds.bottom >= -margin && bounds.top <= window.innerHeight + margin);
-    /** Seed the initial width so the observer's first delivery is not a resize. */
-    let seenWidth = active ? parseFloat(getComputedStyle(element).width) || 0 : 0;
+    /** The width the box last stood at, so a delivery can tell whether it moved. */
+    let seenWidth = 0;
     let settleTimer = 0;
     /** True while the box is moving and the paragraph is left to wrap natively. */
     let riding = false;
@@ -419,9 +741,10 @@ export function JustifiedProse({
     };
 
     const fit = () => {
-      if (disposed || !engine) return;
-      if (isSelected()) return;
+      if (!engine) return;
       const style = getComputedStyle(element);
+      // A later ResizeObserver delivery at the width fitted here is not a move.
+      seenWidth = parseFloat(style.width) || 0;
       const width =
         parseFloat(style.width) -
         (style.boxSizing === 'border-box'
@@ -512,7 +835,8 @@ export function JustifiedProse({
         };
       });
       setComposition({
-        content,
+        id: ++compositions,
+        signature,
         lines,
         spaceFont: {
           display: 'contents',
@@ -527,24 +851,38 @@ export function JustifiedProse({
         },
       });
     };
-    const compose = () => {
-      // Measurement may be unavailable in an embedded or hidden document.
-      try {
-        fit();
-      } catch {
-        setComposition(null);
-      }
-    };
-    const schedule = () => {
-      // Nothing is composed while the box is moving or outside the preload range.
-      if (riding || !active) return;
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(compose);
+    const paragraph: Paragraph = {
+      element,
+      root: null,
+      near: false,
+      stale: true,
+      observed: false,
+      disposed: false,
+      compose: () => {
+        // Nothing is composed while the box is moving; `rest` asks again once it stops.
+        if (riding) return;
+        paragraph.stale = false;
+        if (isSelected()) {
+          held.add(paragraph);
+          return;
+        }
+        // Measurement may be unavailable in an embedded or hidden document.
+        try {
+          fit();
+        } catch {
+          setComposition(null);
+        }
+      },
+      fontsChanged: () => {
+        prepared = undefined;
+        request(paragraph);
+      },
+      isSelected,
     };
     /** The box has come to rest: compose for the width it stopped at. */
     const rest = () => {
       riding = false;
-      schedule();
+      request(paragraph);
     };
     /**
      * A paragraph that already stands composed goes back to NATIVE wrapping for as
@@ -553,9 +891,12 @@ export function JustifiedProse({
      * column that just gained width — is composed straight away and never waits.
      */
     const resized = () => {
-      if (!active) return;
-      // A selected passage keeps the composition it was selected in, moving or not.
-      if (isSelected()) return;
+      // A selected passage keeps the composition it was selected in, moving or not,
+      // and is refitted once the selection no longer covers it.
+      if (isSelected()) {
+        held.add(paragraph);
+        return;
+      }
       const width = parseFloat(getComputedStyle(element).width) || 0;
       const moved = width !== seenWidth;
       seenWidth = width;
@@ -573,52 +914,28 @@ export function JustifiedProse({
         settleTimer = window.setTimeout(rest, SETTLE_MS);
         return;
       }
-      schedule();
+      // A delivery that keeps the width may still bring a new font size or style.
+      request(paragraph);
     };
-    const fontsChanged = () => {
-      prepared = undefined;
-      schedule();
-    };
-    // Commit visible text before paint; distant text needs no composition yet.
-    let stopObserving: (() => void) | undefined;
-    if (active) compose();
-    else {
-      stopObserving = observeNearby(element, () => {
-        active = true;
-        seenWidth = parseFloat(getComputedStyle(element).width) || 0;
-        compose();
-      });
-    }
+    const release = register(paragraph);
     const observer = new ResizeObserver(resized);
     observer.observe(element);
-    window.addEventListener('resize', schedule);
-    document.addEventListener('selectionchange', schedule);
-    const fontSet = document.fonts;
-    fontSet?.addEventListener('loadingdone', fontsChanged);
-    // A resolved ready promise does not mean the already-loaded face changed.
-    if (fontSet && fontSet.status !== 'loaded') {
-      void fontSet.ready.then(() => {
-        if (!disposed) fontsChanged();
-      });
-    }
     return () => {
-      disposed = true;
-      cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
-      stopObserving?.();
       observer.disconnect();
-      window.removeEventListener('resize', schedule);
-      document.removeEventListener('selectionchange', schedule);
-      fontSet?.removeEventListener('loadingdone', fontsChanged);
+      release();
+      // The next signature snapshots native markup, even one that repeats an old one.
+      setComposition(null);
     };
-  }, [content]);
+    // `content` changes whenever its signature does; the signature alone keys the work.
+  }, [signature]);
 
-  const lines = composition?.content === content ? composition?.lines : null;
+  const lines = composition?.signature === signature ? composition?.lines : null;
   return (
     <Tag ref={ref} className={className} data-justice={lines ? '' : undefined}>
-      {lines
+      {lines && content
         ? lines.map((line, index) => (
-            <Fragment key={index}>
+            <Fragment key={`${composition!.id}:${index}`}>
               <span
                 style={{
                   display: 'inline-block',
@@ -632,7 +949,7 @@ export function JustifiedProse({
                   letterSpacing: line.tracking,
                 }}
               >
-                {inlineSlice(composition!.content, line.start, line.end, composition!.spaceFont)}
+                {inlineSlice(content, line.start, line.end, composition!.spaceFont)}
               </span>
               {line.separator}
             </Fragment>
