@@ -1844,9 +1844,11 @@
    or nil.
 
    Only a block Python `refused` with a syntax error is repaired, and only its
-   quotes and brackets change: parinferish closes a string or bracket left open,
-   drops or swaps a stray closer and splits statements glued onto one line. The
-   repaired source must still parse to at least one statement."
+   quotes, brackets and escapes change: parinferish closes a string or bracket
+   left open, drops or swaps a stray closer, splits statements glued onto one
+   line, escapes quotes that end a string too early and doubles f-string braces
+   or backslashes Python rejects. The repaired source must still parse to at
+   least one statement."
   [session code ^String refused]
   (when (re-find #"^(?:vis-python:\s+)?(?:SyntaxError|IndentationError|TabError)\b" refused)
     (let [{:keys [text changed? clean? fixes]}

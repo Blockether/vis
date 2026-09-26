@@ -15,15 +15,18 @@ Python functions. `apropos` and `doc` inspect the available API synchronously.
 ### Unbalanced quotes and brackets
 
 The agent sometimes writes a block that Python cannot parse because a quote or
-bracket does not balance: a string that never closes, or a bracket that is closed
-by the wrong character or not closed at all. Vis repairs such a block with
+bracket does not balance: a string that never closes, a quote inside a string
+that ends it too early, or a bracket that is closed by the wrong character or
+not closed at all. Literal braces in an f-string and a backslash escape that
+Python rejects stop a block the same way. Vis repairs such a block with
 parinferish and runs the repaired code, but only when Python can parse it. The
 block's output then starts with a note that names Python's error and each fix,
 and Vis marks the block as repaired. The agent reads the same note, so it can
 check that the repaired code did what it meant.
 
 When the repair cannot make the block parse, the block does not run. Its error
-lists the quotes and brackets that are wrong, followed by Python's own error.
+lists the quotes, brackets and escapes that are wrong, followed by Python's own
+error.
 
 ## Experiment with extension declarations
 

@@ -151,6 +151,15 @@
       (expect (nil? (:error r)))
       (expect (true? (:auto-repaired r)))
       (expect (str/ends-with? (out r) "Output of the repaired block:\nFirst line.\nSecond line"))))
+  (it "escapes the quotes inside a string, runs the repaired block and discloses the fix"
+      (let [r (ep/run-python-block (py-ctx) "print(\"He said \"hi\" to me\")")]
+        (expect (nil? (:error r)))
+        (expect (true? (:auto-repaired r)))
+        (expect (= "print(\"He said \\\"hi\\\" to me\")" (:repaired-source r)))
+        (expect (str/includes?
+                  (out r)
+                  "escaped the \" at columns 16 and 19 so the string keeps them as text"))
+        (expect (str/ends-with? (out r) "Output of the repaired block:\nHe said \"hi\" to me"))))
   (it "discloses the repair when the repaired block raises"
       (let [r (ep/run-python-block (py-ctx) "raise ValueError(\"boom\"")]
         (expect (true? (:auto-repaired r)))
@@ -173,9 +182,10 @@
 
 (defdescribe
   no-false-repair-test
-  "Auto-repair changes only quotes and brackets. A block whose delimiters balance
-   but still does not parse — glued statements, a parroted transcript tail —
-   errors as a plain SyntaxError, and clean Python runs untouched."
+  "Auto-repair changes only quotes, brackets and escapes. A block whose
+   delimiters balance but still does not parse — glued statements, a parroted
+   transcript tail — errors as a plain SyntaxError, and clean Python runs
+   untouched."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
       (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
         (expect (not (contains? r :result)))
