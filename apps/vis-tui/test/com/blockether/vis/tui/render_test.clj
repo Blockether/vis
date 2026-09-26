@@ -10435,6 +10435,13 @@ print(paths)"
             (expect (= :toggle-details (:kind meta)))
             (expect (true? (:collapsed? meta)))
             (expect (= :error (:status-tone meta)) "a failing check colors the summary")
+            ;; User report: the summary sat two columns right of the answer's prose.
+            (expect (not (:trace-inset? meta)) "the summary starts on the prose column")
+            (let [pinned (keep (fn [[row row-meta]]
+                                 (when (str/includes? row "3 passed, 1 failed") row-meta))
+                               (map vector (visible result) (:line-meta result)))]
+              (expect (seq pinned))
+              (expect (every? :trace-inset? pinned) "the rows it pins stay inset"))
             (expect (str/includes? body "3 passed, 1 failed"))
             (expect (str/includes? body "expected 1, got 2") "the failure keeps its evidence")
             (expect (not (str/includes? body "CODE")))

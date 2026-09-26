@@ -8815,6 +8815,7 @@
                 (contains? states :running) :running
                 :else nil)
 
+          ;; The summary starts on the answer's prose column; only what it opens is inset.
           summary
           {:line (str execution-summary-marker
                       (ellipsize-cols (str (if open? "▾ " "▸ ") (:summary digest)) width))
@@ -8822,8 +8823,7 @@
                   :session-id (str session-id)
                   :node-id node-id
                   :collapsed? (not open?)
-                  :status-tone tone
-                  :trace-inset? true}}
+                  :status-tone tone}}
 
           ;; The pinned rows are ordinary Activity rows, so each still opens its own
           ;; evidence. Only the band header is dropped: the digest row already names it.
