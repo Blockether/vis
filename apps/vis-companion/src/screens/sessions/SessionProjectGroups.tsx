@@ -22,7 +22,6 @@ import {
   type SessionRowDeletion,
 } from '../../components/SessionList';
 import {
-  HEADER_TRAIL,
   EditableNameField,
   HeaderActions,
   HeaderTally,
@@ -283,9 +282,11 @@ function SetHeader({
     >
       <span className="font-mono text-ui font-medium text-white">{label}</span>
       {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
-      {/* The set menu follows its own page controls on the trailing edge. */}
+      {/* The set menu follows its own page controls on the trailing edge. The pointer pager
+          uses a 24px step beside the menu's 28px button; a 4px gap lines its chevron
+          up with the session row disclosure without moving either icon off its target. */}
       {(action || navigation) && (
-        <span className={`ml-auto ${HEADER_TRAIL}`}>
+        <span className="ml-auto flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:gap-1 mouse:pr-2.5">
           {navigation}
           {action}
         </span>

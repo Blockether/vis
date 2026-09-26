@@ -503,26 +503,27 @@ describe('ProjectGroup groups', () => {
     expect(groupAction.querySelector('svg.lucide-play')).toBeNull();
   });
 
-  // Regression: the trailing rail is one column on set headers, bands and session rows.
+  // Set headers, bands and session rows keep the menu rail; the row disclosure sits inside it.
   it('stands every trailing mark in one column, set, band and row alike', async () => {
     mount();
     const wallet = await band('Wallet work');
     const row = strip(document.body, LOOSE.id);
     const disclosure = within(row).getByRole('button', { name: /^Show details for / });
     const rowMenu = within(row).getByRole('button', { name: /^Actions for / });
-    const marks = [
+    const menus = [
       screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }),
       screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }),
       within(wallet).getByRole('button', { name: 'Actions for Wallet work' }),
-      disclosure,
       rowMenu,
     ];
-    for (const mark of marks) {
+    for (const mark of [...menus, disclosure]) {
       expect(mark).toHaveClass('size-8', 'mouse:size-7');
       expect(mark).not.toHaveClass('mouse:size-6');
-      expect(mark.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
     }
-    expect(disclosure.parentElement).toHaveClass('gap-2', 'mouse:gap-2.5');
+    for (const menu of menus) {
+      expect(menu.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
+    }
+    expect(disclosure.parentElement).toHaveClass('pr-0.5', 'gap-2', 'mouse:gap-2.5');
   });
 
   it('keeps both set menus reachable in an empty project after folding and expanding it', async () => {

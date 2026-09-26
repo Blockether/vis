@@ -277,6 +277,19 @@ export const SmallPhoneWithPaging: Story = {
 export const DesktopWithPaging: Story = {
   ...PhoneWithPaging,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async (context) => {
+    const page = within(context.canvasElement);
+    const pager = await page.findByRole('navigation', { name: 'Pages of /CryptoSafe sessions' });
+    const next = within(pager).getByRole('button', { name: 'Next page' });
+    const disclosure = (await page.findAllByRole('button', { name: /^Show details for / }))[0];
+    const center = (button: HTMLElement) => {
+      const { left, width } = button.querySelector('svg')!.getBoundingClientRect();
+      return left + width / 2;
+    };
+    // Regression: the page step and the row disclosure share one vertical chevron rail.
+    await expect(Math.abs(center(next) - center(disclosure))).toBeLessThan(1);
+    await PhoneWithPaging.play!(context);
+  },
 };
 
 // Regression: scrolling a narrow session pane must not paint rows through the band that
