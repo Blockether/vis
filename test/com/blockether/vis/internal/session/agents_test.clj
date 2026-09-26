@@ -142,68 +142,80 @@
     (is (not (ps/db-routing-locked? db leader)))))
 
 (deftest gateway-spawn-is-idempotent-and-owned-test
-  (let [db
-        (h/store)
+  (doseq [grouped? [false true]]
+    (let [db
+          (h/store)
 
-        leader
-        (str (h/store-session! db {:channel :api}))
+          leader
+          (str (h/store-session! db {:channel :api}))
 
-        gid
-        (str (:id (ps/db-create-project! db {:name "Agent team"})))
+          project-id
+          (str (:id (ps/db-create-project! db {:name "Agent team"})))
 
-        router
-        {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
+          group-id
+          (when grouped?
+            (str (:id (ps/db-create-session-group! db project-id {:name "Research"}))))
 
-        checkpoint
-        [{:role :system :content "Rules"} {:role :user :content "Current task and folded evidence"}]
+          gid
+          (or group-id project-id)
 
-        env
-        {:db-info db
-         :session-id leader
-         :router router
-         :turn-state-atom (atom {:agent-checkpoint checkpoint :council {:activation-id "parent"}})}
+          router
+          {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
 
-        launches
-        (atom [])]
+          checkpoint
+          [{:role :system :content "Rules"} {:role :user :content "Current task and folded evidence"}]
 
-    (ps/db-set-session-project! db leader gid)
-    (ps/db-store-session-turn!
-      db
-      {:parent-session-id leader :user-request "Parent task" :status :running})
-    (with-redefs-fn {#'lp/db-info (constantly db)
-                     #'loop-router/get-router (constantly router)
-                     #'toggles/enabled? (constantly true)
-                     #'council/runtime (fn [_]
-                                         {leader {:activation-id "parent" :group-id gid}})
-                     (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env) (constantly
-                                                                                         env)
-                     (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
-                     (atom {:eligible? (constantly true)
-                            :wake! (fn [_ sid _]
-                                     (swap! launches conj sid))})}
-      (fn []
-        (let [opts
-              {:task "Check the isolated test owner; report evidence" :key "tests"}
+          env
+          {:db-info db
+           :session-id leader
+           :router router
+           :turn-state-atom (atom {:agent-checkpoint checkpoint :council {:activation-id "parent"}})}
 
-              child
-              (gateway/agents-operation! leader :spawn opts)
+          launches
+          (atom [])]
 
-              sid
-              (:session_id child)]
+      (ps/db-set-session-project! db leader project-id)
+      ;; Managed children must join an explicit Council group before delegation.
+      (when group-id (ps/db-set-session-group! db leader group-id))
+      (ps/db-store-session-turn!
+        db
+        {:parent-session-id leader :user-request "Parent task" :status :running})
+      (with-redefs-fn {#'lp/db-info (constantly db)
+                       #'loop-router/get-router (constantly router)
+                       #'toggles/enabled? (constantly true)
+                       #'council/runtime (fn [_]
+                                           {leader {:activation-id "parent" :group-id gid}})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env) (constantly
+                                                                                           env)
+                       (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                       (atom {:eligible? (constantly true)
+                              :wake! (fn [_ sid _]
+                                       (swap! launches conj sid))})}
+        (fn []
+          (let [opts
+                {:task "Check the isolated test owner; report evidence" :key "tests"}
 
-          (is (= [sid] @launches))
-          (is (= checkpoint (ps/db-agent-checkpoint db sid)))
-          (is (= gid (str (:project-id (ps/db-get-session db sid)))))
-          (is (= sid (:session_id (gateway/agents-operation! leader :spawn opts))))
-          (is (= [sid] @launches))
-          (is (= :idempotency-conflict
-                 (try (gateway/agents-operation! leader :spawn (assoc opts :task "Different task"))
-                      nil
-                      (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
-          (is (= "cancelled"
-                 (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
-          (is (not (agents/claim-iteration! {:db-info db :session-id sid})))
-          (is (= "cancelled" (:status (agents/info db sid)))))))))
+                child
+                (gateway/agents-operation! leader :spawn opts)
+
+                sid
+                (:session_id child)]
+
+            (is (= [sid] @launches))
+            (is (= checkpoint (ps/db-agent-checkpoint db sid)))
+            (is (= project-id (str (:project-id (ps/db-get-session db sid)))))
+            (is (= group-id (some-> (:group-id (ps/db-get-session db sid)) str)))
+            (is (= gid (council/session-group db (ps/db-get-session db sid))))
+            (is (= sid (:session_id (gateway/agents-operation! leader :spawn opts))))
+            (is (= [sid] @launches))
+            (is (= :idempotency-conflict
+                   (try (gateway/agents-operation! leader :spawn (assoc opts :task "Different task"))
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+            (is (= "cancelled"
+                   (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
+            (is (not (agents/claim-iteration! {:db-info db :session-id sid})))
+            (is (= "cancelled" (:status (agents/info db sid))))))))))
 
 (deftest child-usage-excludes-inherited-work-test
   (let [db

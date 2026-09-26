@@ -5318,6 +5318,8 @@
 
             (when-let [project-id (:project-id (persistance/db-get-session db sid))]
               (persistance/db-set-session-project! db child-id project-id))
+            (when-let [group-id (:group-id (persistance/db-get-session db sid))]
+              (persistance/db-set-session-group! db child-id group-id))
             (put-session! child-id {:next-seq 0 :last-active (util/now-ms)})
             (smodel/set-model! db child-id (:provider pair) (:model pair) :agent-spawn)
             (try (let [entry (council/publish! db
