@@ -295,6 +295,99 @@ describe('a reader reaching the end of a turn that is still being written', () =
     expect(latestOffered()).toBe(true);
   });
 
+  /** A running session opened at its newest turn, with the reader following it. */
+  async function followingTheEnd(sid: string) {
+    const paint = installFrames();
+    const resize = installObserver();
+    const live = { height: 46_000 };
+    renderSessionScreen({
+      session: sessionFixture({ id: sid, status: 'running' }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
+    const content = viewport.firstElementChild!;
+    const moves: number[] = [];
+    measure(viewport, live, moves);
+    await paint();
+
+    viewport.scrollTop = live.height - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+    return { paint, resize, live, viewport, content };
+  }
+
+  // Regression, user report: opening a running session landed on its newest turn and
+  // then settled a line or two above it, with the live row cut off and later flushes
+  // no longer followed; a finished turn could leave the reader on the turn before it.
+  // A commit can shrink the transcript for one forced layout and grow it back within
+  // the same task, and the browser clamps `scrollTop` on the way through. Measured in
+  // WebKit: the scroller dropped 72 px while the end moved 8 px, with nobody touching it.
+  it('keeps following through a clamp that no reader gesture made', async () => {
+    const { paint, resize, live, viewport, content } = await followingTheEnd('clamped');
+
+    live.height -= 8;
+    viewport.scrollTop = live.height - SHELL - 64;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    expect(viewport.scrollTop).toBe(live.height - SHELL);
+    expect(latestOffered()).toBe(false);
+
+    live.height += FLUSH;
+    act(() => resize(content));
+    expect(viewport.scrollTop).toBe(live.height - SHELL);
+    expect(latestOffered()).toBe(false);
+  });
+
+  it('keeps following through a clamp behind a transcript that ends where it did', async () => {
+    const { paint, live, viewport, content } = await followingTheEnd('clamped-in-place');
+
+    // The dip and its recovery happened inside one task: only the DOM saw it change.
+    const row = document.createElement('div');
+    content.append(row);
+    row.remove();
+    await act(async () => {});
+    viewport.scrollTop -= 40;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    expect(viewport.scrollTop).toBe(live.height - SHELL);
+    expect(latestOffered()).toBe(false);
+  });
+
+  // Find in page and a screen reader move the scroller without any input this screen
+  // sees. With the transcript at rest nothing could have clamped it: the move is theirs.
+  it('leaves the end for a move that nothing in the layout explains', async () => {
+    const { paint, viewport } = await followingTheEnd('found-in-page');
+
+    viewport.scrollTop -= 900;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    expect(latestOffered()).toBe(true);
+  });
+
+  // A main thread busy committing a running turn can measure the reader's own flick
+  // after the gesture grace, with the transcript grown underneath it meanwhile.
+  it('leaves the end for a reader scroll measured late while the turn grows', async () => {
+    let now = Date.now() + 10_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const { paint, live, viewport } = await followingTheEnd('late-flick');
+
+    noteReaderGesture();
+    now += 600;
+    live.height += FLUSH;
+    viewport.scrollTop -= 900;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    expect(latestOffered()).toBe(true);
+  });
+
   it('leaves a reader who stayed in history where they are', async () => {
     const { viewport, live } = await readerDrags({
       sid: 'reading',

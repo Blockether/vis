@@ -112,7 +112,7 @@ import {
 } from '../lib/share-intake';
 import { attachmentsFromSharedFiles } from '../lib/share-files';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
-import { readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
+import { readerMayBeScrolling, readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
 import {
   arrivedAtEnd,
   bottomOf,
@@ -1415,6 +1415,12 @@ export function SessionScreen({
     const end = bottomOf(box);
     if (lowestEndRef.current < 0 || end < lowestEndRef.current) lowestEndRef.current = end;
   }, []);
+  // ...and whether ANYTHING under the scroller changed since that measurement. The
+  // browser clamps `scrollTop` only while the layout moves, and a commit can shrink
+  // the transcript for one forced layout and grow it back in the same task: that dip
+  // reaches no observer, only the clamp it left behind does. A transcript at rest
+  // cannot move the reader, so whatever moves it then was the reader's doing.
+  const layoutChangedRef = useRef(false);
 
   const scrollToEnd = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -1583,10 +1589,16 @@ export function SessionScreen({
     const handleViewportScroll = () => {
       if (frame === null) frame = window.requestAnimationFrame(recapture);
     };
+    const noteLayoutChange = () => {
+      layoutChangedRef.current = true;
+    };
+    const mutations =
+      typeof MutationObserver === 'undefined' ? null : new MutationObserver(noteLayoutChange);
     const observer = new ResizeObserver(() => {
       // Before any early return: a dip this callback sees is a clamp the reader's
       // next scroll event must not read as a retreat of their own.
       markLowestEnd(viewport);
+      noteLayoutChange();
       if (busy()) return;
       const readerOwns = readerOwnsScroll();
       // The send transition is already carrying this viewport to the end. Any direct
@@ -1631,12 +1643,14 @@ export function SessionScreen({
       correctedTopRef.current = viewport.scrollTop;
     });
     observer.observe(transcript);
+    mutations?.observe(transcript, { childList: true, characterData: true, subtree: true });
     viewport.addEventListener('scroll', handleViewportScroll, {
       passive: true,
     });
     recapture();
     return () => {
       observer.disconnect();
+      mutations?.disconnect();
       viewport.removeEventListener('scroll', handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
@@ -3963,10 +3977,29 @@ export function SessionScreen({
       // moves with it.
       const lowestEnd = lowestEndRef.current < 0 ? bottomOf(viewport) : lowestEndRef.current;
       lowestEndRef.current = bottomOf(viewport);
+      const layoutChanged = layoutChangedRef.current || bottomOf(viewport) !== previousBottom;
+      layoutChangedRef.current = false;
       const settled = isCorrectionEcho(viewport, previousTop);
       seenTopRef.current = viewport.scrollTop;
       seenBottomRef.current = bottomOf(viewport);
       if (settled) return;
+      // A move UP that no reader input can account for, made while the layout under
+      // it changed, is the browser clamping the scroller to an end that dipped — often
+      // for one forced layout inside a commit, which no observer above ever sees. Read
+      // as a retreat, it dropped the follow as a running session opened, leaving its
+      // live row under the fold and every later flush unfollowed, and again when a
+      // finished turn handed over to its persisted row. Nobody moved: the follow
+      // stands, and a reader following the end is put back on it.
+      if (viewport.scrollTop < previousTop && layoutChanged && !readerMayBeScrolling()) {
+        if (followingRef.current && !submitScrollActiveRef.current && followEnd(viewport)) {
+          correctedTopRef.current = viewport.scrollTop;
+          seenTopRef.current = viewport.scrollTop;
+          seenBottomRef.current = bottomOf(viewport);
+        }
+        syncJump();
+        captureScrollAnchor();
+        return;
+      }
       // The bottom tolerance only helps a downward gesture ARRIVE at a live end.
       // An upward gesture means “hold this line”, even when it moved less than
       // that tolerance; leaving follow armed there lets the next stream flush
@@ -4772,6 +4805,7 @@ export function SessionScreen({
             <div
               ref={scrollRef}
               className="@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+              data-keeps-reading-position
               onClickCapture={handleDisclosureClick}
               onScroll={handleScroll}
               onPointerDown={releasePin}

@@ -16,8 +16,26 @@ export function noteReaderGesture(): void {
 
 /** True while the reader's own gesture owns the scroll position. */
 export function readerOwnsScroll(): boolean {
-  if (draggingUnderTouch) return true;
+  if (dragging) return true;
   return Date.now() - lastGestureAt <= GESTURE_GRACE_MS;
+}
+
+/**
+ * How long after the reader's last input a moving scroller can still be their doing.
+ * Momentum keeps a flick going once the finger has lifted, the native scroller keeps
+ * following a finger JS was told was cancelled, and a main thread busy committing a
+ * running turn can deliver the first scroll event of either after the grace above.
+ */
+const MOVEMENT_REACH_MS = 1_000;
+
+/**
+ * Whether a scroll that moves the transcript now may still come from the reader.
+ * Outside this, a move the layout explains — the browser clamping `scrollTop` to an
+ * end that dipped for one forced layout — is nobody's gesture.
+ */
+export function readerMayBeScrolling(): boolean {
+  if (dragging) return true;
+  return Date.now() - lastGestureAt <= MOVEMENT_REACH_MS;
 }
 
 /**
@@ -27,8 +45,32 @@ export function readerOwnsScroll(): boolean {
  * would be cancelled by the tap that requested it.
  */
 function onReaderMove(event: Event): void {
-  if (event.type === 'pointermove' && (event as PointerEvent).buttons === 0) return;
+  if (event.type === 'pointermove' && (event as PointerEvent).buttons === 0) {
+    // No button is down now, whatever `pointerup` said or never said.
+    onPointerUp(event);
+    return;
+  }
   noteReaderGesture();
+}
+
+/**
+ * The keyboard scrolls as well: the arrows, Page Up/Down, Home, End and Space move
+ * the scroller that holds the focus, and Tab brings the control it focuses into
+ * view. In a text field the same keys move the caret, and Space presses a button.
+ */
+const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ']);
+
+function keyScrolls(key: string, target: EventTarget | null): boolean {
+  if (key === 'Tab') return true;
+  if (!SCROLL_KEYS.has(key)) return false;
+  if (!(target instanceof HTMLElement)) return true;
+  if (target.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return false;
+  return key !== ' ' || !target.matches('button, summary, [role="button"]');
+}
+
+function onKeyDown(event: Event): void {
+  const { key, target } = event as KeyboardEvent;
+  if (keyScrolls(key, target)) noteReaderGesture();
 }
 
 /**
@@ -38,16 +80,27 @@ function onReaderMove(event: Event): void {
  * scroller and stop sending `touchmove` (it sends `touchcancel` instead), so a
  * long slow drag can go quiet in JS while the scroller is still following the
  * finger. “It scrolled while a finger was down” survives that; `touchmove` is
- * only the earliest notice of it.
+ * only the earliest notice of it. A mouse or pen button held down counts the same
+ * way: it drags a scrollbar, or selects text past the edge the scroller follows,
+ * and the browser need not report that movement to the page.
  */
 let touchesDown = 0;
-let draggingUnderTouch = false;
+let pointerHeld = false;
+let dragging = false;
 
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
 export function releaseReaderScroll(): void {
   lastGestureAt = Number.NEGATIVE_INFINITY;
   touchesDown = 0;
-  draggingUnderTouch = false;
+  pointerHeld = false;
+  dragging = false;
+}
+
+/** When the last finger or button lets go, a drag it made keeps the grace. */
+function letGo(): void {
+  if (touchesDown > 0 || pointerHeld) return;
+  if (dragging) noteReaderGesture();
+  dragging = false;
 }
 
 function onTouchStart(event: Event): void {
@@ -55,17 +108,28 @@ function onTouchStart(event: Event): void {
 }
 
 // `touchcancel` counts as a lift so the count can never leak into a permanent
-// veto; the drag it usually announces keeps the ordinary grace window instead.
+// veto. It is also the native scroller taking the drag over, so it restarts the
+// reader's reach: the scroller may go on following that finger in silence.
 function onTouchEnd(event: Event): void {
   touchesDown = (event as TouchEvent).touches?.length ?? 0;
-  if (touchesDown > 0) return;
-  if (draggingUnderTouch) noteReaderGesture();
-  draggingUnderTouch = false;
+  if (event.type === 'touchcancel') noteReaderGesture();
+  letGo();
+}
+
+// Touch has its own count above, which survives WebKit taking the drag over.
+function onPointerDown(event: Event): void {
+  if ((event as PointerEvent).pointerType !== 'touch') pointerHeld = true;
+}
+
+function onPointerUp(event: Event): void {
+  if ((event as PointerEvent).pointerType === 'touch' || !pointerHeld) return;
+  pointerHeld = false;
+  letGo();
 }
 
 function onScroll(): void {
-  if (touchesDown === 0) return;
-  draggingUnderTouch = true;
+  if (touchesDown === 0 && !pointerHeld) return;
+  dragging = true;
   noteReaderGesture();
 }
 
@@ -75,20 +139,20 @@ function onScroll(): void {
 // must never be able to delay the scroll it is only watching. `scroll` does not
 // bubble at all, which is the other reason it is captured here.
 if (typeof window !== 'undefined') {
+  const watch = { capture: true, passive: true };
   for (const type of ['touchmove', 'wheel', 'pointermove']) {
-    window.addEventListener(type, onReaderMove, {
-      capture: true,
-      passive: true,
-    });
+    window.addEventListener(type, onReaderMove, watch);
   }
-  window.addEventListener('touchstart', onTouchStart, {
-    capture: true,
-    passive: true,
-  });
+  window.addEventListener('touchstart', onTouchStart, watch);
   for (const type of ['touchend', 'touchcancel']) {
-    window.addEventListener(type, onTouchEnd, { capture: true, passive: true });
+    window.addEventListener(type, onTouchEnd, watch);
   }
-  window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+  window.addEventListener('pointerdown', onPointerDown, watch);
+  for (const type of ['pointerup', 'pointercancel']) {
+    window.addEventListener(type, onPointerUp, watch);
+  }
+  window.addEventListener('keydown', onKeyDown, watch);
+  window.addEventListener('scroll', onScroll, watch);
 }
 
 // Keeping the reader's line while content lands above them is NOT here, and no

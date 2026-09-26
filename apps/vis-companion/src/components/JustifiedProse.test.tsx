@@ -333,6 +333,54 @@ describe('Justice prose', () => {
     expect(scroller.scrollTop).toBe(24);
   });
 
+  it('leaves the reading position to the screen that declares it keeps it', async () => {
+    let notify: IntersectionObserverCallback = () => {};
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    let scroller: HTMLElement | null = null;
+    let top = -2000;
+    measure.mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
+      if (this.tagName === 'P') {
+        const height = this.hasAttribute('data-justice') ? 64 : 40;
+        const start = top - (scroller?.scrollTop ?? 0);
+        return { width, top: start, bottom: start + height } as DOMRect;
+      }
+      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
+    });
+    const view = render(
+      <div data-testid="scroller" data-keeps-reading-position style={{ overflowY: 'auto' }}>
+        <JustifiedProse>{paragraph}</JustifiedProse>
+      </div>,
+    );
+    scroller = view.getByTestId('scroller');
+    const prose = view.getByRole('paragraph');
+    await settle();
+
+    noteReaderGesture();
+    top = -600;
+    act(() =>
+      notify(
+        [{ isIntersecting: true, target: prose } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    );
+    await composed(prose);
+
+    // The transcript's own observer bills this growth once; a second shift here was a
+    // scroll its owner read as the reader's.
+    expect(scroller.scrollTop).toBe(0);
+  });
+
   it('keeps its lines when a parent repeats the same prose with new handlers', async () => {
     const first = vi.fn();
     const second = vi.fn();

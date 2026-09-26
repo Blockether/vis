@@ -452,8 +452,14 @@ function locate(paragraph: Paragraph, views: Map<Element | null, View>): Spot {
   }
 }
 
-/** Whether the browser itself keeps the reader's lines in place in this scroller. */
+/**
+ * Whether something else keeps the reader's lines in place in this scroller: the
+ * browser's own scroll anchoring, or the screen that owns the scroller and says so
+ * with `data-keeps-reading-position`. Moving that scroller here as well bills the
+ * same height twice, and reads to its owner as a scroll nobody made.
+ */
 function anchorsItself(root: Element | null): boolean {
+  if (root?.hasAttribute('data-keeps-reading-position')) return true;
   if (typeof CSS === 'undefined' || !CSS.supports?.('overflow-anchor', 'auto')) return false;
   const scroller = root ?? document.scrollingElement;
   return !!scroller && getComputedStyle(scroller).overflowAnchor !== 'none';
