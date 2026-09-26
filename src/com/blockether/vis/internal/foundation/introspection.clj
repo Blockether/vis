@@ -80,7 +80,7 @@
 (defn- attempts-from-iterations
   "Walk `iterations` in database order and collect every executed Python form.
    One entry exists per form, not per iteration."
-  [_db-info iterations]
+  [iterations]
   (into []
         (mapcat
           (fn [iteration]
@@ -275,10 +275,6 @@
         (:raw-data-preview data)
         (assoc :raw-data-preview (:raw-data-preview data))))))
 
-(defn- tool-name-from-code
-  [code]
-  (when (string? code) (second (re-find #"^\s*\(?([^\s\)]+)" code))))
-
 (defn- cancellation-failure?
   "True when an error is fallout from interrupting a cancelled turn, rather than
    a defect in the form that happened to be on the stack."
@@ -292,10 +288,8 @@
 (def ^:private patch-refusal-causes
   "Cause phrases `patch` prints under its refusal head, in match order, paired with the
    classification whose advice actually fixes that cause. The wording is the editor's own
-   (`foundation.editing.core`): the parse gate, an overlap, an anchor mismatch, then the
-   edit-shape checks."
-  [[:patch-parse-error ["would not parse" "at replacement line"]]
-   [:patch-overlapping-edits ["overlap"]] [:patch-stale-anchor ["stale from" "stale to"]]
+   (`foundation.editing.core`): an overlap, an anchor mismatch, then the edit-shape checks."
+  [[:patch-overlapping-edits ["overlap"]] [:patch-stale-anchor ["stale from" "stale to"]]
    [:patch-invalid-edit
     ["expected line:hash" "out of range" "is after to line" "must be a map" "non-empty list of maps"
      "missing `from`" "missing `replace`" "allowed: from, to, replace"]]])
@@ -316,38 +310,15 @@
           patch-refusal-causes)))
 
 (defn- classify-expression-failure
-  [code error]
-  (let [message
-        (or (error-text error) "")
-
-        lower-message
-        (str/lower-case message)
-
-        tool-name
-        (or (tool-name-from-code code) "")
-
-        patch-refusal
-        (patch-refusal-classification lower-message)]
-
+  [error]
+  (let [lower-message (str/lower-case (or (error-text error) ""))]
     (cond (retired-python-error? error) :python-environment-retired
           (cancellation-failure? lower-message) :turn-cancelled
-          (and (str/includes? tool-name "rg")
-               (str/includes? lower-message "unsupported escape character"))
-          :regex-unsupported-escape
-          (and (str/includes? tool-name "rg")
-               (str/includes? lower-message "unable to resolve symbol"))
-          :regex-unescaped-quote
-          (and (str/includes? tool-name "patch")
-               (str/includes? lower-message "unmatched delimiter"))
-          :patch-unbalanced-replacement
           ;; A refused ANCHOR is its own loop: the exact line/hash pair no longer agrees, and
-          ;; the refusal already carries the fresh anchor. But a parse-gate rejection, an
-          ;; overlap and an unusable edit shape refuse under the SAME head, and stale-anchor
-          ;; advice sends those back with the very text that was refused, so the cause line
-          ;; decides — never the head alone.
-          (some? patch-refusal) patch-refusal
-          (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
-          :else :code-execution-error)))
+          ;; the refusal already carries the fresh anchor. But an overlap and an unusable edit
+          ;; shape refuse under the SAME head, and stale-anchor advice sends those back with
+          ;; the very text that was refused, so the cause line decides — never the head alone.
+          :else (or (patch-refusal-classification lower-message) :code-execution-error))))
 
 (defn- advice-for-classification
   [classification]
@@ -357,18 +328,6 @@
 
     :provider-schema-rejected
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
-
-    :regex-unsupported-escape
-    "grep matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: grep({\"query\": [\"foo\", \"bar\"], \"context\": 3}), or set is_regex: True to run the query as a real regex. grep takes ONE options map — never a positional query — and answers anchored TEXT, so filter it with .splitlines() rather than by key."
-
-    :regex-unescaped-quote
-    "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
-
-    :patch-unbalanced-replacement
-    "The `replace` text likely lost the closing quote or a delimiter, and a syntax-breaking write refuses the WHOLE batch. Re-emit that edit with a Python triple-quoted string for multi-line content."
-
-    :patch-parse-error
-    "The parse gate refused the REPLACEMENT text, not the anchor: the message names the language, the replacement line and the text it broke on. Nothing was written, so the anchors you already hold stay live — fix the replacement syntax and re-send the same edit. Re-reading the file or swapping anchors changes nothing."
 
     :patch-overlapping-edits
     "Two edits in the batch cover the same line, so the whole batch was refused. Merge them into ONE edit spanning both ranges instead of sending the same pair again."
@@ -382,25 +341,22 @@
     :turn-cancelled
     "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
 
-    :unresolved-symbol
-    "A reader/string boundary probably split the form and exposed a bare symbol. Check quoting before retrying."
-
     "Read :message, :code, and :iteration; fix the smallest failing form before issuing new searches."))
 
 (defn- expression-failures-for-iteration
   "Curated failure entries for one iteration - one per errored FORM.
    The error is a property of the form, never of the iteration row."
-  [_db-info iteration]
+  [iteration]
   (into []
         (keep (fn [form]
                 (when-let [error (:error form)]
                   (let [code (or (:src form) (:code iteration))
-                        classification (classify-expression-failure code error)]
+                        classification (classify-expression-failure error)]
 
                     {:source (if (= :python-environment-retired classification) :runtime :code)
                      :iteration-id (:id iteration)
                      :iteration (:position iteration)
-                     :tool (or (:vis/tool-name form) (tool-name-from-code code))
+                     :tool (:vis/tool-name form)
                      :classification classification
                      :code code
                      :message (error-text error)
@@ -408,13 +364,13 @@
         (iteration-forms iteration)))
 
 (defn- failures-from-iterations
-  [db-info iterations]
+  [iterations]
   (vec (mapcat (fn [iteration]
                  (let [failure (when-let [failure (iteration-failure iteration)]
                                  [(assoc failure
                                     :advice (advice-for-classification (:classification
                                                                          failure)))])]
-                   (concat failure (expression-failures-for-iteration db-info iteration))))
+                   (concat failure (expression-failures-for-iteration iteration))))
                iterations)))
 
 (defn- latest-turn
@@ -438,7 +394,7 @@
    (let [{:keys [db-info]} env]
      (when-let [turn (latest-turn db-info session-id)]
        (let [iterations (iteration-rows db-info (:id turn))
-             attempts (attempts-from-iterations db-info iterations)]
+             attempts (attempts-from-iterations iterations)]
 
          ;; No `:errors` key: a `(filterv :error attempts)` would be a
          ;; verbatim DUPLICATE of every errored attempt (full code+result
@@ -449,7 +405,7 @@
                   :user-request (:user-request turn)
                   :status (:status turn)
                   :attempts attempts
-                  :failures (failures-from-iterations db-info iterations)
+                  :failures (failures-from-iterations iterations)
                   :cost (turn-cost-summary turn)}
            (same-uuid? session-id (current-session-id env))
            (assoc :iteration (iteration-pointer env))
@@ -702,7 +658,7 @@
                            (mapv #(assoc %
                                     :turn-id (:id turn)
                                     :user-request (:user-request turn))
-                                 (failures-from-iterations (:db-info env) iterations))))
+                                 (failures-from-iterations iterations))))
                        (persistance/db-list-session-turns (:db-info env) session-id)))
           (catch Throwable _ []))
      [])))
@@ -780,24 +736,6 @@
         (contains? classes :provider-schema-rejected)
         (conj
           "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from read_session()[\"failures\"] and retry/switch model only if it repeats.")
-
-        (contains? classes :regex-unsupported-escape)
-        (conj (str "grep takes ONE options map whose `query` is a term or a list of terms (OR); "
-                   "for a real pattern set is_regex: True in that same map. The answer is anchored "
-                   "TEXT, so filter it with .splitlines() in Python, not by key. Add \"paths\" and "
-                   "\"include\" to that same map."))
-
-        (contains? classes :regex-unescaped-quote)
-        (conj
-          "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
-
-        (contains? classes :patch-unbalanced-replacement)
-        (conj
-          "Re-emit the patch with balanced `replace` text; use a triple-quoted Python string for multi-line replacement text.")
-
-        (contains? classes :patch-parse-error)
-        (conj
-          "A patch was refused by the parse gate, not by an anchor: fix the replacement syntax and re-send the same edit. Nothing was written, so the anchors you already hold are still live.")
 
         (contains? classes :patch-stale-anchor)
         (conj

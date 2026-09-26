@@ -794,7 +794,7 @@
   (when (some? s) (str/replace (str s) #"\u001b\[[0-9;?]*[ -/]*[@-~]" "")))
 
 (defn- tool-op
-  "Uppercase operation label parsed from a tool-call invocation like `rg(...)`."
+  "Uppercase operation label parsed from a tool-call invocation like `grep(...)`."
   [code]
   (if-let [m (re-find #"^[\s(]*([A-Za-z_][A-Za-z0-9_]*)" (str code))]
     (str/upper-case (second m))

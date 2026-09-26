@@ -26,83 +26,36 @@
                                                  (extension/deregister-extension!
                                                    "foundation-core"))))))])
 
-(defdescribe
-  patch-diagnosis-contract-test
-  (let [classify
-        @#'introspection/classify-expression-failure
+(defdescribe patch-diagnosis-contract-test
+             (let [classify
+                   @#'introspection/classify-expression-failure
 
-        advice
-        @#'introspection/advice-for-classification
+                   advice
+                   @#'introspection/advice-for-classification
 
-        next-actions
-        @#'introspection/next-actions
+                   stale-refusal
+                   (str "patch refused at edit 2 of 5 — nothing was written.\n"
+                        "  src/app.py: stale to 120:7f2; current 120:a11.\n"
+                        "  cat(\"src/app.py\", 117, 123)")
 
-        parse-refusal
-        (str "patch refused — the edit would not parse; nothing was written.\n"
-             "  src/app.py: edit 1/1 lines 12..12; python: ERROR at replacement line 1,"
-             " col 8 — near \"=\\\"Examples\"")
+                   overlap-refusal
+                   (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
+                        "  src/app.py: lines 10..14 and 12..18.")
 
-        stale-refusal
-        (str "patch refused at edit 2 of 5 — nothing was written.\n"
-             "  src/app.py: stale to 120:7f2; current 120:a11.\n"
-             "  cat(\"src/app.py\", 117, 123)")
+                   shape-refusal
+                   (str "patch refused — nothing was written.\n"
+                        "  src/app.py: edit 1/2 missing `replace`.")]
 
-        overlap-refusal
-        (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
-             "  src/app.py: lines 10..14 and 12..18.")
-
-        shape-refusal
-        (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `replace`.")]
-
-    (it "classifies unbalanced patch replacement text and says how to re-emit it"
-        (expect (= :patch-unbalanced-replacement
-                   (classify "patch(p, edits)" "unmatched delimiter in code")))
-        (let [message (advice :patch-unbalanced-replacement)]
-          (expect (str/includes? message "triple-quoted"))
-          (expect (not (str/includes? message "anchor")))))
-    ;; https://github.com/Blockether/vis/issues/265 - the parse gate and a drifted
-    ;; anchor refuse under the SAME `patch refused` head. Classifying the parse gate
-    ;; as a stale anchor told the agent its anchor was wrong and to retry, which
-    ;; re-sent the identical malformed replacement text.
-    (it "classifies a parse-gate refusal as a parse error, not a stale anchor"
-        (expect (= :patch-parse-error (classify "patch(p, edits)" parse-refusal)))
-        (let [message (advice :patch-parse-error)]
-          (expect (str/includes? message "replacement syntax"))
-          (expect (not (str/includes? message "stale"))))
-        (let [actions (next-actions [{:classification :patch-parse-error :message parse-refusal}]
-                                    [])]
-          (expect (some (fn [action]
-                          (str/includes? action "replacement syntax"))
-                        actions))
-          (expect (not-any? (fn [action]
-                              (str/includes? action "anchor the refusal handed back"))
-                            actions))))
-    ;; The same issue in reverse: reading only the block's FIRST token missed a genuine
-    ;; anchor refusal whenever the patch call was assigned or preceded by a read.
-    (it "keeps stale-anchor classification for an anchor mismatch, wherever patch is called"
-        (expect (= :patch-stale-anchor
-                   (classify "rows = cat(path, 1, 20)\nr = patch(path, edits)" stale-refusal)))
-        (expect (str/includes? (advice :patch-stale-anchor) "anchor")))
-    (it "separates overlapping edits and unusable edit shapes from anchor drift"
-        (expect (= :patch-overlapping-edits (classify "patch(p, edits)" overlap-refusal)))
-        (expect (= :patch-invalid-edit (classify "patch(p, edits)" shape-refusal)))
-        (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
-        (expect (str/includes? (advice :patch-invalid-edit) "line:hash")))))
-
-;; Regression: grep gained `is_regex` and started answering ONE anchored TEXT
-;; block, but this advice still read "Regex is not supported - filter the matches
-;; in Python", so a model that hit an escape error was told to index a string.
-(defdescribe grep-advice-names-is-regex-and-text-test
-             (let [advice @#'introspection/advice-for-classification]
-               (it "points at is_regex instead of denying regex"
-                   (let [message (advice :regex-unsupported-escape)]
-                     (expect (str/includes? message "is_regex"))
-                     (expect (not (str/includes? message "Regex is not supported")))))
-               (it "tells the model grep answers TEXT and demonstrates context"
-                   (let [message (advice :regex-unsupported-escape)]
-                     (expect (str/includes? message "anchored TEXT"))
-                     (expect (str/includes? message ".splitlines()"))
-                     (expect (str/includes? message "\"context\": 3"))))))
+               (it "classifies an anchor mismatch as a stale anchor"
+                   (expect (= :patch-stale-anchor (classify stale-refusal)))
+                   (expect (str/includes? (advice :patch-stale-anchor) "anchor")))
+               ;; https://github.com/Blockether/vis/issues/265 - every refusal shares the
+               ;; `patch refused` head, so the cause line under it picks the advice.
+               (it "separates overlapping edits and unusable edit shapes from anchor drift"
+                   (expect (= :patch-overlapping-edits (classify overlap-refusal)))
+                   (expect (= :patch-invalid-edit (classify shape-refusal)))
+                   (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
+                   (expect (str/includes? (advice :patch-invalid-edit) "line:hash")))))
 
 (defdescribe
   introspection-public-surface-test
@@ -804,29 +757,41 @@
          :data {:type ::env-python/context-retired}}
         "{\"message\":\"Python environment is disposed or retired\",\"data\":{\"type\":\"com.blockether.vis.internal.python.env/context-retired\"}}"]]
       (let [failures (#'introspection/failures-from-iterations
-                      nil
                       [{:id "iteration" :position 1 :error error}])]
         (expect (= [:runtime] (mapv :source failures)))
         (expect (= [:python-environment-retired] (mapv :classification failures)))))))
 
 ;; Regression, issue #130: a cancel interrupt was attributed to the form that
 ;; happened to be on the stack, making a user stop look like broken agent code.
-(defdescribe cancel-interrupt-classification-test
-             (let [classify
-                   @#'introspection/classify-expression-failure
+(defdescribe
+  cancel-interrupt-classification-test
+  (let [classify
+        @#'introspection/classify-expression-failure
 
-                   advice
-                   @#'introspection/advice-for-classification]
+        advice
+        @#'introspection/advice-for-classification
 
-               (it "reports cancellation fallout instead of a code failure"
-                   (expect (= :turn-cancelled
-                              (classify "python_execution(...)" "java.lang.InterruptedException")))
-                   (expect (= :turn-cancelled
-                              (classify "grep(...)" "java.util.concurrent.CancellationException")))
-                   (expect (str/includes? (advice :turn-cancelled) "cancelled")))
-               (it "keeps genuine agent failures classified as code errors"
-                   (expect (= :code-execution-error
-                              (classify "python_execution(...)" "NameError: name 'x'"))))))
+        next-actions
+        @#'introspection/next-actions]
+
+    (it "reports cancellation fallout instead of a code failure"
+        (expect (= :turn-cancelled (classify "java.lang.InterruptedException")))
+        (expect (= :turn-cancelled (classify "java.util.concurrent.CancellationException")))
+        (expect (str/includes? (advice :turn-cancelled) "cancelled")))
+    (it "keeps genuine agent failures classified as code errors"
+        (expect (= :code-execution-error (classify "NameError: name 'x'")))
+        (expect (= [] (next-actions [{:classification :code-execution-error :message "x"}] []))))
+    ;; Project Clojure tooling reports its reader and compiler errors through a
+    ;; Python block. They describe the project's code, not a quoting slip in the
+    ;; block, so they earn the plain code-error advice.
+    (it
+      "treats Clojure reader and compiler messages as plain code errors"
+      (doseq
+        [message
+         ["Syntax error compiling at (app.clj:3:9).\nUnable to resolve symbol: foo in this context"
+          "Syntax error reading source at (app.clj:1:2).\nUnmatched delimiter: )"
+          "Unsupported escape character: \\d"]]
+        (expect (= :code-execution-error (classify message)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The renamed surface's two new behaviours: `list_sessions(search=…)` is the
@@ -1142,12 +1107,12 @@
                                   {:session-turn-id turn
                                    :code "print('many lines')"
                                    :forms [{:scope "t1/i1"
-                                             :svar/tool-call-id "call_A|fc_123"
+                                            :svar/tool-call-id "call_A|fc_123"
                                             :src "print('many lines')"
                                             :stdout stdout
                                             :error {:message "ValueError: failed"}}
                                            {:scope "t1/i1"
-                                             :svar/tool-call-id "call_B|fc_456"
+                                            :svar/tool-call-id "call_B|fc_456"
                                             :src "print('other')"
                                             :stdout "other block"}]})
 
@@ -1164,7 +1129,8 @@
                     b
                     (get i "blocks")
 
-                    :when (and (= "t1/i1" (get b "scope")) (= "call_A|fc_123" (get b "svar_tool_call_id")))]
+                    :when (and (= "t1/i1" (get b "scope"))
+                               (= "call_A|fc_123" (get b "svar_tool_call_id")))]
 
                 b)
 

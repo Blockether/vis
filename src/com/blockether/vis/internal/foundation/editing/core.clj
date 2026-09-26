@@ -2888,7 +2888,7 @@
   "A `(fn [line] boolean)` — true when the line matches ANY needle (OR). SMART-
    CASE either way, the SAME rule the fff candidate pre-filter (`fff/grep
    :smart-case?`) uses, so the two never disagree: a needle with NO uppercase
-   matches case-INSENSITIVELY (`rg(\"key\")` finds `Key`/`KEY`/`keymap`); a needle
+   matches case-INSENSITIVELY (`grep(\"key\")` finds `Key`/`KEY`/`keymap`); a needle
    WITH an uppercase letter matches case-sensitively (you typed a capital on
    purpose).
 
@@ -3812,10 +3812,10 @@
 
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written, how
-   many edits landed in that ONE write, how the file's line count moved, and the
-   trailing `clauses` the write earned — the parse verdict, and any note about a
-   replacement. The batch is atomic, so this line describes the FILE; the per-edit
-   detail belongs in the rows under it."
+   many edits landed in that ONE write, how the file's line count moved, and any
+   trailing `clauses` the write earned, such as the note about a copied `cat` gutter.
+   The batch is atomic, so this line describes the FILE; the per-edit detail belongs
+   in the rows under it."
   [rel edit-count old-count new-count clauses]
   (let [delta (- (long new-count) (long old-count))]
     (str "patched "
@@ -4182,7 +4182,7 @@
      :symbol 'patch
      :result
      (str
-       "A plain string: one status line — path, edit count, lines before → after, parse verdict — "
+       "A plain string: one status line — path, edit count, lines before → after — "
        "then one row per edit with its fresh output range, abbreviated to one anchor for one line. "
        "Those anchors are LIVE AFTER the write, so the next patch needs no cat.")
      :description

@@ -435,7 +435,7 @@
 ;; directly, same-process or remote.
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
-;; result the way the MODEL reads it (rg gutter, shell model-render, Python
+;; result the way the MODEL reads it (grep gutter, shell model-render, Python
 ;; printer) instead of pr-str'd Clojure.
 (import-vars [render-form-value ctx-renderer/render-form-value]
              [search-text ir/search-text]
