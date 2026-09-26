@@ -149,9 +149,8 @@ export const Fleet: Story = {
       name: 'Pages of uberworkspace sessions',
     });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
-    // The project band stays uniform across its disclosure, paging and creation control.
+    // The project band stays uniform across its disclosure and the paging under it.
     const header = fold.closest('header')!;
-    const menu = within(header).getByRole('button', { name: /^Groups in / });
     // The band carries the boundary; the steps that move the list stand under it, on the
     // set's own header.
     const band = header.parentElement!;
@@ -175,17 +174,19 @@ export const Fleet: Story = {
     await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeEnabled();
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
-    // The plus stands on the set it creates in, not on the band, so it is found in the
-    // project — and only after the fold above, which unmounts it with the list it grows.
-    const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
+    // The set menu stands on the set it acts on, not on the band, so it is found in the
+    // project — and only after the fold above, which unmounts it with the list it serves.
+    const actions = within(project as HTMLElement).getByRole('button', {
+      name: /^Actions for sessions in /,
+    });
     if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await userEvent.hover(fold);
       const band = win.getComputedStyle(header).backgroundColor;
       await expect(win.getComputedStyle(fold).backgroundColor).toBe('rgba(0, 0, 0, 0)');
       await userEvent.unhover(fold);
-      await userEvent.hover(create);
+      await userEvent.hover(actions);
       await expect(win.getComputedStyle(header).backgroundColor).toBe(band);
-      await userEvent.unhover(create);
+      await userEvent.unhover(actions);
     }
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
@@ -194,10 +195,9 @@ export const Fleet: Story = {
     await expect(
       project.querySelectorAll('nav[aria-label="Pages of uberworkspace sessions"]'),
     ).toHaveLength(1);
-    // THE BAND KEEPS ITS OWN PAIR on one line — the fold and the menu — and the plus stands
-    // on the line of the set it creates in, beside that set's steps.
-    await expect(centerY(fold)).toBe(centerY(menu));
-    await expect(centerY(create)).toBe(centerY(pager));
+    // THE BAND KEEPS ONLY ITS FOLD; the set menu stands on the line of the set it acts on,
+    // beside that set's steps.
+    await expect(centerY(actions)).toBe(centerY(pager));
     const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     const qualifier = header.querySelector('[title]')!;
@@ -226,7 +226,7 @@ export const Fleet: Story = {
       // Under a pointer the steps take the band's 24px step: they are navigation beside the
       // set's own count, not a row's own mark. Touch shares the rail's reach.
       await expect(control.getBoundingClientRect().height).toBe(
-        pointer ? 24 : create.getBoundingClientRect().height,
+        pointer ? 24 : actions.getBoundingClientRect().height,
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
@@ -244,32 +244,28 @@ export const Fleet: Story = {
         height: box.height - top - bottom,
       };
     };
-    // The rail's own marks — the fold and `+` — keep the 28px pointer face; the band's menu
-    // and the set's page steps take the 24px step. Touch reaches 44px for all six.
+    // The rail's own marks — the fold and the set menu — keep the 28px pointer face; the
+    // set's page steps take the 24px step. Touch reaches 44px for all five.
     const railFace = pointer ? 28 : 44;
     const bandStep = pointer ? 24 : 44;
-    const bandRow = [fold, menu].map(reachOf);
-    const stepRow = [previous, pageTarget, next, create].map(reachOf);
-    [fold, create, menu, previous, pageTarget, next].map(reachOf).forEach((target, index) => {
+    const stepRow = [previous, pageTarget, next, actions].map(reachOf);
+    [fold, actions, previous, pageTarget, next].map(reachOf).forEach((target, index) => {
       const minimum = index < 2 ? railFace : bandStep;
       expect(target.width).toBeGreaterThanOrEqual(minimum);
       expect(target.height).toBeGreaterThanOrEqual(minimum);
     });
     // Reported after BLO-167 (paraphrased: a plus standing on the left is unacceptable, the
-    // three dots belong on the right): the band's own controls hold its trailing edge and the
-    // menu is the last of them. The page steps read left to right on the set's own line.
-    for (const row of [bandRow, stepRow]) {
-      for (let index = 1; index < row.length; index += 1) {
-        expect(row[index].left).toBeGreaterThan(row[index - 1].left);
-      }
+    // three dots belong on the right): the menu ends the set's own line, after the page
+    // steps, which read left to right.
+    for (let index = 1; index < stepRow.length; index += 1) {
+      expect(stepRow[index].left).toBeGreaterThan(stepRow[index - 1].left);
     }
-    for (const control of [fold, create, menu, previous, pageTarget, next]) {
+    for (const control of [fold, actions, previous, pageTarget, next]) {
       const box = control.getBoundingClientRect();
       expect(
         control.contains(doc.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)),
       ).toBe(true);
     }
-    expect(bandRow[1].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
     expect(stepRow[3].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
@@ -314,7 +310,7 @@ export const Fleet: Story = {
       // showing through when the set header sticks beneath the project band.
       const set = within(project as HTMLElement).getByText('Sessions').parentElement!;
       for (
-        let element: HTMLElement | null = create;
+        let element: HTMLElement | null = actions;
         element && element !== set;
         element = element.parentElement
       ) {
@@ -328,15 +324,14 @@ export const Fleet: Story = {
         name: /^Show details for/,
       })
     )[0];
-    const before = [create, disclosure].map((control) => control.getBoundingClientRect());
+    const before = [actions, disclosure].map((control) => control.getBoundingClientRect());
     const rowMenu = within(disclosure.closest<HTMLElement>('[data-swipe-track]')!).getByRole(
       'button',
       { name: /^Actions for/ },
     );
-    // The project and row menus keep the same trailing edge. The Sessions plus now
-    // ends its own strip at that edge, after the pager rather than before it.
-    await expect(menu.getBoundingClientRect().right).toBe(rowMenu.getBoundingClientRect().right);
-    await expect(before[0].right).toBe(menu.getBoundingClientRect().right);
+    // The set and row menus keep the same trailing edge: the Sessions menu ends its own
+    // strip at that edge, after the pager rather than before it.
+    await expect(before[0].right).toBe(rowMenu.getBoundingClientRect().right);
     await expect(before[1].right).toBeLessThanOrEqual(rowMenu.getBoundingClientRect().left);
 
     for (const control of [disclosure]) {
@@ -367,7 +362,7 @@ export const Fleet: Story = {
       await expect(trigger).toHaveFocus();
       await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
     }
-    for (const [index, control] of [create, disclosure].entries()) {
+    for (const [index, control] of [actions, disclosure].entries()) {
       await expect(control.getBoundingClientRect().x).toBe(before[index].x);
     }
   },

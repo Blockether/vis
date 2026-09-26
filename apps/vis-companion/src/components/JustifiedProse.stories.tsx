@@ -79,7 +79,9 @@ export const ResponsiveParagraphs: Story = {
     const column = canvasElement.querySelector<HTMLElement>('[data-prose-column]')!;
     let prose = column.querySelector('p')!;
     await waitFor(() => expect(prose).toHaveAttribute('data-justice'));
-    expectFitted(prose);
+    // Prose composes at once and again when its web font finishes loading, so the first
+    // composition may still carry the fallback font's advances.
+    await waitFor(() => expectFitted(prose), { timeout: 5000 });
     expectSelection(prose, paragraph);
     const narrowLines = prose.children.length;
     column.style.width = '280px';

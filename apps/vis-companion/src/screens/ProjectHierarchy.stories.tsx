@@ -38,7 +38,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const GroupedSessions: Story = {
-  play: async ({ canvasElement }) => {
+  play: async ({ canvasElement, globals }) => {
     const page = within(canvasElement);
     const title = await page.findByText('infrastructure', {}, { timeout: 5000 });
     const group = title.closest<HTMLElement>('[data-project-root]')!;
@@ -57,17 +57,23 @@ export const GroupedSessions: Story = {
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
 
-    // Regression: repeated project pluses and row controls must stay unframed. The project's
-    // own plus stands on the set it creates in, under the band, so it is found in the group.
-    const create = within(group).getByRole('button', { name: /^New session on / });
-    const face = style(create);
-    // Regression: the plus must use the header's neutral ink, not the theme's accent.
-    await expect(face.color).toBe(style(title).color);
-    const box = create.getBoundingClientRect();
-    await expect(box.width).toBe(box.height);
-    await expect(parseFloat(face.borderRadius)).toBe(0);
-    for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
-      await expect(parseFloat(face[`border${side}Width`])).toBe(0);
+    // Regression: repeated project controls and row controls must stay unframed. Each set
+    // under the band carries its own menu, so the menus are found in the group.
+    const menus = within(group).getAllByRole('button', { name: /^Actions for (groups|sessions) in / });
+    await expect(menus).toHaveLength(2);
+    // Regression: the menus wear the rows' own quiet control ink, not the theme's accent.
+    const rowControl = within(group).getByRole('button', {
+      name: 'Show details for Rotate the relay signing key',
+    });
+    for (const menu of menus) {
+      const face = style(menu);
+      await expect(face.color).toBe(style(rowControl).color);
+      const box = menu.getBoundingClientRect();
+      await expect(box.width).toBe(box.height);
+      await expect(parseFloat(face.borderRadius)).toBe(0);
+      for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
+        await expect(parseFloat(face[`border${side}Width`])).toBe(0);
+      }
     }
 
     // Regression: project names and full-width row rules previously had nearly
@@ -93,16 +99,22 @@ export const GroupedSessions: Story = {
     await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(style(rows).borderTopWidth).toBe('0px');
     await expect(style(firstRow).borderTopWidth).toBe('0px');
+    // Adjacent projects meet at the next header rule, without empty page between them.
     const nextGroup = group.nextElementSibling!;
-    await expect(parseFloat(style(nextGroup).paddingTop)).toBeGreaterThan(0);
+    await expect(parseFloat(style(nextGroup).paddingTop)).toBe(0);
 
-    // Folding changes the list, not the heading's surface or its actions.
+    // Folding changes the list, not the heading's frame or its fold. Blockether Light shows
+    // the state by the chevron alone; other themes also tint an expanded header.
     const background = style(header).backgroundColor;
     await userEvent.click(page.getByRole('button', { name: 'Collapse infrastructure' }));
     await expect(group.querySelector('[data-session-id]')).toBeNull();
-    await expect(style(header).backgroundColor).toBe(background);
+    if ((globals.theme ?? 'blockether-light') === 'blockether-light') {
+      await expect(style(header).backgroundColor).toBe(background);
+    } else {
+      await expect(style(header).backgroundColor).not.toBe(background);
+    }
     await expect(style(header).borderBottomWidth).toBe('1px');
-    await expect(within(header).getByRole('button', { name: /^New session/ })).toBeEnabled();
+    await expect(within(header).getByRole('button', { name: 'Expand infrastructure' })).toBeEnabled();
     await userEvent.click(page.getByRole('button', { name: 'Expand infrastructure' }));
     const reopened = await within(group).findByText('Rotate the relay signing key');
     await expect(style(header).borderBottomWidth).toBe('1px');

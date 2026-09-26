@@ -227,10 +227,10 @@ export const ProseSpacing: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const prose = canvas.getAllByText(
-      /^(I will inspect|The build is running|The observation is complete|The build continues)/,
-      { selector: 'p' },
-    );
+    // Justified prose sets a paragraph's words in an inner span; the gaps belong to the paragraph.
+    const prose = canvas
+      .getAllByText(/^(I will inspect|The build is running|The observation is complete|The build continues)/)
+      .map((words) => words.closest('p')!);
     const code = canvasElement.querySelectorAll('[data-execution-code]');
     const activity = canvasElement.querySelectorAll('[data-execution-activity]');
     const run = canvas

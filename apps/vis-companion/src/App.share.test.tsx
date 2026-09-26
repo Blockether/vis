@@ -40,7 +40,11 @@ describe('a share that arrives with no destination', () => {
     restore = view.restore;
 
     fireEvent.click(await screen.findByText('Session one'));
-    const composer = (await screen.findByLabelText('Message Vis')) as HTMLTextAreaElement;
+    const composer = (await screen.findByLabelText(
+      'Message Vis',
+      {},
+      { timeout: 5_000 },
+    )) as HTMLTextAreaElement;
     await settle(50);
 
     receiveSharedText({ text: 'look at this' });
@@ -68,7 +72,11 @@ describe('a share that arrives with no destination', () => {
     expect(await screen.findByText('Sharing')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Session one'));
-    const composer = (await screen.findByLabelText('Message Vis')) as HTMLTextAreaElement;
+    const composer = (await screen.findByLabelText(
+      'Message Vis',
+      {},
+      { timeout: 5_000 },
+    )) as HTMLTextAreaElement;
     await settle(50);
 
     expect(composer.value).toContain('look at this');

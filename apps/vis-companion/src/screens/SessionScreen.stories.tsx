@@ -242,7 +242,8 @@ export const ReadingLayout: Story = {
     for (const element of [...reading, composer]) {
       const style = getComputedStyle(element);
       await expect(style.fontFamily).toBe(getComputedStyle(title).fontFamily);
-      await expect(style.fontSize).toBe(pointer ? getComputedStyle(title).fontSize : '11px');
+      // The reading scale is its own step: the headline sits one step below it on pointer.
+      await expect(style.fontSize).toBe(pointer ? '13px' : '11px');
       await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
     }
     // The THINKING trace is a quiet aside: it keeps the ui step on every

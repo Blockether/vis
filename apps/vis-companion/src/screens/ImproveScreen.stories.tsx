@@ -87,8 +87,12 @@ export const Details: Story = {
     await userEvent.click(
       context.canvas.getByRole('button', { name: 'Original report · read only' }),
     );
+    // Composed prose sets each line and space apart, so the whole paragraph carries the text.
+    const source = 'A tool call failed. Reproduction has not been attempted.';
     await expect(
-      context.canvas.getByText('A tool call failed. Reproduction has not been attempted.'),
+      context.canvas.getByText(
+        (_, element) => element?.tagName === 'P' && element.textContent === source,
+      ),
     ).toBeVisible();
   },
 };

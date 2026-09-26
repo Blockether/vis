@@ -623,7 +623,11 @@ export const ExtensionGroups: Story = {
     await expect(canvasElement.querySelectorAll('[data-activity-group]')).toHaveLength(3);
     await expect(canvas.getByRole('button', { name: /Search reviews ×2/ })).toBeVisible();
     await expect(canvas.getByRole('button', { name: /Check review deployment ×2/ })).toBeVisible();
-    await expect(canvas.getByText(/Waiting for deployment · running/)).toBeVisible();
+    // A closed group keeps its live command behind the chevron and counts it in the tally.
+    await expect(
+      canvas.getByRole('button', { name: /Check review deployment ×2/ }),
+    ).toHaveTextContent('1 running');
+    await expect(canvas.queryByText(/Waiting for deployment · running/)).toBeNull();
     await expect(canvasElement).not.toHaveTextContent('Review service unavailable');
     await userEvent.click(canvas.getByRole('button', { name: /Search reviews ×3/ }));
     await expect(canvasElement).not.toHaveTextContent('Review service unavailable');
