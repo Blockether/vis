@@ -19,6 +19,7 @@
              [raw-count raw-query]]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
@@ -1301,6 +1302,52 @@
                                (expect (fs/exists? (fs/path dir "vis.db")))
                                (finally (vis/db-dispose-connection! s2))))
                         (finally (vis/db-dispose-connection! s1) (fs/delete-tree root))))))
+
+;; hs_err_pid61432: POSIX locks belong to the process, so a file tool that opened
+;; `vis.db-shm` released sqlite's wal-index locks. The pool registers its files as
+;; held for exactly as long as a connection may hold those locks.
+(defdescribe
+  disk-pool-held-files-test
+  (it "holds the database files from the first open until the last store lets go"
+      (let [root
+            (fs/create-temp-dir)
+
+            dir
+            (str (fs/path root "store"))
+
+            s1
+            (vis/db-create-connection! dir)
+
+            s2
+            (vis/db-create-connection! dir)
+
+            files
+            (mapv #(str (fs/path dir %)) ["vis.db" "vis.db-wal" "vis.db-shm" "vis.db-journal"])]
+
+        (try (expect (every? paths/held-file? files))
+             (vis/db-dispose-connection! s1)
+             ;; `s2` still uses the pool, so its locks are still live.
+             (expect (every? paths/held-file? files))
+             (vis/db-dispose-connection! s2)
+             (expect (not-any? paths/held-file? files))
+             (finally (vis/db-dispose-connection! s1)
+                      (vis/db-dispose-connection! s2)
+                      (fs/delete-tree root)))))
+  (it "lets go of the files when the pool fails to open"
+      (let [root
+            (fs/create-temp-dir)
+
+            dir
+            (str (fs/path root "store"))
+
+            failure
+            (with-redefs-fn {#'sqlite-core/open-disk-pool! (fn [& _]
+                                                             (throw (ex-info "open failed" {})))}
+              #(try (vis/db-create-connection! dir) nil (catch Throwable t t)))]
+
+        (try (expect (some? failure))
+             (expect (not (paths/held-file? (str (fs/path dir "vis.db")))))
+             (finally (fs/delete-tree root))))))
 
 (defdescribe
   migration-additive-column-top-up-test

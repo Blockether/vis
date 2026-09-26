@@ -143,6 +143,50 @@
   ^long []
   (.pid (java.lang.ProcessHandle/current)))
 
+(defonce ^:private lock-holders
+  ;; Files whose OS locks this process depends on, by owner: `{owner #{path}}`,
+  ;; canonical path strings. See `held-file?` for why they are off limits.
+  (atom {}))
+
+(defn- canonical-path
+  "Canonical path string of `f` (a `File`, `Path` or string); its absolute path when
+   the file system cannot canonicalize it."
+  ^String [f]
+  (let [file (if (instance? File f) ^File f (File. (str f)))]
+    (try (.getCanonicalPath file) (catch java.io.IOException _ (.getAbsolutePath file)))))
+
+(defn hold-files!
+  "Record that `owner` holds OS locks on `files` (they need not exist yet), so the
+   rest of this process leaves them alone (see `held-file?`). Replaces what
+   `owner` held before. Answers nil."
+  [owner files]
+  (swap! lock-holders assoc owner (into #{} (map canonical-path) files))
+  nil)
+
+(defn release-held-files!
+  "Forget `owner`'s files once it holds no more locks on them. Answers nil."
+  [owner]
+  (swap! lock-holders dissoc owner)
+  nil)
+
+(defn held-files
+  "Canonical path strings of every file this process holds OS locks on."
+  []
+  (into #{} cat (vals @lock-holders)))
+
+(defn held-file?
+  "True when `f` names a file this process holds OS locks on, such as a live SQLite
+   database with its `-wal` and `-shm` companions. POSIX record locks belong to the
+   PROCESS, not to a descriptor: closing ANY descriptor of the file drops every
+   lock the process holds on it. One read of a live `vis.db-shm` by a file tool
+   therefore releases SQLite's wal-index locks; the next process to open the
+   database then truncates the `-shm` this process still has mapped, and its next
+   write dies with SIGBUS. Code that opens user-chosen files must refuse or skip
+   held ones."
+  [f]
+  (let [held (held-files)]
+    (and (boolean (seq held)) (contains? held (canonical-path f)))))
+
 (defonce ^:private held-claims
   ;; Claims THIS process holds, by absolute path: `{path [channel lock]}`. The
   ;; channel stays open deliberately — the OS drops its lock when the process
@@ -171,7 +215,8 @@
                                                         StandardOpenOption/READ
                                                         StandardOpenOption/WRITE]))]
              (if-let [^FileLock lock (.tryLock channel 0 Long/MAX_VALUE true)]
-               (swap! held-claims assoc path [channel lock])
+               (do (swap! held-claims assoc path [channel lock])
+                   (hold-files! [::claim path] [(claim-file dir)]))
                (.close channel)))
            (catch Throwable _ nil)))
     dir))

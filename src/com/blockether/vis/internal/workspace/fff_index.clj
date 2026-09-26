@@ -18,7 +18,9 @@
    - the body must NOT close `idx`; borrowed indexes cannot be evicted,
    - filesystem mutations call `note-fs-write!` with the changed path so the
      next search reads its own writes without rescanning unrelated drafts."
-  (:require [com.blockether.fff :as fff]
+  (:require [clojure.string :as str]
+            [com.blockether.fff :as fff]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]))
@@ -322,8 +324,39 @@
                (record-event! :close (entry-data entry))
                (catch Throwable _ nil)))))))
 
+(defn- literal-glob
+  "Anchored gitignore pattern matching exactly `rel`, a `/`-separated path under
+   the index base."
+  [^String rel]
+  (str "/" (str/replace rel #"[\\*?\[\]]|\s$" #(str "\\" %))))
+
+(defn- held-globs
+  "Exclude globs for every file under `canonical-root` this process holds OS locks
+   on (`paths/held-file?`). Scanning, grepping or watching such a file opens it,
+   and closing that descriptor releases the locks."
+  [^String canonical-root]
+  (let [root
+        (paths/unixify canonical-root)
+
+        prefix
+        (if (str/ends-with? root "/") root (str root "/"))]
+
+    (into []
+          (comp (map paths/unixify)
+                (filter #(str/starts-with? % prefix))
+                (map #(literal-glob (subs % (count prefix)))))
+          (sort (paths/held-files)))))
+
+(defn- unguarded?
+  "True when the index under pool key `k` may still open a file this process has
+   since started to hold locks on: its exclude globs predate that hold."
+  [[root _ overlay-key]]
+  (let [globs (held-globs root)]
+    (boolean (and (seq globs) (not (every? (set (second overlay-key)) globs))))))
+
 (defn- sweep!
-  "Retire idle/over-budget entries, never borrowed entries or `keep-key`.
+  "Retire idle and over-budget entries, and ones whose excludes miss a file this
+   process has since started to hold locks on — never borrowed entries or `keep-key`.
    Selection is atomic with taking a lease, so a live index stays shared even
    when workers simultaneously acquire roots under capacity pressure."
   [keep-key]
@@ -341,28 +374,41 @@
                      (sort-by (fn [[_ e]]
                                 (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))))
 
-                expired
-                (filterv (fn [[_ e]]
-                           (> (- now (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
-                              (long idle-ttl-ms)))
+                unguarded
+                (filterv (fn [[k _]]
+                           (unguarded? k))
                   available)
 
-                expired-keys
-                (set (map key expired))
+                unguarded-keys
+                (set (map key unguarded))
+
+                expired
+                (filterv (fn [[k e]]
+                           (and (not (contains? unguarded-keys k))
+                                (> (- now
+                                      (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
+                                   (long idle-ttl-ms))))
+                  available)
+
+                retired-keys
+                (into unguarded-keys (map key) expired)
 
                 over
-                (- (count @pool) (count expired) (long pool-size))
+                (- (count @pool) (count retired-keys) (long pool-size))
 
                 capacity
-                (take (max 0 over) (remove #(contains? expired-keys (key %)) available))
+                (take (max 0 over) (remove #(contains? retired-keys (key %)) available))
 
                 victims
-                (into (mapv (fn [[k e]]
-                              [k e :idle])
-                            expired)
-                      (map (fn [[k e]]
-                             [k e :capacity]))
-                      capacity)]
+                (-> (mapv (fn [[k e]]
+                            [k e :held-files])
+                          unguarded)
+                    (into (map (fn [[k e]]
+                                 [k e :idle]))
+                          expired)
+                    (into (map (fn [[k e]]
+                                 [k e :capacity]))
+                          capacity))]
 
             (swap! pool #(apply dissoc % (map first victims)))
             victims))]
@@ -546,12 +592,22 @@
 (defn lease
   "One pool key: which root, under which ignore policy, with which ignore
    overlay. Bundled into a single value so `with-index` keeps a plain
-   `[binding init]` shape."
+   `[binding init]` shape. Files under `root` that this process holds OS locks
+   on (`paths/held-file?`) join the overlay's exclude globs, so no index opens
+   them."
   ([^File root respect-ignore-files?] (lease root respect-ignore-files? nil))
   ([^File root respect-ignore-files? overlay]
-   {:root root
-    :respect-ignore-files? (boolean respect-ignore-files?)
-    :overlay (when (some seq (vals overlay)) overlay)}))
+   (let [held
+         (held-globs (.getCanonicalPath root))
+
+         overlay
+         (cond-> overlay
+           (seq held)
+           (update :exclude-globs #(vec (distinct (concat % held)))))]
+
+     {:root root
+      :respect-ignore-files? (boolean respect-ignore-files?)
+      :overlay (when (some seq (vals overlay)) overlay)})))
 
 (defmacro with-index
   "`(with-index [idx (lease root respect?)] body…)` — body runs with a

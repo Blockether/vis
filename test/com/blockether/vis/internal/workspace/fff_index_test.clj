@@ -1,6 +1,10 @@
 (ns com.blockether.vis.internal.workspace.fff-index-test
   (:require [babashka.fs :as fs]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.fff :as fff]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.fff-index :as index]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [taoensso.telemere :as tel]))
@@ -335,3 +339,99 @@
                    (is (and (number? (:scan-ms scan)) (not (neg? (:scan-ms scan)))))
                    (is (and (number? (:queued-ms scan)) (not (neg? (:queued-ms scan))))))))))
          (finally (fs/delete-tree dir)))))
+
+(defn- require-executable
+  "Resolve a required test executable, failing explicitly when it is absent."
+  [exe]
+  (or (some (fn [d]
+              (let [f (io/file d exe)]
+                (when (.canExecute f) (.getPath f))))
+            (str/split (or (System/getenv "PATH") "") #":"))
+      (throw (ex-info (str "FFF index tests require " exe " on PATH") {:executable exe}))))
+
+(defn- wal-index-lock
+  "Whether sqlite's wal-index lock (the DMS byte of `shm`) is still taken, tested
+   from ANOTHER process, since a process never conflicts with its own locks:
+   `held` while a connection keeps the wal-index open, `free` once it is gone."
+  [python shm]
+  (let [probe
+        (str "import fcntl, os, sys\n"
+             "fd = os.open(sys.argv[1], os.O_RDWR)\n" "try:\n"
+             "    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 128, os.SEEK_SET)\n"
+             "    print('free')\n"
+             "except OSError:\n" "    print('held')\n")
+
+        process
+        (.start (doto (ProcessBuilder. ^java.util.List [python "-c" probe shm])
+                  (.redirectErrorStream true)))]
+
+    (.waitFor process 30 java.util.concurrent.TimeUnit/SECONDS)
+    (str/trim (slurp (.getInputStream process)))))
+
+(deftest lease-excludes-files-this-process-holds-locks-on-test
+  (let [dir (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-held-lease-"})))]
+    (try (paths/hold-files! ::lease
+                            [(io/file dir "vis.db-shm") (io/file dir "a[1]" "x*.db")
+                             (io/file (.getParentFile dir) "outside.db")])
+         ;; Anchored and escaped: each glob names exactly one held file under the root.
+         (is (= ["/a\\[1\\]/x\\*.db" "/vis.db-shm"]
+                (get-in (index/lease dir true) [:overlay :exclude-globs])))
+         (is (= ["/node_modules/" "/a\\[1\\]/x\\*.db" "/vis.db-shm"]
+                (get-in (index/lease dir true {:exclude-globs ["/node_modules/"]})
+                        [:overlay :exclude-globs])))
+         (finally (paths/release-held-files! ::lease) (fs/delete-tree dir)))))
+
+(deftest index-built-before-a-hold-is-retired-test
+  (with-pool
+    (fn [pool _]
+      (let [dir
+            (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-held-sweep-"})))
+
+            closed
+            (promise)]
+
+        (with-redefs-fn {#'index/open! (fn [& _]
+                                         (reify
+                                           java.io.Closeable
+                                             (close [_] (deliver closed true))))}
+          (fn []
+            (try (index/with-index* (index/lease dir true) identity)
+                 (is (= 1 (count @pool)))
+                 (paths/hold-files! ::sweep [(io/file dir "vis.db-shm")])
+                 (#'index/sweep! nil)
+                 ;; Its watcher could still open the file, so it goes now, not at idle expiry.
+                 (is (empty? @pool))
+                 (is (= true (deref closed 2500 false)))
+                 ;; The replacement excludes the file and stays.
+                 (index/with-index* (index/lease dir true) identity)
+                 (#'index/sweep! nil)
+                 (is (= 1 (count @pool)))
+                 (finally (paths/release-held-files! ::sweep) (fs/delete-tree dir)))))))))
+
+;; hs_err_pid61432: an index over `~/.vis` opened `vis.db-shm`. POSIX locks belong
+;; to the process, so closing that descriptor dropped sqlite's wal-index locks; the
+;; next process to open the database truncated the `-shm` the gateway still had
+;; mapped, and the gateway's next write died with SIGBUS.
+(deftest index-over-a-live-store-keeps-its-wal-index-lock-test
+  (with-pool
+    (fn [_ _]
+      (let [python
+            (require-executable "python3")
+
+            dir
+            (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-live-store-"})))
+
+            store
+            (vis/db-create-connection! (.getPath dir))
+
+            shm
+            (.getPath (io/file dir "vis.db-shm"))]
+
+        (spit (io/file dir "notes.txt") "notes")
+        (try (is (= "held" (wal-index-lock python shm)))
+             (index/with-index
+               [idx (index/lease dir true)]
+               (is (str/includes? (pr-str (fff/search idx {:query "notes"})) "notes.txt"))
+               (is (not (str/includes? (pr-str (fff/search idx {:query "vis.db"})) "vis.db-shm"))))
+             (is (= "held" (wal-index-lock python shm)))
+             (finally (vis/db-dispose-connection! store) (fs/delete-tree dir)))))))

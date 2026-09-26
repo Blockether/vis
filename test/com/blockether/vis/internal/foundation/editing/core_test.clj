@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
@@ -5123,7 +5124,34 @@
           (expect (= :ext.foundation.editing/path-denied
                      (try (safe-path (str secret "/c.txt"))
                           nil
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+  ;; hs_err_pid61432: POSIX locks belong to the process, so one file tool read of a
+  ;; live `vis.db-shm` released sqlite's wal-index locks for the whole gateway.
+  (it "a file this process holds OS locks on is refused while its neighbours are served"
+      (let [safe-path
+            (private-fn "safe-path")
+
+            root
+            (mk-tmp-dir "vis-held")
+
+            shm
+            (str root "/vis.db-shm")]
+
+        (spit (java.io.File. ^String root "notes.txt") "NOTES")
+        (spit (java.io.File. ^String shm) "")
+        (paths/hold-files! ::held-shm [shm])
+        (try (binding [workspace/*workspace-root*
+                       root
+
+                       workspace/*filesystem-roots*
+                       [{:trunk root :clone root :draft :shared :primary? true}]]
+
+               (expect (= "NOTES" (slurp (safe-path (str root "/notes.txt")))))
+               (let [data
+                     (try (safe-path shm) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                 (expect (= :ext.foundation.editing/path-denied (:type data)))
+                 (expect (= :held-lock (:reason data)))))
+             (finally (paths/release-held-files! ::held-shm))))))
 
 ;; Regression: grep answers ONE anchored TEXT block, but the model-facing prose still
 ;; described a keyed map — the blank-path refusal told the model to use "the keys under

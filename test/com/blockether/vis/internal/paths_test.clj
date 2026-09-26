@@ -174,6 +174,8 @@
              (expect (= held (paths/claim-dir! held)))
              (expect (= :held (paths/claim-state held)))
              (expect (.isFile (io/file held ".vis-live")))
+             ;; Nothing else in this process may open the token: that would drop the lock.
+             (expect (paths/held-file? (io/file held ".vis-live")))
              ;; Claiming twice is the same claim, not a second descriptor.
              (expect (= :held (paths/claim-state (paths/claim-dir! held))))
              ;; What a killed process leaves behind: the token, held by nobody.
@@ -187,3 +189,36 @@
                               (reverse (file-seq dir))]
 
                         (.delete entry)))))))
+
+;; POSIX locks belong to the process: closing ANY descriptor of a locked file drops
+;; them all, so the registry is what keeps file tools away from sqlite's live files.
+(defdescribe held-files-test
+             (it "tracks files by owner under their canonical path until every owner lets go"
+                 (let [dir
+                       (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                                     "vis-held"
+                                                     (make-array FileAttribute 0))))
+
+                       db
+                       (io/file dir "vis.db")
+
+                       shm
+                       (io/file dir "vis.db-shm")]
+
+                   (.mkdir (io/file dir "sub"))
+                   (try (expect (not (paths/held-file? db)))
+                        ;; Files need not exist yet: sqlite creates `-shm` after the first open.
+                        (paths/hold-files! ::sqlite [db shm])
+                        (paths/hold-files! ::other [(.getPath db)])
+                        (expect (paths/held-file? (io/file dir "sub" ".." "vis.db")))
+                        (expect (paths/held-file? (.getPath shm)))
+                        (expect (contains? (paths/held-files) (.getCanonicalPath shm)))
+                        (paths/release-held-files! ::sqlite)
+                        (expect (paths/held-file? db))
+                        (expect (not (paths/held-file? shm)))
+                        (paths/release-held-files! ::other)
+                        (expect (not (paths/held-file? db)))
+                        (finally (paths/release-held-files! ::sqlite)
+                                 (paths/release-held-files! ::other)
+                                 (doseq [^File entry (reverse (file-seq dir))]
+                                   (.delete entry)))))))

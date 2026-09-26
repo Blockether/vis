@@ -464,10 +464,22 @@
        (catch Throwable _ nil)))
 
 (defonce ^:private disk-pools
-  ;; canonical `vis.db` path -> {:pool HikariDataSource :refs long}
+  ;; canonical `vis.db` path -> {:pool HikariDataSource :refs long :file-key :holder}
   (atom {}))
 
 (defonce ^:private disk-pools-monitor (Object.))
+
+(defn- db-lock-files
+  "`file` and the companions SQLite locks and maps beside it."
+  [^String file]
+  (mapv #(str file %) ["" "-wal" "-shm" "-journal"]))
+
+(defn- retire-disk-pool!
+  "Close one pool generation, then drop its hold on the database files: they stay
+   held (`paths/held-file?`) until its last connection is gone."
+  [{:keys [pool holder]}]
+  (close-pool! pool)
+  (when holder (paths/release-held-files! holder)))
 
 (defn- open-disk-pool!
   "Fresh pool over `file`, schema installed under the cross-process migration
@@ -542,15 +554,29 @@
             (if reusable?
               (do (swap! disk-pools assoc
                     file
-                    {:pool pool :refs (inc (long (:refs entry 0))) :file-key (or file-key key-now)})
+                    (assoc entry
+                      :refs (inc (long (:refs entry 0)))
+                      :file-key (or file-key key-now)))
                   [pool nil])
-              (let [fresh (open-disk-pool! path file)]
-                (swap! disk-pools assoc file {:pool fresh :refs 1 :file-key (fs-file-key file)})
-                [fresh (when (and pool (not (.isClosed pool))) pool)]))))]
+              ;; Hold the files BEFORE the first connection opens them: from then
+              ;; on one stray descriptor elsewhere in this process can drop
+              ;; sqlite's locks (see `paths/held-file?`).
+              (let [holder
+                    [::disk-pool file (Object.)]
+
+                    fresh
+                    (do (paths/hold-files! holder (db-lock-files file))
+                        (try (open-disk-pool! path file)
+                             (catch Throwable t (paths/release-held-files! holder) (throw t))))]
+
+                (swap! disk-pools assoc
+                  file
+                  {:pool fresh :refs 1 :file-key (fs-file-key file) :holder holder})
+                [fresh entry]))))]
 
     ;; A retired generation drains OUTSIDE the monitor; its remaining holders
     ;; find a foreign entry on release and close nothing twice.
-    (when doomed (close-pool! doomed))
+    (when doomed (retire-disk-pool! doomed))
     pool))
 
 (defn- release-disk-pool!
@@ -559,10 +585,10 @@
   [^String file ^HikariDataSource pool]
   (let [doomed (locking disk-pools-monitor
                  (let [entry (get @disk-pools file)]
-                   (cond (or (nil? entry) (not (identical? pool (:pool entry)))) pool ;; an older generation nobody tracks any more
-                         (<= (long (:refs entry 1)) 1) (do (swap! disk-pools dissoc file) pool)
+                   (cond (or (nil? entry) (not (identical? pool (:pool entry)))) {:pool pool} ;; an older generation nobody tracks any more
+                         (<= (long (:refs entry 1)) 1) (do (swap! disk-pools dissoc file) entry)
                          :else (do (swap! disk-pools update-in [file :refs] dec) nil))))]
-    (when doomed (close-pool! doomed))
+    (when doomed (retire-disk-pool! doomed))
     nil))
 
 (defn- open-sqlite-at-dir

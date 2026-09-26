@@ -524,6 +524,16 @@
     (when-not resolved
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
                       {:type :workspace/path-escape :path (str p)})))
+    ;; A live database (or claim) this process locks: one read from a file tool
+    ;; would release its locks (see `paths/held-file?`).
+    (when (paths/held-file? (.toFile resolved))
+      (throw
+        (ex-info
+          (str
+            "Path '"
+            p
+            "' is a file this Vis process keeps locked while it runs; opening it here would release that lock")
+          {:type :workspace/path-denied :path (str p) :reason :held-lock})))
     (.toFile resolved)))
 
 (defn draft-isolation-plan
