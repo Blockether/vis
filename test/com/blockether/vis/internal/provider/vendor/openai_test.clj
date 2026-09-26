@@ -38,5 +38,5 @@
                  (let [provider (vis/provider-by-id :openai)]
                    (expect (= :openai (:provider/id provider)))
                    (expect (= "OpenAI" (:provider/label provider)))
-                   (expect (= "gpt-6-astra"
+                   (expect (= "gpt-6-sol"
                               (first (get-in provider [:provider/preset :default-models])))))))

@@ -141,8 +141,9 @@
            (mapv :name)))
 
 (def ^:private dated-variant-pattern
-  "Matches model IDs that are dated snapshots, e.g. gpt-4o-2024-08-06."
-  #"-\d{4}-\d{2}-\d{2}$")
+  "Matches model IDs that are dated snapshots, e.g. gpt-4o-2024-08-06 or
+   claude-opus-4-5-20251101."
+  #"-\d{4}-\d{2}-\d{2}$|-\d{8}$")
 
 (defn dated-variant? [id] (boolean (re-find dated-variant-pattern id)))
 
@@ -154,8 +155,8 @@
 
 (defn default-model-names
   "Union of model names already on the provider map plus the preset /
-   provider `:default-models`, deduped. Config order leads: the models a
-   user wrote in vis.yml come first and `model-options` keeps them there."
+   provider `:default-models`, deduped. `model-options` ranks them in svar's
+   canonical model order."
   [provider]
   (let [template (catalog/template (:id provider))]
     (->> (concat (:models provider) (:default-models template) (:default-models provider))
@@ -164,9 +165,9 @@
          vec)))
 
 (defn configured-model-names
-  "Model names a provider declares in config, in the exact order they are
-   written in vis.yml. Never filtered by svar's catalog visibility rules - an
-   explicitly configured model is a statement of intent, not a suggestion."
+  "Model names a provider declares in config, deduped, in the provider map's
+   order. Never filtered by svar's catalog visibility rules - an explicitly
+   configured model is a statement of intent, not a suggestion."
   [provider]
   (->> (:models provider)
        (keep config/model-name)
@@ -174,10 +175,11 @@
        vec))
 
 (defn model-options
-  "Selectable model ids for a provider: configured models first IN vis.yml
-   ORDER, then live-fetched + preset defaults deduped and sorted, env
-   default pinned first. When `show-all?` is false, dated snapshot
-   variants (gpt-4o-2024-08-06) are hidden.
+  "Selectable model ids for a provider in svar's canonical model order
+   (`svar/sort-models`), env default pinned first. Configured, live-fetched and
+   preset ids are deduped; ids the order does not rank keep configured order,
+   then alphabetical order. When `show-all?` is false, dated snapshot variants
+   (gpt-4o-2024-08-06) are hidden.
 
    Returns `{:models [id ...] :hidden-count n}` - channels render
    their own 'show all' affordance from `:hidden-count`."
@@ -199,11 +201,12 @@
          (filterv #(catalog/model-visible? provider-id %) (or default-models []))
 
          all-ids
-         (into configured
-               (->> (concat fetched defaults)
-                    distinct
-                    (remove configured?)
-                    sort))
+         (svar/sort-models provider-id
+                           (into configured
+                                 (->> (concat fetched defaults)
+                                      distinct
+                                      (remove configured?)
+                                      sort)))
 
          pinned
          (pin-default all-ids)
@@ -996,7 +999,8 @@
   (ensure-base-url provider))
 
 (defn default-model-configs
-  "Preset `:default-models` as persisted model maps. A bare-string entry
+  "Preset `:default-models` as persisted model maps, in svar's canonical model
+   order (`svar/sort-models`). A bare-string entry
    becomes `{:name str}`; a MAP entry is carried through verbatim (name
    normalized) so a provider can declare `:context` / `:output-limit` / … for
    a model svar's pinned catalog doesn't know yet — no svar release, no
@@ -1011,7 +1015,7 @@
                                        not-empty)]
                  (if (map? model) (assoc model :name name) {:name name}))))
        distinct
-       vec))
+       (svar/sort-models (:id preset))))
 
 (defn authenticated-preset-providers
   "Registered providers that BIND THEMSELVES — the credential lives OUTSIDE the

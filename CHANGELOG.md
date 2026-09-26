@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   such as `^foo` or `foo.*bar`, and finds nothing now runs once more as a
   regular expression. Before, the first stopped with a syntax error and the
   second returned no matches.
+- Every provider lists its models in the same order: current flagship models
+  first, then premium, mid-size and fast models, then the previous generation.
+  Dated snapshots, previews and aliases come last, and models Vis does not rank
+  keep the order you configured. When you have not chosen a default or fallback
+  model for a provider, Vis uses the first model in this order, its best one.
+  Z.ai providers list GLM-5.3 Flash first. OpenCode Go no longer lists models
+  that its catalog no longer offers, such as Kimi K2.5 and GLM-5.
 
 ### Fixed
 - A Python block that sleeps past its time limit now stops with a timeout and

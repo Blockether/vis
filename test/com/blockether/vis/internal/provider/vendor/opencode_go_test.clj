@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.opencode-go-test
   (:require [babashka.http-client :as http]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
@@ -78,6 +79,12 @@
                    ;; that froze when this provider was first written.
                    (expect (some #(= "deepseek-v4.1-flash" %) bare))
                    (expect (some #(= "kimi-k3" %) bare))))
+             (it "ships its catalog in svar's canonical model order, flagship first"
+                 (reload!)
+                 (let [models (get-in (vis/provider-by-id :opencode-go)
+                                      [:provider/preset :default-models])]
+                   (expect (= "kimi-k3" (first models)))
+                   (expect (= models (svar/sort-models :opencode-go models)))))
              (it "declares Anthropic-wire models as maps with :api-style :anthropic"
                  (reload!)
                  (let [models

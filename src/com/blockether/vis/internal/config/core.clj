@@ -1400,9 +1400,10 @@
        (mapv str (if (some? always-exclude) always-exclude default-search-always-exclude))})))
 
 (defn- apply-provider-metadata
-  "Attach catalog metadata and the provider's complete preset model catalog.
-   Persisted model maps win by name so custom metadata survives, while an old
-   narrowed list can no longer hide models supplied by the provider preset."
+  "Attach catalog metadata and the provider's complete preset model catalog in
+   svar's canonical model order (`svar/sort-models`), so the first model, pickers and
+   fallbacks agree. Persisted model maps win by name so custom metadata survives, while
+   an old narrowed list can no longer hide models supplied by the provider preset."
   [provider]
   (let [template
         (catalog/template (:id provider))
@@ -1423,7 +1424,8 @@
                                             {:name model-name}))})
                          acc))
                      {:seen #{} :models []})
-             :models)]
+             :models
+             (svar/sort-models (:id provider)))]
 
     (cond-> provider
       (and (nil? (:base-url provider)) (:base-url template))

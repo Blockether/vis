@@ -503,13 +503,12 @@
                  [{:id :openrouter :models (:models (first (get @saved "providers")))}])))
           "so the pair round-trips instead of reverting to the provider's first model"))))
 
-(deftest model-options-keeps-vis-yml-order
-  ;; A hand-written `models:` list is an ORDER, not a set. Sorting every id
-  ;; alphabetically reshuffled the user's fleet on every render (and moved the
-  ;; intended default off the top). Configured models lead, in file order; the
-  ;; live catalog is appended after them, sorted.
+(deftest model-options-uses-canonical-model-order
+  ;; Configured, live and preset ids share svar's canonical order, so every render
+  ;; lists the best models first and dated snapshots last. Ids the order does not
+  ;; rank keep vis.yml order, and the rest of the live catalog follows, sorted.
   (with-redefs [providers/fetch-models
-                (constantly ["zebra-live" "alpha-live"])
+                (constantly ["zebra-live" "gpt-4o-2024-08-06" "alpha-live" "claude-opus-5-5"])
 
                 catalog/template
                 (constantly nil)
@@ -518,15 +517,18 @@
                 (constantly true)]
 
     (let [provider
-          {:id :fake :models [{:name "zzz-first"} {:name "my-local"} {:name "alpha-live"}]}
+          {:id :fake
+           :models [{:name "zzz-first"} {:name "glm-4.7"} {:name "my-local"} {:name "alpha-live"}]}
 
-          {:keys [models]}
-          (providers/model-options provider (providers/default-model-names provider) true)]
+          {:keys [models hidden-count]}
+          (providers/model-options provider (providers/default-model-names provider) false)]
 
-      (is (= ["zzz-first" "my-local" "alpha-live" "zebra-live"] models)
-          "vis.yml order is preserved verbatim; catalog-only ids follow, sorted")
-      (is (= ["zzz-first" "my-local" "alpha-live"] (providers/configured-model-names provider))
-          "configured names come straight off the provider map, in file order"))))
+      (is (= ["claude-opus-5-5" "glm-4.7" "zzz-first" "my-local" "alpha-live" "zebra-live"] models)
+          "ranked models lead; unranked ids keep vis.yml order, then the live catalog, sorted")
+      (is (= 1 hidden-count) "the dated snapshot is hidden")
+      (is (= ["zzz-first" "glm-4.7" "my-local" "alpha-live"]
+             (providers/configured-model-names provider))
+          "configured names come straight off the provider map, in its order"))))
 
 (deftest model-options-accepts-mapped-provider-defaults
   (with-redefs [providers/fetch-models
@@ -545,7 +547,7 @@
           (providers/default-model-names provider)]
 
       (is (= ["glm-5.2" "minimax-m3"] defaults))
-      (is (= ["glm-5.2" "minimax-m3" "ox-alpha-free"]
+      (is (= ["minimax-m3" "glm-5.2" "ox-alpha-free"]
              (:models (providers/model-options provider defaults true)))))))
 
 ;; Regression: a fleet stayed frozen at the build that added it. `:default-models`

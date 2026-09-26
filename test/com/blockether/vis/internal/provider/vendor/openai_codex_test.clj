@@ -259,7 +259,7 @@
                                        defaults)]
 
                      ;; svar-catalog models ride as bare strings.
-                     (expect (= "gpt-6-astra" (config/model-name (first defaults))))
+                     (expect (= "gpt-6-sol" (config/model-name (first defaults))))
                      (expect (string? (get by-name "gpt-6-astra")))
                      (expect (contains? by-name "gpt-6-sol"))
                      (expect (contains? by-name "gpt-6-luna"))

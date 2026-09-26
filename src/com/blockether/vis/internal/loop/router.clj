@@ -448,8 +448,9 @@
 
         wanted-model
         (or (if slash (second slash) requested-model)
-            ;; No explicit model tag: the configured provider's FIRST model is
-            ;; the selection, exactly as when no default was ever picked.
+            ;; No explicit model tag: the configured provider's FIRST model - its best
+            ;; in svar's canonical order - is the selection, exactly as when no
+            ;; default was ever picked.
             (some-> (provider-by-id provider)
                     :models
                     first
@@ -476,10 +477,11 @@
    PRIMARY pair first, the FALLBACK pair — always a DIFFERENT provider — second,
    every other provider left in its configured order behind them.
 
-   Provider/model vector order is otherwise left alone and has no configuration
-   meaning. A config that tags nothing keeps its first provider/first model
-   selection, and an untagged, unknown or
-   primary-colliding fallback leaves the tail exactly as it was."
+   Provider vector order is otherwise left alone and has no configuration meaning;
+   each provider's models arrive in svar's canonical order (`config/load-config`).
+   A config that tags nothing keeps its first provider and that provider's best
+   model, and an untagged, unknown or primary-colliding fallback leaves the tail
+   exactly as it was."
   [router config]
   (let [primary
         (config-root-pair config

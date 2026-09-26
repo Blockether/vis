@@ -26,6 +26,21 @@
                      (select-keys (config/load-config false)
                                   [:providers :default-provider :default-model])))))))
 
+(defdescribe provider-model-order-test
+             (it "loads each provider's models in svar's canonical order"
+                 (config/invalidate-config-cache!)
+                 (try (with-redefs [config/load-config-raw
+                                    (constantly {"providers"
+                                                 [{"id" "order-fixture"
+                                                   "api_key" "test"
+                                                   "models" [{"name" "zzz-local"} {"name" "glm-4.7"}
+                                                             {"name" "gpt-4o-2024-08-06"}
+                                                             {"name" "claude-opus-5-5"}]}]})]
+                        (expect (= ["claude-opus-5-5" "glm-4.7" "zzz-local" "gpt-4o-2024-08-06"]
+                                   (mapv :name
+                                         (:models (first (:providers (config/load-config))))))))
+                      (finally (config/invalidate-config-cache!)))))
+
 (defdescribe
   provider-preset-transport-test
   (it
