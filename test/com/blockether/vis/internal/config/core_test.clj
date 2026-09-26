@@ -1867,3 +1867,28 @@
         (expect (= 50000 (get-in provider [:models 0 :input-limit])))
         (expect (= 70000 (get-in provider [:model-metadata :models 0 :input-limit])))
         (expect (= "account-digest" (get-in provider [:model-metadata :identity]))))))
+
+(defdescribe
+  resolve-db-spec-test
+  (it "prefers an explicit spec, then the JVM property, over a YAML db_spec"
+      (let [prop (System/getProperty "vis.db.path")]
+        (try
+          (System/setProperty "vis.db.path" "/tmp/vis-property.mdb")
+          (with-redefs [config/load-config-raw
+                        (constantly {"db_spec" {"backend" "sqlite" "path" "/tmp/vis-yaml.mdb"}})]
+            (expect (= {:backend :sqlite :path "/tmp/vis-explicit.mdb"}
+                       (config/resolve-db-spec {:backend :sqlite :path "/tmp/vis-explicit.mdb"})))
+            (expect (= {:backend :sqlite :path "/tmp/vis-property.mdb"} (config/resolve-db-spec))))
+          (finally (if prop
+                     (System/setProperty "vis.db.path" prop)
+                     (System/clearProperty "vis.db.path"))))))
+  (it "keeps the suite's default session DB out of the real Vis home"
+      ;; deps.edn's :test alias sets -Dvis.db.path: a suite run must never write sessions
+      ;; into, or migrate, the database a running gateway owns.
+      (let [home
+            (.getCanonicalPath (io/file (config/config-dir)))
+
+            db
+            (.getCanonicalPath (io/file (:path (config/resolve-db-spec))))]
+
+        (expect (not (str/starts-with? db (str home "/")))))))
