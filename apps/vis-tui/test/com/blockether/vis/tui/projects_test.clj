@@ -357,7 +357,15 @@
           (doseq [label ["open" "hide" "chat"]]
             (is (str/includes? footer label)))))
       (is (= "├" (get-in capture [:frames 0 15 0 :ch])))
-      (is (= :project-add (:kind (.lookup projects/hit-map (- width 8) 1))))
+      (let [header (nth (str/split-lines text) 1)]
+        (is (= "│ Projects + " (subs header 0 13)))
+        (is (not (str/includes? header "⌕"))))
+      (is (= :project-add (:kind (.lookup projects/hit-map 11 1))))
+      (is (= [:add]
+             (projects/key-action
+               db
+               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 11 1)))))
+      (is (not-any? #(= :project-search (:kind %)) (.current projects/hit-map)))
       (is (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
       (is (= "┌" (get-in capture [:frames 0 0 0 :ch])))
       (is (= "┤" (get-in capture [:frames 0 2 (dec width) :ch])))
@@ -1798,7 +1806,7 @@
               :let [{:keys [col row width]} bounds]]
 
         (is (= 3 width))
-        (is (= " : " (subs (nth lines row) col (+ col width))))))))
+        (is (= " ⋮ " (subs (nth lines row) col (+ col width))))))))
 
 (deftest set-buttons-use-web-bands-and-direct-actions-test
   (let [db
@@ -3434,7 +3442,7 @@
                           (dec (get-in @state/app-db [:project-sidebar :index])))
                      [:session "id"]))))))
 
-(deftest project-search-mouse-button-and-empty-state-test
+(deftest project-search-shortcut-and-empty-state-test
   (with-redefs [state/app-db (atom (fixture-db))]
     (let [paint! (fn []
                    (cap/capture!
@@ -3446,12 +3454,8 @@
                    (#'screen/project-sidebar-key! key identity identity identity identity nil))]
 
       (is (nil? (:error (paint!))))
-      (let [hit (first (filter #(= :project-search (:kind %)) (.current projects/hit-map)))
-            {:keys [col row]} (:bounds hit)]
-
-        (is (some? hit))
-        (press!
-          (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))))
+      (is (not-any? #(= :project-search (:kind %)) (.current projects/hit-map)))
+      (press! (cap/key-stroke \/))
       (is (some? (get-in @state/app-db [:project-sidebar :search])))
       (is (some #(= "Type to search saved sessions" (:label %))
                 (projects/sidebar-entries @state/app-db)))

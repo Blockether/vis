@@ -1065,9 +1065,8 @@
         (when (and (>= width 18) (> rows 3))
           (p/set-fg! g t/header-fg)
           (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects"))
-          (when (>= width 30) (components/button! g (- (+ left width) 13) 1 " ⌕ " :project-search))
           (components/button! g
-                              (- (+ left width) 9)
+                              (+ left 10)
                               1 " + "
                               :project-add {:accent? (and (:focused? sidebar)
                                                           (zero? (long (or (:index sidebar) 0))))})
@@ -1179,14 +1178,14 @@
               (components/button! g
                                   (- (+ left width) 5)
                                   row
-                                  " : "
+                                  " ⋮ "
                                   :project-set-menu
                                   {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (components/button! g
                                 (- (+ left width) 5)
                                 row
-                                " : "
+                                " ⋮ "
                                 :project-details
                                 {:extra {:session (:session entry)
                                          :action [:details
@@ -1252,8 +1251,8 @@
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
                  :project-session :project-details :project-set :project-page :project-group-page
                  :project-state :project-add :project-hide :project-suggest :project-new-folder
-                 :project-search :project-search-field :project-updates :project-group-add
-                 :project-session-add :project-set-menu}
+                 :project-search-field :project-updates :project-group-add :project-session-add
+                 :project-set-menu}
                (:kind hit))
             (cond
               (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
@@ -1304,9 +1303,6 @@
 
                 :project-new-folder
                 [:add-folder]
-
-                :project-search
-                [:search]
 
                 :project-search-field
                 [:focus]
