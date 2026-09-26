@@ -995,6 +995,20 @@ export const ProjectGroup = memo(function ProjectGroup({
       .filter(paints);
     return parked.length === 0 ? held : [...parked, ...held];
   }, [searching, painting, local, refiled, paints, epoch, admitted, paged, getClient, conn, list]);
+  // Each response can land first: never put a new band's name over the previous page's
+  // sessions, or create an unnamed band from rows whose own page has not arrived yet.
+  const matchedRows =
+    groupArchived === archived
+      ? paged?.view === groupArchived &&
+        paged.bandOffset === bandWindow.offset &&
+        paged.read === groupsRead
+        ? paged.grouped
+        : null
+      : groupedPage?.view === groupArchived &&
+          groupedPage.offset === bandWindow.offset &&
+          groupedPage.read === groupsRead
+        ? groupedPage.rows
+        : null;
   // A BAND IS NEVER CUT BY THE SESSION PAGE. The gateway answers the FILED sessions of
   // the bands on this page complete and beside the window (`?grouped=aside`), because a
   // group is a shelf a reader reads whole: bands cut from the current page printed a name
@@ -1002,15 +1016,30 @@ export const ProjectGroup = memo(function ProjectGroup({
   // session filed from the sheet left the very band that had just taken it. What IS paged
   // is the wall of bands itself, and a shelf off that page is not painted here at all
   // (`&group_limit=`).
+  //
+  // AND A FILED ROW NEVER FALLS BETWEEN TWO READS. The page and its shelves are one answer,
+  // but the shelves are painted only once the groups read that names them has landed too:
+  // a row that answer has just filed has already left the page, so it stands on its shelf
+  // from that answer meanwhile. A row dropped onto a band painted there, vanished from the
+  // whole project for the groups roundtrip, then came back.
   const shelved = useMemo(() => {
     const api = getClient(conn);
     // A query is answered over the whole project already; its hits are the list.
     if (searching) return NO_ROWS;
-    return (presentedGroups?.view === groupArchived ? presentedGroups.rows : NO_ROWS)
+    if (presentedGroups?.view !== groupArchived) return NO_ROWS;
+    const shown = new Set(presentedGroups.rows.map((session) => session.id));
+    const landed =
+      matchedRows !== null && presentedGroups.offset === bandWindow.offset
+        ? matchedRows.filter((session) => !shown.has(session.id))
+        : NO_ROWS;
+    return [...presentedGroups.rows, ...landed]
       .filter((session) => !api.isSessionDeleted(session.id))
       .map((session) => settled(session, local, refiled))
       .filter(paints);
-  }, [searching, presentedGroups, groupArchived, local, refiled, paints, getClient, conn]);
+  }, [
+    searching, presentedGroups, groupArchived, matchedRows, bandWindow, local, refiled, paints,
+    getClient, conn,
+  ]);
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
   const painted = useMemo(() => [...shelved, ...rows], [shelved, rows]);
@@ -1124,20 +1153,6 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, noteRefresh]);
-  // Each response can land first: never put a new band's name over the previous page's
-  // sessions, or create an unnamed band from rows whose own page has not arrived yet.
-  const matchedRows =
-    groupArchived === archived
-      ? paged?.view === groupArchived &&
-        paged.bandOffset === bandWindow.offset &&
-        paged.read === groupsRead
-        ? paged.grouped
-        : null
-      : groupedPage?.view === groupArchived &&
-          groupedPage.offset === bandWindow.offset &&
-          groupedPage.read === groupsRead
-        ? groupedPage.rows
-        : null;
   useEffect(() => {
     if (
       groupsReady?.view !== groupArchived ||

@@ -597,6 +597,14 @@ export const DragSelectedSessions: Story = {
     const wallet = await page.findByRole('button', { name: 'Collapse Wallet work' });
     const row = (sid: string) =>
       canvasElement.querySelector<HTMLButtonElement>(`[data-row-surface][data-session-id="${sid}"]`)!;
+    const filed = () =>
+      [...wallet.closest('div')!.parentElement!.querySelectorAll('[data-session-id]')].map((node) =>
+        node.getAttribute('data-session-id'),
+      );
+    // A range runs down the rows as they stand. The project opens on the rows the machine
+    // holds and takes the band's own order from the gateway's answer a beat later, so the
+    // range is drawn once that answer has landed.
+    await waitFor(() => expect(filed()).toEqual([GROUPED[0].id, GROUPED[1].id]));
     const pointer = userEvent.setup();
     await pointer.click(row(GROUPED[0].id));
     await pointer.keyboard('{Shift>}');

@@ -1153,6 +1153,61 @@ describe('ProjectGroup groups', () => {
     expect(surface(ROWS[3].id)).toHaveAttribute('aria-pressed', 'false');
   });
 
+  // A DROPPED ROW NEVER FALLS BETWEEN TWO READS. The page under the bands answered first and
+  // no longer held the row, while the shelves still waited on the groups read that names
+  // them: the row painted in its new band, left the whole project for that roundtrip, then
+  // came back.
+  it('keeps a dropped row on its band while the groups read is still out', async () => {
+    const loose = ROWS.slice(2);
+    const before = { rows: loose, total: loose.length, awaiting: [], grouped: ROWS.slice(0, 2), nextCursor: '' };
+    let page = before;
+    let answerPage: () => void = () => {};
+    let answerGroups: () => void = () => {};
+    const client = machine({
+      heldProjectPage: () => page,
+      listProjectPage: vi.fn(async () => {
+        if (page !== before) {
+          await new Promise<void>((resolve) => {
+            answerPage = resolve;
+          });
+        }
+        return page;
+      }),
+      listSessionGroups: vi.fn(async () => {
+        if (page !== before) {
+          await new Promise<void>((resolve) => {
+            answerGroups = resolve;
+          });
+        }
+        return wall([{ ...WALLET_GROUP, session_count: page.grouped.length }]);
+      }),
+      assignSessionGroup: vi.fn(async (sid: string, gid: string | null) => {
+        const moved = { ...ROWS.find((row) => row.id === sid)!, group_id: gid };
+        page = {
+          ...before,
+          rows: loose.filter((row) => row.id !== sid),
+          total: loose.length - 1,
+          grouped: [...before.grouped, moved],
+        };
+        return moved;
+      }),
+    });
+    mount(client);
+    const wallet = await band('Wallet work');
+    const carrier = dragCarrier();
+    fireEvent.dragStart(strip(document.body, ROWS[3].id), { dataTransfer: carrier });
+    fireEvent.drop(wallet, { dataTransfer: carrier });
+    await waitFor(() => expect(client.listSessionGroups).toHaveBeenCalledTimes(2));
+    expect(wallet).toContainElement(surface(ROWS[3].id));
+    // The page lands first: the row has left it, and the band still paints it.
+    await act(async () => answerPage());
+    expect(wallet).toContainElement(surface(ROWS[3].id));
+    expect(wallet.querySelectorAll('[data-session-row]')).toHaveLength(3);
+    await act(async () => answerGroups());
+    expect(wallet).toContainElement(surface(ROWS[3].id));
+    expect(wallet.querySelectorAll('[data-session-row]')).toHaveLength(3);
+  });
+
   it('reports partial failures and leaves unsuccessful sessions selected for retry', async () => {
     finePointer();
     const client = machine({
@@ -1414,7 +1469,7 @@ describe('ProjectGroup groups', () => {
       const { user } = mount(client, undefined, '', []);
       const firstBand = await band(names[0].name);
       await waitFor(() =>
-        expect(firstBand.querySelector(`[data-session-id="${firstRow.id}"]`)).not.toBeNull(),
+        expect(firstBand.querySelector(`[data-session-id="${firstRow.id}"]`)).toBeInTheDocument(),
       );
       const steps = screen.getByRole('navigation', {
         name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
@@ -1441,7 +1496,7 @@ describe('ProjectGroup groups', () => {
         release();
       });
       const nextBand = await band(names[10].name);
-      expect(nextBand.querySelector(`[data-session-id="${nextRow.id}"]`)).not.toBeNull();
+      expect(nextBand.querySelector(`[data-session-id="${nextRow.id}"]`)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: `Collapse ${names[0].name}` })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
       expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument();
@@ -1449,7 +1504,7 @@ describe('ProjectGroup groups', () => {
       await user.click(within(steps).getByRole('button', { name: 'Previous page' }));
       const restored = await band(names[0].name);
       await waitFor(() =>
-        expect(restored.querySelector(`[data-session-id="${firstRow.id}"]`)).not.toBeNull(),
+        expect(restored.querySelector(`[data-session-id="${firstRow.id}"]`)).toBeInTheDocument(),
       );
       expect(screen.queryByRole('button', { name: `Collapse ${names[10].name}` })).toBeNull();
       expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
