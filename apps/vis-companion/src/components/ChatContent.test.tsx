@@ -991,6 +991,32 @@ describe('a turn declares no size it has not measured', () => {
 
     expect(html).not.toMatch(paintIsland);
   });
+
+  it('marks each trace step and the answer as parts the jump chip counts', () => {
+    const shell = { op: 'shell', stdout: 'ok\n' };
+    const view = render(
+      <AssistantMessage
+        turn={{
+          turn_id: 'parts',
+          status: 'completed',
+          content: [{ id: 'answer', type: 'prose', markdown: 'Done.' }],
+          iterations: [
+            { id: 'iteration-1', assistant_prose: 'Look first.', forms: [shell] },
+            { id: 'iteration-2', forms: [shell] },
+            { id: 'iteration-3', assistant_prose: 'Then check.', forms: [shell] },
+          ],
+        }}
+        whole
+      />,
+    );
+
+    const parts = view.container.querySelectorAll('[data-transcript-message] [data-transcript-part]');
+    expect(Array.from(parts, (part) => part.textContent)).toEqual([
+      expect.stringContaining('Look first.'),
+      expect.stringContaining('Then check.'),
+      'Done.',
+    ]);
+  });
 });
 
 describe('a card gives stdout one stable band and no op badge', () => {

@@ -2551,7 +2551,10 @@ const TraceSegment = memo(function TraceSegment({
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
 
   return (
-    <section className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}>
+    <section
+      className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}
+      data-transcript-part
+    >
       {segment.head.thinking && <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
@@ -3744,6 +3747,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         {(blocks.length > 0 || fallback || emptyStatus) && (
           <div
             className={`bg-answer text-ui mouse:text-title ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
+            data-transcript-part
           >
             {blocks.map((block) => (
               <ContentBlockView key={block.id} block={block} onOpenAttachment={onOpenAttachment} />

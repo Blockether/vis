@@ -186,15 +186,33 @@ export function shouldOfferLatest(box: ScrollBox | null, following: boolean): bo
   return !isAtBottom(box);
 }
 
-/** Count user and assistant bubbles not yet fully above the viewport's bottom edge. */
+/**
+ * Count what the reader still has to scroll down to: user messages, the steps of each
+ * assistant turn and its answer, when not yet fully above the viewport's bottom edge.
+ * One agentic turn is a single bubble many screens tall, so counting whole bubbles kept
+ * the number unchanged while the reader scrolled up through it.
+ */
 export function messagesBelow(viewport: HTMLElement, transcript: HTMLElement | null): number {
   if (!transcript) return 0;
   const edge = viewport.getBoundingClientRect().bottom;
   const messages = transcript.querySelectorAll<HTMLElement>('[data-transcript-message]');
+  let count = 0;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].getBoundingClientRect().bottom <= edge) {
-      return messages.length - index - 1;
-    }
+    const box = messages[index].getBoundingClientRect();
+    if (box.bottom <= edge) break;
+    const parts = messages[index].querySelectorAll<HTMLElement>('[data-transcript-part]');
+    // A bubble wholly below the fold may be paint-skipped: count its parts without
+    // measuring them, which would lay the skipped turn out again.
+    count += Math.max(1, box.top >= edge ? parts.length : partsBelow(parts, edge));
   }
-  return messages.length;
+  return count;
+}
+
+function partsBelow(parts: NodeListOf<HTMLElement>, edge: number): number {
+  let count = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (parts[index].getBoundingClientRect().bottom <= edge) break;
+    count += 1;
+  }
+  return count;
 }
