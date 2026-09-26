@@ -1295,6 +1295,89 @@
         (is (str/includes? (:text head) "▸ Verify release source / pytho… · 1 row")
             "the count is the head's furniture, not the first thing an ellipsis eats")))))
 
+;; A rule is where the rails of the lines around it meet. A group head and an
+;; empty line span the whole table and keep no inner rail, so the rule beside one
+;; bends (`┴`, `┬`) or runs straight instead of poking a stub into its words.
+(def ^:private rule-arms
+  "Which way each frame glyph reaches past its own line: [up down]."
+  {\┌ [false true]
+   \┬ [false true]
+   \┐ [false true]
+   \├ [true true]
+   \┼ [true true]
+   \┤ [true true]
+   \└ [true false]
+   \┴ [true false]
+   \┘ [true false]
+   \─ [false false]})
+
+(defn- frame-of
+  "The lines of the first boxed table in `p`, from its top rule down to its bottom one."
+  [p]
+  (let [[inside [bottom]] (->> (rows-of p)
+                               (drop-while #(not= :trule (:kind %)))
+                               (split-with #(not (str/starts-with? (:text %) "└"))))]
+    (conj (vec inside) bottom)))
+
+(defn- stray-junctions
+  "Where a table's rules and the rails around them disagree, as [line column
+   glyph]: an arm reaching into a line with no rail there, or a rail left hanging
+   with no arm to meet it."
+  [frame]
+  (for [[idx {:keys [kind text]}]
+        (map-indexed vector frame)
+
+        :when (= :trule kind)
+        :let [above
+              (:text (get frame (dec (long idx))))
+
+              below
+              (:text (get frame (inc (long idx))))]
+        [col glyph]
+        (map-indexed vector text)
+
+        :let [[up down]
+              (get rule-arms glyph)]
+        :when (or (not= up (= \│ (get above col))) (not= down (= \│ (get below col))))]
+
+    [idx col glyph]))
+
+(deftest live-view-table-rule-test
+  (let [table
+        (fn [rows]
+          (lv/opened (mounted {}
+                              (fixture/table "jobs"
+                                             [(fixture/table-column "job" "Job")
+                                              (fixture/table-column "now" "Now")
+                                              (fixture/table-column "took" "Took")]
+                                             {:label "Jobs" :rows rows}))))
+
+        run
+        (fn ([id] (fixture/table-row id [id "success" "1m0s"])) ([id parent] (fixture/table-row id
+                                                                               [id "success" "1m0s"]
+                                                                               {:parent parent})))
+
+        heads
+        (table [(run "t-1" "tests") (run "b-1" "build") (run "l-1" "lint")])
+
+        mixed
+        (table [(run "build") (run "t-1" "tests") (run "t-2" "tests") (run "lint")])]
+
+    (testing "every rule joins exactly the rails of the lines around it"
+      (doseq [[label p] [["cells only" (table [(run "build") (run "lint")])]
+                         ["shut heads only" heads] ["a shut head between cells" mixed]
+                         ["an open head between cells" (lv/expanded mixed ["jobs" "tests"])]
+                         ["an empty table" (table [])]]]
+        (is (empty? (stray-junctions (frame-of p))) label)))
+    (testing "a column of shut heads reads as a list, not as a grid of stubs"
+      (let [rules (->> (frame-of heads)
+                       (filter #(= :trule (:kind %)))
+                       (mapv :text))]
+        (is (= 5 (count rules)))
+        (is (re-matches #"├─+┴─+┴─+┤" (nth rules 1)) "the rule under the header closes its columns")
+        (is (every? #(re-matches #"├─+┤" %) (subvec rules 2 4)) "a plain line between two heads")
+        (is (re-matches #"└─+┘" (peek rules)) "and a plain bottom under the last one")))))
+
 ;; A step is a line with TWO things on it: what it is doing, and what it reports.
 ;; The band a narrow pane has is not always wide enough for both — so the words
 ;; give way and the number stays, instead of the row running past the rail.

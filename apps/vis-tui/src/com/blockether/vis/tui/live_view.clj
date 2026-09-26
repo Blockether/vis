@@ -621,8 +621,11 @@
 (def ^:private table-frame
   "The glyphs a table is drawn with. A live table wears the same box the rest of
    the TUI's tables wear, so the band reads it as ONE block instead of as a
-   header and some lines that happen to line up."
-  {:top ["┌" "┬" "┐"] :mid ["├" "┼" "┤"] :bottom ["└" "┴" "┘"]})
+   header and some lines that happen to line up. A frame line's `:corners`
+   follow its edge; where it crosses a column edge, its `:junctions` follow
+   whether the lines above and below keep a rail there."
+  {:corners {:top ["┌" "┐"] :mid ["├" "┤"] :bottom ["└" "┘"]}
+   :junctions {[true true] "┼" [true false] "┴" [false true] "┬" [false false] "─"}})
 
 (defn- table-chrome
   "Columns a boxed table spends on its own frame: a rail at every column edge and
@@ -750,11 +753,12 @@
 (defn- rule-line
   "One frame line of a table: the corner glyphs `edge` names and a dash for every
    column the cells occupy, the pads included, so the rails of two lines stand in
-   the same columns."
-  [widths edge]
-  (let [[l m r] (get table-frame edge)]
+   the same columns. At a column edge it joins only the rails that meet it there:
+   `above` and `below` say whether the line on that side keeps its inner rails."
+  [widths edge above below]
+  (let [[l r] (get-in table-frame [:corners edge])]
     (str l
-         (str/join m
+         (str/join (get-in table-frame [:junctions [(boolean above) (boolean below)]])
                    (map (fn [w]
                           (apply str (repeat (+ 2 (long w)) "─")))
                         widths))
@@ -1057,9 +1061,15 @@
           (let [segments (table-segments ws cells aligns fg styles)]
             {:segments segments :text (segment-line segments)}))
 
+        ;; Only a line of CELLS keeps a rail at every column edge. A head and an
+        ;; empty line span the whole table, so a rule beside one bends away (`┴`,
+        ;; `┬`) or runs straight instead of poking a stub into its words.
         rule
-        (fn [edge]
-          {:kind :trule :node-id id :text (rule-line ws edge)})
+        (fn [edge above below]
+          (let [railed #{:thead :trow}]
+            {:kind :trule
+             :node-id id
+             :text (rule-line ws edge (railed (:kind above)) (railed (:kind below)))}))
 
         ;; A parent head wears the group's LABEL and then says how much its fold
         ;; holds, and the whole line is the control that opens it. The count is
@@ -1098,64 +1108,54 @@
              :segments segments
              :text (segment-line segments)}))
 
+        body
+        (if (seq shown)
+          (mapv (fn [item]
+                  (let [row (:row item)]
+                    (if (nil? row)
+                      (head item)
+                      (let [is-fresh (contains? fresh (:id row))
+                            is-selected (contains? selected (:id row))
+                            cells (cond-> (mapv (fn [col-idx]
+                                                  (md-runs (cell-of row col-idx)))
+                                                (range (count columns)))
+                                    (and (:is-leg item) (seq columns))
+                                    (update 0 #(into [{:text "  "}] %))
+
+                                    (and is-selectable (seq columns))
+                                    (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
+
+                        (merge {:kind :trow
+                                :node-id id
+                                :item-id (:id row)
+                                :tone (:tone row)
+                                :is-fresh is-fresh
+                                :is-selectable (boolean (and is-selectable is-interactive))
+                                :is-selected is-selected}
+                               (line
+                                 cells
+                                 (if is-selected t/header-active-tab-accent (tone-fg (:tone row)))
+                                 (if (or is-fresh is-selected) [p/BOLD] [])))))))
+                shown)
+          (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
+            [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))
+
+        lines
+        (into [(merge {:kind :thead :node-id id}
+                      (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))]
+              body)
+
         ;; A rail between EVERY pair of rows: a live table is read while it fills,
         ;; and the eye needs the line that says where one row's answer ends and the
         ;; next one begins — especially when a cell wears a tone of its own.
-        body
-        (if (seq shown)
-          (into []
-                (comp
-                  (map-indexed
-                    (fn [idx item]
-                      (let [row
-                            (:row item)
+        framed
+        (conj (reduce (fn [out entry]
+                        (conj out (rule (if (seq out) :mid :top) (peek out) entry) entry))
+                      []
+                      lines)
+              (rule :bottom (peek lines) nil))]
 
-                            entry
-                            (if (nil? row)
-                              (head item)
-                              (let [is-fresh
-                                    (contains? fresh (:id row))
-
-                                    is-selected
-                                    (contains? selected (:id row))
-
-                                    cells
-                                    (cond-> (mapv (fn [col-idx]
-                                                    (md-runs (cell-of row col-idx)))
-                                                  (range (count columns)))
-                                      (and (:is-leg item) (seq columns))
-                                      (update 0 #(into [{:text "  "}] %))
-
-                                      (and is-selectable (seq columns))
-                                      (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
-
-                                (merge {:kind :trow
-                                        :node-id id
-                                        :item-id (:id row)
-                                        :tone (:tone row)
-                                        :is-fresh is-fresh
-                                        :is-selectable (boolean (and is-selectable is-interactive))
-                                        :is-selected is-selected}
-                                       (line cells
-                                             (if is-selected
-                                               t/header-active-tab-accent
-                                               (tone-fg (:tone row)))
-                                             (if (or is-fresh is-selected) [p/BOLD] [])))))]
-
-                        [(when (pos? (long idx)) (rule :mid)) entry])))
-                  cat
-                  (remove nil?))
-                shown)
-          (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
-            [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))]
-
-    (with-meta (cond-> (-> [(rule :top)
-                            (merge
-                              {:kind :thead :node-id id}
-                              (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
-                            (rule :mid)]
-                           (into body)
-                           (conj (rule :bottom)))
+    (with-meta (cond-> framed
                  (pos? (long behind))
                  (conj (more-row id behind "row")))
       {:widths {id measured}})))
@@ -1206,9 +1206,13 @@
                             (range)
                             (md-lines (:label link) (max 1 (- (long w) 2))))))
 
+                  ;; Every line of the grid is a line of cells, so its top rule
+                  ;; opens a rail at every column edge and its bottom one closes it.
                   rule
                   (fn [edge]
-                    {:kind :trule :node-id id :text (rule-line widths edge)})]
+                    {:kind :trule
+                     :node-id id
+                     :text (rule-line widths edge (= :bottom edge) (= :top edge))})]
 
               (into [(rule :top)]
                     (concat (mapcat (fn [batch]
