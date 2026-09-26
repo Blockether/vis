@@ -6831,6 +6831,88 @@
                            {:iteration 3 :messages [{:role "user" :content "hi"}]})))))))
 
 (defdescribe
+  request-attempt-test
+  "Each Vis-owned retry sentinel moves the request attempt forward on its own budget
+   and carries its input into the next attempt."
+  (let [next-attempt
+        @#'iteration/next-attempt
+
+        request-with-retries
+        @#'iteration/request-with-retries
+
+        attempt
+        {:retries {:auth 1 :stream 1 :max-tokens 0} :extra-body {:max_tokens 100} :env ::env}]
+
+    (it "ends on a real result"
+        (expect (nil? (next-attempt attempt {:answer "done"})))
+        (expect (nil? (next-attempt attempt :unrelated-keyword))))
+    (it "sends a max-token bump as the next request body"
+        (expect
+          (= {:retries {:auth 1 :stream 1 :max-tokens 1} :extra-body {:max_tokens 200} :env ::env}
+             (next-attempt attempt {::iteration/retry-max-tokens {:max_tokens 200}}))))
+    (it "installs an auth fallback route without spending the auth budget"
+        (expect (= (assoc attempt :routing {:provider :anthropic})
+                   (next-attempt attempt
+                                 {::iteration/retry-auth-fallback {:provider :anthropic}}))))
+    (it "waits out token propagation before resending the same token"
+        (expect (= (-> attempt
+                       (assoc-in [:retries :auth] 2)
+                       (assoc :backoff-ms 2400))
+                   (next-attempt attempt ::iteration/retry-auth-backoff))))
+    (it "waits before re-issuing a recoverable stream"
+        (expect (= (-> attempt
+                       (assoc-in [:retries :stream] 2)
+                       (assoc :backoff-ms 3000))
+                   (next-attempt attempt ::iteration/retry-stream-recovery))))
+    (it "resends unchanged after an auth refresh or a context-overflow fold"
+        (expect (= (assoc-in attempt [:retries :auth] 2)
+                   (next-attempt attempt ::iteration/retry-auth-refresh)))
+        (expect (= attempt (next-attempt attempt ::iteration/retry-context-overflow))))
+    (it
+      "threads each attempt's env and installs the fallback route before resending"
+      (let [routing
+            (atom {:provider :openai})
+
+            sent
+            (atom [])
+
+            results
+            [{::iteration/retry-auth-fallback {:provider :anthropic}}
+             {::iteration/retry-max-tokens {:max_tokens 200}} ::iteration/retry-auth-refresh
+             {:answer "done"}]
+
+            send!
+            (fn [attempt]
+              (let [n (count @sent)]
+                (swap! sent conj (assoc attempt :routing @routing))
+                {:result (nth results n) :env [:env n]}))]
+
+        (expect (= {:answer "done"}
+                   (request-with-retries send!
+                                         {:retries {:auth 0 :stream 0 :max-tokens 0}
+                                          :extra-body {:max_tokens 100}
+                                          :env :env}
+                                         routing)))
+        (expect
+          (= [{:retries {:auth 0 :stream 0 :max-tokens 0}
+               :extra-body {:max_tokens 100}
+               :env :env
+               :routing {:provider :openai}}
+              {:retries {:auth 0 :stream 0 :max-tokens 0}
+               :extra-body {:max_tokens 100}
+               :env [:env 0]
+               :routing {:provider :anthropic}}
+              {:retries {:auth 0 :stream 0 :max-tokens 1}
+               :extra-body {:max_tokens 200}
+               :env [:env 1]
+               :routing {:provider :anthropic}}
+              {:retries {:auth 1 :stream 0 :max-tokens 1}
+               :extra-body {:max_tokens 200}
+               :env [:env 2]
+               :routing {:provider :anthropic}}]
+             @sent))))))
+
+(defdescribe
   stream-watchdog-terminal-error-test
   "Stream watchdog failures that reach here have spent BOTH svar's bounded
    retry/fallback policy and Vis' own pre-output re-issue budget
