@@ -1,14 +1,17 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  type VideoHTMLAttributes,
 } from 'react';
 
+import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import { artifactMedia, attachmentBytes } from '../lib/artifacts';
 import {
   mediaCaptionClass,
@@ -18,8 +21,8 @@ import {
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
 import type { TranscriptionSegment } from '../lib/types';
-import { PauseIcon, PlayIcon } from './icons';
-import { Disclosure, PROSE } from './ui';
+import { DownloadIcon, PauseIcon, PlayIcon, ShareIcon } from './icons';
+import { Disclosure, IconButton, PROSE } from './ui';
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -35,12 +38,15 @@ import { Disclosure, PROSE } from './ui';
 export function MediaPlate({
   name,
   meta,
+  action,
   children,
 }: {
-  /** The caption's file name. Without one the plate carries no caption at all. */
+  /** The caption's file name. Without one or an `action` the plate carries no caption at all. */
   name?: string;
   /** The caption's right half, e.g. `PNG · 287KB`. */
   meta?: string;
+  /** A control docked at the caption's end, e.g. a clip's `MediaShareButton`. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -50,13 +56,127 @@ export function MediaPlate({
     // matching.
     <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className={mediaFrameClass}>{children}</div>
-      {name ? (
+      {name || action ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
+          {action}
         </figcaption>
       ) : null}
     </figure>
+  );
+}
+
+/**
+ * Where a clip opens: on its FIRST FRAME, never on a grey plate. WebKit (iOS
+ * Safari and the app's own web view) decodes nothing of a `blob:` clip before
+ * play, `preload="auto"` included, but a media-fragment start makes it seek and
+ * the seek paints that frame. `#t=0` is a no-op there, hence the millisecond. A
+ * `data:` address cannot carry the fragment (WebKit then refuses the whole
+ * source), and an address that already names a fragment keeps its own.
+ */
+export function clipTeaserSrc(src: string): string {
+  if (src.startsWith('data:') || src.includes('#')) return src;
+  return `${src}#t=0.001`;
+}
+
+/**
+ * The address a `ClipVideo` plays. A `data:` clip plays from an object URL of its
+ * own bytes instead, so it opens on its first frame too; that URL belongs to this
+ * clip alone and is revoked with it. Nothing loads before the URL exists, and a
+ * clip that cannot have one still plays from its `data:` address.
+ */
+function useClipSrc(src: string): string | undefined {
+  const inline = src.startsWith('data:');
+  const [local, setLocal] = useState<{ from: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!inline) return;
+    let alive = true;
+    let made = '';
+    void (async () => {
+      try {
+        const blob = await (await fetch(src)).blob();
+        if (!alive) return;
+        made = URL.createObjectURL(blob);
+        setLocal({ from: src, url: made });
+      } catch {
+        if (alive) setLocal({ from: src, url: src });
+      }
+    })();
+    return () => {
+      alive = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [inline, src]);
+  if (!inline) return clipTeaserSrc(src);
+  return local?.from === src ? clipTeaserSrc(local.url) : undefined;
+}
+
+/**
+ * A `<video>` that opens on its first frame; see `clipTeaserSrc`. It always plays
+ * inline and preloads, because desktop Safari also stops at `metadata` on a grey
+ * plate. Everything else a `<video>` takes passes through.
+ */
+export function ClipVideo({
+  src,
+  ...props
+}: Omit<VideoHTMLAttributes<HTMLVideoElement>, 'src'> & { src: string }) {
+  const shown = useClipSrc(src);
+  return <video {...props} src={shown} playsInline preload="auto" />;
+}
+
+/**
+ * A clip's share control, docked in its plate's caption. A `<video>`'s own
+ * controls offer no way to send a clip on, so one the model produced could be
+ * watched and never shared. The bytes are asked for on each press, and the
+ * outcome is said beside the button.
+ */
+export function MediaShareButton({
+  name,
+  mediaType = '',
+  load,
+}: {
+  name: string;
+  mediaType?: string;
+  /** Resolves the clip's original bytes. */
+  load: () => Promise<Blob>;
+}) {
+  // Probed once: the share sheet cannot appear or disappear under a mounted clip.
+  const [verb] = useState(() => artifactShareVerb(name, mediaType));
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const share = async () => {
+    setBusy(true);
+    setNotice('');
+    try {
+      const blob = await load();
+      setNotice(
+        await shareArtifact(blob, name, mediaType, { dialogTitle: 'Share video', noun: 'Video' }),
+      );
+    } catch {
+      setNotice('Could not share video. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <span role="status" className="shrink-0 empty:hidden">
+        {notice}
+      </span>
+      {/* The glyph sits on the name's inset, and its touch reach stays off the
+          clip's own controls above the caption. */}
+      <IconButton
+        variant="quiet"
+        label={`${verb} ${name}`}
+        title={`${verb} ${name}`}
+        disabled={busy}
+        className="-my-1 -mr-2 after:top-0"
+        onClick={() => void share()}
+      >
+        {verb === 'Share' ? <ShareIcon /> : <DownloadIcon />}
+      </IconButton>
+    </>
   );
 }
 

@@ -745,3 +745,39 @@ describe('an opened artifact', () => {
     },
   );
 });
+
+// Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: a clip's tile
+// carried a bare play mark and its opened view sat on a grey plate until played.
+describe('a clip artifact', () => {
+  it('shows its first frame on the tile and in the opened view', async () => {
+    const clip = artifact({
+      key: 'i7:0',
+      kind: 'video',
+      name: 'brag.mp4',
+      media: 'MP4',
+      mediaType: 'video/mp4',
+      size: 8_600_000,
+      sizeLabel: '8.2MB',
+      iterationId: 'i7',
+    });
+    const view = render(
+      <ArtifactsSheet client={client} sid="s1" artifacts={[clip]} onClose={() => {}} />,
+    );
+
+    try {
+      await waitFor(() =>
+        expect(view.baseElement.querySelector('video')).toHaveAttribute('src', 'blob:none#t=0.001'),
+      );
+      await userEvent.click(screen.getByRole('button', { name: /^Open brag\.mp4/ }));
+      const opened = await screen.findByRole('dialog', { name: 'brag.mp4' });
+      await waitFor(() =>
+        expect(opened.querySelector('video[controls]')).toHaveAttribute(
+          'src',
+          'blob:none#t=0.001',
+        ),
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+});

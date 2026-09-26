@@ -96,9 +96,11 @@ import {
   type MediaLayout,
 } from '../lib/media-frame';
 import {
+  ClipVideo,
   MediaGrid,
   MediaPlate,
   MediaRecording,
+  MediaShareButton,
   MediaTile,
   RecordingPlayer,
   mediaMeta,
@@ -2003,13 +2005,11 @@ const AttachmentTile = memo(function AttachmentTile({
     <div className={mediaPendingClass} aria-hidden="true" />
   ) : isVideo ? (
     // A clip PLAYING from an authenticated artifact URL is already a local Blob: the
-    // client had to fetch every byte before it could make that URL. Safari stops at
-    // readyState 1 with `metadata` and paints a grey plate, so decode the first frame.
-    <video
+    // client had to fetch every byte before it could make that URL. `ClipVideo`
+    // makes WebKit paint its first frame instead of a grey plate.
+    <ClipVideo
       src={url}
       controls
-      playsInline
-      preload="auto"
       onError={() => setFailed(true)}
       className={mediaContentClass}
     />
@@ -2036,7 +2036,19 @@ const AttachmentTile = memo(function AttachmentTile({
 
   if (isTile) return <MediaTile>{body}</MediaTile>;
   return (
-    <MediaPlate name={name} meta={mediaMeta(attachment)}>
+    <MediaPlate
+      name={name}
+      meta={mediaMeta(attachment)}
+      action={
+        isVideo && !failed ? (
+          <MediaShareButton
+            name={name}
+            mediaType={attachment.media_type}
+            load={() => client.attachmentBlob(sid, iterationId, index)}
+          />
+        ) : null
+      }
+    >
       {body}
     </MediaPlate>
   );
@@ -4075,14 +4087,21 @@ export const UserMessage = memo(function UserMessage({
             </MediaRecording>
           ))}
           {clips.map((att, index) => (
-            <MediaPlate key={att.id ?? `clip-${index}`} name={att.filename} meta={mediaMeta(att)}>
-              <video
-                src={attachmentSrc(att)}
-                controls
-                playsInline
-                preload="auto"
-                className={mediaContentClass}
-              />
+            <MediaPlate
+              key={att.id ?? `clip-${index}`}
+              name={att.filename}
+              meta={mediaMeta(att)}
+              action={
+                att.base64 ? (
+                  <MediaShareButton
+                    name={att.filename || 'video'}
+                    mediaType={att.media_type}
+                    load={async () => (await fetch(attachmentSrc(att))).blob()}
+                  />
+                ) : null
+              }
+            >
+              <ClipVideo src={attachmentSrc(att)} controls className={mediaContentClass} />
             </MediaPlate>
           ))}
           {layout === 'grid' ? (

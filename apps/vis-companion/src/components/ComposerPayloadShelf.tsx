@@ -5,6 +5,7 @@ import { keepKeyboard } from '../lib/keyboard';
 import type { ComposerPaste } from '../lib/paste';
 import { MicIcon } from './icons';
 import { ExpandableImage } from './ImageViewer';
+import { ClipVideo } from './Media';
 import { CloseButton, TextButton } from './ui';
 
 export type ComposerPayloadCommands = {
@@ -61,12 +62,10 @@ export function ComposerPayloadShelf({
               className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 overflow-hidden rounded-none border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
             >
               {isVideoMediaType(attachment.media_type) ? (
-                <video
+                <ClipVideo
                   src={attachment.previewUrl}
                   className="size-8 shrink-0 object-cover"
                   muted
-                  playsInline
-                  preload="auto"
                 />
               ) : isAudioMediaType(attachment.media_type) ? (
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">

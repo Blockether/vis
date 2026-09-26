@@ -50,7 +50,7 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { MediaRecording, RecordingPlayer } from './Media';
+import { ClipVideo, MediaRecording, RecordingPlayer } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
 import { AlertIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
@@ -372,8 +372,9 @@ function Peek({
 /**
  * The thumbnail. A picture shows ITSELF — this is the one place in the app where
  * a produced figure is browsable without its turn around it, so a generic icon
- * would defeat the whole surface. A clip, a document and a file have no cheap
- * raster, and each says what it is instead of faking one.
+ * would defeat the whole surface. A clip opens on its first frame for the same
+ * reason. A document and a file have no cheap raster, and each says what it is
+ * instead of faking one.
  */
 function Thumb({
   client,
@@ -397,7 +398,7 @@ function Thumb({
     client,
     sid,
     artifact,
-    artifact.kind === 'image' || previewable,
+    artifact.kind === 'image' || artifact.kind === 'video' || previewable,
   );
   // Markdown is parsed into what its lines ARE; anything else is text and stays
   // verbatim — the same split the reader makes on the same two files.
@@ -517,12 +518,28 @@ function Thumb({
   }
 
   if (artifact.kind === 'video') {
+    // The frame is the clip's own first one (see `ClipVideo`), and the mark in
+    // its corner says it plays. Until the bytes arrive, and when they never do,
+    // the plate carries the mark alone.
     return (
       <span
-        className={`grid place-items-center bg-code text-dialog-hint ${box}`}
+        className={`relative grid place-items-center overflow-hidden bg-code text-dialog-hint ${box}`}
         aria-hidden="true"
       >
-        <PlayIcon className="size-7" />
+        {url && !failed ? (
+          <>
+            <ClipVideo
+              src={url}
+              muted
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            />
+            <span className="absolute right-1 bottom-1 grid place-items-center bg-dialog-title p-0.5 text-dialog-title-foreground">
+              <PlayIcon className="size-3" />
+            </span>
+          </>
+        ) : (
+          <PlayIcon className="size-7" />
+        )}
       </span>
     );
   }
@@ -905,11 +922,9 @@ function ArtifactDetail({
   if (artifact.kind === 'video') {
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
-        <video
+        <ClipVideo
           src={url}
           controls
-          playsInline
-          preload="auto"
           className="min-h-0 flex-1 bg-code object-contain"
         />
       </DetailOverlay>

@@ -51,3 +51,64 @@ it('keeps a failed save retryable and missing bytes visible', async () => {
   expect(view.getByRole('button', { name: `Save ${log.filename}` })).toBeDisabled();
   expect(view.getByText(log.filename)).toBeVisible();
 });
+
+// Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: a sent clip
+// sat as a grey plate on iOS until it played, and its plate could not share it.
+const clip = {
+  filename: 'brag.mp4',
+  media_type: 'video/mp4',
+  base64: 'AAAAIGZ0eXBpc29t',
+  size: 12,
+};
+const clipDataUrl = `data:${clip.media_type};base64,${clip.base64}`;
+
+it('opens a sent clip on its first frame and shares its original bytes', async () => {
+  const blob = new Blob(['clip'], { type: clip.media_type });
+  const fetchClip = vi.fn(async () => ({ blob: async () => blob }));
+  vi.stubGlobal('fetch', fetchClip);
+  const revoked: string[] = [];
+  class StubURL extends URL {
+    static createObjectURL(): string {
+      return 'blob:clip';
+    }
+    static revokeObjectURL(url: string): void {
+      revoked.push(url);
+    }
+  }
+  vi.stubGlobal('URL', StubURL);
+  const view = render(<UserMessage attachments={[clip]}>{''}</UserMessage>);
+
+  // A `data:` clip cannot carry the seek fragment, so it plays from its own object URL.
+  await waitFor(() =>
+    expect(view.container.querySelector('video')).toHaveAttribute('src', 'blob:clip#t=0.001'),
+  );
+  fireEvent.click(view.getByRole('button', { name: `Save ${clip.filename}` }));
+  await waitFor(() =>
+    expect(shareArtifact).toHaveBeenCalledWith(blob, clip.filename, clip.media_type, {
+      dialogTitle: 'Share video',
+      noun: 'Video',
+    }),
+  );
+  expect(fetchClip).toHaveBeenLastCalledWith(clipDataUrl);
+  expect(view.getByRole('status')).toHaveTextContent('Artifact saved.');
+  view.unmount();
+  expect(revoked).toEqual(['blob:clip']);
+});
+
+it('plays a sent clip from its data address when its bytes cannot be read', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      throw new Error('Read failed');
+    }),
+  );
+  const view = render(<UserMessage attachments={[clip]}>{''}</UserMessage>);
+
+  await waitFor(() =>
+    expect(view.container.querySelector('video')).toHaveAttribute('src', clipDataUrl),
+  );
+  fireEvent.click(view.getByRole('button', { name: `Save ${clip.filename}` }));
+  expect(await view.findByText('Could not share video. Try again.')).toBeVisible();
+  expect(view.getByRole('button', { name: `Save ${clip.filename}` })).toBeEnabled();
+  expect(shareArtifact).not.toHaveBeenCalled();
+});

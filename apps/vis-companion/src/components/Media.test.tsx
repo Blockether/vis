@@ -16,6 +16,7 @@ import {
   MediaRecording,
   MediaTile,
   RecordingPlayer,
+  clipTeaserSrc,
   mediaMeta,
   mediaSummary,
 } from './Media';
@@ -332,5 +333,18 @@ describe('RecordingPlayer', () => {
     const scrubber = view.container.querySelector('input[type="range"]');
 
     expect(scrubber).toBeDisabled();
+  });
+});
+
+// Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: iOS painted a
+// clip as a grey plate until it played; a seek to its first frame paints that frame.
+describe('clipTeaserSrc', () => {
+  it('opens a clip on its first frame without breaking inline or named sources', () => {
+    expect(clipTeaserSrc('blob:vis/1')).toBe('blob:vis/1#t=0.001');
+    expect(clipTeaserSrc('https://gateway.example.com/clip.mp4')).toBe(
+      'https://gateway.example.com/clip.mp4#t=0.001',
+    );
+    expect(clipTeaserSrc('data:video/mp4;base64,AAAA')).toBe('data:video/mp4;base64,AAAA');
+    expect(clipTeaserSrc('blob:vis/1#t=4')).toBe('blob:vis/1#t=4');
   });
 });

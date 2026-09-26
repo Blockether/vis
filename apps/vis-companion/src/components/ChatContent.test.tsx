@@ -1698,6 +1698,45 @@ describe('the attachment rail', () => {
     await waitFor(() => expect(view.container.querySelector('video')?.preload).toBe('auto'));
     view.unmount();
   });
+  // Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: iOS left a
+  // produced clip grey until playback began, and its plate had no way to share it.
+  it('opens a produced clip on its first frame and shares its original bytes', async () => {
+    const blob = new Blob(['clip'], { type: 'video/mp4' });
+    const attachmentBlob = vi.fn(async () => blob);
+    const share = vi.fn(async (_data: ShareData) => undefined);
+    Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    const view = render(
+      <AttachmentRail
+        client={{ ...client, attachmentBlob } as unknown as GatewayClient}
+        sid="s1"
+        attachments={[
+          {
+            filename: 'brag.mp4',
+            media_type: 'video/mp4',
+            size: 8_600_000,
+            iteration_id: 'i1',
+            index: 0,
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await waitFor(() =>
+        expect(view.container.querySelector('video')).toHaveAttribute('src', 'blob:none#t=0.001'),
+      );
+      fireEvent.click(view.getByRole('button', { name: 'Share brag.mp4' }));
+      expect(await view.findByText('Video shared.')).toBeVisible();
+      expect(attachmentBlob).toHaveBeenCalledWith('s1', 'i1', 0);
+      expect(share.mock.calls[0]?.[0].files?.[0]).toMatchObject({
+        name: 'brag.mp4',
+        type: 'video/mp4',
+      });
+    } finally {
+      view.unmount();
+      Reflect.deleteProperty(navigator, 'share');
+    }
+  });
   // Regression, user report: "the model attached a document, I commented on it and
   // saved, and now instead of one there are two". Saving files the same filename
   // as the NEXT VERSION of the same artifact; this rail painted a row per
