@@ -3076,22 +3076,24 @@
                                                                environment)))))))
              (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
   ;; Vis session 32bcc713: asyncio.sleep outlived the eval wall, retired Python and
-  ;; ended the active turn. A timed-out sleep must leave the same context usable.
-  (it "unwinds a long asyncio sleep without retiring the context"
+  ;; ended the active turn; a native `time.sleep` held the interpreter the same way.
+  ;; A timed-out sleep must leave the same context usable. The delay is a variable,
+  ;; so the literal-sleep floor cannot lift the wall above it.
+  (it "unwinds a long sleep without retiring the context"
       (tpc/with-own
         [pc {}]
         (let [environment {:python-context-retired-atom (atom false)}]
-          (try
-            (#'python-exec/run-python-code pc "import asyncio" :env environment)
-            (let [result
-                  (binding [rt/*eval-timeout-ms* 350]
-                    (#'python-exec/run-python-code pc "await asyncio.sleep(5)" :env environment))]
-              (expect (true? (:timeout? result)))
-              (expect (false? @(:python-context-retired-atom environment)))
-              (expect (= "ready\n"
-                         (:stdout
-                           (#'python-exec/run-python-code pc "print('ready')" :env environment)))))
-            (finally (env/dispose-python-context! pc)))))))
+          (try (#'python-exec/run-python-code pc "import asyncio, time\ndelay = 5" :env environment)
+               (doseq [sleep-call ["await asyncio.sleep(delay)" "time.sleep(delay)"]]
+                 (let [result (binding [rt/*eval-timeout-ms* 350]
+                                (#'python-exec/run-python-code pc sleep-call :env environment))]
+                   (expect (true? (:timeout? result)))
+                   (expect (false? @(:python-context-retired-atom environment)))
+                   (expect
+                     (= "ready\n"
+                        (:stdout
+                          (#'python-exec/run-python-code pc "print('ready')" :env environment))))))
+               (finally (env/dispose-python-context! pc)))))))
 
 (defdescribe
   retired-python-follow-up-test
@@ -3116,9 +3118,14 @@
 
       (try
         (#'python-exec/run-python-code pc "print('ready')" :env environment)
-        (let [timeout
-              (binding [rt/*eval-timeout-ms* 3000]
-                (#'python-exec/run-python-code pc "import time\ntime.sleep(10)" :env environment))]
+        ;; `select` waits in C, where the interrupt cannot unwind it; `time.sleep`
+        ;; returns to Python often enough that it no longer retires the context.
+        (let [timeout (binding [rt/*eval-timeout-ms* 3000]
+                        (#'python-exec/run-python-code
+                         pc
+                         "import select\nselect.select([], [], [], 10)"
+                         :env
+                         environment))]
           (expect (true? (:timeout? timeout))))
         (expect (loop [remaining 100]
                   (cond @retired true
@@ -3202,7 +3209,7 @@
          tid (persistance/db-store-session-turn! db
                                                  {:parent-session-id (:session-id environment)
                                                   :user-request "timeout regression"})
-         timeout-code "import time\nprint('before native wait')\ntime.sleep(10)"
+         timeout-code "import select\nprint('before native wait')\nselect.select([], [], [], 10)"
          publish-code
          "print(await council.publish('after timeout', kind='coordination', title='Timeout regression'))"
          calls (atom 0)
@@ -5888,7 +5895,27 @@
       ;; …but a longer explicitly requested budget still wins outright.
       (expect (= 610000 (eval-timeout-ms-for-code 120000 "requests.get(u, timeout=600)")))
       ;; Prose that merely mentions a client must not widen anything.
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')")))))
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
+  ;; Vis session 32bcc713: `await asyncio.sleep(420)` under the five-minute base hit
+  ;; the wall, which retired Python and ended the active turn.
+  (it "floors the watchdog above a literal sleep that the base cannot hold"
+      (expect (= 430000
+                 (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS "await asyncio.sleep(420)")))
+      (expect (= 430000 (eval-timeout-ms-for-code 120000 "import time\ntime.sleep(420)")))
+      (expect (= 610000
+                 (eval-timeout-ms-for-code 120000 "await asyncio.sleep(delay=600, result=1)")))
+      (expect (= 130000 (eval-timeout-ms-for-code 120000 "time.sleep(120)")))
+      (expect (= rt/MAX_EVAL_TIMEOUT_MS (eval-timeout-ms-for-code 120000 "time.sleep(86400)")))
+      ;; A literal beyond the range of a long still clamps instead of throwing.
+      (expect (= rt/MAX_EVAL_TIMEOUT_MS
+                 (eval-timeout-ms-for-code 120000 "time.sleep(99999999999999999999)")))
+      ;; A shorter sleep already fits. The scan cannot tell how often a loop
+      ;; repeats it, so the base stays.
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "for host in hosts:\n    time.sleep(5)")))
+      (expect (= 3000 (eval-timeout-ms-for-code 3000 "time.sleep(2.5)")))
+      ;; A computed delay and prose give the scan no number.
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "time.sleep(delay)")))
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('sleep for ten minutes')")))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension
@@ -11008,12 +11035,13 @@
              ;; still offered a Stop nobody was listening to.
              (describe "a run SHOWING its work holds the wall, and the run's end ends the view"
                        (it "is not killed at the eval wall while a live view is open"
-                           (let [[result left] (watching-block (str
-                                                                 (open-a-view)
-                                                                 "import time\n"
-                                                                 "time.sleep(4.0)\n"
-                                                                 "print('watched to the end')\n"))]
+                           (let [[result left] (watching-block
+                                                 (str (open-a-view)
+                                                      "import time\n" "watch_secs = 4.0\n"
+                                                      "time.sleep(watch_secs)\n"
+                                                      "print('watched to the end')\n"))]
                              ;; 4s of watching under a 3s wall: without the hold this is `Timeout (3s)`.
+                             ;; The delay is a variable, so the literal-sleep floor cannot lift the wall.
                              (expect (nil? (:timeout? result)))
                              (expect (some? (re-find #"watched to the end" (str (:stdout result)))))
                              (expect (= 1 (count left)))))

@@ -194,6 +194,11 @@
 (def ^:private http-call-re
   #"\b(?:requests|httpx|urllib3)\s*\.|\b(?:import|from)\s+(?:requests|httpx|urllib3)\b|\burlopen\s*\(")
 
+;; A sleep whose duration is a literal number of seconds: `time.sleep(420)`,
+;; `await asyncio.sleep(420)` or `sleep(delay=420)`. A computed duration is as
+;; invisible here as a computed budget is to `timeout-secs-re`.
+(def ^:private sleep-call-re #"\bsleep\s*\(\s*(?:delay\s*=\s*)?([0-9]+(?:\.[0-9]+)?)")
+
 (defn- max-of
   [xs]
   (when-let [xs (seq (remove nil? xs))]
@@ -240,19 +245,41 @@
     (max-of [(when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
              (when (re-find shell-call-re code) MAX_SHELL_TIMEOUT_SECS)])))
 
+(defn literal-sleep-ms
+  "Longest sleep in Python code whose duration is a literal number, in
+   milliseconds rounded up and capped at [[MAX_EVAL_TIMEOUT_MS]], or nil when
+   the code has none."
+  [code]
+  (max-of (for [[_ n] (re-seq sleep-call-re (str code))]
+            (long (min (double MAX_EVAL_TIMEOUT_MS)
+                       (Math/ceil (* 1000.0 (Double/parseDouble n))))))))
+
 (defn eval-timeout-ms-for-code
   "Eval watchdog for ONE Python block: the configured base, raised so it sits a
-   grace period ABOVE the longest bounded call the block makes."
+   grace period ABOVE the longest bounded call the block makes.
+
+   A literal sleep that alone reaches the base raises it the same way:
+   `await asyncio.sleep(420)` cannot finish inside five minutes. A shorter sleep
+   already fits, and a text scan cannot tell how much other work shares its
+   block, so the base stays."
   [base-timeout-ms code]
   (let [base
         (clamp-eval-timeout-ms base-timeout-ms)
 
-        secs
-        (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])]
+        grace
+        (long shell-timeout-eval-grace-ms)
 
-    (if secs
-      (clamp-eval-timeout-ms (max base (+ (* 1000 (long secs)) (long shell-timeout-eval-grace-ms))))
-      base)))
+        secs
+        (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])
+
+        sleep-ms
+        (literal-sleep-ms code)
+
+        floor-ms
+        (max-of [(when secs (+ (* 1000 (long secs)) grace))
+                 (when (and sleep-ms (<= base (long sleep-ms))) (+ (long sleep-ms) grace))])]
+
+    (if floor-ms (clamp-eval-timeout-ms (max base (long floor-ms))) base)))
 
 (def ^:dynamic *blocking-wall-park*
   "Park hook installed by the innermost enclosing timeout wall: `(fn [thunk])`.

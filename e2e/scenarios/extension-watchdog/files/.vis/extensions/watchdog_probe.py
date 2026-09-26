@@ -1,6 +1,7 @@
 """Side-effect-free waits for issue #187's sandbox/extension boundary tests."""
 
 import asyncio
+import select
 import time
 from dataclasses import dataclass
 
@@ -21,7 +22,10 @@ class WatchdogProbe:
 
     def poll(self, duration: float = 310) -> Observation:
         """Wait silently for duration seconds and return a numbered observation."""
-        time.sleep(duration)
+        # One native wait, like a blocking network read: an interrupt cannot unwind
+        # it before it returns. The runtime's `time.sleep` returns to Python between
+        # short slices, so it would cooperate with cancellation.
+        select.select([], [], [], duration)
         self._count += 1
         return Observation(self._count)
 

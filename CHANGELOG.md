@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   suppression comments such as `fmt: off` is shown as written. Vis no longer
   bundles the native ruff library, which makes the native binary smaller.
 
+### Fixed
+- A Python block that sleeps past its time limit now stops with a timeout and
+  keeps its session's Python state. Before, a long `time.sleep` or
+  `asyncio.sleep` could not be interrupted, so Vis shut down the session's
+  Python and ended the turn. A block that sleeps for a fixed number of seconds,
+  such as `await asyncio.sleep(420)`, now gets enough time to finish.
+- The companion and the TUI session lists mark a session as stopped when its
+  newest turn failed and you have not read it yet, for example after Python was
+  shut down. Before, the session only showed as new.
+
 ## [v0.2.29] - 2026-09-25
 
 The v0.2.27 and v0.2.28 tags were not published. This release includes the
