@@ -35,7 +35,6 @@ import {
 } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
-import { homeifyPath } from '../lib/path';
 
 /** How many crumbs stay on screen. A path too long for 390px elides from the LEFT. */
 const CRUMB_TAIL = 3;
@@ -433,10 +432,8 @@ export function ManageProjectsSheet({
           `aria-label` and the way out. */}
       {!adding && (
         <MenuHeading
-          cells={
-            // Creation is universal chrome here: the plus is the same square band cell
-            // as the way out, while its accessible name keeps the verb explicit. It starts
-            // this action run openly; only the following way out needs their shared rule.
+          titleCells={
+            // Creation is a band cell directly beside Projects; Close stays at the far edge.
             <BandButton isFirst label="New project" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3.5" />
             </BandButton>
@@ -483,7 +480,6 @@ export function ManageProjectsSheet({
                     meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
                       entry.live > 0 ? `, ${entry.live} running` : ''
                     }`}
-                    hint={homeifyPath(entry.root) || entry.root}
                     badge={entry.root === startAt ? 'current' : undefined}
                     onSelect={() => onChoose(entry.root)}
                     action={

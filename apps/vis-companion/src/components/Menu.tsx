@@ -175,6 +175,7 @@ export function Menu({
 export function MenuHeading({
   tone = 'loud',
   cells,
+  titleCells,
   onClose,
   closeLabel,
   children,
@@ -191,6 +192,8 @@ export function MenuHeading({
    * shouts an accent slab beside a 2px accent rule then charges the same colour twice.
    */
   cells?: ReactNode;
+  /** Band cells beside the title, before the flexible space and trailing controls. */
+  titleCells?: ReactNode;
   children: ReactNode;
 } & (
   | {
@@ -214,7 +217,14 @@ export function MenuHeading({
     // way out welded to it is the same cell on both and a cell can only be square in
     // a band of one height.
     <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
-      <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
+      {titleCells ? (
+        <div className="flex min-w-0 flex-1 items-stretch">
+          <p className={`${BAND} min-w-0 self-center truncate pr-0`}>{children}</p>
+          {titleCells}
+        </div>
+      ) : (
+        <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
+      )}
       {cells}
       <CloseButton isBand label={closeLabel} onClick={onClose} />
     </header>

@@ -461,20 +461,27 @@ describe('the projects mark opens the inventory', () => {
     expect(screen.getByRole('button', { name: 'New project' })).not.toHaveClass('border-l');
   });
 
-  it('uses a plus for creation and keeps project paths on their own line', async () => {
+  it('places creation beside Projects and shows each project on one line', async () => {
     sheet();
     const create = screen.getByRole('button', { name: 'New project' });
-    const heading = create.closest('header')!;
-    expect(heading).toHaveClass('bg-dialog-title');
+    const title = screen.getByText('Projects');
+    expect(create.closest('header')).toHaveClass('bg-dialog-title');
+    expect(create.parentElement).toBe(title.parentElement);
+    expect(create.parentElement).toHaveClass('flex-1');
+    expect(title).not.toHaveClass('flex-1');
+    expect(create.previousElementSibling).toBe(title);
     expect(create.textContent).toBe('');
     expect(create.querySelector('svg')).toBeInTheDocument();
 
     const row = await screen.findByRole('button', { name: /^vis/ });
     expect(row.textContent).toContain('3 transcripts, 1 running');
-    const path = screen.getByText('~/code/vis');
-    expect(path).toHaveClass('block');
-    expect(path.parentElement).toBe(row.querySelector('span.min-w-0.flex-1'));
+    expect(row.textContent).not.toContain('~/code/vis');
+    expect(screen.queryByText('~/code/vis')).toBeNull();
+    expect(screen.queryByText('~/code/demo')).toBeNull();
+    await userEvent.click(create);
+    expect(await screen.findByText('New project')).toBeInTheDocument();
   });
+
   // Regression, user report: project deletion expanded the selected row with a cost
   // paragraph above the answers. It should replace that row with the same single-height
   // yes/no strip used by session deletion.
