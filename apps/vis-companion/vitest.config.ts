@@ -66,6 +66,9 @@ export default defineConfig({
           // CI's two-core runner plays the longest interaction stories at half of Vitest's
           // 15s default. The limit is there to catch a hung story, not a busy runner.
           testTimeout: 30_000,
+          // Story files play in iframes of one origin: without their own storage they
+          // start from what another story file left (see `src/test-storage.ts`).
+          setupFiles: ['./src/test-storage.ts'],
           browser: {
             enabled: true,
             headless: true,

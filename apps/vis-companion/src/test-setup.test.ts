@@ -7,6 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import vitestConfig from '../vitest.config.ts?raw';
+
 describe('the storage every test file is handed', () => {
   it('is a working store, not the stub Node hands back without a file', () => {
     for (const store of [localStorage, sessionStorage]) {
@@ -34,5 +36,13 @@ describe('the storage every test file is handed', () => {
       expect(descriptor?.configurable).toBe(true);
       expect(descriptor?.writable).toBe(true);
     }
+  });
+
+  // Regression, no issue: story files play in iframes of one origin, so they shared the
+  // browser's store, and Session/Project archive's Live List painted the sessions another
+  // story file had left in it.
+  it('is handed to every story file too', () => {
+    const storybook = vitestConfig.slice(vitestConfig.indexOf("name: 'storybook'"));
+    expect(storybook).toContain("setupFiles: ['./src/test-storage.ts']");
   });
 });
