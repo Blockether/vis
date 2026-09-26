@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   formatter that lays out code the way `ruff format` does. Code with formatter
   suppression comments such as `fmt: off` is shown as written. Vis no longer
   bundles the native ruff library, which makes the native binary smaller.
+- `grep` recovers from two common search mistakes. A regular expression that
+  does not compile only because of a stray character, such as the `(` in
+  `(defn foo`, now runs with that character escaped, and the result shows the
+  pattern that ran. A plain-text query that looks like a regular expression,
+  such as `^foo` or `foo.*bar`, and finds nothing now runs once more as a
+  regular expression. Before, the first stopped with a syntax error and the
+  second returned no matches.
 
 ### Fixed
 - A Python block that sleeps past its time limit now stops with a timeout and

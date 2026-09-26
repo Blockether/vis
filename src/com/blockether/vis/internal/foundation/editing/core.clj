@@ -2183,6 +2183,64 @@
                          (str/ends-with? q "$")))
                    qs))))
 
+(defn- grep-content
+  "ONE content sweep of grep's `content-spec`: `{:needles :regex-repairs
+   :content-out :content}` — the needles that ran (repaired when an `is_regex`
+   pattern needed it), the raw `rg-search` answer and its canonical result block.
+   ls mode (`ls?`) runs no sweep and answers the same shape, empty."
+  [content-spec is-files-only? ls?]
+  (let [{:keys [needles regex-repairs]}
+        (if ls? {:needles [] :regex-repairs []} (coerce-rg-spec content-spec))
+
+        ;; CONTENT search preserves the caller's exact scope. In particular, an
+        ;; existing file that has zero hits must not silently widen to its parent.
+        content-out
+        (if ls?
+          {:hits [] :total-file-count 0 :total-file-count-exact? true}
+          (rg-search content-spec))]
+
+    {:needles needles
+     :regex-repairs regex-repairs
+     :content-out content-out
+     :content
+     (if is-files-only? (files-result content-out needles) (content-result content-out needles))}))
+
+(defn- literal-miss-regex-rescue
+  "The same CONTENT search run once as a REGEX, for a LITERAL query that reads like
+   one (`regex-looking-query?`) and matched nothing. Models send `^(defn `,
+   `foo.*bar` or `a|b` without `is_regex`, and a literal miss for a query never
+   meant literally is a dead end. Answers `grep-content`'s shape, or nil when a
+   pattern does not compile even after repair, or matches the EMPTY string — that
+   would answer every line of every file."
+  [content-spec is-files-only?]
+  (let [spec
+        (assoc content-spec "is_regex" true)
+
+        needles
+        (try (:needles (coerce-rg-spec spec)) (catch clojure.lang.ExceptionInfo _ nil))]
+
+    (when (and (seq needles) (not-any? #(re-find (re-pattern %) "") needles))
+      (grep-content spec is-files-only? false))))
+
+(defn- regex-repair-note
+  "The `hint` sentence for every pattern `repair-regex-needle` fixed: the pattern as
+   sent, its syntax error, the stray characters escaped and the pattern that ran,
+   so the caller learns the escape instead of repeating the mistake."
+  [regex-repairs]
+  (str (str/join " "
+                 (map (fn [{:keys [needle pattern escaped error]}]
+                        (str "The regex \""
+                             needle
+                             "\" does not compile ("
+                             error
+                             "), so grep escaped the stray "
+                             (str/join " and " (map #(str "`" % "`") (distinct escaped)))
+                             " and ran \""
+                             pattern
+                             "\"."))
+                      regex-repairs))
+       " Pass the repaired pattern next time."))
+
 (defn- grep-data
   "grep's ORDERED DATA — the tested pure core. `grep-tool` is now only its
    RENDERER (`render-grep-text`), so this is the map every shape, count, paging
@@ -2213,10 +2271,14 @@
    `is_regex` switches CONTENT matching to REGULAR EXPRESSIONS — every term a
    pattern, a list still OR, the SAME smart-case rule (no uppercase in the
    pattern → case-insensitive) — and turns the fuzzy NAME axis OFF, because a
-   pattern scored as a filename subsequence is noise. A pattern that does not
-   COMPILE is REFUSED with its syntax error, never answered as zero hits; a
-   pattern the native prefilter cannot NARROW with (lookaround, backreference)
-   is still answered — the candidate set widens to the whole ignore-aware scope,
+   pattern scored as a filename subsequence is noise. A pattern that fails to
+   compile only on a STRAY LITERAL — an unbalanced `(` or `)`, an unclosed `[`, a
+   `{` or `${` that opens no repetition, a dangling `*` — is REPAIRED: that
+   character is escaped and `hint` shows the pattern that ran. Any other pattern
+   that does not COMPILE is REFUSED with its syntax error, never answered as zero
+   hits. A pattern the native prefilter cannot NARROW with (lookaround,
+   backreference) is still answered — the candidate set widens to the whole
+   ignore-aware scope,
    the JVM matcher runs the pattern, and `hint` says the scan went wide. Every
    hit lands in the CANONICAL flat result under `matches` —
    `{path {\"<lineno>\" {\"text\" … \"before\" [{\"line\" \"text\"}] \"after\" […]}}}`
@@ -2236,9 +2298,10 @@
 
    Truncation is explicit on BOTH axes: `truncated_by` covers the NAME list,
    `hits_truncated_by` (`limit`/`bytes`) names a capped CONTENT sweep and is
-   `null` when the content result is complete. A query that reads
-   like a regex but matches no content gets a `hint` saying so, since CONTENT
-   matching never interprets regex syntax.
+   `null` when the content result is complete. A LITERAL query that reads like a
+   regex and matches no content runs once more as a regex (first page only): its
+   hits answer the call and `hint` says so; when it matches nothing either, the
+   `hint` says that instead.
 
    PAGING is one knob on each side: `offset` says where this page starts on
    both axes, and `next_offset` is the value to pass back as the NEXT page's
@@ -2271,16 +2334,36 @@
      ls?
      (str/blank? (str query))
 
-     {:keys [needles]}
-     (if ls? {:needles []} (coerce-rg-spec content-spec))
+     literal
+     (grep-content content-spec is_files_only ls?)
 
-     ;; CONTENT search preserves the caller's exact scope. In particular, an
-     ;; existing file that has zero hits must not silently widen to its parent.
-     content-out
-     (if ls? {:hits [] :total-file-count 0 :total-file-count-exact? true} (rg-search content-spec))
+     ;; RESCUE: a LITERAL query that reads like a regex and matched nothing runs
+     ;; once more as a regex (`literal-miss-regex-rescue`). A FIRST page only:
+     ;; `offset` pages one search, and a literal query paged past its end must
+     ;; not turn into a regex there.
+     rescue
+     (when (and (not ls?)
+                (not is_regex)
+                (zero? (long (or offset 0)))
+                (zero? (long (or (get-in literal [:content "hit_count"]) 0)))
+                (not= "time" (get-in literal [:content "hits_truncated_by"]))
+                (regex-looking-query? query))
+       (literal-miss-regex-rescue content-spec is_files_only))
 
-     content
-     (if is_files_only (files-result content-out needles) (content-result content-out needles))
+     rescued?
+     (pos? (long (or (get-in rescue [:content "hit_count"]) 0)))
+
+     ;; The regex ran to the END and matched nothing either, so the literal
+     ;; hints below must not recommend the flag that was just tried.
+     rescue-missed?
+     (and (some? rescue)
+          (not rescued?)
+          (not= "time" (get-in rescue [:content "hits_truncated_by"])))
+
+     ;; A RESCUED search answers with the regex sweep throughout: its needles,
+     ;; hits, paging and repairs.
+     {:keys [needles regex-repairs content-out content]}
+     (if rescued? rescue literal)
 
      content-hits
      (long (or (get content "hit_count") 0))
@@ -2333,9 +2416,17 @@
        ;; sides), so the recovery is a looser pattern, never a different dialect.
        (and (not ls?) is_regex (zero? content-hits))
        (assoc "hint"
-         (str "No CONTENT matched the regex \"" query
-              "\" — the pattern compiled and ran. Loosen it or widen `paths`. "
-              "`is_regex` searches CONTENT only: file NAMES are not matched in this mode."))
+         (str
+           "No CONTENT matched the regex \""
+           query
+           "\" — the pattern compiled and ran. Loosen it or widen `paths`. "
+           "`is_regex` searches CONTENT only: file NAMES are not matched in this mode."
+           ;; The two misses a pattern cannot show by itself.
+           (when (some #(str/includes? % "\\\\") needles)
+             (str " A doubled backslash `\\\\` matches a LITERAL backslash: escape with ONE"
+                  " (`\\(`, `\\b`), and write it in Python as a raw string, r\"\\(\"."))
+           (when (some #(or (str/includes? % "\n") (str/includes? % "\\n")) needles)
+             " grep matches ONE line at a time, so a newline (`\\n`) never matches: search for a single line.")))
 
        (and (not ls?) (not is_regex) (zero? (long (or item_count 0))) (zero? content-hits))
        (assoc "hint"
@@ -2347,7 +2438,9 @@
              "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
              "Try a different term, a real symbol/string, or widen the scope.")
            (when (regex-looking-query? query)
-             " CONTENT matching is LITERAL smart-case substring by DEFAULT — pass `is_regex: True` to run this query as a regular expression.")))
+             (if rescue-missed?
+               " It reads like a regex, but it matches no CONTENT with `is_regex: True` either."
+               " CONTENT matching is LITERAL smart-case substring by DEFAULT — pass `is_regex: True` to run this query as a regular expression."))))
 
        ;; A page PAST THE END is not a miss. `offset` continues ONE query, so
        ;; carried onto a different query — or a narrower scope — it skips every
@@ -2377,10 +2470,15 @@
             (zero? content-hits)
             (regex-looking-query? query))
        (assoc "hint"
-         (str
-           "No CONTENT matched \"" query
-           "\" — CONTENT matching is LITERAL smart-case substring by DEFAULT. Pass `is_regex: True` "
-           "to run it as a regular expression; only the file NAME matches in `paths` are real."))
+         (if rescue-missed?
+           (str
+             "No CONTENT matched \""
+             query
+             "\", as LITERAL text or with `is_regex: True`; only the file NAME matches in `paths` are real.")
+           (str
+             "No CONTENT matched \"" query
+             "\" — CONTENT matching is LITERAL smart-case substring by DEFAULT. Pass `is_regex: True` "
+             "to run it as a regular expression; only the file NAME matches in `paths` are real.")))
 
        ;; The scan stopped at its wall-clock budget, so these results are
        ;; PARTIAL. Said LAST because it outranks every hint above: "nothing
@@ -2392,22 +2490,35 @@
            "s scan budget — these results are PARTIAL, not the whole tree. "
            "Narrow `paths` to a subdirectory, add `include`/`exclude` globs, or search a more distinctive term.")))
 
-     ;; A WIDENED scan is a property of the answer's COST, not of the answer, so
-     ;; the note is PREPENDED to whatever hint the search already chose (a `time`
-     ;; cap still has to be the first thing after it).
-     wide-note
-     (when (and (not ls?) is_regex (:prefilter-degraded? content-out))
-       (str "This pattern cannot narrow the native prefilter (Rust `regex` has no"
-            " lookaround or backreferences), so grep matched it with `java.util.regex`"
-            " over every file in scope — the same hits, read the slow way. Narrow"
-            " `paths` or add `include` globs if it stops at the scan budget."))]
+     ;; HOW the search ran — a literal query rescued as a regex, a repaired
+     ;; pattern, a WIDENED scan — is the answer's provenance and COST, not the
+     ;; answer, so these notes are PREPENDED to whatever hint the search already
+     ;; chose (a `time` cap still has to be the first thing after them).
+     notes
+     (cond-> []
+       rescued?
+       (conj
+         (str
+           "No CONTENT matched \"" query
+           "\" as LITERAL text, so grep ran it as a regular expression — these are its regex hits. "
+           "Pass `is_regex: True` yourself when you mean a regex, and to page on with `next_offset`."))
+
+       (seq regex-repairs)
+       (conj (regex-repair-note regex-repairs))
+
+       (and (not ls?) (or is_regex rescued?) (:prefilter-degraded? content-out))
+       (conj (str "This pattern cannot narrow the native prefilter (Rust `regex` has no"
+                  " lookaround or backreferences), so grep matched it with `java.util.regex`"
+                  " over every file in scope — the same hits, read the slow way. Narrow"
+                  " `paths` or add `include` globs if it stops at the scan budget.")))]
 
     (cond-> out
-      wide-note
+      (seq notes)
       (assoc "hint"
-        (str wide-note
-             (when-let [h (get out "hint")]
-               (str " " h)))))))
+        (str/join " "
+                  (cond-> notes
+                    (get out "hint")
+                    (conj (get out "hint"))))))))
 
 (defn- grep-tool
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
@@ -2466,6 +2577,19 @@
   [^String s]
   (boolean (some #(Character/isUpperCase ^char %) s)))
 
+(defn- invalid-regex-error
+  "The refusal for an `is_regex` needle that does not compile, carrying its syntax
+   error: a broken pattern must never read as `0 hits`."
+  [^String needle ^java.util.regex.PatternSyntaxException e]
+  (ex-info (str "grep is_regex pattern does not compile: "
+                needle
+                " — "
+                (.getDescription e)
+                " at index "
+                (.getIndex e)
+                ". Fix the pattern, or drop is_regex to search it literally.")
+           {:type :ext.foundation.editing/invalid-rg-spec :field :query :pattern needle}))
+
 (defn- needle-pattern
   "One `is_regex` needle compiled to a `java.util.regex.Pattern` under the SAME
    smart-case rule the literal side uses: no uppercase in the pattern →
@@ -2473,22 +2597,130 @@
    rule fff's native regex grep applies to its own candidate pass (`build_regex`),
    so discovery and JVM re-validation can never disagree about a hit.
 
-   A pattern that does not COMPILE is refused right here, at coercion time,
-   carrying the syntax error: a broken pattern must never read as `0 hits`."
+   `coerce-rg-spec` already repaired or refused every needle at coercion time
+   (`repair-regex-needle`); a pattern that still does not COMPILE is refused here
+   with its syntax error, never answered as `0 hits`."
   ^java.util.regex.Pattern [^String needle]
   (try (java.util.regex.Pattern/compile
          needle
          (int (if (has-upper? needle) 0 java.util.regex.Pattern/CASE_INSENSITIVE)))
-       (catch java.util.regex.PatternSyntaxException e
-         (throw (ex-info
-                  (str "grep is_regex pattern does not compile: "
-                       needle
-                       " — "
-                       (.getDescription e)
-                       " at index "
-                       (.getIndex e)
-                       ". Fix the pattern, or drop is_regex to search it literally.")
-                  {:type :ext.foundation.editing/invalid-rg-spec :field :query :pattern needle})))))
+       (catch java.util.regex.PatternSyntaxException e (throw (invalid-regex-error needle e)))))
+
+(defn- regex-syntax-error
+  "The `PatternSyntaxException` `pattern` raises, or nil when it compiles. The
+   smart-case flag never changes whether a pattern compiles, so none is passed."
+  ^java.util.regex.PatternSyntaxException [^String pattern]
+  (try (java.util.regex.Pattern/compile pattern)
+       nil
+       (catch java.util.regex.PatternSyntaxException e e)))
+
+(defn- regex-open-structure
+  "Where `pattern`'s unbalanced structure sits, read the way `java.util.regex`
+   reads it: `:opens` holds every `(` never closed, `:closes` every `)` with no
+   group to close and `:class-start` the `[` of a character class that never
+   ends. Escapes, `\\Q…\\E` quoting and nested classes are skipped, and a `]`
+   right after `[` or `[^` is a literal, as Java reads it."
+  [^String pattern]
+  (let [n (long (.length pattern))]
+    (loop [i 0
+           opens []
+           closes []
+           class-start nil
+           depth 0]
+
+      (if (>= i n)
+        {:opens opens :closes closes :class-start (when (pos? depth) class-start)}
+        (let [c (.charAt pattern i)]
+          (cond (and (= \\ c) (< (inc i) n) (= \Q (.charAt pattern (inc i))))
+                (let [end (long (.indexOf pattern "\\E" (int (+ i 2))))]
+                  (recur (if (neg? end) n (+ end 2)) opens closes class-start depth))
+                (= \\ c) (recur (+ i 2) opens closes class-start depth)
+                (pos? depth) (recur (inc i)
+                                    opens
+                                    closes
+                                    class-start
+                                    (if (= \[ c) (inc depth) (if (= \] c) (dec depth) depth)))
+                (= \[ c) (let [j (inc i)
+                               j (if (and (< j n) (= \^ (.charAt pattern j))) (inc j) j)
+                               j (if (and (< j n) (= \] (.charAt pattern j))) (inc j) j)]
+
+                           (recur j opens closes i 1))
+                (= \( c) (recur (inc i) (conj opens i) closes class-start depth)
+                (= \) c) (if (seq opens)
+                           (recur (inc i) (pop opens) closes class-start depth)
+                           (recur (inc i) opens (conj closes i) class-start depth))
+                :else (recur (inc i) opens closes class-start depth)))))))
+
+(defn- escaped-at?
+  "True when the character at `i` in `pattern` follows an ODD run of backslashes."
+  [^String pattern i]
+  (loop [j
+         (dec (long i))
+
+         run
+         0]
+
+    (if (and (>= j 0) (= \\ (.charAt pattern j))) (recur (dec j) (inc run)) (odd? run))))
+
+(defn- regex-repair-positions
+  "The indices in `pattern` whose escape fixes its syntax error `e` when that error
+   is a STRAY LITERAL, else nil."
+  [^String pattern ^java.util.regex.PatternSyntaxException e]
+  (let [desc
+        (str (.getDescription e))
+
+        idx
+        (long (.getIndex e))
+
+        n
+        (long (.length pattern))]
+
+    (cond (= "Unclosed group" desc) (some-> (peek (:opens (regex-open-structure pattern)))
+                                            vector)
+          (str/starts-with? desc "Unmatched closing") (some-> (first (:closes (regex-open-structure
+                                                                                pattern)))
+                                                              vector)
+          (= "Unclosed character class" desc) (some-> (:class-start (regex-open-structure pattern))
+                                                      vector)
+          ;; A `{` that opens no valid repetition. The `$` of a `${…}` template goes
+          ;; with it: escaped alone, the `{` leaves `$` demanding an end of line.
+          (contains? #{"Illegal repetition" "Unclosed counted closure"} desc)
+          (let [k (long (.lastIndexOf pattern "{" (int (min (max idx 0) (dec n)))))]
+            (when-not (or (neg? k) (escaped-at? pattern k))
+              (if (and (pos? k)
+                       (= \$ (.charAt pattern (int (dec k))))
+                       (not (escaped-at? pattern (dec k))))
+                [(dec k) k]
+                [k])))
+          (str/starts-with? desc "Dangling meta character")
+          (when (and (< -1 idx n) (contains? #{\* \+ \?} (.charAt pattern (int idx)))) [idx])
+          (= "Unescaped trailing backslash" desc) [(dec n)])))
+
+(defn- repair-regex-needle
+  "nil when the `is_regex` `needle` compiles as written. A needle that fails only
+   on STRAY LITERALS — an unbalanced `(` or `)`, an unclosed `[`, a `{` that opens
+   no repetition (with the `$` of a `${`), a quantifier with nothing to repeat or
+   a trailing `\\` — has each one escaped, one syntax error at a time, and answers
+   `{:needle :pattern :escaped [char …] :error description}`: models send code
+   text such as `(defn foo`, `^});` or `${id}` as a pattern, and the escape is
+   what they meant. Any other syntax error REFUSES the needle with its own error."
+  [^String needle]
+  (when-some [^java.util.regex.PatternSyntaxException error (regex-syntax-error needle)]
+    (loop [^String pattern needle
+           escaped []
+           e error]
+
+      (let [positions (when (<= (count escaped) (count needle)) (regex-repair-positions pattern e))]
+        (when-not positions (throw (invalid-regex-error needle error)))
+        (let [^String repaired (reduce (fn [^String p i]
+                                         (str (subs p 0 i) "\\" (subs p i)))
+                                       pattern
+                                       (sort > positions))
+              escaped (into escaped (map #(str (.charAt pattern (int %)))) (sort positions))]
+
+          (if-some [e (regex-syntax-error repaired)]
+            (recur repaired escaped e)
+            {:needle needle :pattern repaired :escaped escaped :error (.getDescription error)}))))))
 
 (defn- coerce-rg-spec
   "Coerce the public rg spec map into the search engine's shape.
@@ -2498,7 +2730,9 @@
    `make-line-matcher`) — unless `is_regex` is set, which makes every term a
    REGULAR EXPRESSION instead (still OR, still smart-case) and turns the
    comma-splitting and trimming below OFF: `a{1,3}` is ONE pattern, not two
-   terms, and a trailing space is part of the pattern.
+   terms, and a trailing space is part of the pattern. A pattern that fails to
+   compile only on a STRAY LITERAL is repaired (`repair-regex-needle`) and listed
+   under `:regex-repairs`; any other broken pattern is refused.
    `any` is accepted as a back-compat alias for `query`
    (and a stray `all` is treated as OR too — the same-line AND mode was dropped;
    filter the hits in Python for the rare \"both terms\" case).
@@ -2568,10 +2802,12 @@
           (when (empty? ns)
             (throw (ex-info "rg query has no non-blank terms."
                             {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
-          ;; REFUSE a broken pattern here, where the caller still gets a reason —
-          ;; not deep in the scan where it would surface as an empty result.
-          (when is_regex (run! needle-pattern ns))
           ns)
+
+        ;; REPAIR or REFUSE a broken pattern here, where the caller still gets a
+        ;; reason — not deep in the scan where it would surface as an empty result.
+        regex-repairs
+        (if is_regex (into [] (keep repair-regex-needle) (distinct needles)) [])
 
         raw-paths
         (get spec "paths" ["."])
@@ -2629,7 +2865,9 @@
         context
         (if is_files_only 0 (or (get spec "context") default-grep-context-lines))]
 
-    {:needles needles
+    {:needles (let [repaired (into {} (map (juxt :needle :pattern)) regex-repairs)]
+                (mapv #(get repaired % %) needles))
+     :regex-repairs regex-repairs
      :paths paths
      :include (or include [])
      :exclude (or exclude [])
@@ -3988,7 +4226,8 @@
        "same map as kwargs; never a positional query. `context: N` includes N anchored lines on each side "
        "(default 3); set it to 0 only for pure location/count sweeps. "
        "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
-       "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
+       "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched; a stray "
+       "literal such as the `(` of `(defn foo` is escaped, and `hint` shows the pattern that ran). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`limit` (or `max_results` / `max_count` / `max_matches`) caps total results per page, not per file: "

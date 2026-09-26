@@ -245,8 +245,9 @@
   grep-is-regex-test
   ;; `is_regex` makes CONTENT matching a REGULAR EXPRESSION instead of a literal
   ;; smart-case substring: every term is a pattern, a list is still OR, the
-  ;; comma-splitting and trimming are off, the fuzzy NAME axis is off, and a
-  ;; pattern that cannot RUN is refused rather than answered as zero hits.
+  ;; comma-splitting and trimming are off, the fuzzy NAME axis is off, a pattern
+  ;; broken only by a stray literal is repaired, and one that cannot RUN is
+  ;; refused rather than answered as zero hits.
   (let [coerce-rg
         (private-fn "coerce-rg-spec")
 
@@ -259,6 +260,9 @@
         rg
         (private-fn "rg-search")
 
+        repair
+        (private-fn "repair-regex-needle")
+
         grep
         (grep-data-fn)]
 
@@ -269,14 +273,41 @@
         ;; that cuts `a{1,3}` in half and changes what it matches.
         (expect (= ["a{1,3}"] (:needles (coerce-rg {"query" "a{1,3}" "is_regex" true}))))
         (expect (= ["a{1" "3}"] (:needles (coerce-rg {"query" "a{1,3}"})))))
-    (it "a pattern that does not COMPILE is refused, never answered as 0 hits"
-        (let [err (try (coerce-rg {"query" "foo(" "is_regex" true})
-                       nil
-                       (catch clojure.lang.ExceptionInfo e e))]
-          (expect (some? err))
-          (expect (string/includes? (ex-message err) "does not compile"))
-          ;; the same broken pattern is a perfectly good LITERAL search
-          (expect (= ["foo("] (:needles (coerce-rg {"query" "foo("}))))))
+    (it "a pattern broken only by a STRAY LITERAL is repaired, not refused"
+        (let [spec (coerce-rg {"query" "foo(" "is_regex" true})]
+          (expect (= ["foo\\("] (:needles spec)))
+          (expect (= [{:needle "foo(" :pattern "foo\\(" :escaped ["("] :error "Unclosed group"}]
+                     (:regex-repairs spec))))
+        ;; a pattern that compiles is never touched
+        (expect (= [] (:regex-repairs (coerce-rg {"query" "defn-? +grep" "is_regex" true}))))
+        ;; the same text is a perfectly good LITERAL search and needs no repair
+        (expect (= ["foo("] (:needles (coerce-rg {"query" "foo("}))))
+        (expect (= [] (:regex-repairs (coerce-rg {"query" "foo("})))))
+    (it "a pattern that does not COMPILE for any other reason is refused, never answered as 0 hits"
+        (doseq [pattern ["a{3,1}" "\\p{Bogus}" "(?<name" "\\y"]]
+          (let [err (try (coerce-rg {"query" pattern "is_regex" true})
+                         nil
+                         (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err))
+            (expect (string/includes? (ex-message err) "does not compile"))
+            (expect (= pattern (:pattern (ex-data err)))))))
+    (it "repairs the patterns models really send into the code they meant"
+        ;; Collected from grep calls in real sessions that failed to compile.
+        (doseq [[needle pattern line]
+                [["(defn-? [a-z-]*(trailer|tool-message)[a-z-]*"
+                  "\\(defn-? [a-z-]*(trailer|tool-message)[a-z-]*" "(defn- tool-message-text [m]"]
+                 ["(is (thrown" "\\(is \\(thrown" "(is (thrown? Exception (f)))"]
+                 ["^});" "^}\\);" "});"] ["tui)" "tui\\)" "(:require [vis.tui)"]
+                 ["/v1/sessions/${id}" "/v1/sessions/\\$\\{id}" "fetch(`/v1/sessions/${id}`)"]
+                 ["#{\"def\"" "#\\{\"def\"" "(#{\"def\" \"defn\"} head)"]
+                 ["*workspace-root*" "\\*workspace-root*" "(binding [*workspace-root* dir]"]
+                 ["[:session" "\\[:session" "(get-in state [:session :id])"]
+                 ["\\Q(\\E(x" "\\Q(\\E\\(x" "((x"] ["path\\" "path\\\\" "C:\\path\\"]]]
+          (let [repaired (repair needle)]
+            (expect (= pattern (:pattern repaired)))
+            (expect (some? (re-find (re-pattern pattern) line)))))
+        (expect (nil? (repair "[]a]")))
+        (expect (nil? (repair "(defn-? +grep)"))))
     (it "accepts is_regex and retains it in structured unknown-key diagnostics"
         (expect (true? (:is_regex (coerce-find [{"query" "x" "is_regex" true}]))))
         (expect (false? (:is_regex (coerce-find [{"query" "x"}]))))
@@ -356,7 +387,7 @@
 
           (expect (zero? (long (get out "hit_count"))))
           (expect (string/includes? (get out "hint") "the pattern compiled and ran"))))
-    (it "a regex-looking LITERAL query is told which flag would run it"
+    (it "a regex-looking LITERAL query that misses as a regex too says both were tried"
         ;; The old hint only said regex syntax was not interpreted, which left
         ;; the caller re-running the same pattern with cosmetic edits.
         (let [d
@@ -369,7 +400,72 @@
               (:result (grep {"query" "ZZABSENT.*ZZ" "paths" [d]}))]
 
           (expect (zero? (long (get out "hit_count"))))
-          (expect (string/includes? (get out "hint") "is_regex: True"))))))
+          (expect (string/includes? (get out "hint") "is_regex: True` either"))))
+    (it "a regex broken by a stray literal runs repaired, and the hint shows the fix"
+        (let [d
+              (temp-dir-path "grepregexrepair")
+
+              _
+              (write-temp! "grepregexrepair/a.clj"
+                           "(defn- tool-message-text [m] m)\n(defn other [] 1)\n")
+
+              out
+              (:result (grep {"query" "(defn-? [a-z-]*(trailer|tool-message)[a-z-]*"
+                              "paths" [d]
+                              "is_regex" true}))]
+
+          (expect (= 1 (get out "hit_count")))
+          (expect (string/includes? (get out "hint") "does not compile (Unclosed group)"))
+          (expect (string/includes? (get out "hint")
+                                    "\\(defn-? [a-z-]*(trailer|tool-message)[a-z-]*"))))
+    (it "a regex-looking LITERAL query that misses is rescued as a regex"
+        (let [d
+              (temp-dir-path "grepregexrescue")
+
+              _
+              (write-temp! "grepregexrescue/a.clj" "(ns demo)\n(defn needle [] :ok)\n")
+
+              out
+              (:result (grep {"query" "^(defn needle" "paths" [d]}))]
+
+          (expect (= 1 (get out "hit_count")))
+          (expect (string/includes? (get out "hint") "ran it as a regular expression"))
+          ;; the rescue needed the same repair, and says so
+          (expect (string/includes? (get out "hint") "^\\(defn needle"))
+          ;; a later page belongs to the LITERAL search: it is never rescued
+          (expect (zero? (long (get (:result (grep
+                                               {"query" "^(defn needle" "paths" [d] "offset" 1}))
+                                    "hit_count"))))))
+    (it "a pattern that matches EMPTY text is never a rescue"
+        (let [d
+              (temp-dir-path "grepregexempty")
+
+              _
+              (write-temp! "grepregexempty/a.txt" "alpha\nbeta\n")
+
+              out
+              (:result (grep {"query" "ZZABSENT|" "paths" [d]}))]
+
+          (expect (zero? (long (get out "hit_count"))))
+          (expect (string/includes? (get out "hint") "is_regex: True"))
+          (expect (not (string/includes? (get out "hint") "either")))))
+    (it "a zero-hit regex names a doubled backslash and a newline"
+        (let [d
+              (temp-dir-path "grepregexslash")
+
+              _
+              (write-temp! "grepregexslash/a.clj" "(defn x [] 1)\n")
+
+              slash
+              (:result (grep {"query" "\\\\(defn x" "paths" [d] "is_regex" true}))
+
+              newline
+              (:result (grep {"query" "defn x\\n" "paths" [d] "is_regex" true}))]
+
+          (expect (zero? (long (get slash "hit_count"))))
+          (expect (string/includes? (get slash "hint") "doubled backslash"))
+          (expect (zero? (long (get newline "hit_count"))))
+          (expect (string/includes? (get newline "hint") "ONE line at a time"))))))
 
 (defdescribe
   cwd-safety-test
@@ -3348,7 +3444,7 @@
           (expect (nil? (get r "hits_truncated_by")))
           (expect (true? (get r "total_file_count_is_exact")))
           (expect (= 1 (get r "total_file_count")))))
-    (it "a regex-looking query that matches no CONTENT says the search is literal"
+    (it "a regex-looking query that matches no LITERAL content is rescued as a regex"
         (let [_
               (write-temp! "grep-regex/needle.clj" "(defn needle [] :ok)\n")
 
@@ -3358,8 +3454,8 @@
               result
               (:result (find-files {"query" "defn-? +needle" "paths" [dir]}))]
 
-          (expect (= 0 (get result "hit_count")))
-          (expect (string/includes? (get result "hint") "LITERAL"))))
+          (expect (= 1 (get result "hit_count")))
+          (expect (string/includes? (get result "hint") "as LITERAL text"))))
     (it "a plain literal query that matches nothing keeps the ordinary hint"
         (let [_
               (write-temp! "grep-plain/needle.clj" "(defn needle [] :ok)\n")
@@ -5154,8 +5250,17 @@
               out (:result (grep {"query" "(grepx) \\1" "paths" [d] "is_regex" true}))]
 
           (expect (= 1 (get out "hit_count")))))
+    (it "a pattern repaired from a stray literal gives a directory the same hits as the file"
+        (let [rel (write-temp! "grepdegradec/a.txt" "function f() {\n  g();\n});\n")
+              d (temp-dir-path "grepdegradec")
+              dir-out (:result (grep {"query" "^});" "paths" [d] "is_regex" true}))
+              file-out (:result (grep {"query" "^});" "paths" [rel] "is_regex" true}))]
+
+          (expect (= 1 (get dir-out "hit_count")))
+          (expect (= 1 (get file-out "hit_count")))))
     (it "a pattern that does not COMPILE is still refused, never widened"
-        (let [caught (try (grep {"query" "(defn[- ]?[a-z-]*root" "paths" ["src"] "is_regex" true})
+        (let [caught (try (grep
+                            {"query" "defn[- ]?[a-z-]*root{3,1}" "paths" ["src"] "is_regex" true})
                           nil
                           (catch clojure.lang.ExceptionInfo e (ex-message e)))]
           (expect (string/includes? (str caught) "does not compile"))))))
