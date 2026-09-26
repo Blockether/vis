@@ -396,10 +396,7 @@ export function Pager({
       onClick={() => onPage(target)}
       disabled={disabled || target < 1 || target > pageCount}
     >
-      <ChevronIcon
-        back={isBack}
-        className={`mx-auto size-3.5 ${isBack ? 'translate-x-1' : '-translate-x-1'} mouse:translate-x-0`}
-      />
+      <ChevronIcon back={isBack} className="mx-auto size-3.5" />
     </IconButton>
   );
   return (

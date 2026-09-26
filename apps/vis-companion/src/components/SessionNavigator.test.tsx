@@ -228,6 +228,18 @@ describe('project pages', () => {
     }
   });
 
+  // Regression, screenshot: both page arrows must sit in the middle of their own tap targets.
+  it('centers pager chevrons inside both step buttons on touch and mouse', () => {
+    render(<Pager page={1} pageCount={123} label="vis sessions" onPage={vi.fn()} />);
+    for (const name of ['Previous page', 'Next page']) {
+      const icon = screen.getByRole('button', { name }).querySelector('svg');
+      expect(icon).toHaveClass('mx-auto', 'size-3.5');
+      for (const shift of ['translate-x-1', '-translate-x-1', 'mouse:translate-x-0']) {
+        expect(icon).not.toHaveClass(shift);
+      }
+    }
+  });
+
   it('keeps the same step controls while traversing a long history', () => {
     const onPage = vi.fn();
     const { rerender } = render(
