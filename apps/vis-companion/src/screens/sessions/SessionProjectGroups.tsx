@@ -481,6 +481,8 @@ export type SessionRowsContext = {
    * memoised, and a fresh object per paint re-renders every row of a long list.
    */
   openRow: string | null;
+  /** Answers visited here, before a project's own paged row catches up. */
+  readFloors?: ReadonlyMap<string, number>;
 };
 
 /** The reader agreement shared by every project on one machine. */
@@ -1534,6 +1536,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           commands={soleGroup ? soleGroupCommands : rowCommands}
           deletion={deletion}
           isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
+          seenAnswers={context.readFloors?.get(sessionRowKey(conn, session.id))}
           isSelected={selectedSet.has(session.id)}
           onSelectionClick={(event) => onSelectionClick(session.id, event)}
           dragIds={selectedSet.has(session.id) ? selectedIds : undefined}

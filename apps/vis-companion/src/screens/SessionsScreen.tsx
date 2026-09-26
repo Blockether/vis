@@ -28,7 +28,7 @@ import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { onWake } from '../lib/wake';
-import { unreadTurnCount } from '../lib/unread';
+import { answeredTurnCount, unreadAfterVisit, unreadTurnCount } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { notifyDesktopFleet } from '../lib/desktop-notify';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
@@ -340,6 +340,9 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
+  // A visit is local truth before the transcript's gateway read mark reaches this list.
+  const [readFloors, setReadFloors] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const readFloorsRef = useRef(readFloors);
   // Exactly one paired machine is always active. The saved primary owns the first
   // scope; if it changes while this mounted screen is behind Settings, it becomes
   // the scope on return. Pressing the selected tab cannot turn it off.
@@ -472,6 +475,57 @@ export function SessionsScreen({
     [],
   );
 
+  // Carry a visit through the list's slower reads, including an in-flight window.
+  const noteOpenedRead = useCallback(
+    (conn: GatewayConn, session: Session, seen = answeredTurnCount(session)) => {
+      const rowKey = sessionRowKey(conn, session.id);
+      if ((readFloorsRef.current.get(rowKey) ?? -1) >= seen) return;
+      const next = new Map(readFloorsRef.current).set(rowKey, seen);
+      readFloorsRef.current = next;
+      setReadFloors(next);
+      patchMachine(machineKey(conn), (machine) => {
+        if (!machine.sessions) return machine;
+        const previous = machine.sessions;
+        const rows = machine.sessions.map((row) => {
+          if (row.id !== session.id) return row;
+          const unread = unreadAfterVisit(row, seen);
+          return unread < unreadTurnCount(row)
+            ? { ...row, is_unread: unread > 0, unread_answers: unread }
+            : row;
+        });
+        return rows.some((row, index) => row !== previous[index])
+          ? { ...machine, sessions: rows }
+          : machine;
+      });
+    },
+    [patchMachine],
+  );
+  // Row taps know their page's exact row; deep links use the best cached copy.
+  useEffect(() => {
+    if (!openSession) return;
+    const { conn, sid } = openSession;
+    const row =
+      machinesRef.current.find((machine) => machineKey(machine.conn) === machineKey(conn))
+        ?.sessions?.find((session) => session.id === sid) ?? clientFor(conn).cachedSession(sid);
+    if (row) noteOpenedRead(conn, row);
+  }, [openSession?.conn.url, openSession?.sid, noteOpenedRead]);
+
+  // Closing the pane can follow another answer. Use the transcript's latest cached
+  // read mark before the list is painted again; do not hide an unseen newer answer.
+  const previouslyOpen = useRef(openSession);
+  useLayoutEffect(() => {
+    const prior = previouslyOpen.current;
+    previouslyOpen.current = openSession;
+    if (!prior) return;
+    if (
+      openSession &&
+      sessionRowKey(prior.conn, prior.sid) === sessionRowKey(openSession.conn, openSession.sid)
+    ) return;
+    const cached = clientFor(prior.conn).cachedSession(prior.sid);
+    if (cached)
+      noteOpenedRead(prior.conn, cached, answeredTurnCount(cached) - unreadTurnCount(cached));
+  }, [openSession, noteOpenedRead]);
+
   // The order the list is HELD in is renewed by reader actions that legitimately
   // move a row, and this ref is how a callback declared above the hook reaches it.
   const adoptRef = useRef<() => void>(() => {});
@@ -542,7 +596,13 @@ export function SessionsScreen({
               const previous = held?.sessions?.find((session) => session.id === row.id);
               return previous ? [previous] : [];
             }
-            return [update ? { ...row, ...update } : row];
+            const received = update ? { ...row, ...update } : row;
+            const seen = readFloorsRef.current.get(sessionRowKey(conn, row.id));
+            const unread = unreadAfterVisit(received, seen);
+            const nextRow = unread < unreadTurnCount(received)
+              ? { ...received, is_unread: unread > 0, unread_answers: unread }
+              : received;
+            return [nextRow];
           });
           const merged = reconcileSessions(held?.sessions ?? null, current);
           // The stable project totals arrive BESIDE the head window. Adopt both in one
@@ -1367,12 +1427,13 @@ export function SessionsScreen({
   // itself. A STRING in the row context rather than the connection it came from:
   // that context is memoised, and an object would re-render every row per paint.
   const openRow = openSession ? sessionRowKey(openSession.conn, openSession.sid) : null;
-  // A session standing OPEN beside the list is BEING READ, so it stops being news
-  // at once: its own row drops NEW, and so does every count painted over it.
+  // A visit remains read after the pane closes, even if a paged row or a fleet read
+  // still carries the old NEW. Later answers are counted above that visit's floor.
   const isRowUnread = useCallback(
     (conn: GatewayConn, session: Session) =>
-      unreadTurnCount(session) > 0 && sessionRowKey(conn, session.id) !== openRow,
-    [openRow],
+      sessionRowKey(conn, session.id) !== openRow &&
+      unreadAfterVisit(session, readFloors.get(sessionRowKey(conn, session.id))) > 0,
+    [openRow, readFloors],
   );
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
@@ -1568,13 +1629,14 @@ export function SessionsScreen({
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       open: onOpen,
+      read: noteOpenedRead,
       rename: renameSession,
       fork: forkSession,
       archive: archiveSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, renameSession, forkSession, archiveSession, startDelete, toggleStar],
+    [onOpen, noteOpenedRead, renameSession, forkSession, archiveSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({
@@ -1597,8 +1659,9 @@ export function SessionsScreen({
       needle: searchNeedle,
       actions: rowActions,
       openRow,
+      readFloors,
     }),
-    [draftMessages, matches, searchNeedle, rowActions, openRow],
+    [draftMessages, matches, searchNeedle, rowActions, openRow, readFloors],
   );
   const projectCreation = useMemo<ProjectCreation>(
     () => ({ state: creating, start: createSession }),

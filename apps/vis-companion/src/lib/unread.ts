@@ -47,3 +47,11 @@ export function unreadTurnCount(session: Session): number {
   const unread = Number(session.unread_answers ?? 0);
   return Number.isFinite(unread) && unread > 0 ? unread : 0;
 }
+
+/** Keep a visit visible locally while the gateway's read mark reaches the list. */
+export function unreadAfterVisit(session: Session, seenAnswers?: number): number {
+  const unread = unreadTurnCount(session);
+  return seenAnswers === undefined
+    ? unread
+    : Math.min(unread, Math.max(0, answeredTurnCount(session) - seenAnswers));
+}

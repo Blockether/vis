@@ -36,7 +36,7 @@ import { GatewayClient, GatewayError, type SessionMatch } from '../lib/gateway';
 import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
-import { unreadTurnCount } from '../lib/unread';
+import { unreadAfterVisit } from '../lib/unread';
 import { isFavorite } from '../lib/favorites';
 import { groupSwatch } from '../lib/group-colors';
 import {
@@ -98,6 +98,8 @@ export type SessionRowCommands = {
   /** File this session through inline group choices in its project list, when available. */
   moveToGroup?: (session: Session, conn: GatewayConn) => void;
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
+  /** Remember the answers visible on this row before opening its transcript. */
+  read?: (conn: GatewayConn, session: Session) => void;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
@@ -268,6 +270,7 @@ export const SessionRow = memo(function SessionRow({
   commands,
   deletion,
   isOpen = false,
+  seenAnswers,
   isSelected = false,
   onSelectionClick,
   dragIds,
@@ -294,6 +297,8 @@ export const SessionRow = memo(function SessionRow({
    * group's colour and would read as two marks on one filed row.
    */
   isOpen?: boolean;
+  /** Answers this device has already visited while the list awaits a read mark. */
+  seenAnswers?: number;
   /** Only project lists support Shift-click selection; other rows still open normally. */
   isSelected?: boolean;
   onSelectionClick?: (event: MouseEvent<HTMLButtonElement>) => boolean;
@@ -321,16 +326,10 @@ export const SessionRow = memo(function SessionRow({
     'Untitled session';
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
-  // Turns that finished while this session was closed: the one thing a relative
-  // timestamp cannot announce. The GATEWAY counts them and says so on the row, so
-  // every surface of that machine paints the same badge — and the poll that brings
-  // the row back read is what retires it here.
-  //
-  // The session standing open in the pane beside the list is BEING READ: its row
-  // drops NEW the moment it opens. The transcript reports the read mark through its
-  // OWN gateway client, which this list only hears about on its next poll — and
-  // until then the badge sat on the very conversation the reader was looking at.
-  const unread = isOpen ? 0 : unreadTurnCount(session);
+  // Opening a session marks its answers read on the gateway. Its list row and its
+  // project page can still hold the old NEW until their next read; the visit counts
+  // locally until then, without hiding any answer that arrived afterwards.
+  const unread = isOpen ? 0 : unreadAfterVisit(session, seenAnswers);
   // STOPPED: the newest turn failed, was cancelled, or was swept after a
   // gateway died mid-answer. The gateway owns each persisted verdict. Gated on the
   // unread mark so the flag is BOUNDED: it reports something you have not
@@ -612,7 +611,10 @@ export const SessionRow = memo(function SessionRow({
               isCurrent={isOpen}
               isSelected={isSelected}
               sessionId={session.id}
-              onOpen={() => void commands.open(conn, session.id)}
+              onOpen={() => {
+                commands.read?.(conn, session);
+                void commands.open(conn, session.id);
+              }}
               onSelectionClick={onSelectionClick}
             >
               {/* Narrow lists stack metadata under the title. The container, not the
