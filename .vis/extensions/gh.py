@@ -28,10 +28,12 @@ of the same placeholder into the view's record on every tick. The raw log replac
 moment GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
 retain the last good picture and retry visibly in the run status; three consecutive failures settle
 the view as failed instead of turning an outage or deleted run into an infinite watch. A missing job
-log is never cached as final. When a running watch is overtaken by a newer commit for the same
-workflow, branch and event, the obsolete watch closes and links to its replacement instead of
-polling work that no longer matters. Pull-request checks use this same view through the one public
-watcher; a check set with no checks settles neutral rather than waiting forever.
+log is never cached as final. When newer work for the same workflow, branch and event replaces a
+run — the newer run starts, or the watched run is cancelled — the obsolete view closes with a link
+to its replacement and the watch continues in a new view of that run, so one watch answers for
+the work that still matters. A newer run queued behind the watched one does not take over, and a
+skipped run never does. Pull-request checks use this same view through the one public watcher; a
+check set with no checks settles neutral rather than waiting forever.
 
 The model's surface is one `gh` object — `login()`, `runs()`, `watch()` — and every answer is a
 typed frozen outcome (`Account`, `RunSummary`, `WatchOutcome`): jobs, steps and failed-log tails
@@ -47,7 +49,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import blockether.vis.extension as vis
 
@@ -65,6 +67,10 @@ FAST_TICK_S = 3.0
 SLOW_TICK_S = 8.0
 BACKOFF_AFTER_S = 300.0
 MAX_CONSECUTIVE_POLL_FAILURES = 3
+
+# The latest runs of the watched workflow, branch and event read when looking for the run that
+# replaced it: skipped runs share that list and must not hide the one doing the work.
+NEWER_RUNS_READ = 10
 
 # The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
 # is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
@@ -172,14 +178,18 @@ class FailedLog:
 class WatchOutcome:
     """What one finished watch answers: the run, every job, the damage.
 
-    `ending` is one of `completed`; `superseded` (a newer run of the same
-    workflow/branch/event took over — `replacement_run_id`, `replacement_url` and
-    `replacement_title` name it); `poll_failure` (gh stopped answering; `error`
-    carries the first line); and `interrupted` (the person watching stopped it;
-    `is_stopped_by_human` says who, `human_note` carries their words when they
-    left any). `status`/`conclusion` are the LAST poll's, so an interrupted watch
-    describes the run as it stood when the view closed. Pull-request checks
-    answer the same shape with `workflow` = "checks" and no numeric `run_id`.
+    `ending` is one of `completed`; `job_failure` (a job failed while others still
+    run, so `status` stays in progress); `superseded` (a newer run of the same
+    workflow/branch/event took over but could not be opened — `error` says why, and
+    `replacement_run_id`, `replacement_url` and `replacement_title` name it);
+    `poll_failure` (gh stopped answering; `error` carries the first line); and
+    `interrupted` (the person watching stopped it; `is_stopped_by_human` says who,
+    `human_note` carries their words when they left any). A watch follows each newer
+    run that replaces the one it watches, so the outcome describes the last run it
+    reached and `superseded_run_ids` lists the runs it left, oldest first.
+    `status`/`conclusion` are the LAST poll's, so an interrupted watch describes the
+    run as it stood when the view closed. Pull-request checks answer the same shape
+    with `workflow` = "checks" and no numeric `run_id`.
     """
 
     run_id: int | None
@@ -197,6 +207,7 @@ class WatchOutcome:
     replacement_run_id: int | None = None
     replacement_title: str = ""
     replacement_url: str = ""
+    superseded_run_ids: tuple[int, ...] = ()
 
 
 # -- the mapping: a `gh run view` payload, read as the eight answers --------------------
@@ -1086,8 +1097,29 @@ def run_list(repo=None, limit=10):
     )
 
 
+def _is_cancelled(payload):
+    """Whether this run stopped because it was cancelled rather than because its work failed."""
+    jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
+    broken = [
+        job
+        for job in jobs
+        if tone_of(job.get("status"), job.get("conclusion")) == "error"
+    ]
+    if any(str(job.get("conclusion") or "") != "cancelled" for job in broken):
+        return False
+    return bool(broken) or str(payload.get("conclusion") or "") == "cancelled"
+
+
 def newer_run(payload, repo=None):
-    """A later run of this workflow/branch/event, or None while this run is still newest."""
+    """The later run of this workflow/branch/event that replaced this run, or None.
+
+    Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: any later run ended the watch,
+    even one still queued behind the watched run, so the verdict of the run that was building
+    never arrived; a run already cancelled for newer work was reported as a plain cancellation.
+    A later run takes over once it is doing work: started, or finished with a verdict of its
+    own. One still waiting takes over only from a run being cancelled. Skipped and cancelled
+    runs never take over.
+    """
     workflow = str(payload.get("workflowName") or "")
     branch = str(payload.get("headBranch") or "")
     event = str(payload.get("event") or "")
@@ -1100,7 +1132,8 @@ def newer_run(payload, repo=None):
     if event:
         flags += f" --event {shlex.quote(event)}"
     exit_code, text = _capture(
-        f"gh run list{_repo_flag(repo)}{flags} -L 1 --json databaseId,url,displayTitle"
+        f"gh run list{_repo_flag(repo)}{flags} -L {NEWER_RUNS_READ}"
+        " --json databaseId,url,displayTitle,status,conclusion"
     )
     if exit_code != 0:
         return None
@@ -1108,13 +1141,19 @@ def newer_run(payload, repo=None):
         rows = json.loads(text)
     except json.JSONDecodeError:
         return None
-    latest = rows[0] if isinstance(rows, list) and rows else None
-    if not isinstance(latest, dict):
-        return None
-    try:
-        return latest if int(latest.get("databaseId") or 0) > int(current) else None
-    except (TypeError, ValueError):
-        return None
+    cancelled = _is_cancelled(payload)
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            is_later = int(row.get("databaseId") or 0) > int(current)
+        except (TypeError, ValueError):
+            continue
+        if not is_later or str(row.get("conclusion") or "") in ("skipped", "cancelled"):
+            continue
+        if cancelled or str(row.get("status") or "") in ("in_progress", "completed"):
+            return row
+    return None
 
 
 def log_window(text, lines=LOG_TAIL_LINES):
@@ -1195,6 +1234,23 @@ def superseded_shape(shape):
         else stat
         for stat in shape.get("score") or []
     ]
+    return settled
+
+
+def _yield_to(view, shape, newer, log_of, log_cache):
+    """Settle this view as handed over to the `newer` run; answers the settled shape."""
+    settled = superseded_shape(shape)
+    with view.batch():
+        push_changes(view, shape, settled)
+        view["run"].set(
+            f"Superseded by newer run {newer.get('databaseId') or '?'}",
+            tone="idle",
+            detail="Newer work for this workflow and branch replaced this run",
+        )
+        _show_selection_logs(view, settled, log_of, log_cache, FAILED_TAIL_LINES)
+        target = str(newer.get("url") or "")
+        if target:
+            view["links"].add("newer-run", "Newer run", target)
     return settled
 
 
@@ -1557,24 +1613,9 @@ def watch(
                 except vis.Interrupted:
                     break
                 if superseded_by:
-                    superseded = superseded_by()
+                    superseded = superseded_by(payload)
                     if superseded:
-                        run_id = str(superseded.get("databaseId") or "?")
-                        settled = superseded_shape(shape)
-                        with view.batch():
-                            push_changes(view, shape, settled)
-                            shape = settled
-                            view["run"].set(
-                                f"Superseded by newer run {run_id}",
-                                tone="idle",
-                                detail="Stopped watching obsolete work after a newer commit started",
-                            )
-                            _show_selection_logs(
-                                view, shape, log_of, log_cache, FAILED_TAIL_LINES
-                            )
-                            target = str(superseded.get("url") or "")
-                            if target:
-                                view["links"].add("newer-run", "Newer run", target)
+                        shape = _yield_to(view, shape, superseded, log_of, log_cache)
                         break
                 try:
                     payload = poll()
@@ -1616,6 +1657,19 @@ def watch(
                 )
                 shape = fresh
                 published = payload
+            # Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: a run cancelled for
+            # newer work ended the watch as a failed job or a cancelled run, and the model went
+            # looking for the newer run by hand. A cancelled run hands over even to a queued one.
+            if (
+                superseded_by
+                and not superseded
+                and not terminal_failure
+                and not view.is_interrupted
+                and _is_cancelled(published)
+            ):
+                superseded = superseded_by(published)
+                if superseded:
+                    shape = _yield_to(view, shape, superseded, log_of, log_cache)
             job_failure = (
                 stop_on_failure
                 and not shape["is_over"]
@@ -1630,7 +1684,7 @@ def watch(
                     tone="error",
                     detail=f"{shape['headline']} · other jobs may still be running",
                 )
-            if shape["is_over"]:
+            if shape["is_over"] and not superseded:
                 _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
                 selection_snapshots = _archive_selection_snapshots(
                     view, published, log_of, log_cache
@@ -1655,8 +1709,10 @@ def watch(
         else:
             view.close(selection_snapshots=selection_snapshots)
         # The view is closed, so the person watching already has their stop. What the MODEL
-        # is owed is the reason the run broke, and a watch that ended early never asked.
-        _harvest_failed_logs(published, log_of, log_cache)
+        # is owed is the reason the run broke, and a watch that ended early never asked. A run
+        # that newer work replaced owes no such reason: the newer run answers instead.
+        if not superseded:
+            _harvest_failed_logs(published, log_of, log_cache)
         return _watch_outcome(
             published, log_cache, superseded, terminal_failure, view, job_failure
         )
@@ -1676,7 +1732,28 @@ def _watch_run(run=None, repo=None, pr=None):
             lambda: fetch_checks(pull, repo),
         )
     run_id = _run_selector(run) if run is not None else newest_run(repo)
-    first = fetch_run(run_id, repo)
+    outcome = _watch_one(run_id, repo, fetch_run(run_id, repo))
+    left = ()
+    # Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: a watch that yielded to a
+    # newer run answered "superseded", and the model wrapped this call in a loop of its own
+    # to reach the verdict. The run that replaced the watched one is the answer owed.
+    while outcome.ending == "superseded" and outcome.replacement_run_id:
+        try:
+            first = fetch_run(outcome.replacement_run_id, repo)
+        except RuntimeError as failure:
+            lines = str(failure).strip().splitlines()
+            return replace(
+                outcome,
+                error=lines[0] if lines else "the newer run could not be opened",
+                superseded_run_ids=left,
+            )
+        left += (outcome.run_id,)
+        outcome = _watch_one(outcome.replacement_run_id, repo, first)
+    return replace(outcome, superseded_run_ids=left)
+
+
+def _watch_one(run_id, repo, first):
+    """Watch one run from its first poll until it ends or a newer run replaces it."""
     title = str(first.get("workflowName") or "GitHub Actions")
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed
     # progress and elapsed durations but never the calendar date and time it began.
@@ -1700,7 +1777,7 @@ def _watch_run(run=None, repo=None, pr=None):
         described.strip(" ·"),
         lambda: fetch_run(run_id, repo),
         lambda job_id, lines: job_log(owner, job_id, lines),
-        lambda: newer_run(first, repo),
+        lambda payload: newer_run(payload, repo),
     )
 
 
@@ -1813,6 +1890,14 @@ def _watch_activity(*, phase, result, **_):
         )
     workflow = " ".join(result.workflow.split())[:60] or "Workflow"
     content = []
+    if result.superseded_run_ids:
+        earlier = ", ".join(str(run_id) for run_id in result.superseded_run_ids)
+        noun = "run" if len(result.superseded_run_ids) == 1 else "runs"
+        content.append(
+            vis.ActivityText(
+                f"Followed run {result.run_id} after newer work replaced {noun} {earlier}."
+            )
+        )
     if result.jobs:
         content.append(
             vis.ActivityTable(
@@ -1910,11 +1995,14 @@ class Gh:
         the artifact tree. `run` is a run id or
         URL; without `run` or `pr`, the newest run on the current branch is selected. `pr` is a
         pull-request number, branch, URL, or `"current"`; it watches that PR's aggregate checks
-        through the same view. `run` and `pr` are mutually exclusive. Any running run yields when
-        a newer run starts the same workflow, branch and event. A failed job also stops the
-        view promptly, even while other jobs are running; the result retains the run’s in-progress
-        status and the failed log. `repo` is `owner/name` for another repository. Human Stop
-        returns the last published run facts and cached failed logs without fetching more after Stop.
+        through the same view. `run` and `pr` are mutually exclusive. When a newer run of the same
+        workflow, branch and event replaces the watched one — it starts, or the watched run is
+        cancelled — the watch follows it in a new view and answers for the last run it reached;
+        `superseded_run_ids` lists the runs it left. A newer run still queued behind the watched
+        one does not take over. A failed job also stops the view promptly, even while other jobs
+        are running; the result retains the run’s in-progress status and the failed log. `repo`
+        is `owner/name` for another repository. Human Stop returns the last published run facts
+        and cached failed logs without fetching more after Stop.
         """
         return _watch_run(run, repo, pr)
 
@@ -1928,7 +2016,8 @@ PROMPT = """gh_ surface active — GitHub through the gh CLI (gh):
   watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
 Every answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
 the human can watch and stop; its WatchOutcome carries every job, step and failed-log tail once. Use
-watch() instead of a shell polling loop — it signs in by itself when needed."""
+watch() instead of a shell polling loop or a loop around watch(): it signs in by itself when needed
+and follows a newer run that replaces the one it watches."""
 
 
 vis.register_extension(

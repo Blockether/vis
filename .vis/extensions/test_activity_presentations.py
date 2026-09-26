@@ -154,6 +154,35 @@ def test_watch_activity_labels_partial_job_lists(monkeypatch):
     assert any("20 of 21 jobs" in getattr(block, "text", "") for block in view.content)
 
 
+@pytest.mark.parametrize(
+    "left, text",
+    [
+        ((1,), "Followed run 3 after newer work replaced run 1."),
+        ((1, 2), "Followed run 3 after newer work replaced runs 1, 2."),
+    ],
+)
+def test_watch_activity_names_the_runs_newer_work_replaced(monkeypatch, left, text):
+    module = _load_extension(monkeypatch, "gh")
+    outcome = module.WatchOutcome(
+        3,
+        "CI",
+        "main",
+        "completed",
+        "success",
+        "",
+        "completed",
+        (),
+        (),
+        superseded_run_ids=left,
+    )
+    view = module.gh.watch.__vis_symbol_activity__.render(
+        phase="success", result=outcome
+    )
+    # The verdict is the newest run's; the runs it replaced stay visible beside it.
+    assert view.summary == "CI · Succeeded · 0 jobs"
+    assert text in [getattr(block, "text", "") for block in view.content]
+
+
 @pytest.mark.parametrize("filename", ["gh", "uplink"])
 def test_bundled_activities_keep_unicode_within_portable_limits(monkeypatch, filename):
     module = _load_extension(monkeypatch, filename)

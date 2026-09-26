@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and OpenRouter presets start with current models.
 
 ### Fixed
+- A GitHub workflow watch now follows a newer run that replaces the watched
+  run and answers with that run's result. Before, the watch stopped with a
+  superseded result, and the newer run had to be found and watched separately.
+  A newer run still queued behind the watched run no longer ends the watch
+  early, skipped runs never take over, and a run cancelled for newer work hands
+  over to that work instead of reporting a cancellation.
 - A Python block that sleeps past its time limit now stops with a timeout and
   keeps its session's Python state. Before, a long `time.sleep` or
   `asyncio.sleep` could not be interrupted, so Vis shut down the session's

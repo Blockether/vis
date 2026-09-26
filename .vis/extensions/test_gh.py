@@ -87,6 +87,13 @@ def node(view, node_id):
     return next(one for one in view["nodes"] if one["id"] == node_id)
 
 
+def settled(run_id, ending="completed", **facts):
+    """A watch verdict for stubs that stand in for the live view."""
+    return gh.WatchOutcome(
+        run_id, "CI", "main", "completed", "success", "", ending, (), (), **facts
+    )
+
+
 def test_a_job_state_is_one_tone_everywhere():
     assert gh.tone_of("queued", "") == "running"
     assert gh.tone_of("in_progress", "") == "running"
@@ -198,11 +205,11 @@ def test_the_head_says_when_the_run_began(monkeypatch):
 
     def capture(title, description, poll, log_of=None, superseded_by=None):
         received["watch"] = (title, description)
-        return "watched"
+        return settled(32146686161)
 
     monkeypatch.setattr(gh, "watch", capture)
 
-    assert gh.gh.watch(run=32146686161) == "watched"
+    assert gh.gh.watch(run=32146686161) == settled(32146686161)
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed progress
     # and elapsed durations but never the calendar date and time it began, so a run opened
@@ -853,7 +860,7 @@ def test_cancelled_run_ends_watch_without_a_replacement(
         TITLE,
         DESCRIPTION,
         lambda: polls.pop(0),
-        superseded_by=lambda: None,
+        superseded_by=lambda payload: None,
         stop_on_failure=False,
     )
 
@@ -890,7 +897,11 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     # remained queued/in progress forever. Close it as superseded and make every
     # unfinished row explicitly superseded instead of preserving a stale action state.
     result = gh.watch(
-        TITLE, DESCRIPTION, poll, superseded_by=lambda: newer, stop_on_failure=False
+        TITLE,
+        DESCRIPTION,
+        poll,
+        superseded_by=lambda payload: newer,
+        stop_on_failure=False,
     )
 
     assert len(polls) == 1
@@ -1004,6 +1015,7 @@ def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatc
                     "databaseId": 32146699999,
                     "url": "https://github.com/Blockether/vis/actions/runs/32146699999",
                     "displayTitle": "newer push",
+                    "status": "in_progress",
                 }
             ]
         )
@@ -1012,8 +1024,8 @@ def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatc
 
     assert gh.newer_run(payload)["databaseId"] == 32146699999
     assert asked == [
-        "gh run list --workflow CI --branch main --event push -L 1 "
-        "--json databaseId,url,displayTitle"
+        "gh run list --workflow CI --branch main --event push -L 10 "
+        "--json databaseId,url,displayTitle,status,conclusion"
     ]
 
 
@@ -1033,12 +1045,193 @@ def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
 
     def capture_watch(title, description, poll, log_of=None, superseded_by=None):
         received["superseded_by"] = superseded_by
-        return "watched"
+        return settled(32146686161)
 
     monkeypatch.setattr(gh, "watch", capture_watch)
 
-    assert gh.gh.watch(32146686161) == "watched"
-    assert received["superseded_by"]() == replacement
+    assert gh.gh.watch(32146686161) == settled(32146686161)
+    assert received["superseded_by"](first) == replacement
+
+
+def newer_runs(monkeypatch, rows):
+    """Answer every `gh run list` with these rows, newest first."""
+    monkeypatch.setattr(
+        gh, "_capture", lambda command, seconds=120: (0, json.dumps(rows))
+    )
+
+
+def a_run(run_id, status, conclusion=""):
+    return {
+        "databaseId": run_id,
+        "url": f"https://github.com/Blockether/vis/actions/runs/{run_id}",
+        "displayTitle": f"push {run_id}",
+        "status": status,
+        "conclusion": conclusion,
+    }
+
+
+@pytest.mark.parametrize(
+    "job_conclusion, rows, taken",
+    [
+        # A newer run still queued behind the watched build does not take over.
+        ("", [a_run(4, "queued"), a_run(3, "completed", "skipped")], None),
+        # A newer run doing work does; the queued one behind it waits its turn.
+        ("", [a_run(4, "queued"), a_run(3, "in_progress")], 3),
+        ("", [a_run(3, "completed", "success")], 3),
+        # Skipped and cancelled runs replace nothing.
+        ("", [a_run(3, "completed", "cancelled")], None),
+        # A run being cancelled hands over to the newer work, even while that is queued.
+        ("cancelled", [a_run(4, "completed", "skipped"), a_run(3, "queued")], 3),
+        ("cancelled", [a_run(3, "completed", "skipped")], None),
+        # Runs older than the watched one never take over.
+        ("cancelled", [a_run(2, "in_progress"), a_run(1, "queued")], None),
+    ],
+)
+def test_only_newer_work_under_way_replaces_the_watched_run(
+    monkeypatch, job_conclusion, rows, taken
+):
+    # Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: a newer Beta Native run
+    # still queued behind the watched one ended the watch, so the verdict of the build
+    # that was running never arrived.
+    watched = {
+        "databaseId": 2,
+        "workflowName": "Beta Native",
+        "headBranch": "main",
+        "event": "push",
+        "status": "in_progress",
+        "conclusion": "",
+        "jobs": [
+            {
+                "name": "build",
+                "status": "completed" if job_conclusion else "in_progress",
+                "conclusion": job_conclusion,
+            }
+        ],
+    }
+    newer_runs(monkeypatch, rows)
+
+    assert (gh.newer_run(watched) or {}).get("databaseId") == taken
+
+
+@pytest.mark.parametrize("status", ["in_progress", "completed"])
+def test_a_run_cancelled_for_newer_work_hands_over_to_it(recorder, monkeypatch, status):
+    # Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: a CI run cancelled by a
+    # newer push ended the watch as a failed job or a cancelled run, and the model went
+    # looking for the newer run by hand.
+    cancelled = fixture("run-final.json")
+    cancelled.update(
+        status=status, conclusion="cancelled" if status == "completed" else ""
+    )
+    for job in cancelled["jobs"]:
+        job.update(status="completed", conclusion="cancelled")
+    offered = []
+    harvested = []
+    monkeypatch.setattr(
+        gh, "_harvest_failed_logs", lambda *args: harvested.append(args)
+    )
+
+    def superseded_by(payload):
+        offered.append(payload)
+        return a_run(32146699999, "queued")
+
+    result = gh.watch(
+        TITLE, DESCRIPTION, lambda: cancelled, superseded_by=superseded_by
+    )
+
+    assert offered == [cancelled]
+    assert (result.ending, result.replacement_run_id) == ("superseded", 32146699999)
+    # The newer run answers for this one: nothing reads the logs of the jobs it cancelled.
+    assert harvested == []
+    picture = recorder.picture()
+    assert node(picture, "run")["text"] == "Superseded by newer run 32146699999"
+    assert node(picture, "links")["links"][-1]["id"] == "newer-run"
+
+
+def test_a_failed_job_is_reported_while_newer_work_waits(recorder):
+    offered = []
+
+    def superseded_by(payload):
+        offered.append(payload)
+        return a_run(32146699999, "queued")
+
+    result = gh.watch(
+        TITLE, DESCRIPTION, lambda: fixture("run-mid.json"), superseded_by=superseded_by
+    )
+
+    # A job that failed is the verdict the model needs, whatever is queued after it.
+    assert result.ending == "job_failure"
+    assert offered == []
+
+
+def test_a_watch_follows_the_run_that_replaced_the_watched_one(recorder, monkeypatch):
+    # Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: a watch that yielded to a
+    # newer run answered "superseded", and the model wrapped gh.watch in a loop of its own
+    # to follow the replacement to its verdict.
+    first = fixture("run-mid.json")
+    first["databaseId"] = 32146686161
+    first["jobs"] = [
+        job
+        for job in first["jobs"]
+        if gh.tone_of(job["status"], job["conclusion"]) != "error"
+    ]
+    replacement = fixture("run-final.json")
+    replacement["databaseId"] = 32146699999
+
+    def fetch(run_id, repo=None):
+        return first if int(run_id) == 32146686161 else replacement
+
+    def newer(payload, repo=None):
+        if payload["databaseId"] == 32146686161:
+            return a_run(32146699999, "in_progress")
+        return None
+
+    monkeypatch.setattr(gh, "require_gh", lambda: None)
+    monkeypatch.setattr(gh, "fetch_run", fetch)
+    monkeypatch.setattr(gh, "repo_of", lambda payload, repo=None: "Blockether/vis")
+    monkeypatch.setattr(gh, "job_log", lambda owner, job_id, lines: failing_log())
+    monkeypatch.setattr(gh, "newer_run", newer)
+
+    result = gh.gh.watch(32146686161)
+
+    assert (result.run_id, result.ending, result.conclusion) == (
+        32146699999,
+        "completed",
+        "failure",
+    )
+    assert result.superseded_run_ids == (32146686161,)
+    # Each run keeps its own view: the obsolete one closes, the replacement opens.
+    assert [one["op"] for one in recorder.ops() if one["op"] in ("open", "close")] == [
+        "open",
+        "close",
+        "open",
+        "close",
+    ]
+
+
+def test_a_replacement_that_cannot_be_opened_is_named_with_the_reason(monkeypatch):
+    def fetch(run_id, repo=None):
+        if int(run_id) == 32146699999:
+            raise RuntimeError(
+                "gh run view 32146699999 failed: HTTP 404: Not Found\n(details)"
+            )
+        return fixture("run-mid.json")
+
+    def one_watch(title, description, poll, log_of=None, superseded_by=None):
+        return settled(32146686161, "superseded", replacement_run_id=32146699999)
+
+    monkeypatch.setattr(gh, "require_gh", lambda: None)
+    monkeypatch.setattr(gh, "fetch_run", fetch)
+    monkeypatch.setattr(gh, "repo_of", lambda payload, repo=None: "Blockether/vis")
+    monkeypatch.setattr(gh, "watch", one_watch)
+
+    result = gh.gh.watch(32146686161)
+
+    assert (result.ending, result.replacement_run_id, result.superseded_run_ids) == (
+        "superseded",
+        32146699999,
+        (),
+    )
+    assert result.error == "gh run view 32146699999 failed: HTTP 404: Not Found"
 
 
 def test_capture_does_not_accept_partial_output_from_a_timed_out_process(monkeypatch):
