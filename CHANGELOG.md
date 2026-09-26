@@ -36,10 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Z.ai providers list GLM-5.3 Flash first. OpenCode Go no longer lists models
   that its catalog no longer offers, such as Kimi K2.5 and GLM-5.
 - Model lists no longer offer stealth models, such as OpenCode Go's Omen Alpha,
-  preview models, such as Gemini 3.1 Pro Preview, or MiMo models older than
-  MiMo V2.6. When Vis refreshes a provider's models, it also removes these
-  models from the list it saved for that provider. OpenCode Go now includes
-  MiMo V2.6 Pro and MiMo V2.6 Flash in its built-in list.
+  preview models, such as Gemini 3.1 Pro Preview, or outdated models. A model is
+  outdated when its family has a newer version, such as GLM-4.7 or MiniMax M2.5,
+  when it is a dated Claude snapshot, such as `claude-haiku-4-5-20251001`, or
+  when its provider marks it as deprecated. Ollama and LM Studio still list every
+  model they serve. When Vis refreshes a provider's models, it also removes these
+  models from the list it saved for that provider. OpenCode Go now includes MiMo
+  V2.6 Pro and MiMo V2.6 Flash in its built-in list, and the Alibaba Coding Plan
+  and OpenRouter presets start with current models.
 
 ### Fixed
 - A Python block that sleeps past its time limit now stops with a timeout and

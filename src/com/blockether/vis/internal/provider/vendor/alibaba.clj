@@ -70,24 +70,22 @@
    :error-type :vis/alibaba-not-authenticated
    :auth-notes ["  The key is plan-scoped - a key issued for the other Alibaba plan"
                 "  is rejected by this endpoint." ""]
-   :plans {:coding {:provider-id :alibaba-coding-plan
-                    :label "Alibaba (Coding Plan)"
-                    :base-url "https://coding-intl.dashscope.aliyuncs.com/v1"
-                    :default-models ["qwen3-coder-plus" "qwen3-coder-next" "qwen3.7-plus"
-                                     "qwen3.6-plus" "qwen3.5-plus" "qwen3-max-2026-01-23" "glm-5"
-                                     "glm-4.7" "kimi-k2.5" "MiniMax-M2.5"]
-                    :env-keys ["ALIBABA_CODING_PLAN_API_KEY"]
-                    ;; A flat-fee plan: the second choice for session titles.
-                    :policy {:preset-rank 7 :title-rank 1}}
-           :token {:provider-id :alibaba-token-plan
-                   :label "Alibaba (Token Plan)"
-                   :base-url
-                   "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-                   :default-models
-                   [{:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
-                    "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.2" "deepseek-v4-pro"]
-                   :env-keys ["ALIBABA_TOKEN_PLAN_API_KEY"]
-                   :policy {:preset-rank 8}}}})
+   :plans
+   {:coding {:provider-id :alibaba-coding-plan
+             :label "Alibaba (Coding Plan)"
+             :base-url "https://coding-intl.dashscope.aliyuncs.com/v1"
+             :default-models ["qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "qwen3.6-plus" "glm-5"]
+             :env-keys ["ALIBABA_CODING_PLAN_API_KEY"]
+             ;; A flat-fee plan: the second choice for session titles.
+             :policy {:preset-rank 7 :title-rank 1}}
+    :token {:provider-id :alibaba-token-plan
+            :label "Alibaba (Token Plan)"
+            :base-url "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+            :default-models
+            [{:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
+             "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.2" "deepseek-v4-pro"]
+            :env-keys ["ALIBABA_TOKEN_PLAN_API_KEY"]
+            :policy {:preset-rank 8}}}})
 
 (defn- make-limits-fn
   "Neither plan exposes a quota/usage endpoint: `/usage`, `/quota` and the

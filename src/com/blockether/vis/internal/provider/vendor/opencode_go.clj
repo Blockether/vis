@@ -53,8 +53,8 @@
    in svar's canonical model order (`svar/sort-models`), which also ranks the picker
    and gives a fresh install its first model: current flagships lead, then mid-size
    and fast models, the previous generation, and aliases and experimental builds
-   last. Stealth models, previews and MiMo builds before V2.6 stay out, as they do
-   from every model list (`svar/hidden-model?`).
+   last. Stealth models, previews and outdated versions stay out, as they do from
+   every model list (`svar/provider-model-visible?`).
 
    Nothing is fetched here. `native-image` (graal-build-time) initializes this
    namespace at BUILD time, so a `/models` call at load ran on the BUILDER — it
@@ -72,8 +72,8 @@
    "mimo-v2.6-flash" "hy3" "muse-spark-1.3-contributor" "gpt-5.6-luna" "grok-4.6" "kimi-k2.6"
    {:name "qwen3.7-max" :api-style :anthropic} {:name "qwen3.7-plus" :api-style :anthropic}
    {:name "qwen3.6-plus" :api-style :anthropic} "glm-5.2" "glm-5.1" "deepseek-v4-flash"
-   {:name "minimax-m2.7" :api-style :anthropic} "muse-spark-1.2-contributor"
-   {:name "minimax-m2.5" :api-style :anthropic} "deepseek-flash" "deepseek-v4-flash-vision-exp"])
+   {:name "minimax-m2.7" :api-style :anthropic} "muse-spark-1.2-contributor" "deepseek-flash"
+   "deepseek-v4-flash-vision-exp"])
 
 (defn- enrich-models
   "`:provider/enrich-models-fn`: `(svar-provider router-opts) -> models-vec`, run

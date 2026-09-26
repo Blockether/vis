@@ -60,46 +60,47 @@
                                               :environment {:session-id "conversation-1"}
                                               :provider {:id :anthropic}}))))))))
 
-(defdescribe per-model-wire-routing-test
-             (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
-                 (reload!)
-                 (let [models
-                       (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+(defdescribe
+  per-model-wire-routing-test
+  (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
+      (reload!)
+      (let [models
+            (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
 
-                       bare
-                       (filter string? models)]
+            bare
+            (filter string? models)]
 
-                   ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat ride the OpenAI chat wire.
-                   (expect (some #(= "glm-5.2" %) bare))
-                   (expect (some #(= "kimi-k2.7-code" %) bare))
-                   (expect (some #(= "deepseek-v4-flash" %) bare))
-                   (expect (some #(= "hy3" %) bare))
-                   (expect (some #(= "mimo-v2.6-pro" %) bare))
-                   ;; The catalog a build ships is the vendor's CURRENT one, not the list
-                   ;; that froze when this provider was first written.
-                   (expect (some #(= "deepseek-v4.1-flash" %) bare))
-                   (expect (some #(= "kimi-k3" %) bare))))
-             (it "ships its catalog in svar's canonical model order, flagship first"
-                 (reload!)
-                 (let [models (get-in (vis/provider-by-id :opencode-go)
-                                      [:provider/preset :default-models])]
-                   (expect (= "kimi-k3" (first models)))
-                   (expect (= models (svar/sort-models :opencode-go models)))
-                   ;; Stealth models, previews and pre-V2.6 MiMo builds stay out of the catalog.
-                   (expect (not-any? #(svar/hidden-model? (if (map? %) (:name %) %)) models))))
-             (it "declares Anthropic-wire models as maps with :api-style :anthropic"
-                 (reload!)
-                 (let [models
-                       (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+        ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat ride the OpenAI chat wire.
+        (expect (some #(= "glm-5.2" %) bare))
+        (expect (some #(= "kimi-k2.7-code" %) bare))
+        (expect (some #(= "deepseek-v4-flash" %) bare))
+        (expect (some #(= "hy3" %) bare))
+        (expect (some #(= "mimo-v2.6-pro" %) bare))
+        ;; The catalog a build ships is the vendor's CURRENT one, not the list
+        ;; that froze when this provider was first written.
+        (expect (some #(= "deepseek-v4.1-flash" %) bare))
+        (expect (some #(= "kimi-k3" %) bare))))
+  (it "ships its catalog in svar's canonical model order, flagship first"
+      (reload!)
+      (let [models (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])]
+        (expect (= "kimi-k3" (first models)))
+        (expect (= models (svar/sort-models :opencode-go models)))
+        ;; Stealth models, previews and outdated versions stay out of the catalog.
+        (expect (every? #(svar/provider-model-visible? :opencode-go (if (map? %) (:name %) %))
+                        models))))
+  (it "declares Anthropic-wire models as maps with :api-style :anthropic"
+      (reload!)
+      (let [models
+            (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
 
-                       styled
-                       (filter map? models)]
+            styled
+            (filter map? models)]
 
-                   ;; MiniMax / Qwen ride the Anthropic Messages wire via per-model override.
-                   (expect (seq styled))
-                   (expect (every? #(= :anthropic (:api-style %)) styled))
-                   (expect (some #(re-find #"minimax" (:name %)) styled))
-                   (expect (some #(re-find #"qwen" (:name %)) styled)))))
+        ;; MiniMax / Qwen ride the Anthropic Messages wire via per-model override.
+        (expect (seq styled))
+        (expect (every? #(= :anthropic (:api-style %)) styled))
+        (expect (some #(re-find #"minimax" (:name %)) styled))
+        (expect (some #(re-find #"qwen" (:name %)) styled)))))
 
 ;; Regression, issue #N: `DEFAULT_MODELS` forced a `delay` that fetched the live
 ;; `/models` catalog at the top level, so the request ran during namespace

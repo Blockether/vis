@@ -1513,11 +1513,11 @@
 
 (defn refresh-models!
   "Refresh existing model metadata and append new live ids, preserving explicit config
-   and order, except that saved models svar hides from every model list are dropped
-   (`svar/hidden-model?`: stealth models, previews and old MiMo builds). The learned
-   snapshot is account/endpoint-scoped and stored separately. Partial replies retain
-   last good fields for that identity; failure changes nothing. Returns appended
-   names, [] for metadata-only/no change, nil for a failed probe."
+   and order, except that saved models svar leaves out of this provider's model lists
+   are dropped (`svar/provider-model-visible?`: stealth models, previews and outdated
+   versions). The learned snapshot is account/endpoint-scoped and stored separately.
+   Partial replies retain last good fields for that identity; failure changes nothing.
+   Returns appended names, [] for metadata-only/no change, nil for a failed probe."
   ([provider-id] (refresh-models! provider-id nil))
   ([provider-id source]
    (when-let [provider (some #(when (= provider-id (:id %)) %) (configured-providers))]
@@ -1543,8 +1543,9 @@
                             (-> entry
                                 (assoc :model-metadata (merge-catalog entry))
                                 (update :models
-                                        #(into (filterv (complement (comp svar/hidden-model?
-                                                                          config/model-name))
+                                        #(into (filterv (comp (partial catalog/model-visible?
+                                                                       provider-id)
+                                                              config/model-name)
                                                  %)
                                                (map (fn [id]
                                                       (or (preset id) {:name id})))

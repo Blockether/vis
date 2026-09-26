@@ -39,7 +39,7 @@
             token-models
             (get-in (vis/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
 
-        (expect (= "qwen3-coder-plus" (first coding-models)))
+        (expect (= "qwen3.7-max" (first coding-models)))
         (expect (contains? (set coding-models) "glm-5"))
         ;; `qwen3.8-max` is served live but ships as `qwen3.8-max-preview` in
         ;; the models.dev catalog, so its window is declared inline.

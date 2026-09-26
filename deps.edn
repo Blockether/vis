@@ -21,7 +21,7 @@
         ;; Repairs unbalanced quotes and brackets in a Python block before it runs.
         com.blockether/parinferish {:mvn/version "0.2.2"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-        com.blockether/svar {:mvn/version "0.7.181"}
+        com.blockether/svar {:mvn/version "0.7.182"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "9a5c0121a07af7529de8f1dff46ca2d8c4c352b2"

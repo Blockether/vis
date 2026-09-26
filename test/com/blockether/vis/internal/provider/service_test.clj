@@ -559,11 +559,11 @@
 
     (let [provider {:id :fake
                     :default-models ["glm-5.2" "mimo-v2.5-pro" "gemini-3-pro-preview" "omen-alpha"
-                                     "mimo-v2.6-pro"]}]
+                                     "glm-4.7" "claude-haiku-4-5-20251001" "mimo-v2.6-pro"]}]
       (is (= ["mimo-v2.6-pro" "glm-5.2"]
              (:models
                (providers/model-options provider (providers/default-model-names provider) true)))
-          "stealth, preview and pre-V2.6 MiMo defaults stay out of the picker"))))
+          "stealth, preview and outdated defaults stay out of the picker"))))
 
 ;; Regression: a fleet stayed frozen at the build that added it. `:default-models`
 ;; is a hardcoded vendor list, adding a provider persisted exactly that list, and
@@ -605,7 +605,7 @@
   (let [entry
         {:id :fake
          :models [{:name "glm-5.2"} {:name "omen-alpha"} "mimo-v2.5-pro" {:name "hy4-preview"}
-                  {:name "mimo-v2.6-pro"}]}
+                  {:name "glm-4.7"} {:name "claude-haiku-4-5-20251001"} {:name "mimo-v2.6-pro"}]}
 
         written
         (atom nil)]
@@ -626,7 +626,32 @@
 
       (is (= [] (providers/refresh-models! :fake :test)) "no live id is new")
       (is (= [{:name "glm-5.2"} {:name "mimo-v2.6-pro"}] (:models (second @written)))
-          "stealth, preview and pre-V2.6 MiMo models leave the saved list; the rest keep order"))))
+          "stealth, preview and outdated models leave the saved list; the rest keep order"))))
+
+(deftest refreshing-a-local-provider-keeps-its-saved-models
+  (let [entry
+        {:id :ollama :models [{:name "qwen3-coder-30b"} {:name "glm-4.7"}]}
+
+        written
+        (atom nil)]
+
+    (with-redefs [providers/configured-providers
+                  (constantly [entry])
+
+                  providers/fetch-model-catalog
+                  (constantly {:identity "local"
+                               :models [{:name "qwen3-coder-30b"} {:name "glm-4.7"}]})
+
+                  catalog/template
+                  (constantly {:id :ollama :default-models []})
+
+                  providers/update-config-provider!
+                  (fn [provider-id f source]
+                    (reset! written [provider-id (f entry) source]))]
+
+      (is (= [] (providers/refresh-models! :ollama :test)) "no live id is new")
+      (is (= [{:name "qwen3-coder-30b"} {:name "glm-4.7"}] (:models (second @written)))
+          "Ollama lists every model it serves, so older versions stay saved"))))
 
 (deftest a-failed-model-probe-leaves-the-fleet-alone
   (let [writes (atom 0)]

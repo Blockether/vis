@@ -3,8 +3,8 @@
 
    OpenRouter is a multi-provider gateway speaking the OpenAI chat wire, so no
    `:api-style` override is needed - svar's default OpenAI transport handles it.
-   Model names are `vendor/model` slugs (`anthropic/claude-sonnet-4.5`,
-   `openai/gpt-5.1`, ...).
+   Model names are `vendor/model` slugs (`anthropic/claude-sonnet-5`,
+   `openai/gpt-6-astra`, ...).
 
    Authentication is the shared static-API-key shape, owned by
    `com.blockether.vis.internal.provider.key-store` and declared by `BOOK` below:
@@ -33,8 +33,8 @@
    seeds a small cross-vendor set of `vendor/model` slugs; users edit the list
    in config afterwards. svar stays the source of truth if it ever curates one."
   (or (not-empty (svar/provider-default-models PROVIDER_ID))
-      ["anthropic/claude-sonnet-4.5" "openai/gpt-5.1" "google/gemini-2.5-pro" "z-ai/glm-4.6"
-       "deepseek/deepseek-chat-v3.1"]))
+      ["z-ai/glm-5.3" "deepseek/deepseek-v4-pro" "openai/gpt-6-astra" "anthropic/claude-sonnet-5"
+       "google/gemini-3.8-flash"]))
 
 (def ^:private BOOK
   "OpenRouter's slice of the shared static-API-key shape
