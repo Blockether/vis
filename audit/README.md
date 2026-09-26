@@ -139,7 +139,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.9` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
-| `com.blockether/parinferish` | `0.2.0` | MIT | 61 KB | Blockether (in-house) |
+| `com.blockether/parinferish` | `0.2.1` | MIT | 64 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.180` | Apache-2.0 | 833 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:9a5c0121a07af7529de8f1dff46ca2d8c4c352b2` | MIT | source checkout | Blockether (in-house) |
