@@ -572,40 +572,43 @@
             ;; session expensive to create, and a session that never runs Python
             ;; never needs one. Whoever first enters Python pays for it, through
             ;; `env/python-context`; teardown and liveness checks read the sandbox
-            ;; without building one (`env/sandbox-if-built`).
-            sandbox
-            (delay
-              (let [built (env/create-python-context (merge env-bindings
-                                                            (:custom-bindings @state-atom))
-                                                     sandbox-roots-fn
-                                                     network-opts
-                                                     nil)
-                    python-context (:python-context built)]
+            ;; without building one (`env/sandbox-if-built`). This makes a fresh
+            ;; one for the session and again for `env/renew-python-sandbox!` after
+            ;; a timed-out block retires its worker, so the turn can go on.
+            new-sandbox
+            (fn []
+              (delay
+                (let [built (env/create-python-context (merge env-bindings
+                                                              (:custom-bindings @state-atom))
+                                                       sandbox-roots-fn
+                                                       network-opts
+                                                       nil)
+                      python-context (:python-context built)]
 
-                (vreset! pending built)
-                ;; Every step past the build carries its own teardown. `create-environment`'s
-                ;; try/catch used to cover this stretch; it has long returned by the time
-                ;; this delay runs, so the failure path has to live in here. An abandoned
-                ;; sandbox is never reclaimed — its Python namespace is a reference cycle
-                ;; through every function defined in it, and the host half holds one closure
-                ;; per tool — which is why the FAILURE path leaks worse than success can.
-                (try
-                  ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
-                  ;; while the transcript still shows the helpers this session refined, so the
-                  ;; next call would be a NameError against code the model can read. Re-create
-                  ;; them from the snapshot `execute-code` wrote after every block.
-                  (env/restore-session-defs! python-context session-id)
-                  ;; Extensions installed while this sandbox was still cold skipped their
-                  ;; symbol sync; give them their globals now. The context goes in by hand
-                  ;; because reaching it through the environment would re-enter THIS delay.
-                  (when-let [environment @environment-atom]
-                    (sync-extension-symbols-into! python-context
-                                                  environment
-                                                  (prompt/active-extensions environment)))
-                  built
-                  (catch Throwable t
-                    (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
-                    (throw t)))))
+                  (vreset! pending built)
+                  ;; Every step past the build carries its own teardown. `create-environment`'s
+                  ;; try/catch used to cover this stretch; it has long returned by the time
+                  ;; this delay runs, so the failure path has to live in here. An abandoned
+                  ;; sandbox is never reclaimed — its Python namespace is a reference cycle
+                  ;; through every function defined in it, and the host half holds one closure
+                  ;; per tool — which is why the FAILURE path leaks worse than success can.
+                  (try
+                    ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
+                    ;; while the transcript still shows the helpers this session refined, so the
+                    ;; next call would be a NameError against code the model can read. Re-create
+                    ;; them from the snapshot `execute-code` wrote after every block.
+                    (env/restore-session-defs! python-context session-id)
+                    ;; Extensions installed while this sandbox was still cold skipped their
+                    ;; symbol sync; give them their globals now. The context goes in by hand
+                    ;; because reaching it through the environment would re-enter THIS delay.
+                    (when-let [environment @environment-atom]
+                      (sync-extension-symbols-into! python-context
+                                                    environment
+                                                    (prompt/active-extensions environment)))
+                    built
+                    (catch Throwable t
+                      (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
+                      (throw t))))))
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/state-id session-state-id
@@ -672,11 +675,14 @@
                   ;; `env/python-context` / `env/sandbox-ns` force it; teardown and
                   ;; liveness read it through `env/sandbox-if-built` and never do.
                   ;; It also carries what used to sit beside it as `:python-engine`
-                  ;; and `:initial-ns-keys` — both come out of the same build.
-                  :python-sandbox sandbox
-                  ;; A failed guest interrupt makes reuse permanently unsafe even
+                  ;; and `:initial-ns-keys` — both come out of the same build. The
+                  ;; atom lets `env/renew-python-sandbox!` swap in a replacement.
+                  :python-sandbox (atom (new-sandbox))
+                  :python-sandbox-factory new-sandbox
+                  ;; A failed guest interrupt makes reuse of that worker unsafe even
                   ;; while a probe can still enter around extension-owned host work.
-                  ;; The next turn abandons this environment instead.
+                  ;; A timed-out block renews the sandbox within its turn; any other
+                  ;; retirement makes the next turn abandon this environment.
                   :python-context-retired-atom (atom false)
                   ;; Long-lived per-env LRU map: `{var-name-string →
                   ;; last-used-turn-pos}`. Merged from each iteration's

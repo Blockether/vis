@@ -48,6 +48,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.python.env :as env]
     [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.paths :as paths]
     [taoensso.telemere :as tel]
     [com.blockether.vis.internal.session.model :as session-model]
     [com.blockether.vis.internal.config.toggles :as toggles]
@@ -3079,26 +3080,32 @@
   ;; ended the active turn; a native `time.sleep` held the interpreter the same way.
   ;; A timed-out sleep must leave the same context usable. The delay is a variable,
   ;; so the literal-sleep floor cannot lift the wall above it.
-  (it "unwinds a long sleep without retiring the context"
-      (tpc/with-own
-        [pc {}]
-        (let [environment {:python-context-retired-atom (atom false)}]
-          (try (#'python-exec/run-python-code pc "import asyncio, time\ndelay = 5" :env environment)
-               (doseq [sleep-call ["await asyncio.sleep(delay)" "time.sleep(delay)"]]
-                 (let [result (binding [rt/*eval-timeout-ms* 350]
-                                (#'python-exec/run-python-code pc sleep-call :env environment))]
-                   (expect (true? (:timeout? result)))
-                   (expect (false? @(:python-context-retired-atom environment)))
-                   (expect
-                     (= "ready\n"
-                        (:stdout
-                          (#'python-exec/run-python-code pc "print('ready')" :env environment))))))
-               (finally (env/dispose-python-context! pc)))))))
+  (it
+    "unwinds a long sleep without retiring the context"
+    (tpc/with-own
+      [pc {}]
+      (let [environment {:python-context-retired-atom (atom false)}]
+        (try
+          (#'python-exec/run-python-code pc "import asyncio, time\ndelay = 5" :env environment)
+          (doseq [sleep-call ["await asyncio.sleep(delay)" "time.sleep(delay)"]]
+            (let [result (binding [rt/*eval-timeout-ms* 350]
+                           (#'python-exec/run-python-code pc sleep-call :env environment))]
+              (expect (true? (:timeout? result)))
+              (expect (false? @(:python-context-retired-atom environment)))
+              (expect
+                (re-matches
+                  #"Time limit reached: Vis stopped this block after \d+( ms|s)\. This is the normal time limit for one python_execution block, not a fault\. Python state is kept\."
+                  (str (get-in result [:error :message]))))
+              (expect (= "ready\n"
+                         (:stdout
+                           (#'python-exec/run-python-code pc "print('ready')" :env environment))))))
+          (finally (env/dispose-python-context! pc)))))))
 
 (defdescribe
   retired-python-follow-up-test
   ;; Issue #180: the first post-timeout block contained council.publish, but the
-  ;; retired-environment guard failed before it could execute any Python.
+  ;; retired-environment guard failed before it could execute any Python. A timed-out
+  ;; block now restarts Python; any other retirement still stops at this guard.
   (it
     "records rejected print and Council blocks and treats retirement as terminal"
     (let [environment
@@ -3118,19 +3125,11 @@
 
       (try
         (#'python-exec/run-python-code pc "print('ready')" :env environment)
-        ;; `select` waits in C, where the interrupt cannot unwind it; `time.sleep`
-        ;; returns to Python often enough that it no longer retires the context.
-        (let [timeout (binding [rt/*eval-timeout-ms* 3000]
-                        (#'python-exec/run-python-code
-                         pc
-                         "import select\nselect.select([], [], [], 10)"
-                         :env
-                         environment))]
-          (expect (true? (:timeout? timeout))))
-        (expect (loop [remaining 100]
-                  (cond @retired true
-                        (zero? remaining) false
-                        :else (do (Thread/sleep 50) (recur (dec remaining))))))
+        ;; Retired from outside a timed-out block, as a detached environment is.
+        (expect
+          (true?
+            (python-exec/retire-python-context-once! pc environment :environment-detached nil)))
+        (expect (true? @retired))
         (expect (false? (env/context-enterable? environment)))
         (with-redefs [env/run-python-block (fn [context code & args]
                                              (swap! entered conj code)
@@ -3168,6 +3167,62 @@
               (expect (false? (get card "retryable"))))))
         (finally (loop-env/dispose-environment! environment))))))
 
+(defdescribe
+  timed-out-python-restart-test
+  ;; A block waiting in native code does not respond to its stop, so its worker is
+  ;; killed. The same turn goes on in a fresh Python with the saved definitions.
+  (it
+    "restarts Python, restores saved definitions and tells the model why"
+    (let [environment
+          (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          defs-file
+          (paths/sandbox-defs-file (str (:session-id environment)))
+
+          old-context
+          (env/python-context environment)]
+
+      (try
+        (expect
+          (nil? (:error
+                  (python-exec/execute-code
+                    environment
+                    "def saved_helper():\n    return 'restored'\nscratch = 1\nhandle = object()"))))
+        (let [timeout
+              (binding [rt/*eval-timeout-ms* 3000]
+                (python-exec/execute-code
+                  environment
+                  "import select\nprint('before native wait')\nselect.select([], [], [], 10)"))
+
+              message
+              (str (get-in timeout [:error :message]))]
+
+          (expect (true? (:timeout? timeout)))
+          (expect (str/includes? (str (:stdout timeout)) "before native wait"))
+          (expect
+            (re-find
+              #"^Time limit reached: Vis stopped this block after \d+s\. This is the normal time limit for one python_execution block, not a fault\. "
+              message)
+            message)
+          (expect (str/includes?
+                    message
+                    (str "Vis restarted Python. Imports, functions, classes and small "
+                         "literal values saved from earlier blocks are restored; other "
+                         "objects, such as open files, connections and large data, are gone."))
+                  message)
+          (expect (str/includes? message "The block was not run again") message)
+          (expect (nil? (get-in timeout [:error :type]))))
+        (expect (false? @(:python-context-retired-atom environment)))
+        (expect (env/context-enterable? environment))
+        (let [after (python-exec/execute-code
+                      environment
+                      "print(saved_helper(), scratch, 'handle' in globals())")]
+          (expect (nil? (:error after)) (pr-str after))
+          (expect (= "restored 1 False\n" (:stdout after))))
+        (expect (not= old-context (env/python-context environment)))
+        (finally (loop-env/dispose-environment! environment)
+                 (clojure.java.io/delete-file defs-file true))))))
+
 ;; Regression, vis session f2cfccd5: a stale `py` global restored into the session
 ;; sandbox made every tool bind fail, and the worker error carried no provider
 ;; evidence — so the loop treated it as correctable and re-asked the model for two
@@ -3200,9 +3255,12 @@
 (defdescribe
   retired-python-stops-turn-test
   ;; Issue #180: no automatic model retry or side-effect replay on a dead worker.
+  ;; An environment without a sandbox factory cannot restart Python, so its turn
+  ;; still ends at the native timeout.
   (doseq [same-response? [false true]]
     (it
-      (str "stops after the native timeout; Council shares response=" same-response?)
+      (str "stops after the native timeout without a restart; Council shares response="
+           same-response?)
       (let
         [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
          db (:db-info environment)
@@ -3239,7 +3297,7 @@
                                                               :content "unexpected retry"}))]
 
                               (iteration/iteration-loop
-                                environment
+                                (dissoc environment :python-sandbox-factory)
                                 "timeout regression"
                                 {:session-turn-id tid :hooks {:on-chunk #(swap! chunks conj %)}})))
                    iterations (persistance/db-list-session-turn-iterations db tid)
@@ -3265,6 +3323,59 @@
                  (expect (every? #(get-in % [:source_ref :session_turn_iteration_id]) complaints)))
                (expect (= (if same-response? 2 1)
                           (count (filter #(= :form-result (:phase %)) @chunks)))))
+             (finally (loop-env/dispose-environment! environment)))))))
+
+(defdescribe
+  timed-out-python-continues-turn-test
+  ;; The turn does not end when a timed-out block ignores its stop: the model reads
+  ;; why the block stopped and continues in a fresh Python. Nothing is replayed.
+  (doseq [same-response? [false true]]
+    (it
+      (str "restarts Python and asks the model again; Council shares response=" same-response?)
+      (let [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+            db (:db-info environment)
+            tid (persistance/db-store-session-turn! db
+                                                    {:parent-session-id (:session-id environment)
+                                                     :user-request "timeout restart"})
+            timeout-code "import select\nprint('before native wait')\nselect.select([], [], [], 10)"
+            after-code "print('handle' in globals())"
+            calls (atom 0)
+            requests (atom [])]
+
+        (try (expect (nil? (:error (python-exec/execute-code environment
+                                                             "handle = object()\nprint('ready')"))))
+             (let [result (binding [rt/*eval-timeout-ms* 3000]
+                            (with-redefs [svar/ask-code! (fn [_ opts]
+                                                           (swap! requests conj (:messages opts))
+                                                           (if (= 1 (swap! calls inc))
+                                                             {:stop-reason :tool-calls
+                                                              :tool-calls
+                                                              (mapv (fn [idx code]
+                                                                      {:id (str "call_" idx)
+                                                                       :name "python_execution"
+                                                                       :input {:code code}})
+                                                                    (range)
+                                                                    (cond-> [timeout-code]
+                                                                      same-response?
+                                                                      (conj after-code)))}
+                                                             {:stop-reason :end :content "done"}))]
+                              (iteration/iteration-loop environment
+                                                        "timeout restart"
+                                                        {:session-turn-id tid})))
+                   forms (:forms (first (persistance/db-list-session-turn-iterations db tid)))]
+
+               (expect (= 2 @calls))
+               (expect (= 2 (:iteration-count result)) (pr-str (:status result)))
+               (expect (str/includes? (pr-str (:answer result)) "done"))
+               (expect (= (if same-response? [timeout-code after-code] [timeout-code])
+                          (mapv :src forms)))
+               (expect (str/includes? (str (:stdout (first forms))) "before native wait"))
+               (expect (str/includes? (pr-str (last @requests)) "Vis restarted Python"))
+               ;; A second block of the same response runs in the fresh interpreter.
+               (when same-response?
+                 (expect (= "False\n" (:stdout (second forms))) (pr-str (second forms))))
+               (expect (false? @(:python-context-retired-atom environment)))
+               (expect (env/context-enterable? environment)))
              (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
@@ -9431,7 +9542,7 @@
                                (atom 0)]
 
                    (let [environment
-                         {:python-sandbox (delay (throw (ex-info "must stay lazy" {})))
+                         {:python-sandbox (atom (delay (throw (ex-info "must stay lazy" {}))))
                           :python-context-retired-atom (atom false)}
 
                          entry
@@ -9439,7 +9550,7 @@
 
                      (swap! loop-env/cache assoc (java.util.UUID/randomUUID) entry)
                      (loop-env/mark-policy-reload!)
-                     (expect (not (realized? (:python-sandbox environment))))
+                     (expect (not (realized? @(:python-sandbox environment))))
                      (expect @(:python-context-retired-atom environment))))))
 
 ;; Regression, issue #106: a Settings flip only reached live tool bindings when it

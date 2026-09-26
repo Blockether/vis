@@ -188,6 +188,40 @@
            (catch Throwable _ nil))
       (env/take-partial-block-stdout! python-context)))
 
+(defn- timeout-error
+  "The error of a block that reached its time limit. The model reads that the stop
+   is the normal limit for one block, not a fault, and which Python state the next
+   block starts from: `:kept`, `:restarted` or `:retired`."
+  [timeout-ms python-state]
+  (let [ms
+        (long timeout-ms)
+
+        limit
+        (if (and (pos? ms) (zero? (rem ms 1000))) (str (quot ms 1000) "s") (str ms " ms"))
+
+        no-response
+        "The block was waiting in native code and did not respond to the stop, so "]
+
+    (cond-> {:message
+             (str "Time limit reached: Vis stopped this block after " limit
+                  ". This is the normal time limit for one python_execution block, not a fault. "
+                  (case python-state
+                    :kept
+                    "Python state is kept."
+
+                    :restarted
+                    (str
+                      no-response
+                      "Vis restarted Python. Imports, functions, classes and small literal values "
+                      "saved from earlier blocks are restored; other objects, such as open files, "
+                      "connections and large data, are gone. The block was not run again: check "
+                      "what it already did before you continue.")
+
+                    :retired
+                    (str no-response "Vis shut down its Python process.")))}
+      (= :retired python-state)
+      (assoc :type ::env/context-retired))))
+
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
    `get_attachment(id)` hand the model: identity, provenance and shape, and never
@@ -443,8 +477,14 @@
     (if (identical? timeout-sentinel execution-result)
       ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
       ;; exception cannot reach retires its environment before the Java interrupt.
-      (let [landed?
+      (let [retired-before?
+            (some? (env/retired-context-error env))
+
+            landed?
             (interrupt-block! python-context exec-future env :await-unwind? true)
+
+            retired?
+            (some? (env/retired-context-error env))
 
             ;; The unwinding guest cannot reach the host any more, so its `with` never
             ;; closes: the wall that killed the block ends its views too, and the model
@@ -456,15 +496,26 @@
             ;; envelope is never a bare `Timeout` and nothing else: that is
             ;; unactionable, and the model re-runs the whole block blind.
             out
-            (when landed? (unwound-stdout python-context exec-future))
+            (when (or landed? retired?) (unwound-stdout python-context exec-future))
+
+            ;; A block parked in native code did not respond to the stop, so its
+            ;; worker was killed. The turn goes on in a fresh interpreter that the
+            ;; next block builds. Only this block's own retirement renews, never a
+            ;; cancelled turn's, and only after the old worker's stdout was drained
+            ;; above, because renewal disposes it.
+            restarted?
+            (and retired?
+                 (not retired-before?)
+                 (not (cancellation/cancelled? cancel-token))
+                 (env/renew-python-sandbox! env))
 
             envelope
             (cond-> {:lru {}
-                     :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
+                     :error (timeout-error timeout-ms
+                                           (cond restarted? :restarted
+                                                 retired? :retired
+                                                 :else :kept))
                      :timeout? true}
-              (env/retired-context-error env)
-              (update :error assoc :type ::env/context-retired)
-
               out
               (assoc :stdout out))
 

@@ -690,7 +690,8 @@
 
 (defn retired-context-error
   "Local terminal error data for a retired environment, otherwise nil.
-   This check never creates or enters an interpreter. Only a new turn may rebuild it."
+   This check never creates or enters an interpreter. Only a new turn, or
+   [[renew-python-sandbox!]] after a timed-out block, may rebuild it."
   [environment]
   (when (some-> (:python-context-retired-atom environment)
                 deref)
@@ -701,18 +702,19 @@
 
    `create-environment` stores the sandbox as a delay rather than a value: a
    session that never runs Python never starts an interpreter, and the wait for
-   one belongs to the turn that needs it instead of to `POST /v1/sessions`.
+   one belongs to the turn that needs it instead of to `POST /v1/sessions`. The
+   delay sits in an atom so [[renew-python-sandbox!]] can replace a retired one.
    Every caller about to enter Python reads through here.
 
    Callers that only tear down, retire, or ASK whether Python is live must use
    [[sandbox-if-built]] instead — forcing a sandbox in order to dispose it would
    start an interpreter for the sole purpose of killing it."
   [environment]
-  (when-let [pending (:python-sandbox environment)]
-    (locking pending
+  (when-let [slot (:python-sandbox environment)]
+    (locking slot
       (when-let [error (retired-context-error environment)]
         (throw (ex-info (:message error) error)))
-      @pending)))
+      @@slot)))
 
 (defn python-context
   "The environment's Python context, building the sandbox on first ask.
@@ -737,8 +739,9 @@
    Never builds one. A failed initializer leaves no sandbox even though its delay
    is realized. Teardown and liveness inspection must not rethrow that cached error."
   [environment]
-  (when-let [pending (:python-sandbox environment)]
-    (when (realized? pending) (try @pending (catch Throwable _ nil)))))
+  (when-let [slot (:python-sandbox environment)]
+    (let [pending @slot]
+      (when (realized? pending) (try @pending (catch Throwable _ nil))))))
 
 (defn python-context-if-built
   "The environment's Python context ONLY when it already exists.
@@ -1374,15 +1377,44 @@
 
 (defn dispose-sandbox!
   "Close the environment's sandbox without building it. Serialize with first
-   initialization so teardown cannot miss an interpreter still being created."
+   initialization and renewal so teardown cannot miss an interpreter still being
+   created."
   [environment]
   (let [close! (fn []
                  (when-let [retired (:python-context-retired-atom environment)]
                    (reset! retired true))
                  (dispose-python-context! (python-context-if-built environment)))]
-    (if-let [pending (:python-sandbox environment)]
-      (locking pending (close!))
+    (if-let [slot (:python-sandbox environment)]
+      (locking slot (close!))
       (close!))))
+
+(defn renew-python-sandbox!
+  "Replace a retired sandbox with a fresh, unbuilt one and answer whether it did.
+
+   A timed-out block parked in native code does not respond to its interrupt, so
+   its worker is killed and the environment retired. The turn can still go on:
+   the next block enters Python through [[sandbox]], which builds the replacement
+   and restores the session's saved helpers. Nothing is run again. Only an
+   environment built with a `:python-sandbox-factory` renews, and never once its
+   sandbox was disposed."
+  [environment]
+  (let [slot
+        (:python-sandbox environment)
+
+        make
+        (:python-sandbox-factory environment)
+
+        retired
+        (:python-context-retired-atom environment)]
+
+    (boolean (when (and slot make retired)
+               (locking slot
+                 (let [old (python-context-if-built environment)]
+                   (when (and @retired old (not (contains? @disposed-sessions old)))
+                     (dispose-python-context! old)
+                     (reset! slot (make))
+                     (reset! retired false)
+                     true)))))))
 
 ;; =============================================================================
 ;; Session lifecycle the loop drives (dispose / probe / drain / interrupt)
@@ -1409,7 +1441,7 @@
              (pyext/worker-ready? worker session)
              true))
       (boolean (and (:python-sandbox environment)
-                    (not (realized? (:python-sandbox environment)))
+                    (not (realized? @(:python-sandbox environment)))
                     (not retired?))))))
 
 (def ^:private guest-budget-ms
@@ -1861,9 +1893,11 @@
    interpreter dies with the PROCESS. Restart the gateway and every helper the
    session refined is gone while the transcript still shows it, so the next call
    is a NameError against code the model can still read. Best effort; answers the
-   file when it wrote one."
+   file when it wrote one. A disposed session is skipped: a call under its name
+   would reach a fresh, empty namespace, and that empty snapshot would erase the
+   saved helpers."
   [session session-id]
-  (when (and session session-id)
+  (when (and session session-id (not (contains? @disposed-sessions session)))
     (try (let [src
                (within-budget #(guest-value session "__vis_defs_snapshot__()"))
 

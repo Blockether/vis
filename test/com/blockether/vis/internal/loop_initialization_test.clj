@@ -23,7 +23,7 @@
         (promise)
 
         environment
-        {:python-sandbox (delay (deliver entered true) @release)
+        {:python-sandbox (atom (delay (deliver entered true) @release))
          :python-context-retired-atom (atom false)}
 
         builder
@@ -38,7 +38,7 @@
          (expect (not (.isAlive builder)))
          (expect (instance? InterruptedException (deref failed 5000 ::timeout)))
          (expect (nil? (ex-message @failed)))
-         (expect (realized? (:python-sandbox environment)))
+         (expect (realized? @(:python-sandbox environment)))
          environment
          (finally (deliver release nil) (.interrupt builder) (.join builder 5000)))))
 
@@ -56,7 +56,7 @@
         (expect (true? @(:python-context-retired-atom environment)))))
   (it "keeps an unstarted sandbox cold and a completed sandbox available"
       (let [cold
-            {:python-sandbox (delay (throw (ex-info "must stay cold" {})))}
+            {:python-sandbox (atom (delay (throw (ex-info "must stay cold" {}))))}
 
             built
             {:python-context "initialized"}
@@ -65,16 +65,16 @@
             (delay built)]
 
         (expect (env/context-enterable? cold))
-        (expect (not (realized? (:python-sandbox cold))))
+        (expect (not (realized? @(:python-sandbox cold))))
         (expect (= built @pending))
-        (expect (= built (env/sandbox-if-built {:python-sandbox pending})))
-        (expect (= "initialized" (env/python-context-if-built {:python-sandbox pending})))))
+        (expect (= built (env/sandbox-if-built {:python-sandbox (atom pending)})))
+        (expect (= "initialized" (env/python-context-if-built {:python-sandbox (atom pending)})))))
   (it "does not retry a failed initializer when entering Python directly"
       (let [error
             (ex-info "initialization failed" {})
 
             environment
-            {:python-sandbox (delay (throw error))}]
+            {:python-sandbox (atom (delay (throw error)))}]
 
         (dotimes [_ 2]
           (expect (identical? error
@@ -103,7 +103,7 @@
           {:db-info ::db
            :session-id id
            :router {:providers [{:id :openai-codex :models [{:name "fixture-model"}]}]}
-           :python-sandbox (delay {:python-context (str "recovered-" id)})
+           :python-sandbox (atom (delay {:python-context (str "recovered-" id)}))
            :python-context-retired-atom (atom false)}
 
           answer

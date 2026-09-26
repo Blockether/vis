@@ -113,67 +113,112 @@
                      (expect (nil? (:error result)) (pr-str result))
                      (expect (= "Runtime restrictions preserved\n" (:stdout result)))))))
 
-(defdescribe retired-context-entry-test
-             ;; Issue #180: retirement is a typed local failure, never an invitation to
-             ;; recreate Python while the interrupted turn can still own side effects.
-             (it "checks retirement without forcing a cold sandbox"
-                 (let [environment {:python-sandbox (delay (throw (ex-info "must stay cold" {})))
-                                    :python-context-retired-atom (atom false)}]
-                   (expect (nil? (ep/retired-context-error environment)))
-                   (expect (not (realized? (:python-sandbox environment))))
-                   (reset! (:python-context-retired-atom environment) true)
-                   (doseq [enter [ep/sandbox ep/python-context]]
-                     (let [error (try (enter environment) nil (catch Exception e e))]
-                       (expect (= ::ep/context-retired (:type (ex-data error))))))
-                   (expect (not (realized? (:python-sandbox environment))))))
-             (it "honors retirement even when a caller supplies its context directly"
-                 (let [environment {:python-context "owned-context"
-                                    :python-context-retired-atom (atom false)}]
-                   (expect (= "owned-context" (ep/python-context environment)))
-                   (reset! (:python-context-retired-atom environment) true)
-                   (let [error (try (ep/python-context environment) nil (catch Exception e e))]
-                     (expect (= ::ep/context-retired (:type (ex-data error))))))))
+(defdescribe
+  retired-context-entry-test
+  ;; Issue #180: retirement is a typed local failure, never an invitation to
+  ;; recreate Python while the interrupted turn can still own side effects.
+  (it "checks retirement without forcing a cold sandbox"
+      (let [environment {:python-sandbox (atom (delay (throw (ex-info "must stay cold" {}))))
+                         :python-context-retired-atom (atom false)}]
+        (expect (nil? (ep/retired-context-error environment)))
+        (expect (not (realized? @(:python-sandbox environment))))
+        (reset! (:python-context-retired-atom environment) true)
+        (doseq [enter [ep/sandbox ep/python-context]]
+          (let [error (try (enter environment) nil (catch Exception e e))]
+            (expect (= ::ep/context-retired (:type (ex-data error))))))
+        (expect (not (realized? @(:python-sandbox environment))))))
+  (it "honors retirement even when a caller supplies its context directly"
+      (let [environment {:python-context "owned-context" :python-context-retired-atom (atom false)}]
+        (expect (= "owned-context" (ep/python-context environment)))
+        (reset! (:python-context-retired-atom environment) true)
+        (let [error (try (ep/python-context environment) nil (catch Exception e e))]
+          (expect (= ::ep/context-retired (:type (ex-data error))))))))
 
-(defdescribe between-turn-guest-readiness-test
-             ;; A live process can be stuck in native Python code after its last block finished.
-             ;; The next turn must rebuild it, not wait forever while installing tool bindings.
-             (it "keeps cold sandboxes cold and never probes a retired environment"
-                 (let [environment {:python-sandbox (delay (throw (ex-info "unexpected build" {})))
-                                    :python-context-retired-atom (atom false)}]
+(defdescribe renew-python-sandbox-test
+             ;; A timed-out block whose worker was killed continues its turn in a fresh
+             ;; interpreter. Renewal is the only path that clears a retirement.
+             (it "replaces a retired sandbox with an unbuilt one"
+                 (let [old
+                       (str "vis-test-renew-old-" (random-uuid))
+
+                       fresh
+                       (delay {:python-context "vis-test-renew-fresh"})
+
+                       environment
+                       {:python-sandbox (atom (delay {:python-context old}))
+                        :python-sandbox-factory (constantly fresh)
+                        :python-context-retired-atom (atom false)}]
+
+                   (expect (= old (ep/python-context environment)))
+                   (expect (false? (ep/renew-python-sandbox! environment)))
+                   (reset! (:python-context-retired-atom environment) true)
+                   (expect (true? (ep/renew-python-sandbox! environment)))
+                   (expect (false? @(:python-context-retired-atom environment)))
+                   (expect (not (realized? fresh)))
                    (expect (ep/context-enterable? environment))
-                   (expect (not (realized? (:python-sandbox environment))))
+                   (expect (= "vis-test-renew-fresh" (ep/python-context environment)))))
+             (it "refuses without a factory, before a build and after disposal"
+                 (let [environment {:python-sandbox (atom (delay {:python-context "unused"}))
+                                    :python-context-retired-atom (atom false)}]
+                   (ep/python-context environment)
                    (reset! (:python-context-retired-atom environment) true)
-                   (expect (not (ep/context-enterable? environment)))
-                   (expect (not (realized? (:python-sandbox environment))))))
-             (it "preserves a responsive worker and its globals"
-                 (tpc/with-own
-                   [ctx {} nil {:worker? true}]
-                   (expect (nil? (:error (ep/run-python-block ctx "ready_value = 41"))))
-                   (let [pids (worker/worker-pids)]
-                     (expect (ep/context-enterable? {:python-context ctx}))
-                     (expect (= pids (worker/worker-pids)))
-                     (expect (= "42\n"
-                                (:stdout (ep/run-python-block ctx "print(ready_value + 1)")))))))
-             (it "rejects a live worker whose readiness request never completes"
-                 (tpc/with-own [ctx {} nil {:worker? true}]
-                               (let [entered
-                                     (promise)
+                   (expect (false? (ep/renew-python-sandbox! environment))))
+                 (let [environment {:python-sandbox (atom (delay (throw (ex-info "must stay cold"
+                                                                                 {}))))
+                                    :python-sandbox-factory #(throw (ex-info "must not rebuild" {}))
+                                    :python-context-retired-atom (atom true)}]
+                   (expect (false? (ep/renew-python-sandbox! environment)))
+                   (expect (some? (ep/retired-context-error environment))))
+                 (let [environment {:python-sandbox (atom (delay {:python-context
+                                                                  (str "vis-test-renew-disposed-"
+                                                                       (random-uuid))}))
+                                    :python-sandbox-factory #(throw (ex-info "must not rebuild" {}))
+                                    :python-context-retired-atom (atom false)}]
+                   (ep/python-context environment)
+                   (ep/dispose-sandbox! environment)
+                   (expect (false? (ep/renew-python-sandbox! environment)))
+                   (expect (some? (ep/retired-context-error environment))))))
 
-                                     release
-                                     (promise)
+(defdescribe
+  between-turn-guest-readiness-test
+  ;; A live process can be stuck in native Python code after its last block finished.
+  ;; The next turn must rebuild it, not wait forever while installing tool bindings.
+  (it "keeps cold sandboxes cold and never probes a retired environment"
+      (let [environment {:python-sandbox (atom (delay (throw (ex-info "unexpected build" {}))))
+                         :python-context-retired-atom (atom false)}]
+        (expect (ep/context-enterable? environment))
+        (expect (not (realized? @(:python-sandbox environment))))
+        (reset! (:python-context-retired-atom environment) true)
+        (expect (not (ep/context-enterable? environment)))
+        (expect (not (realized? @(:python-sandbox environment))))))
+  (it "preserves a responsive worker and its globals"
+      (tpc/with-own [ctx {} nil {:worker? true}]
+                    (expect (nil? (:error (ep/run-python-block ctx "ready_value = 41"))))
+                    (let [pids (worker/worker-pids)]
+                      (expect (ep/context-enterable? {:python-context ctx}))
+                      (expect (= pids (worker/worker-pids)))
+                      (expect (= "42\n"
+                                 (:stdout (ep/run-python-block ctx "print(ready_value + 1)")))))))
+  (it "rejects a live worker whose readiness request never completes"
+      (tpc/with-own [ctx {} nil {:worker? true}]
+                    (let [entered
+                          (promise)
 
-                                     left
-                                     (promise)]
+                          release
+                          (promise)
 
-                                 (with-redefs [worker-peer/request!
-                                               (fn [& _]
-                                                 (deliver entered true)
-                                                 (try @release (finally (deliver left true))))]
-                                   (try (expect (worker/worker-live? ctx))
-                                        (expect (not (ep/context-enterable? {:python-context ctx})))
-                                        (expect (realized? entered))
-                                        (expect (= true (deref left 1000 ::blocked)))
-                                        (finally (deliver release true))))))))
+                          left
+                          (promise)]
+
+                      (with-redefs [worker-peer/request! (fn [& _]
+                                                           (deliver entered true)
+                                                           (try @release
+                                                                (finally (deliver left true))))]
+                        (try (expect (worker/worker-live? ctx))
+                             (expect (not (ep/context-enterable? {:python-context ctx})))
+                             (expect (realized? entered))
+                             (expect (= true (deref left 1000 ::blocked)))
+                             (finally (deliver release true))))))))
 
 (defdescribe
   readiness-probe-failure-test
