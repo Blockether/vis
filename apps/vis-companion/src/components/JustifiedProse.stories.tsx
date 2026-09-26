@@ -35,18 +35,30 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+/**
+ * A line whose gaps would open wider than the ragged limit keeps natural spacing and ends
+ * short by design. Glyph advances differ by platform, and so does which line that is.
+ */
+function isRagged(line: Element) {
+  const { wordSpacing, letterSpacing } = (line as HTMLElement).style;
+  return parseFloat(wordSpacing) === 0 && parseFloat(letterSpacing) === 0;
+}
+
 function expectFitted(prose: HTMLElement) {
   const column = prose.getBoundingClientRect();
   const inset = parseFloat(getComputedStyle(prose).paddingLeft);
   const lines = [...prose.children];
   expect(lines.length).toBeGreaterThan(1);
+  expect(lines.slice(0, -1).some((line) => !isRagged(line))).toBe(true);
   for (const [index, line] of lines.entries()) {
     const range = document.createRange();
     range.selectNodeContents(line);
     const rect = range.getBoundingClientRect();
     expect(Math.abs(rect.left - column.left - inset)).toBeLessThan(1);
     expect(rect.right).toBeLessThanOrEqual(column.right + 1);
-    if (index < lines.length - 1) expect(Math.abs(rect.right - column.right)).toBeLessThan(1);
+    if (index < lines.length - 1 && !isRagged(line)) {
+      expect(Math.abs(rect.right - column.right)).toBeLessThan(1);
+    }
   }
 }
 
@@ -75,7 +87,10 @@ export const ResponsiveParagraphs: Story = {
     expectFitted(prose);
     expectSelection(prose, paragraph);
     const smallerFontLines = prose.children.length;
+    // Text sizes change the line height too. Composed lines never wrap, so the new line
+    // height is what resizes the passage for its ResizeObserver.
     column.style.fontSize = '22px';
+    column.style.lineHeight = '30px';
     await waitFor(() => expect(prose.children.length).toBeGreaterThan(smallerFontLines));
     expectFitted(prose);
     await userEvent.click(within(canvasElement).getByRole('button', { name: 'Continue response' }));
@@ -179,8 +194,9 @@ export const StableOpening: Story = {
       const frames: { composed: boolean; geometry: number[][] }[] = [];
       let frame = 0;
       const capture = () => {
-        const prose = [...column.querySelectorAll('p, li')];
-        if (prose.length > 0) {
+        // The artifact shows a loading line until its source is read; the document ends in h2.
+        if (column.querySelector('h2')) {
+          const prose = [...column.querySelectorAll('p, li')];
           frames.push({
             composed: prose.every((element) => element.hasAttribute('data-justice')),
             geometry: [...column.querySelectorAll('p, li, h2')].map((element) => {
