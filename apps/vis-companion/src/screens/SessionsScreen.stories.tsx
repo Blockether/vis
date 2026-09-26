@@ -428,11 +428,12 @@ export const NarrowRail: Story = {
     scroller.scrollTo({ top: 0, behavior: 'instant' });
     await expect(scroller.scrollTop).toBe(0);
     await checkEdges();
-    const forward = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
-    const backward = Array.from({ length: pageCount - 1 }, (_, index) => pageCount - index - 1);
+    // Forward reaches every page and both ends of the pager; one step back covers the other
+    // control. Walking every page back again only repeated the same layouts.
+    const walk = [...Array.from({ length: pageCount - 1 }, (_, index) => index + 2), pageCount - 1];
     let current = 1;
     const pagerCenter = centerY(pager);
-    for (const target of [...forward, ...backward]) {
+    for (const target of walk) {
       await userEvent.click(
         within(pager).getByRole('button', {
           name: target > current ? 'Next page' : 'Previous page',

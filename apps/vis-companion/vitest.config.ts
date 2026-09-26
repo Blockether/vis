@@ -63,6 +63,9 @@ export default defineConfig({
         plugins: [tailwindcss(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
         test: {
           name: 'storybook',
+          // CI's two-core runner plays the longest interaction stories at half of Vitest's
+          // 15s default. The limit is there to catch a hung story, not a busy runner.
+          testTimeout: 30_000,
           browser: {
             enabled: true,
             headless: true,
