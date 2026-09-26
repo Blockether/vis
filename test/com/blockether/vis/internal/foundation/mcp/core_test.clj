@@ -368,6 +368,89 @@
           (expect (= 0 (tool-count nil)))))))
 
 (defdescribe
+  mcp-unhealthy-status-test
+  (it
+    "stops describing a failed handshake as connecting, and clears it on recovery or a new spec"
+    (let [spec
+          (atom {:transport :stdio :command "echo"})
+
+          failing?
+          (atom true)
+
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+
+          failures
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'connect-failures)
+
+          summary
+          #(get
+             (#'mcp/server-summary "stuck" {"transport" "stdio" "command" (:command @spec)} false)
+             "status")]
+
+      (with-redefs-fn {#'mcp/configured-servers (fn []
+                                                  {"stuck" @spec})
+                       #'client/connect (fn [_ _]
+                                          (case @failing?
+                                            true
+                                            (throw (ex-info "handshake failed" {}))
+
+                                            :auth
+                                            (throw (ex-info "Sign in needed"
+                                                            {:type :mcp/oauth-required}))
+
+                                            {:tools (atom []) :alive-fn (constantly true)}))
+                       #'client/list-tools (constantly [])
+                       #'client/close (constantly nil)
+                       #'mcp/reconcile-async! (constantly nil)}
+        (fn []
+          (try (reset! conns {})
+               (reset! killed #{})
+               (reset! failures {})
+               (expect (= "connecting" (summary)))
+               (#'mcp/ensure-connected! "stuck")
+               (expect (= "unhealthy" (summary)))
+               (expect (= "unhealthy"
+                          (get-in (#'mcp/contribute {:session-id "session"})
+                                  ["session_env" "mcp" "servers" "stuck" "status"])))
+               (reset! failing? :auth)
+               (#'mcp/ensure-connected! "stuck")
+               (expect (= "connecting" (summary)))
+               (swap! spec assoc :command "new-command")
+               (expect (= "connecting" (summary)))
+               (reset! failing? false)
+               (#'mcp/ensure-connected! "stuck")
+               (expect (= "connected" (summary)))
+               (finally (reset! conns {})
+                        (reset! killed #{})
+                        (#'mcp/clear-auth-backoff! "stuck")
+                        (reset! failures {}))))))))
+
+(defdescribe
+  mcp-session-failure-cleanup-test
+  (it "drops a failed session-scoped server verdict when its session detaches"
+      (let [sid
+            "failed-session-test"
+
+            failures
+            @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'connect-failures)]
+
+        (with-redefs-fn {#'mcp/configured-servers (constantly {})
+                         #'mcp/reconcile-async! (constantly nil)
+                         #'client/connect (fn [_ _]
+                                            (throw (ex-info "unavailable" {})))}
+          (fn []
+            (try (reset! failures {})
+                 (mcp/set-session-servers! sid {"broken" {"transport" "stdio" "command" "echo"}})
+                 (expect (contains? @failures [sid "broken"]))
+                 (mcp/clear-session-servers! sid)
+                 (expect (not (contains? @failures [sid "broken"])))
+                 (finally (mcp/clear-session-servers! sid) (reset! failures {}))))))))
+
+(defdescribe
   gateway-mcp-runtime-test
   (it
     "keeps a killed server down across reconciles until it is started again"

@@ -358,6 +358,8 @@ export interface McpServer {
   transport: 'stdio' | 'streamable_http';
   enabled: boolean;
   is_connected: boolean;
+  /** Live gateway verdict; older gateways may omit it. */
+  status?: 'connected' | 'connecting' | 'unhealthy' | 'disabled' | 'killed';
   /** False when the server comes from a hand-written config tier: listed, but this API never rewrites it. */
   is_managed: boolean;
   tools: number;

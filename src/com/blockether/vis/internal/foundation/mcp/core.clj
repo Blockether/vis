@@ -190,6 +190,21 @@
 
 (defonce ^:private reconciling? (atom false)) ; single-flight guard
 
+;; A failed handshake is not "still connecting". Keep the failed spec so a retry
+;; cannot briefly paint it connecting again; a new spec or a successful handshake
+;; clears the verdict. Keys match the global and session connection pools.
+(defonce ^:private connect-failures (atom {})) ; {pool-key spec}
+
+(defn- failed-connect?
+  [k spec]
+  (let [failures @connect-failures]
+    (and (contains? failures k) (= spec (get failures k)))))
+
+(defn- clear-connect-failure!
+  [k spec]
+  (swap! connect-failures (fn [failures]
+                            (if (= spec (get failures k)) (dissoc failures k) failures))))
+
 ;; Servers a client explicitly KILLED. `reconcile!` runs on every turn and every
 ;; `/reload`, so simply closing a connection is not a stop: the very next turn
 ;; respawns the stdio child the user just killed. A kill is therefore REMEMBERED
@@ -244,6 +259,7 @@
    too: a human asked, so the answer is fetched now."
   [server]
   (swap! killed disj server)
+  (swap! connect-failures dissoc server)
   (clear-auth-backoff! server)
   server)
 
@@ -291,37 +307,40 @@
   (let [existing (get @pool k)]
     (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
           existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
-          :else (try (let [conn (mcp/connect server spec)
-                           [accepted stale]
-                           (locking pool
-                             (let [winner (get @pool k)]
-                               (cond (not (accept?)) [nil [conn]]
-                                     (and winner (mcp/alive? (:conn winner))) [(:conn winner)
-                                                                               [conn]]
-                                     :else (do (swap! pool assoc k {:conn conn :spec spec})
-                                               [conn (when winner [(:conn winner)])]))))]
+          :else (try
+                  (let [conn (mcp/connect server spec)
+                        [accepted stale]
+                        (locking pool
+                          (let [winner (get @pool k)]
+                            (cond (not (accept?)) [nil [conn]]
+                                  (and winner (mcp/alive? (:conn winner))) [(:conn winner) [conn]]
+                                  :else (do (swap! pool assoc k {:conn conn :spec spec})
+                                            [conn (when winner [(:conn winner)])]))))]
 
-                       (run! (fn [c]
-                               (try (mcp/close c) (catch Throwable _ nil)))
-                             stale)
-                       accepted)
-                     (catch Throwable t
-                       (if (oauth-required? t)
-                         ;; Not a failure to repair, a sign-in to wait for. A JFR profile of
-                         ;; a live gateway caught one unauthorized server being re-asked every
-                         ;; couple of seconds - the per-turn reconcile, the handlers' nudges
-                         ;; and the health loop each paying an HTTP round trip for the same
-                         ;; 401 - so it is now asked once per `AUTH_BACKOFF_MS`.
-                         (do (note-auth-refusal! k spec)
-                             (tel/log! {:level :info
-                                        :id ::connect-awaits-sign-in
-                                        :data {:server server :retry-in-ms AUTH_BACKOFF_MS}}
-                                       "MCP server awaits sign-in; connect deferred"))
-                         (tel/log! {:level :warn
-                                    :id ::connect-failed
-                                    :data {:server server :error (ex-message t)}}
-                                   "MCP connect failed"))
-                       nil)))))
+                    (run! (fn [c]
+                            (try (mcp/close c) (catch Throwable _ nil)))
+                          stale)
+                    (when accepted (clear-connect-failure! k spec))
+                    accepted)
+                  (catch Throwable t
+                    (if (oauth-required? t)
+                      ;; Not a failure to repair, a sign-in to wait for. A JFR profile of
+                      ;; a live gateway caught one unauthorized server being re-asked every
+                      ;; couple of seconds - the per-turn reconcile, the handlers' nudges
+                      ;; and the health loop each paying an HTTP round trip for the same
+                      ;; 401 - so it is now asked once per `AUTH_BACKOFF_MS`.
+                      (do (clear-connect-failure! k spec)
+                          (note-auth-refusal! k spec)
+                          (tel/log! {:level :info
+                                     :id ::connect-awaits-sign-in
+                                     :data {:server server :retry-in-ms AUTH_BACKOFF_MS}}
+                                    "MCP server awaits sign-in; connect deferred"))
+                      (do (when (accept?) (swap! connect-failures assoc k spec))
+                          (tel/log! {:level :warn
+                                     :id ::connect-failed
+                                     :data {:server server :error (ex-message t)}}
+                                    "MCP connect failed")))
+                    nil)))))
 
 (defn- session-spec-of [session-id server] (get-in @session-specs [session-id server]))
 
@@ -456,6 +475,8 @@
           :when (= session-id (first k))]
 
     (close-in-pool! session-conns k))
+  (doseq [server (keys (get @session-specs session-id))]
+    (swap! connect-failures dissoc [session-id server]))
   (swap! session-specs dissoc session-id)
   nil)
 
@@ -608,12 +629,20 @@
         (conn-of name)
 
         tools
-        (tool-count conn)]
+        (tool-count conn)
+
+        connected?
+        (boolean (and conn (mcp/alive? conn)))]
 
     (cond-> {"name" name
              "transport" (wire-transport spec)
              "enabled" (enabled? spec)
-             "is_connected" (boolean (and conn (mcp/alive? conn)))
+             "is_connected" connected?
+             "status" (cond (killed? name) "killed"
+                            (not (enabled? spec)) "disabled"
+                            connected? "connected"
+                            (failed-connect? name (get (configured-servers) name)) "unhealthy"
+                            :else "connecting")
              ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
              ;; tier is the user's file: listed, never rewritten from here.
              "is_managed" (boolean is-managed)
@@ -1184,6 +1213,7 @@
                       "status" (cond connected? "connected"
                                      (and (not session?) (killed? nm)) "killed"
                                      (needs-auth? sid nm) "needs_auth"
+                                     (failed-connect? (if session? [sid nm] nm) spec) "unhealthy"
                                      :else "disconnected")}
                connected?
                (assoc "tools" names)

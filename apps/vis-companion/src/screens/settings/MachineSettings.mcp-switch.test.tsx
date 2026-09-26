@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../../lib/gateway';
 import type { McpServer } from '../../lib/types';
@@ -75,11 +75,74 @@ it.each<[Partial<McpServer>, string, string]>([
   [{ enabled: false }, 'Disabled', ''],
   [{ is_connected: false, is_authorized: false }, 'Not signed in — sign in to connect', 'sign in'],
   [{ is_connected: false }, 'Connecting', 'connecting'],
+  [{ is_connected: false, status: 'unhealthy' }, 'Unhealthy — could not connect', 'unhealthy'],
+  [{ is_connected: false, status: 'unhealthy', is_killed: true }, 'Killed — start it to reconnect', 'killed'],
+  [{ is_connected: false, status: 'unhealthy', enabled: false }, 'Disabled', ''],
 ])('preserves connection status without a leading mark: %s', async (patch, label, word) => {
   const { control, row } = await openServer(patch);
   expect(row).toHaveAccessibleDescription(label);
   expect(control).toHaveAccessibleDescription(label);
   if (word) expect(row).toHaveTextContent(word);
+});
+
+// Regression: a server that never finishes connecting kept showing `connecting`
+// even after the panel stopped polling. Each server needs its own deadline.
+it('shows unhealthy after 30 seconds of silence without timing out another server', async () => {
+  const first = {
+    ...SERVER,
+    name: 'iMCP',
+    transport: 'stdio' as const,
+    command: '/Applications/iMCP.app/Contents/MacOS/imcp-server',
+    url: undefined,
+    is_connected: false,
+  };
+  const second = { ...first, name: 'other' };
+  let rows = [first];
+  const client = {
+    cachedMcpServers: () => rows,
+    mcpServers: vi.fn(async () => [...rows]),
+  };
+  vi.useFakeTimers();
+  try {
+    render(<McpServersPanel client={client as unknown as GatewayClient} />);
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(client.mcpServers).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: /^iMCP/ })).toHaveAccessibleDescription('Connecting');
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    rows = [first, second];
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(screen.getByRole('button', { name: /^other/ })).toHaveAccessibleDescription('Connecting');
+    await act(async () => vi.advanceTimersByTimeAsync(18_500));
+    expect(screen.getByRole('button', { name: /^iMCP/ })).toHaveAccessibleDescription('Unhealthy — could not connect');
+    expect(screen.getByRole('button', { name: /^other/ })).toHaveAccessibleDescription('Connecting');
+    await act(async () => vi.advanceTimersByTimeAsync(11_500));
+    expect(screen.getByRole('button', { name: /^other/ })).toHaveAccessibleDescription('Unhealthy — could not connect');
+    const calls = client.mcpServers.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(client.mcpServers).toHaveBeenCalledTimes(calls);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('shows unhealthy even when the inventory request itself never answers', async () => {
+  const server = { ...SERVER, is_connected: false };
+  const client = {
+    cachedMcpServers: () => [server],
+    mcpServers: vi.fn(() => new Promise<McpServer[]>(() => {})),
+  };
+  vi.useFakeTimers();
+  try {
+    render(<McpServersPanel client={client as unknown as GatewayClient} />);
+    expect(screen.getByRole('button', { name: /^linear/ })).toHaveAccessibleDescription('Connecting');
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.getByRole('button', { name: /^linear/ })).toHaveAccessibleDescription('Unhealthy — could not connect');
+    const calls = client.mcpServers.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(client.mcpServers).toHaveBeenCalledTimes(calls);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it('keeps the switch busy while saving and preserves its value after a failure', async () => {

@@ -31,6 +31,8 @@
               (cond-> [(cond (flag row "is_killed") "killed"
                              (not (flag row "enabled")) "disabled"
                              (flag row "is_connected") "connected"
+                             (= "unhealthy" (get row "status")) "unhealthy"
+                             (= "connecting" (get row "status")) "connecting"
                              :else "idle")]
                 (pos? tools)
                 (conj (str tools (if (= 1 tools) " tool" " tools")))

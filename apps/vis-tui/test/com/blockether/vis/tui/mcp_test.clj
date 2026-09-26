@@ -58,7 +58,23 @@
                                       "enabled" false
                                       "is_connected" false
                                       "tools" 0))))
-      (expect (= "idle" (mcp/server-status {"name" "x" "enabled" true "is_managed" true}))))
+      (expect (= "idle" (mcp/server-status {"name" "x" "enabled" true "is_managed" true})))
+      (expect (= "connecting"
+                 (mcp/server-status (assoc managed-stdio
+                                      "is_connected" false
+                                      "status" "connecting"
+                                      "tools" 0))))
+      (expect (= "unhealthy"
+                 (mcp/server-status (assoc managed-stdio
+                                      "is_connected" false
+                                      "status" "unhealthy"
+                                      "tools" 0))))
+      (expect (= "killed"
+                 (mcp/server-status (assoc managed-stdio
+                                      "is_connected" false
+                                      "is_killed" true
+                                      "status" "unhealthy"
+                                      "tools" 0)))))
   (it "flags an HTTP server that has no gateway token yet"
       (expect (= "idle · needs sign-in" (mcp/server-status http-server)))
       (expect (= "idle · signed in" (mcp/server-status (assoc http-server "is_authorized" true)))))

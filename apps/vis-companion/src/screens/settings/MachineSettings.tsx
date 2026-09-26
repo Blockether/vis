@@ -445,14 +445,10 @@ export function MachineSettings({
 }
 
 /**
- * A server that answers "connecting" is the gateway still mid-handshake: it
- * settles a sign-in, a kill or a start AFTER answering the verb that asked for
- * it. Reported after a Linear sign-in: the row said `connecting` until the
- * settings were closed and opened again, because the one refresh the verdict
- * paid for ran before the reconnect landed. So while any row is settling the
- * list asks again, for at most `MCP_SETTLE_WINDOW_MS` after the last verb — a
- * server that never comes up must not keep a phone polling for as long as the
- * sheet stays open.
+ * A server that answers "connecting" may still be mid-handshake after a start or
+ * sign-in. Poll until it settles, but give each server its own 30-second deadline:
+ * a stalled peer must neither stay "connecting" forever nor postpone another
+ * server's verdict. The gateway continues its own health retries.
  */
 const MCP_SETTLE_POLL_MS = 1500;
 const MCP_SETTLE_WINDOW_MS = 30_000;
@@ -507,12 +503,15 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [confirming]);
 
-  // When the current settling episode began, or null while every row is settled.
-  const settlingSince = useRef<number | null>(null);
+  const settlingSince = useRef(new Map<string, number>());
+  const [timedOut, setTimedOut] = useState<Set<string>>(() => new Set());
   const load = useCallback(
     async (isPoll = false) => {
-      // A verb opens a fresh settle window; a poll only spends the open one.
-      if (!isPoll) settlingSince.current = null;
+      // A user action opens a fresh settle window; a poll only spends the open one.
+      if (!isPoll) {
+        settlingSince.current.clear();
+        setTimedOut(new Set());
+      }
       try {
         setServers(await client.mcpServers());
         setError(null);
@@ -528,15 +527,35 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   }, [load]);
 
   useEffect(() => {
-    if (!servers?.some((server) => mcpServerState(server).isSettling)) {
-      settlingSince.current = null;
-      return;
+    const pending = servers?.filter((server) => mcpServerState(server).isSettling) ?? [];
+    const names = new Set(pending.map((server) => server.name));
+    for (const name of settlingSince.current.keys()) {
+      if (!names.has(name)) settlingSince.current.delete(name);
     }
-    settlingSince.current ??= Date.now();
-    if (Date.now() - settlingSince.current > MCP_SETTLE_WINDOW_MS) return;
-    const timer = window.setTimeout(() => void load(true), MCP_SETTLE_POLL_MS);
-    return () => window.clearTimeout(timer);
-  }, [servers, load]);
+    if ([...timedOut].some((name) => !names.has(name))) {
+      setTimedOut((previous) => new Set([...previous].filter((name) => names.has(name))));
+    }
+    const now = Date.now();
+    for (const { name } of pending) {
+      if (!settlingSince.current.has(name)) settlingSince.current.set(name, now);
+    }
+    const waiting = pending.filter(({ name }) => !timedOut.has(name));
+    if (!waiting.length) return;
+    const untilDeadline = Math.min(
+      ...waiting.map(({ name }) => MCP_SETTLE_WINDOW_MS - (now - settlingSince.current.get(name)!)),
+    );
+    const deadlineTimer = window.setTimeout(() => {
+      const expired = waiting
+        .filter(({ name }) => Date.now() - settlingSince.current.get(name)! >= MCP_SETTLE_WINDOW_MS)
+        .map(({ name }) => name);
+      if (expired.length) setTimedOut((previous) => new Set([...previous, ...expired]));
+    }, Math.max(0, untilDeadline));
+    const pollTimer = window.setTimeout(() => void load(true), MCP_SETTLE_POLL_MS);
+    return () => {
+      window.clearTimeout(deadlineTimer);
+      window.clearTimeout(pollTimer);
+    };
+  }, [servers, timedOut, load]);
 
   useEffect(
     () => () => {
@@ -916,7 +935,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
         )}
         {servers?.map((server) => {
           const isSigningIn = authFlow?.server === server.name;
-          const state = mcpServerState(server, isSigningIn);
+          const state = mcpServerState(server, isSigningIn, timedOut.has(server.name));
           const isOpen = expanded.has(server.name);
           const panelId = `mcp-server-${server.name}`;
           const idle = busy === null;
@@ -1119,6 +1138,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
 function mcpServerState(
   server: McpServer,
   isSigningIn = false,
+  timedOut = false,
 ): {
   tone: string;
   label: string;
@@ -1141,6 +1161,8 @@ function mcpServerState(
     };
   if (!server.enabled) return { tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
   if (server.is_connected) return { tone: 'text-ok', label: 'Connected', word: tools };
+  if (server.status === 'unhealthy' || timedOut)
+    return { tone: 'text-err', label: 'Unhealthy — could not connect', word: 'unhealthy' };
   if (server.url && !server.is_authorized)
     return {
       tone: 'text-warn',
