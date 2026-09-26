@@ -328,7 +328,7 @@
     ;; The middle of the header shows only the active session title, never tabs.
     (when (pos? title-width)
       (p/clear-styles! g)
-      (p/set-colors! g t/header-active-tab-fg t/terminal-bg)
+      (p/set-colors! g t/header-fg t/terminal-bg)
       (p/enable! g p/BOLD)
       (p/put-str! g title-col content-row title-text))
     ;; RIGHT 20%: session-id copy button.

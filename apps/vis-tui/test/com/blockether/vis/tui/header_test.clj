@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.header-model :as vh]
             [lazytest.core :refer [defdescribe expect it]])
@@ -282,11 +283,26 @@
                                 (some #(when (= text (:text %)) %) @writes))]
 
             ;; The title stays legible while the copy badge keeps its own hover fg.
-            (expect (= t/header-active-tab-fg (:fg title-write)))
+            (expect (= t/header-fg (:fg title-write)))
             ;; Badge is a copy BUTTON (` #123e4567 `); hovering fills the chip
             ;; with the shared accent while preserving its inverse foreground.
             (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 "))))
             (expect (= t/header-active-tab-accent (:bg (write-by-text " #123e4567 ")))))))))
+
+(defdescribe session-title-contrast-test
+             (it "paints the title with readable header ink on light and dark surfaces"
+                 (try (doseq [theme-id [:vis-light :blockether-dark]]
+                        (t/apply-theme! theme-id)
+                        (let [writes (atom [])
+                              title "Contrast check"]
+
+                          (binding [header/*register-click-regions?* false]
+                            (header/draw-header! (dummy-text-graphics writes) {:title title} 0 80))
+                          (let [title-write (some #(when (= title (:text %)) %) @writes)]
+                            (expect (some? title-write))
+                            (expect (= t/header-fg (:fg title-write)))
+                            (expect (= t/terminal-bg (:bg title-write))))))
+                      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 ;; Regression: removing the numbered strip must leave only the active session title,
 ;; even when other sessions remain live in the local state.
