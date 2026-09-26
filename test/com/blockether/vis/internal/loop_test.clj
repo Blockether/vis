@@ -3094,7 +3094,7 @@
               (expect (false? @(:python-context-retired-atom environment)))
               (expect
                 (re-matches
-                  #"Time limit reached: Vis stopped this block after \d+( ms|s)\. This is the normal time limit for one python_execution block, not a fault\. Python state is kept\."
+                  #"Time limit reached: Vis stopped this block after \d+( ms|s)\. This is the normal time limit for one python_execution block, not a fault\. Extension calls have no time limit and do not count toward it\. Python state is kept\."
                   (str (get-in result [:error :message]))))
               (expect (= "ready\n"
                          (:stdout
@@ -3201,7 +3201,7 @@
           (expect (str/includes? (str (:stdout timeout)) "before native wait"))
           (expect
             (re-find
-              #"^Time limit reached: Vis stopped this block after \d+s\. This is the normal time limit for one python_execution block, not a fault\. "
+              #"^Time limit reached: Vis stopped this block after \d+s\. This is the normal time limit for one python_execution block, not a fault\. Extension calls have no time limit and do not count toward it\. "
               message)
             message)
           (expect (str/includes?

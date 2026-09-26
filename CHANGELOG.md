@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   limit, for example in `select.select`, no longer ends the turn. Vis restarts
   Python, restores the imports, functions, classes and small values saved from
   earlier blocks, and tells the model that the block reached its normal time
-  limit. Before, Vis shut down the session's Python and ended the turn.
+  limit, which never applies to extension calls. Before, Vis shut down the
+  session's Python and ended the turn.
 - The companion and the TUI session lists mark a session as stopped when its
   newest turn failed and you have not read it yet, for example after Python was
   shut down. Before, the session only showed as new.

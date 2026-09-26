@@ -190,8 +190,9 @@
 
 (defn- timeout-error
   "The error of a block that reached its time limit. The model reads that the stop
-   is the normal limit for one block, not a fault, and which Python state the next
-   block starts from: `:kept`, `:restarted` or `:retired`."
+   is the normal limit for one block, not a fault, that extension calls have no
+   limit (they park the wall, see [[rt/park-blocking-wall]]), and which Python
+   state the next block starts from: `:kept`, `:restarted` or `:retired`."
   [timeout-ms python-state]
   (let [ms
         (long timeout-ms)
@@ -203,8 +204,10 @@
         "The block was waiting in native code and did not respond to the stop, so "]
 
     (cond-> {:message
-             (str "Time limit reached: Vis stopped this block after " limit
+             (str "Time limit reached: Vis stopped this block after "
+                  limit
                   ". This is the normal time limit for one python_execution block, not a fault. "
+                  "Extension calls have no time limit and do not count toward it. "
                   (case python-state
                     :kept
                     "Python state is kept."
