@@ -100,6 +100,8 @@ jobs:
     name: publish only the complete native beta
     needs: [pick, native]
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -109,6 +111,7 @@ jobs:
         with:
           tag: ${{ needs.pick.outputs.tag }}
       - name: Verify all native assets and publish the immutable prerelease
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -121,6 +124,7 @@ jobs:
           green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
             -q '.workflow_runs[0].head_sha // empty')"
           if [ "$green_main" != "$SHA" ]; then
+            echo 'published=false' >> "$GITHUB_OUTPUT"
             echo '::notice::A newer successful main CI superseded this beta; leaving its draft unpublished'
             exit 0
           fi
@@ -139,10 +143,14 @@ jobs:
           assert all(asset['size'] > 0 and asset['state'] == 'uploaded' for asset in assets)
           PY
           gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
+          echo 'published=true' >> "$GITHUB_OUTPUT"
 
   index:
     name: select the published native beta for installers
     needs: [pick, publish]
+    # Only the publish job decides whether this beta is still current. A second CI
+    # query can see a different latest run and select a beta left as a draft.
+    if: needs.publish.outputs.published == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: beta-native-index
@@ -158,12 +166,6 @@ jobs:
           set -euo pipefail
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
           [ "$TAG" = "beta-$SHA" ]
-          green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
-            -q '.workflow_runs[0].head_sha // empty')"
-          if [ "$green_main" != "$SHA" ]; then
-            echo '::notice::A newer successful main CI superseded this beta selection'
-            exit 0
-          fi
           [ "$(gh api "repos/$REPO/releases/tags/$TAG" -q '.draft == false and .prerelease == true')" = true ]
           printf '%s\n' "$TAG" > "$RUNNER_TEMP/native-beta"
           gh release upload installer "$RUNNER_TEMP/native-beta" --repo "$REPO" --clobber

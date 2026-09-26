@@ -1836,17 +1836,20 @@
                  [{} {:assets (assoc assets 0 (last assets))} false false]
                  [{} {:draft false} false false] [{} {:prerelease false} false false]
                  [{} {:tag_name "v9.9.9"} false false]]]
-          (let [{:keys [exit output calls]}
+          (let [{:keys [exit output outputs calls]}
                 (run-beta-job "publish" overrides (merge metadata changes))]
             (expect (= exit-ok? (zero? exit)) output)
             (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
-                    calls))))))
+                    calls)
+            ;; The index job acts on this answer alone.
+            (expect (= publish? (str/includes? outputs "published=true")) outputs))))))
 
 (defdescribe
   beta-index-test
-  (it "updates the installer selection only for the latest green published beta"
+  (it "updates the installer selection only for a published beta"
+      ;; What the CI API reports now no longer overrides the publish job's decision.
       (doseq [[overrides pass? update?]
-              [[{} true true] [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} true false]
+              [[{} true true] [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} true true]
                [{"TEST_PUBLISHED" "false"} false false] [{"SHA" "main"} false false]
                [{"TAG" "v9.9.9"} false false]]]
         (let [{:keys [exit output calls]} (run-beta-job "index" overrides {})]
@@ -1854,6 +1857,23 @@
           (expect (= update? (str/includes? calls "release upload installer")) calls)
           (when update?
             (expect (str/includes? calls (str "beta-" (apply str (repeat 40 "a")))) calls)))))
+  (it "runs only for a beta that the publish job reports as published"
+      ;; Beta Native 36258346489: publish read another latest green CI and kept the draft;
+      ;; index asked again seconds later, chose this beta and failed with 404 on the draft.
+      (let [jobs
+            (get (yaml/load (slurp ".github/workflows/beta-native.yml")) "jobs")
+
+            publish
+            (some #(when (= "publish" (get % "id")) %) (get-in jobs ["publish" "steps"]))
+
+            index
+            (workflow-job-script ".github/workflows/beta-native.yml" "index")]
+
+        (expect (= "${{ steps.publish.outputs.published }}"
+                   (get-in jobs ["publish" "outputs" "published"])))
+        (expect (str/includes? (get publish "run") "echo 'published=true'"))
+        (expect (= "needs.publish.outputs.published == 'true'" (get-in jobs ["index" "if"])))
+        (expect (not (str/includes? index "actions/workflows/ci.yml/runs")) index)))
   (it
     "rejects missing or malformed installer beta selections"
     (let [body (re-find #"(?ms)^vis_beta_tag\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
