@@ -487,6 +487,7 @@ export function ManageProjectsSheet({
                         variant="remove"
                         label={`Remove every transcript in ${entry.name}`}
                         onClick={() => askRemove(entry)}
+                        className="after:-left-[9px] after:-right-[3px] sm:after:-left-1.5 sm:after:-right-1.5"
                       >
                         <TrashIcon className="size-4" />
                       </IconButton>

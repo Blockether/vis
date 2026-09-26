@@ -346,8 +346,8 @@ export function MenuItem({
   );
   if (!action) return row;
   return (
-    // Keep the independent action inside the same gutter as the row's leading icon.
-    <div className="flex items-center gap-2 border-b border-dialog-edge pr-3">
+    // Align the independent action with the heading exit while keeping its hit area inside the sheet.
+    <div className="flex items-center gap-2 border-b border-dialog-edge pr-[3px] sm:pr-[7px] mouse:pr-[9px]">
       {row}
       {action}
     </div>

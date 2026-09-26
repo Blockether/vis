@@ -37,6 +37,9 @@ export const Inventory: Story = {
     // A short project list must fit without either scrollbar, including the trailing actions.
     await expect(inventory.scrollWidth).toBe(inventory.clientWidth);
     await expect(inventory.scrollHeight).toBe(inventory.clientHeight);
+    const close = page.getByRole('button', { name: 'Close projects on tower' }).querySelector('svg')!;
+    const closeBox = close.getBoundingClientRect();
+    const closeCenter = closeBox.x + closeBox.width / 2;
     for (const action of page.getAllByRole('button', { name: /^Remove every transcript/ })) {
       const box = action.getBoundingClientRect();
       const row = action.parentElement!.getBoundingClientRect();
@@ -53,10 +56,12 @@ export const Inventory: Story = {
       ]) {
         await expect(parseFloat(width)).toBe(0);
       }
-      await expect(row.right - box.right).toBeGreaterThanOrEqual(8);
-      await expect(box.top - row.top).toBeGreaterThanOrEqual(8);
       await expect(Math.abs(icon.x + icon.width / 2 - (box.x + box.width / 2))).toBeLessThan(1);
       await expect(Math.abs(icon.y + icon.height / 2 - (box.y + box.height / 2))).toBeLessThan(1);
+      // Row actions and the heading exit should sit on one vertical icon axis.
+      await expect(Math.abs(icon.x + icon.width / 2 - closeCenter)).toBeLessThan(1);
+      await expect(row.right - box.right).toBeGreaterThanOrEqual(3);
+      await expect(box.top - row.top).toBeGreaterThanOrEqual(4);
     }
     await userEvent.click(page.getByRole('button', { name: /^vis/i }));
     await userEvent.click(page.getByRole('button', { name: 'Close projects on tower' }));
